@@ -29,9 +29,16 @@ Pushing to `main` deploys via `.github/workflows/deploy-cloudflare.yml`
 - `public/` sprites, beasts, MapAssets tile catalog
 - `docs/` design notes
 
+## Quest Board
+
+Ten randomly generated contracts (kill any foe, an element, a named monster or a boss; mine, chop,
+pick mushrooms, fish, befriend spirits, craft). The board refreshes every 30 minutes, a finished
+contract is replaced by a new random one, and "New board" rerolls everything for kyo. Count and pay
+scale with your level and a random difficulty tier. Logic is in `src/game/quest-board.ts`
+(tested in `scripts/quest-board.test.mjs`); the state lives on the save as `save.board`.
+
 ## Known issues carried over from V5
 
-- Quest Board panel is empty: `src/game/quest-board.ts` was never wired in (see header).
 - 3 tests in `scripts/game-content.test.mjs` fail (fixed equipment stats, equipment
   migration, campfire recipes).
 - Black Market is still a runtime patch (`src/game/black-market.ts`) rather than part of the engine class.

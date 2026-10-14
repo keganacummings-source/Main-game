@@ -87,6 +87,10 @@ import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor } from "./sprites";
 import { expandZones, mapToWorld, savedMaps } from "./map-format";
 import { CombatFx } from "./combat-fx";
+import {
+	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, rerollBoard, rerollCost, TIER_XP,
+	type BoardEventDetail, type BoardKind,
+} from "./quest-board";
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { initActorSprites } from "./actor-sprites";
 import {
@@ -1011,6 +1015,7 @@ export class TurbzGame {
 			}
 			if (made.skill) this.gainSkill(made.skill.id, made.skill.xp);
 			this.say(`Crafted ${Object.entries(made.outputs).map(([id, n]) => `${ITEM_BY_ID[id]?.name ?? id} x${n}`).join(", ")}.`);
+			this.boardEvent("craft");
 		}
 		this.persist(); this.syncHud(true);
 	}
@@ -2034,6 +2039,7 @@ export class TurbzGame {
 		this.say(`${mob.name} falls.`);
 		this.tone(90, .08, "triangle");
 		this.questKill(mob);
+		if (!mob.ghost) this.boardEvent("kills", { species: mob.species, type: mob.type, boss: !!mob.boss });
 		if (mob.witch || mob.bounty) {
 			if (mob.bounty) {
 				for (const pool of [this.mobs, this.contract ?? []]) {
@@ -2127,6 +2133,7 @@ export class TurbzGame {
 		this.say(spirit.active ? `${spirit.name} stays, and follows.` : `${spirit.name} stays in the party. Call them out from Spirits.`);
 		this.gainSkill("catching", 16);
 		save.catches[mob.type] = (save.catches[mob.type] ?? 0) + 1;
+		this.boardEvent("catch");
 		this.noteCatch(mob);
 	}
 	spiritCap() {
@@ -2161,6 +2168,56 @@ export class TurbzGame {
 		}
 		if ((save.catches.fire ?? 0) >= 1 && (save.catches.light ?? 0) >= 1 && !save.quests.keeper_lanterns!.done) this.completeQuest("keeper_lanterns");
 		if (mob.type === "water" && save.quests.marsh_walk!.n >= 1 && !save.quests.marsh_walk!.done) this.completeQuest("marsh_walk");
+	}
+	/** The Quest Board: ten random contracts, refreshed every 30 minutes. State lives on the save. */
+	questBoardSnap() {
+		if (!this.save) return [];
+		const now = Date.now();
+		return boardView(ensureBoard(this.save, now), now);
+	}
+	questBoardRerollCost(): number {
+		return rerollCost(this.save?.level ?? 1);
+	}
+	acceptQuest(id: string) {
+		if (!this.save) return;
+		const q = acceptContract(ensureBoard(this.save, Date.now()), id);
+		if (!q) return this.say("That contract is gone. Wait for the board to refresh.");
+		this.say(`Accepted: ${q.name}. ${q.about}`);
+		this.persist(); this.syncHud(true);
+	}
+	abandonQuest() {
+		if (!this.save) return;
+		const q = abandonContract(ensureBoard(this.save, Date.now()));
+		if (q) this.say(`Dropped: ${q.name}.`);
+		this.persist(); this.syncHud(true);
+	}
+	rerollQuestBoard() {
+		const save = this.save;
+		if (!save) return;
+		const cost = this.questBoardRerollCost();
+		if (save.kyo < cost) return this.say(`A fresh board costs ${cost} kyo.`);
+		save.kyo -= cost;
+		rerollBoard(save, Date.now());
+		this.say(`The board is rewritten. -${cost} kyo.`);
+		this.persist(); this.syncHud(true);
+	}
+	/** Something happened in the world; advance the accepted contract if it cares. */
+	boardEvent(kind: BoardKind, detail: BoardEventDetail = {}) {
+		const save = this.save;
+		if (!save) return;
+		const hit = applyBoardEvent(save, ensureBoard(save, Date.now()), kind, detail);
+		if (!hit) return;
+		if (!hit.complete) {
+			this.say(`${hit.quest.name}: ${hit.progress}/${hit.quest.need}`);
+			this.syncHud(true);
+			return;
+		}
+		const kyo = Math.floor(hit.quest.rewardKyo * (1 + this.skillN("social") * 0.0015));
+		save.kyo += kyo;
+		this.gainSkill("adventuring", TIER_XP[hit.quest.tier]);
+		this.gainSkill("social", 8);
+		this.say(`Contract complete: ${hit.quest.name}. +${kyo} kyo`);
+		this.persist(); this.syncHud(true);
 	}
 	questKill(mob) {
 		const save = this.save;
@@ -2771,6 +2828,7 @@ export class TurbzGame {
 			this.gainSkill("shroom", 16);
 			this.say("The patch gives.");
 		}
+		this.boardEvent(node as BoardKind);
 		this.persist();
 	}
 	bankAccount(save: Save) {
@@ -3252,6 +3310,7 @@ export class TurbzGame {
 			this.giveItem("fish", n);
 			this.gainSkill("fishing", 16);
 			this.say(`A bite! Fish x${n}.`);
+			this.boardEvent("fish");
 			this.persist();
 			if (this.autoplay) this.autoPlan = 0;
 			return;
@@ -3280,6 +3339,7 @@ export class TurbzGame {
 			this.gainSkill("shroom", 16);
 			this.say("The patch gives.");
 		}
+		this.boardEvent(node as BoardKind);
 		this.persist();
 		if (this.autoplay) this.autoPlan = 0;
 	}

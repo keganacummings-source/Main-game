@@ -17,6 +17,7 @@ import { ArenaScreen } from "@/components/arena-ui";
 import { AccountChip, Boards, ChatDock, DuelBanner, Hub, Options } from "@/components/hub-ui";
 import { getSnap, subscribe, TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
+import type { BoardView } from "@/game/quest-board";
 
 /** Static (dreamdaw.com) build: accounts + saves live in the worker (see /worker). */
 
@@ -444,28 +445,9 @@ function PanelBody({ panel, snap, game }: { panel: string; snap: ReturnType<type
           {panel === "skills" && <Skills snap={snap} game={game} />}
           {panel === "quests" && (
             <div className="grid gap-2">
-              <p className="font-display text-xs text-kyo">RANDOM QUEST BOARD</p>
-              <p className="text-dim">Ten contracts at once. Board refreshes every 30 minutes.</p>
-              {snap.questBoard && snap.questBoard.length > 0 ? (
-                snap.questBoard.map((q: { id: string; name: string; about: string; rewardKyo: number; active?: boolean }) => (
-                  <div key={q.id} className={`border-2 border-bone p-2 ${q.active ? "border-kyo" : ""}`}>
-                    <p className="font-display text-xs text-kyo">{q.name}</p>
-                    <p>{q.about}</p>
-                    <p className="text-dim">Reward · {q.rewardKyo} kyo</p>
-                    {!q.active && (
-                      <button type="button" className="px-btn mt-1 !min-h-9 !py-1" onClick={() => game?.acceptQuest?.(q.id)}>
-                        Accept
-                      </button>
-                    )}
-                    {q.active && <p className="text-kyo mt-1">Active</p>}
-                  </div>
-                ))
-              ) : (
-                <>
-                  <p className="font-display text-xs text-kyo">{snap.questName}</p>
-                  <p>{snap.questAbout}</p>
-                </>
-              )}
+              <QuestBoard game={game} />
+              <p className="font-display mt-2 text-xs text-kyo">STORY QUEST · {snap.questName}</p>
+              <p>{snap.questAbout}</p>
               <p className="mt-2 text-dim">Skills and finished sets survive the veil. The body does not.</p>
               <p className="mt-2">Set {snap.setLabel}</p>
               <p className="text-dim">{snap.setBonus}</p>
@@ -887,6 +869,64 @@ function Bag({ snap, game }: { snap: ReturnType<typeof getSnap>; game: TurbzGame
   );
 }
 
+
+const TIER_LABEL: Record<BoardView["tier"], string> = { easy: "EASY", normal: "NORMAL", hard: "HARD", elite: "ELITE" };
+const TIER_COLOR: Record<BoardView["tier"], string> = { easy: "text-dim", normal: "text-bone", hard: "text-kyo", elite: "text-blood" };
+
+function QuestBoard({ game }: { game: TurbzGame | null }) {
+  const [board, setBoard] = useState<BoardView[]>([]);
+  useEffect(() => {
+    const pull = () => setBoard(game?.questBoardSnap() ?? []);
+    pull();
+    const id = window.setInterval(pull, 1000);
+    return () => window.clearInterval(id);
+  }, [game]);
+  const secs = board[0]?.refreshIn ?? 0;
+  const mm = Math.floor(secs / 60);
+  const ss = Math.floor(secs % 60);
+  const cost = game?.questBoardRerollCost() ?? 0;
+  const hasActive = board.some((q) => q.active);
+  return (
+    <div className="grid gap-2">
+      <p className="font-display text-xs text-kyo">RANDOM QUEST BOARD</p>
+      <p className="text-dim">Ten random contracts. Finish one and a new one is posted. The whole board refreshes every 30 minutes.</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-kyo">
+          Refresh · {mm}:{ss.toString().padStart(2, "0")}
+        </p>
+        <div className="flex gap-1">
+          {hasActive && (
+            <button type="button" className="px-btn !min-h-9 !py-1" onClick={() => game?.abandonQuest()}>
+              Drop contract
+            </button>
+          )}
+          <button type="button" className="px-btn !min-h-9 !py-1" onClick={() => game?.rerollQuestBoard()}>
+            New board · {cost} kyo
+          </button>
+        </div>
+      </div>
+      {board.map((q: BoardView) => (
+        <div key={q.id} className={`border-2 p-2 ${q.active ? "border-kyo" : "border-bone"}`}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-display text-xs text-kyo">{q.name}</p>
+            <span className={`font-display text-[10px] ${TIER_COLOR[q.tier]}`}>{TIER_LABEL[q.tier]}</span>
+          </div>
+          <p>{q.about}</p>
+          <p className="text-dim">Reward · {q.rewardKyo} kyo</p>
+          {q.active ? (
+            <p className="mt-1 text-kyo">
+              Active · {q.progress}/{q.need}
+            </p>
+          ) : (
+            <button type="button" className="px-btn mt-1 !min-h-9 !py-1" onClick={() => game?.acceptQuest(q.id)}>
+              Accept
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function BlackMarket({ snap, game }: { snap: ReturnType<typeof getSnap>; game: TurbzGame | null }) {
   const [cat, setCat] = useState<"items" | "gear" | "enchants" | "spirits">("gear");
