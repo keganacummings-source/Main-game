@@ -1,0 +1,17 @@
+{
+  // Separate from the app's tsconfig (which targets the browser/Node).
+  // Generate the Cloudflare runtime types first:  npm run cf:types
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "types": []
+  },
+  "include": ["./*.ts", "../worker-configuration.d.ts"]
+}
