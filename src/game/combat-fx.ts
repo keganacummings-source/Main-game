@@ -86,6 +86,20 @@ type Kind = "slash" | "thrust" | "proj" | "beam" | "impact" | "ward" | "heal" | 
 type Fx = {
   kind: Kind; x0: number; y0: number; x1: number; y1: number; t: number; dur: number; pal: Pal; type: TypeId; seed: number;
   shape?: Shape; big?: number; dir?: number; tilt?: number; impact?: Fx; quality?: number; burst?: boolean;
+  /** Live aim point. Flying FX re-read it every tick so a shot chases a moving target (or its miss spot). */
+  follow?: () => [number, number] | null; fox?: number; foy?: number;
+};
+
+/** Gap between the shots of one volley. The engine staggers a volley's damage by the same amount. */
+export const VOLLEY_GAP = 0.07;
+
+export type CastOpts = {
+  /** Live aim point for the end of the flight. Return null once the target is gone. */
+  follow?: () => [number, number] | null;
+  /** The attack misses: melee skips the impact burst, shots end in a small puff beside the target. */
+  miss?: boolean;
+  /** Force a three-shot volley so the visuals agree with a volley's three hits. */
+  volley?: boolean;
 };
 type MoteKind = "px" | "drop" | "spark" | "ring" | "flake";
 type Mote = { x: number; y: number; vx: number; vy: number; life: number; max: number; c: string; g: number; k: MoteKind; drag: number };
@@ -112,53 +126,78 @@ export class CombatFx {
     this.motes.push({ x, y, vx: vx + (Math.random() - 0.5) * spread, vy: vy + (Math.random() - 0.5) * spread * 0.7, life, max: life, c, g: RISE[type] ?? 0, k, drag: k === "spark" ? 0.9 : 0.95 });
   }
 
-  /** Each verse gets its own recipe from tactic, form, element, effect and an id hash. */
-  cast(move: Move, form: string, tactic: string, x0: number, y0: number, x1: number, y1: number) {
+  /**
+   * Each verse gets its own recipe from tactic, form, element, effect and an id hash.
+   *
+   * Returns how many seconds pass before the verse visually connects (projectile arrival, beam
+   * strike, slash contact). The engine applies damage then, so numbers, hit-flashes and MISS
+   * always agree with what the player sees.
+   */
+  cast(move: Move, form: string, tactic: string, x0: number, y0: number, x1: number, y1: number, opts: CastOpts = {}): number {
     const type = move.type;
     const pal = PAL[type] ?? PAL.normal;
     const seed = hash(move.id);
     const big = 0.75 + Math.min(1.1, move.power / 60);
     const tilt = 0.5 + ((seed * 7) % 1) * 0.5;
     const base = { x0, y0, x1, y1, t: 0, pal, type, seed, big, tilt };
+    const miss = !!opts.miss;
     const impact: Fx = { ...base, kind: "impact", dur: 0.38 + big * 0.1, x0: x1, y0: y1 };
     const key = (move.id + " " + move.name).toLowerCase();
-    const add = (f: Fx) => this.list.push(f);
-    if (tactic === "ward") return add({ ...base, kind: "ward", dur: 1 });
-    if (tactic === "heal" || move.effect === "mend") return add({ ...base, kind: "heal", dur: 1 });
-    if (tactic === "surge") return add({ ...base, kind: "surge", dur: 0.85 });
-    if (tactic === "dash") return add({ ...base, kind: "trail", dur: 0.5 });
-    if (tactic === "roll") return add({ ...base, kind: "roll", dur: 0.5 });
+    const add = (f: Fx) => { this.list.push(f); };
+    const chase = (dx = 0, dy = 0): Partial<Fx> => (opts.follow ? { follow: opts.follow, fox: dx, foy: dy } : {});
+    if (tactic === "ward") { add({ ...base, kind: "ward", dur: 1 }); return 0; }
+    if (tactic === "heal" || move.effect === "mend") { add({ ...base, kind: "heal", dur: 1 }); return 0; }
+    if (tactic === "surge") { add({ ...base, kind: "surge", dur: 0.85 }); return 0; }
+    if (tactic === "dash") { add({ ...base, kind: "trail", dur: 0.5 }); return 0; }
+    if (tactic === "roll") { add({ ...base, kind: "roll", dur: 0.5 }); return 0; }
     if (tactic === "blink") {
       add({ ...base, kind: "blink", dur: 0.45 });
-      return add({ ...impact, t: -0.06, big: big * 0.8 });
+      if (!miss) add({ ...impact, t: -0.06, big: big * 0.8 });
+      return 0.06;
     }
     if (tactic === "heavy") {
       add({ ...base, kind: "slash", dur: 0.26, dir: seed > 0.5 ? 1 : -1, big: big * 1.35, tilt: 0.45 });
-      return add({ ...base, kind: "slam", dur: 0.7, x0: x1, y0: y1, t: -0.12 });
+      if (!miss) add({ ...base, kind: "slam", dur: 0.7, x0: x1, y0: y1, t: -0.12 });
+      return 0.14;
     }
     if (tactic === "channel") {
       add({ ...base, kind: "rune", dur: 1, x1: x0, y1: y0 + 20 });
-      if (type === "light" || type === "electric" || type === "void" || seed > 0.55) return add({ ...base, kind: "beam", dur: 0.5, t: -0.4, impact: { ...impact, big: big * 1.35, burst: true } });
-      return add({ ...base, kind: "proj", shape: SHAPE[type], dur: 0.34, t: -0.4, big: big * 1.5, impact: { ...impact, big: big * 1.45, burst: true } });
+      const spill = { ...impact, big: big * (miss ? 0.8 : 1.35), burst: !miss };
+      if (type === "light" || type === "electric" || type === "void" || seed > 0.55) {
+        add({ ...base, ...chase(), kind: "beam", dur: 0.5, t: -0.4, impact: spill });
+        return 0.4;
+      }
+      add({ ...base, ...chase(), kind: "proj", shape: SHAPE[type], dur: 0.34, t: -0.4, big: big * 1.5, impact: { ...spill, big: big * (miss ? 0.8 : 1.45) } });
+      return 0.74;
     }
     if (form === "melee" || tactic === "lunge") {
       if (THRUST.test(key)) {
         add({ ...base, kind: "thrust", dur: 0.22 });
-        return add({ ...impact, t: -0.06, big: big * 0.85 });
+        if (!miss) add({ ...impact, t: -0.06, big: big * 0.85 });
+        return 0.1;
       }
       const count = MULTI.test(key) ? 3 : seed > 0.66 ? 2 : 1;
       for (let i = 0; i < count; i++) add({ ...base, kind: "slash", dur: 0.22, t: -i * 0.09, dir: i % 2 ? -1 : 1, tilt: i % 2 ? tilt * 0.7 : tilt, big: big * (1 - i * 0.08) });
-      return add({ ...impact, t: -0.06, big: big * 0.8 });
+      if (!miss) add({ ...impact, t: -0.06, big: big * 0.8 });
+      return 0.08;
     }
-    if (type === "electric" || move.id === "dawn" || move.id === "focuslance") return add({ ...base, kind: "beam", dur: 0.32, impact });
+    if (type === "electric" || move.id === "dawn" || move.id === "focuslance") {
+      add({ ...base, ...chase(), kind: "beam", dur: 0.32, impact: miss ? { ...impact, big: big * 0.7 } : impact });
+      return 0.05;
+    }
     const shape: Shape = move.id === "cointoss" ? "coin" : SHAPE[type];
-    const n = VOLLEY.test(key) ? 3 : 1;
+    const n = opts.volley ? 3 : VOLLEY.test(key) ? 3 : 1;
     const dist = Math.hypot(x1 - x0, y1 - y0);
+    const flight = Math.max(0.14, dist / (type === "earth" ? 420 : 600));
     add({ ...base, kind: "flash", dur: 0.14, x1: x0, y1: y0 });
     for (let i = 0; i < n; i++) {
       const off = (i - (n - 1) / 2) * 16;
-      add({ ...base, kind: "proj", shape, dur: Math.max(0.14, dist / (type === "earth" ? 420 : 600)), t: -i * 0.07, x1: x1 + off * 0.3, y1: y1 + off, impact: { ...impact, x0: x1 + off * 0.3, y0: y1 + off, big: big * (n > 1 ? 0.6 : 1) } });
+      add({
+        ...base, ...chase(off * 0.3, off), kind: "proj", shape, dur: flight, t: -i * VOLLEY_GAP, x1: x1 + off * 0.3, y1: y1 + off,
+        impact: { ...impact, x0: x1 + off * 0.3, y0: y1 + off, big: big * (n > 1 ? 0.6 : 1) * (miss ? 0.7 : 1) },
+      });
     }
+    return flight;
   }
 
   /** Weapon swing: crescent in the weapon's element; rarer weapons leave more behind. */
@@ -187,6 +226,14 @@ export class CombatFx {
     const done: Fx[] = [];
     for (const f of this.list) {
       f.t += dt;
+      if (f.follow && f.t < f.dur) {
+        const p = f.follow();
+        if (p) {
+          f.x1 = p[0] + (f.fox ?? 0);
+          f.y1 = p[1] + (f.foy ?? 0);
+          if (f.impact) { f.impact.x0 = f.x1; f.impact.y0 = f.y1; }
+        }
+      }
       if (f.t >= f.dur) done.push(f);
       else if (f.t > 0 && f.kind === "proj") {
         const [x, y] = this.pos(f, f.t / f.dur);

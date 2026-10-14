@@ -446,6 +446,17 @@ function PanelBody({ panel, snap, game }: { panel: string; snap: ReturnType<type
           {panel === "quests" && (
             <div className="grid gap-2">
               <QuestBoard game={game} />
+              {snap.mapQuests.length > 0 && (
+                <div className="grid gap-2" data-testid="map-quest-log">
+                  <p className="font-display text-xs text-blood">THIS MAP'S QUESTS</p>
+                  {snap.mapQuests.map((q) => (
+                    <div key={q.id} className="border-2 border-bone p-2">
+                      <p className="font-display text-xs text-kyo">{q.name}{q.ready ? " · report to " + q.turnIn : ""}</p>
+                      {q.lines.map((l, i) => <p key={i} className="text-dim">{l}</p>)}
+                    </div>
+                  ))}
+                </div>
+              )}
               <p className="font-display mt-2 text-xs text-kyo">STORY QUEST · {snap.questName}</p>
               <p>{snap.questAbout}</p>
               <p className="mt-2 text-dim">Skills and finished sets survive the veil. The body does not.</p>
@@ -472,7 +483,7 @@ function PanelBody({ panel, snap, game }: { panel: string; snap: ReturnType<type
           {panel === "pause" && (
             <div className="grid gap-2">
               <p>
-                WASD / arrows: move. E: gather, fish, or talk. X: Crafting. 1–9: cast. B/I: Bag. V: Verses. K: Skills. G: Spirits. C: Character Sheet. L: Lobby. M: Map. H: Hardcore Survival. Escape: close or pause. Unstuck moves you to the cursor after 3 seconds. Right-click or Menu opens more actions. Chat and search fields stop movement while typing.
+                WASD / arrows: move. E: gather, fish, or talk. X: Crafting. 1–9: cast. B/I: Bag. V: Verses. K: Skills. G: Spirits. C: Character Sheet. L: Lobby. M: Map. H: Hardcore Survival. F: Hardcore log building. Escape: close or pause. Unstuck moves you to the cursor after 3 seconds. Right-click or Menu opens more actions. Chat and search fields stop movement while typing.
               </p>
               {snap.roomCode && <p className="text-kyo">Lobby {snap.roomCode}</p>}
               <p className="text-dim">Drag any window by its title bar, resize from the corner, and pin it to keep it open and locked. Your layout saves to your TURBZ account.</p>
@@ -561,7 +572,9 @@ function Play({
       {snap.survival && (
         <FloatWin id="survival-hud" title="Survival" compact def={() => ({ x: 8, y: narrow() ? 160 : 260, w: 300 })}>
           <div className="survival-hud-body">
+            {snap.clock.active && <p className={snap.clock.phase === "night" ? "text-blood" : "text-kyo"} data-testid="hud-clock">{snap.clock.phase === "night" ? "☾" : "☀"} {snap.clock.label} · {snap.clock.left}</p>}
             <button className="px-btn" onClick={() => game?.toggle("survival")}>Survival & Camp</button>
+            {snap.build.on && <button className="px-btn px-btn-kyo" onClick={() => game?.toggleBuild(false)}>Building · {snap.build.logs} logs · click to stop</button>}
             <p>Hunger {Math.ceil(snap.survival.hunger)} · Thirst {Math.ceil(snap.survival.thirst)} · Sleep {Math.ceil(snap.survival.rest)}</p>
             {Math.min(snap.survival.hunger, snap.survival.thirst, snap.survival.rest) < 15 && <p className="text-blood">Supplies low. Empty reserves cause lasting damage.</p>}
             {snap.sleeping && <button className="px-btn" onClick={() => game?.survivalAction("sleep")}>Sleeping · Wake up</button>}
@@ -632,9 +645,11 @@ function Play({
             </p>
             <p className="mt-2">{snap.talk.line}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button className="px-btn" onClick={() => game?.nextLine()}>
-                More
-              </button>
+              {snap.talk.more !== false && (
+                <button className="px-btn" onClick={() => game?.nextLine()}>
+                  More
+                </button>
+              )}
               {snap.talk.shrine && (
                 <button className="px-btn px-btn-kyo" onClick={() => game?.startShrine(snap.talk!.shrine!)}>
                   Enter shrine
@@ -689,6 +704,25 @@ function Play({
               <button className="px-btn mt-2" onClick={() => game?.brew("meal")}>
                 Cook a fish
               </button>
+            )}
+            {snap.talk.quests && (snap.talk.quests.offers.length > 0 || snap.talk.quests.active.length > 0) && (
+              <div className="mt-3 grid gap-2" data-testid="map-quest-talk">
+                {snap.talk.quests.active.map((q) => (
+                  <div key={q.id} className="border-2 border-bone p-2">
+                    <p className="font-display text-xs text-kyo">{q.ready ? "READY TO HAND IN" : "IN PROGRESS"} · {q.name}</p>
+                    {q.lines.map((l, i) => <p key={i} className="text-dim">{l}</p>)}
+                  </div>
+                ))}
+                {snap.talk.quests.offers.map((q) => (
+                  <div key={q.id} className="border-2 border-kyo p-2">
+                    <p className="font-display text-xs text-kyo">QUEST · {q.name}</p>
+                    <p>{q.about}</p>
+                    {q.steps.map((l, i) => <p key={i} className="text-dim">{i + 1}. {l}</p>)}
+                    {q.reward && <p className="text-dim">Reward: {q.reward}</p>}
+                    <button className="px-btn px-btn-kyo mt-1" data-testid={`accept-map-quest-${q.id}`} onClick={() => game?.acceptMapQuestById(q.id)}>Accept</button>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </FloatWin>
@@ -1188,6 +1222,7 @@ function Survival({ snap, game }: { snap: ReturnType<typeof getSnap>; game: Turb
   const food = bestFood(bag, snap.survival.hunger);
   return <div className="grid gap-3">
     <p className="text-kyo">Frontier Survival</p>
+    {snap.clock.active && <p className={snap.clock.phase === 'night' ? 'text-blood' : 'text-kyo'} data-testid="clock-line">{snap.clock.label} · {snap.clock.left} until {snap.clock.phase === 'night' ? 'dawn' : 'dusk'}. {snap.clock.phase === 'night' ? 'Foes have twice the health and damage, and give three times the experience. Sleep at a campfire to skip to dawn.' : 'Days and nights each last 30 active minutes.'}</p>}
     <p>Logs {count('timber')} · Raw meat {count('meat')} · Fish {count('fish')} · Raw water {count('raw_water')}</p>
     <div className="grid grid-cols-2 gap-2"><button className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${snap.bag.find(item => item.id === food)?.name}` : 'No meal needed / stocked'}</button><button className="px-btn" disabled={!count('drinking_water') || snap.survival.thirst >= 100} onClick={() => game?.useBag('drinking_water')}>Drink purified water · {count('drinking_water')}</button></div>
     {[['Hunger', snap.survival.hunger], ['Thirst', snap.survival.thirst], ['Sleep', snap.survival.rest]].map(([name, value]) => <label key={name}>{name} · {Math.ceil(Number(value))}/100<progress className="survival-meter" max={100} value={value} /></label>)}
@@ -1198,6 +1233,12 @@ function Survival({ snap, game }: { snap: ReturnType<typeof getSnap>; game: Turb
     <button className="px-btn" disabled={!snap.nearWater} onClick={() => game?.startFishing()}>Fish · Stand by any water tile</button>
     <button className="px-btn" disabled={snap.nearCamp || count('timber') < 3} onClick={() => game?.survivalAction('fire')}>Build campfire · 3 logs</button>
     <p className="text-kyo">{snap.nearCamp ? 'Campfire within reach' : 'Stand beside a campfire to cook, purify, or sleep'}</p>
+    <p className="text-kyo">Building</p>
+    <button className="px-btn" data-testid="build-toggle-btn" disabled={!snap.build.on && count('timber') < 1} onClick={() => game?.toggleBuild()}>{snap.build.on ? 'Stop building (F)' : 'Build with logs (F) · 1 log per tile'}</button>
+    <p className="text-dim">In build mode click a tile to place a log wall piece, and click a placed log to take it back. Logs are solid for you, followers and foes. You have placed {snap.build.placed} here.</p>
+    <p className="text-dim">A campfire makes a 15 by 15 tile safe zone (dashed outline). Foes cannot enter it or hurt you inside it.</p>
+    <button className="px-btn" data-testid="hold-followers-btn" onClick={() => game?.holdFollowers(!snap.build.holding)}>{snap.build.holding ? 'Call followers back' : 'Send followers to wait at this campfire'}</button>
+    {snap.build.inZone && <p className="stat-up">You are inside a safe zone.</p>}
     <p className="text-kyo">Campfire Crafting</p>
     {CAMP_RECIPE_LIST.map(r => {
       const have = Object.entries(r.costs).every(([id, n]) => count(id) >= n);
@@ -1206,7 +1247,7 @@ function Survival({ snap, game }: { snap: ReturnType<typeof getSnap>; game: Turb
       const outputs = Object.entries(r.outputs).map(([id, n]) => `${name(id)} x${n}`).join(', ');
       return <button key={r.id} className="px-btn" title={r.about} disabled={!snap.nearCamp || !have} onClick={() => game?.survivalAction(r.id)}>{r.name} · {costs} → {outputs}</button>;
     })}
-    <button className="px-btn" disabled={!snap.nearCamp} onClick={() => game?.survivalAction('sleep')}>{snap.sleeping ? 'Wake up' : 'Sleep · About 13 seconds for a full rest'}</button>
+    <button className="px-btn" disabled={!snap.nearCamp} onClick={() => game?.survivalAction('sleep')}>{snap.sleeping ? 'Wake up' : snap.clock.phase === 'night' && snap.clock.active ? 'Sleep · Skip the rest of the night' : 'Sleep · About 13 seconds for a full rest'}</button>
     <p className="text-dim">Use meals and drinking water from Bag. Holt sells rations and cooked meat. Hunt animals for raw meat. Look for LOGS markers, including the grove beside the hearth.</p>
     <button className="px-btn" onClick={() => game?.toggle('bag')}>Open Bag · Eat / Drink</button>
   </div>;

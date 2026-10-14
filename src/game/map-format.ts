@@ -29,12 +29,39 @@ export type MapInteractable =
 
 export type MapQuestStep =
   | { type: "talk"; npcId: string; hint?: string }
-  | { type: "bring"; itemId: string; count: number; hint?: string }
+  /** Hand items to `npcId` (default: whoever turns the quest in). The items are taken from the bag. */
+  | { type: "bring"; itemId: string; count: number; npcId?: string; hint?: string }
   | { type: "kill"; count: number; species?: string; hint?: string }
   | { type: "goto"; tx: number; ty: number; radius?: number; hint?: string }
   | { type: "gather"; node: "ore" | "tree" | "shroom" | "fish"; count: number; hint?: string };
 
-/** Custom NPC for quest maps: dialogue, optional multi-step quest. */
+export type MapQuestReward = { kyo?: number; xp?: number; items?: { itemId: string; count: number }[] };
+
+/**
+ * A quest or story chapter. Anyone can give it (`giver`), steps run in order, and it is handed in to
+ * `turnIn` (defaults to the giver). `requires` chains quests into a storyline.
+ */
+export type MapQuest = {
+  id: string;
+  name: string;
+  about: string;
+  giver: string;
+  turnIn?: string;
+  requires?: string;
+  steps: MapQuestStep[];
+  reward?: MapQuestReward;
+  /** What the giver says when offering the quest. */
+  offer?: string;
+  /** What they say while it is unfinished. */
+  progress?: string;
+  /** What they say when it is handed in. */
+  done?: string;
+};
+
+/** Legacy single-quest shape (older map files). Migrated into MapFile.quests on load. */
+type LegacyNpcQuest = { id: string; name: string; about: string; rewardKyo?: number; steps: MapQuestStep[] };
+
+/** Custom NPC for quest maps: dialogue lines and a look. Quests live in MapFile.quests. */
 export type MapNpc = {
   id: string;
   name: string;
@@ -43,13 +70,11 @@ export type MapNpc = {
   role?: string;
   female?: boolean;
   lines: string[];
-  quest?: {
-    id: string;
-    name: string;
-    about: string;
-    rewardKyo?: number;
-    steps: MapQuestStep[];
-  };
+  /** Appearance. */
+  outfit?: number;
+  hair?: number;
+  /** @deprecated read-only: old files stored one quest here. */
+  quest?: LegacyNpcQuest;
 };
 
 export type MapTile = WorldTile & {
@@ -59,6 +84,26 @@ export type MapTile = WorldTile & {
 };
 export const MAX_LAYERS = 4;
 export const DESIGNER_KEY = "turbz-designer-maps-v1";
+
+/** Saves (or replaces) a designer map on this device. Returns an error message, or null on success. */
+export function saveDesignerMap(map: MapFile): string | null {
+  try {
+    const clean = parseMapJson(map);
+    const list = (JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]") as { id?: string }[]).filter((m) => m && m.id !== clean.id);
+    localStorage.setItem(DESIGNER_KEY, JSON.stringify([...list, packMap(clean)]));
+    return null;
+  } catch (err) {
+    if (err instanceof DOMException && (err.name === "QuotaExceededError" || err.code === 22)) return "This device has no room left for the map. Export it as a JSON file instead, or delete other saved maps.";
+    return err instanceof Error ? err.message : "Save failed.";
+  }
+}
+
+export function deleteDesignerMap(id: string): void {
+  try {
+    const list = JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]") as { id?: string }[];
+    localStorage.setItem(DESIGNER_KEY, JSON.stringify(list.filter((m) => m && m.id !== id)));
+  } catch { /* nothing to delete */ }
+}
 
 /** Designer maps saved on this device, keyed by id. */
 export function savedMaps(): MapFile[] {
@@ -88,6 +133,10 @@ export type MapFile = {
   interactables?: MapInteractable[];
   /** Quest / dialogue NPCs placed on this map. */
   npcs?: MapNpc[];
+  /** Quests and story chapters. */
+  quests?: MapQuest[];
+  /** Story text shown the first time a hunter enters. Blank line = new page. */
+  intro?: string;
 };
 
 export const FLOOR_COLOR: Record<number, string> = {
@@ -188,7 +237,44 @@ export function tileSlow(world: WorldData, x: number, y: number): number {
   return 1;
 }
 
-export function parseMapJson(raw: unknown): MapFile {
+/** Compact form for storage: a palette of distinct tiles plus [paletteIndex, runLength] pairs. */
+export type PackedMap = Omit<MapFile, "tiles"> & { tiles?: undefined; tilesPacked: { palette: MapTile[]; runs: number[] } };
+
+export function packMap(map: MapFile): PackedMap {
+  const palette: MapTile[] = [];
+  const index = new Map<string, number>();
+  const runs: number[] = [];
+  let last = -1;
+  for (const t of map.tiles) {
+    const key = JSON.stringify(t);
+    let i = index.get(key);
+    if (i === undefined) { i = palette.length; palette.push(t); index.set(key, i); }
+    if (i === last) runs[runs.length - 1]!++;
+    else { runs.push(i, 1); last = i; }
+  }
+  const { tiles: _drop, ...rest } = map;
+  return { ...rest, tilesPacked: { palette, runs } };
+}
+
+/** Accepts a normal map or a packed one and returns a normal-looking object for parseMapJson. */
+export function unpackMap(raw: unknown): unknown {
+  const m = raw as { tilesPacked?: { palette?: MapTile[]; runs?: number[] }; tiles?: unknown; w?: number; h?: number } | null;
+  const p = m?.tilesPacked;
+  if (!m || !p) return raw;
+  if (!Array.isArray(p.palette) || !Array.isArray(p.runs) || p.runs.length % 2 || !Number.isInteger(m.w) || !Number.isInteger(m.h) || m.w! > 512 || m.h! > 512) throw new Error("Packed map is damaged.");
+  const tiles: MapTile[] = [];
+  for (let i = 0; i < p.runs.length; i += 2) {
+    const t = p.palette[p.runs[i]!];
+    const n = p.runs[i + 1]!;
+    if (!t || !Number.isInteger(n) || n < 1 || tiles.length + n > m.w! * m.h!) throw new Error("Packed map is damaged.");
+    for (let k = 0; k < n; k++) tiles.push(t);
+  }
+  const { tilesPacked: _drop, ...rest } = m as Record<string, unknown>;
+  return { ...rest, tiles };
+}
+
+export function parseMapJson(input: unknown): MapFile {
+  const raw = unpackMap(input);
   if (!raw || typeof raw !== "object") throw new Error("Map file is empty or invalid.");
   const m = raw as Partial<MapFile>;
   if (typeof m.id !== "string" || !/^[a-z0-9_-]{1,80}$/i.test(m.id) || typeof m.name !== "string" || !m.name.trim()) throw new Error("Map needs a name and a file ID using letters, numbers, dashes or underscores.");
@@ -233,11 +319,72 @@ export function parseMapJson(raw: unknown): MapFile {
     spawns,
     zones: parseZones(m.zones, m.w!, m.h!),
     interactables: parseInteractables(m.interactables, m.w!, m.h!),
-    npcs: parseNpcs(m.npcs, m.w!, m.h!),
+    ...questsAndNpcs(m, m.w!, m.h!),
     spawn,
+    ...(typeof m.intro === "string" && m.intro.trim() ? { intro: m.intro.slice(0, 4000) } : {}),
     notes: typeof m.notes === "string" ? m.notes.slice(0, 2000) : undefined,
     kind: ["bossroom", "dungeon", "world"].includes(m.kind ?? "") ? m.kind : "world",
   };
+}
+
+const NODE_KINDS = ["ore", "tree", "shroom", "fish"];
+const clip = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : undefined);
+
+function parseStep(s: unknown): MapQuestStep {
+  if (!s || typeof s !== "object") throw new Error("Invalid quest step.");
+  const step = s as MapQuestStep;
+  const hint = clip(step.hint, 120);
+  if (step.type === "talk") return { type: "talk", npcId: String(step.npcId || "").slice(0, 40), hint };
+  if (step.type === "bring") return { type: "bring", itemId: String(step.itemId || "").slice(0, 40), count: Math.max(1, Math.min(99, Math.floor(Number(step.count)) || 1)), ...(step.npcId ? { npcId: String(step.npcId).slice(0, 40) } : {}), hint };
+  if (step.type === "kill") return { type: "kill", count: Math.max(1, Math.min(50, Math.floor(Number(step.count)) || 1)), species: step.species ? String(step.species).slice(0, 40) : undefined, hint };
+  if (step.type === "goto") return { type: "goto", tx: Math.floor(Number(step.tx)) || 0, ty: Math.floor(Number(step.ty)) || 0, radius: Math.max(1, Math.min(12, Math.floor(Number(step.radius)) || 2)), hint };
+  if (step.type === "gather") return { type: "gather", node: (NODE_KINDS.includes(step.node) ? step.node : "ore") as "ore", count: Math.max(1, Math.min(20, Math.floor(Number(step.count)) || 1)), hint };
+  throw new Error("Unknown quest step type.");
+}
+
+function parseQuests(raw: unknown, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapQuest[] {
+  if (raw != null && (!Array.isArray(raw) || raw.length > 120)) throw new Error("Invalid quests (maximum 120).");
+  const ids = new Set<string>();
+  const out: MapQuest[] = [];
+  const add = (q: Partial<MapQuest> & { id?: unknown; name?: unknown }) => {
+    if (typeof q.id !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(q.id) || ids.has(q.id)) throw new Error("Quests need unique ids (letters, numbers, dashes).");
+    if (typeof q.name !== "string" || !q.name.trim()) throw new Error("Every quest needs a name.");
+    ids.add(q.id);
+    const steps = (Array.isArray(q.steps) ? q.steps.slice(0, 16) : []).map(parseStep);
+    const r = q.reward;
+    const items = Array.isArray(r?.items) ? r!.items!.slice(0, 6).filter((i) => i && typeof i.itemId === "string" && i.itemId).map((i) => ({ itemId: i.itemId.slice(0, 40), count: Math.max(1, Math.min(99, Math.floor(Number(i.count)) || 1)) })) : [];
+    const kyo = Math.max(0, Math.min(99999, Math.floor(Number(r?.kyo)) || 0));
+    const xp = Math.max(0, Math.min(99999, Math.floor(Number(r?.xp)) || 0));
+    out.push({
+      id: q.id,
+      name: q.name.slice(0, 60),
+      about: clip(q.about, 400) ?? "",
+      giver: clip(q.giver, 40) ?? "",
+      ...(q.turnIn ? { turnIn: clip(q.turnIn, 40) } : {}),
+      ...(q.requires ? { requires: clip(q.requires, 40) } : {}),
+      steps,
+      ...(kyo || xp || items.length ? { reward: { ...(kyo ? { kyo } : {}), ...(xp ? { xp } : {}), ...(items.length ? { items } : {}) } } : {}),
+      ...(q.offer ? { offer: clip(q.offer, 300) } : {}),
+      ...(q.progress ? { progress: clip(q.progress, 300) } : {}),
+      ...(q.done ? { done: clip(q.done, 300) } : {}),
+    });
+  };
+  for (const q of (raw ?? []) as MapQuest[]) {
+    if (!q || typeof q !== "object") throw new Error("Invalid quest.");
+    add(q);
+  }
+  for (const { giver, quest } of legacy) {
+    let id = quest.id;
+    while (ids.has(id)) id += "_";
+    add({ id, name: quest.name, about: quest.about, giver, steps: quest.steps, reward: quest.rewardKyo ? { kyo: quest.rewardKyo } : undefined });
+  }
+  return out;
+}
+
+function questsAndNpcs(m: Partial<MapFile>, w: number, h: number): { npcs: MapNpc[]; quests: MapQuest[] } {
+  const legacy: { giver: string; quest: LegacyNpcQuest }[] = [];
+  const npcs = parseNpcs(m.npcs, w, h, legacy);
+  return { npcs, quests: parseQuests(m.quests, legacy) };
 }
 
 function parseInteractables(raw: unknown, w: number, h: number): MapInteractable[] {
@@ -267,7 +414,7 @@ function parseInteractables(raw: unknown, w: number, h: number): MapInteractable
   });
 }
 
-function parseNpcs(raw: unknown, w: number, h: number): MapNpc[] {
+function parseNpcs(raw: unknown, w: number, h: number, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapNpc[] {
   if (raw == null) return [];
   if (!Array.isArray(raw) || raw.length > 80) throw new Error("Invalid NPCs (maximum 80).");
   const ids = new Set<string>();
@@ -280,28 +427,8 @@ function parseNpcs(raw: unknown, w: number, h: number): MapNpc[] {
     if (typeof n.name !== "string" || !n.name.trim()) throw new Error("NPC needs a name.");
     if (!inMap(n.tx, n.ty)) throw new Error("NPC is outside the map.");
     const lines = Array.isArray(n.lines) ? n.lines.filter((l) => typeof l === "string").map((l) => l.slice(0, 200)).slice(0, 12) : [];
-    let quest: MapNpc["quest"] | undefined;
-    if (n.quest && typeof n.quest === "object") {
-      const q = n.quest;
-      if (typeof q.id !== "string" || typeof q.name !== "string") throw new Error("NPC quest needs id and name.");
-      const steps = Array.isArray(q.steps) ? q.steps.slice(0, 12).map((s) => {
-        if (!s || typeof s !== "object") throw new Error("Invalid quest step.");
-        const step = s as MapQuestStep;
-        if (step.type === "talk") return { type: "talk" as const, npcId: String(step.npcId || "").slice(0, 40), hint: typeof step.hint === "string" ? step.hint.slice(0, 120) : undefined };
-        if (step.type === "bring") return { type: "bring" as const, itemId: String(step.itemId || "").slice(0, 40), count: Math.max(1, Math.min(99, Number(step.count) || 1)), hint: typeof step.hint === "string" ? step.hint.slice(0, 120) : undefined };
-        if (step.type === "kill") return { type: "kill" as const, count: Math.max(1, Math.min(50, Number(step.count) || 1)), species: typeof step.species === "string" ? step.species.slice(0, 40) : undefined, hint: typeof step.hint === "string" ? step.hint.slice(0, 120) : undefined };
-        if (step.type === "goto") return { type: "goto" as const, tx: Number(step.tx) || 0, ty: Number(step.ty) || 0, radius: Math.max(1, Math.min(12, Number(step.radius) || 2)), hint: typeof step.hint === "string" ? step.hint.slice(0, 120) : undefined };
-        if (step.type === "gather") return { type: "gather" as const, node: (["ore", "tree", "shroom", "fish"].includes(step.node) ? step.node : "ore") as "ore" | "tree" | "shroom" | "fish", count: Math.max(1, Math.min(20, Number(step.count) || 1)), hint: typeof step.hint === "string" ? step.hint.slice(0, 120) : undefined };
-        throw new Error("Unknown quest step type.");
-      }) : [];
-      quest = {
-        id: q.id.slice(0, 40),
-        name: q.name.slice(0, 60),
-        about: typeof q.about === "string" ? q.about.slice(0, 240) : "",
-        rewardKyo: typeof q.rewardKyo === "number" ? Math.max(0, Math.min(99999, Math.floor(q.rewardKyo))) : undefined,
-        steps,
-      };
-    }
+    const quest = n.quest && typeof n.quest === "object" ? n.quest : undefined;
+    legacy.push(...(quest ? [{ giver: n.id, quest }] : []));
     return {
       id: n.id,
       name: n.name.slice(0, 40),
@@ -310,7 +437,8 @@ function parseNpcs(raw: unknown, w: number, h: number): MapNpc[] {
       role: typeof n.role === "string" ? n.role.slice(0, 40) : undefined,
       female: !!n.female,
       lines: lines.length ? lines : ["…"],
-      ...(quest ? { quest } : {}),
+      ...(Number.isInteger(n.outfit) ? { outfit: Math.max(0, Math.min(11, n.outfit!)) } : {}),
+      ...(Number.isInteger(n.hair) ? { hair: Math.max(0, Math.min(11, n.hair!)) } : {}),
     };
   });
 }

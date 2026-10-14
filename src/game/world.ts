@@ -51,6 +51,8 @@ export type Spawn = {
   template?: number;
   type?: string;
   animal?: boolean;
+  /** Custom display name (designer maps). */
+  name?: string;
 };
 
 export type WorldData = {
@@ -60,6 +62,8 @@ export type WorldData = {
   spawns: Spawn[];
   cache: HTMLCanvasElement | null;
   entry?: { x: number; y: number };
+  /** Tile indices (ty * w + tx) made solid by player-placed logs. Rebuilt by the engine on map load. */
+  solids?: Set<number>;
 };
 
 const REGION_DESIGN: { id: BiomeId; x: number; y: number; r: number }[] = [
@@ -1044,6 +1048,7 @@ export function blocked(world: WorldData, x: number, y: number): boolean {
   const ty = Math.floor(y / TILE);
   if (tx < 0 || ty < 0 || tx >= world.w || ty >= world.h) return true;
   if (tx <= 1 || ty <= 1 || tx >= world.w - 2 || ty >= world.h - 2) return true;
+  if (world.solids && world.solids.has(ty * world.w + tx)) return true;
   const t = world.tiles[ty * world.w + tx]!;
   if (t.floor === 1 || t.floor === 2) return true;
   if (t.decor > 0) return false;

@@ -42,3 +42,17 @@ scale with your level and a random difficulty tier. Logic is in `src/game/quest-
 - 3 tests in `scripts/game-content.test.mjs` fail (fixed equipment stats, equipment
   migration, campfire recipes).
 - Black Market is still a runtime patch (`src/game/black-market.ts`) rather than part of the engine class.
+
+## Hardcore: day, night and building
+
+- Day and night are 30 minutes each (Hardcore only; Standard has no night). At night foes have 2x health and deal 2x damage, and give 3x XP. Sleeping at night skips to dawn.
+- Press F to build. A Log (Timber) places one solid log tile. Click a placed log to take it back.
+- A campfire makes a 15x15 tile safe zone. Foes cannot enter or attack inside it. Use "Hold followers" in the Survival panel to send spirits and companions to wait there.
+
+## Verses
+
+Nine verses can be equipped at once (keys 1-9). Unlock more in Unlock & Upgrade and swap them on the Equip tab. Casting, auto-battle and autogrind only use equipped verses.
+
+## Map Builder (Designer Mode)
+
+Build whole maps up to 512x512 with the supplied tile pack: terrain (paint, rectangle, fill, overlay layers, collision), portals, start tile, enemies, bosses, spawn zones, resource nodes, NPCs, bounty boards, arenas, shrines, hearths and doors, plus an opening story and a quest editor (talk, bring, defeat, travel and gather steps, chained quests, kyo/XP/item rewards and NPC dialogue). "Check map" finds broken quests before you share. Save, then enter the map from the in-game Map panel; export/import JSON to share.

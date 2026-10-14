@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { itemUseProblem, bestFood } from "./item-use";
+import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, type DayNightState } from "./daynight";
+import { BUILD_REACH, LOG_COST, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, buildProceduralDungeon, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonState } from "./procedural-dungeon";
@@ -85,8 +87,13 @@ import type { GraveBody } from "./social-types";
 import { readAccountMeta, writeAccountMeta } from "./account-save";
 import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor } from "./sprites";
+const MAX_EQUIPPED = 9;
+/** Autogrind fishes for this long, then lets another skill have a turn. */
+const FISH_GRIND_SECONDS = 75;
+const FISH_GRIND_PAUSE = 150;
 import { expandZones, mapToWorld, savedMaps } from "./map-format";
-import { CombatFx } from "./combat-fx";
+import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
+import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import {
 	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, rerollBoard, rerollCost, TIER_XP,
 	type BoardEventDetail, type BoardKind,
@@ -137,7 +144,9 @@ export type Snap = {
   questName: string;
   questAbout: string;
   notice: string;
-  talk: { id: string; name: string; role: string; line: string; shop: string | null; shrine: TypeId | null } | null;
+  talk: { id: string; name: string; role: string; line: string; shop: string | null; shrine: TypeId | null; more?: boolean; quests?: { offers: { id: string; name: string; about: string; steps: string[]; reward: string }[]; active: { id: string; name: string; lines: string[]; ready: boolean }[] } } | null;
+  /** Open quests on the designer map you are standing in. */
+  mapQuests: { id: string; name: string; lines: string[]; ready: boolean; turnIn: string }[];
   gear: Gear[];
   equipped: string[];
   setLabel: string;
@@ -193,20 +202,26 @@ export type Snap = {
   duel: null | { phase: "answer" | "yours"; attacker: string; move: string; about: string; beat: string };
   classId: string;
   sheet: Sheet | null;
+  clock: { phase: "day" | "night"; label: string; left: string; dark: number; active: boolean };
+  build: { on: boolean; logs: number; placed: number; inZone: boolean; holding: boolean };
   lobby: { code: string; role: "solo" | "host" | "guest"; net: string; members: { id: string; name: string; classId: string; className: string; level: number; hp: number; max: number; map: string; self: boolean; host: boolean }[] };
 };
 export type Sheet = {
   name: string; classId: string; className: string; role: string; type: TypeId; blurb: string; specialty: string; passive: string; female: boolean; gendered: boolean;
   level: number; xp: number; xpNeed: number; hp: number; maxHp: number; shield: number; kyo: number; skillPoints: number;
   trait: { id: string; name: string; about: string } | null;
-  stats: { id: string; name: string; value: string; about: string; mod: number }[];
+  stats: { id: string; name: string; value: string; about: string; mod: number; cls: number; trait: number }[];
   buffs: string[]; debuffs: string[];
   effects: { id: string; label: string; t: number; good: boolean }[];
   aptitudes: { id: string; name: string; level: number; mult: number }[];
-  moves: { id: string; name: string; type: TypeId; rank: number; tactic: string; signature: boolean; movement: boolean; about: string }[];
+  moves: { id: string; name: string; type: TypeId; rank: number; tactic: string; signature: boolean; movement: boolean; about: string; kind: string; form: string; acc: number; range: number; cd: number; hit: number; critHit: number; critPct: number; heal: number; shield: number; rankMult: number; shape: { label: string; value: string }[]; note: string }[];
   gear: { slot: string; name: string; quality: string; stat: string }[];
   combat: { label: string; value: string }[];
   account: { level: number; score: number; perks: number };
+  numbers: { id: string; label: string; value: string; note: string; parts: { label: string; value: string; src?: string }[] }[];
+  bonuses: { id: string; name: string; gear: number; account: number; total: number; effect: string; slots: { slot: string; power: number }[] }[];
+  skillsFull: { id: string; name: string; level: number; xp: number; need: number; line: string; mult: number }[];
+  night: { on: boolean; phase: string; rules: string };
 };
 
 
@@ -239,6 +254,13 @@ type Save = {
   perks: Record<string, number>; lastTavern: string; innate: string[]; party: string[]; found: Record<string, Slot[]>;
   spirits?: Spirit[]; accountScore?: number; evilMark?: number; deathBanked?: boolean; traitId?: string | null; female?: boolean; classMovesV?: number;
   ghostSlots?: number; jarLeft?: number;
+  /** Equipped verse ids, at most MAX_EQUIPPED. */
+  loadout?: string[];
+  dayNight?: DayNightState;
+  /** Progress in designer-map quests, keyed "mapId:questId". */
+  mapQuests?: QuestStates;
+  /** Designer maps whose opening story this hunter has read. */
+  mapSeen?: string[];
 };
 type Part = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: string };
 type Flo = { x: number; y: number; text: string; life: number; color: string };
@@ -322,6 +344,9 @@ const emptySnap = (): Snap => ({
 	duel: null,
 	classId: "",
 	sheet: null,
+	clock: { phase: "day", label: "Day", left: "", dark: 0, active: false },
+	mapQuests: [],
+	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false },
 	lobby: { code: "", role: "solo", net: "", members: [] }
 });
 let snap: Snap = emptySnap();
@@ -540,6 +565,7 @@ export class TurbzGame {
 			if (e.code === "KeyC") this.toggle("sheet");
 			if (e.code === "KeyL") this.toggle("lobby");
 			if (e.code === "KeyH" && this.rules === "hardcore") this.toggle("survival");
+			if (e.code === "KeyF" && this.rules === "hardcore") this.toggleBuild();
 			if (e.code === "KeyT") this.toggleTrade();
 			if (e.code === "Escape") this.escape();
 			this.unlock();
@@ -566,6 +592,7 @@ export class TurbzGame {
 			this.menu = null;
 			this.canvas.setPointerCapture(e.pointerId);
 			const w = this.screenToWorld(e.clientX, e.clientY);
+			if (this.buildMode && this.buildOn()) { this.buildAt(w.x, w.y); return; }
 			this.pointer = {
 				x: w.x,
 				y: w.y,
@@ -810,6 +837,7 @@ export class TurbzGame {
 			const file = savedMaps().find((m) => `custom-${m.id}` === map);
 			if (!file) return this.loadMap("world", true);
 			this.customFile = file;
+			this.mapNpcs = file.npcs ?? [];
 			this.world = mapToWorld(file);
 			this.world.spawns.push(...expandZones(file));
 			this.world.entry = { x: (file.spawn?.tx ?? 1) * 32 + 16, y: (file.spawn?.ty ?? 1) * 32 + 16 };
@@ -822,6 +850,7 @@ export class TurbzGame {
 			this.world = buildDungeon(map, save.seed);
 			paintWorld(this.world);
 		}
+		if (!map.startsWith("custom-")) { this.customFile = null; this.mapNpcs = []; }
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit) ?? null;
 		this.stashContract();
 		if (freshMobs || this.mobs.length === 0 || map !== "world") {
@@ -830,6 +859,7 @@ export class TurbzGame {
 		}
 		this.restoreContract(map);
 		save.map = map;
+		this.syncSolids(map);
 	}
 	makeMob(s) {
 		const species = s.species ?? "onibi";
@@ -893,7 +923,8 @@ export class TurbzGame {
 			speed,
 			master: "",
 			aggro: look?.aggression === "hunt",
-			zone: s.zone ?? null
+			zone: s.zone ?? null,
+			nightScaled: false
 		};
 	}
 	step(dt) {
@@ -914,13 +945,17 @@ export class TurbzGame {
 		if (this.role !== "guest") this.tickDungeons(dt);
 		this.tickPlayer(dt);
 		if (this.dead) return;
+		this.tickDayNight(dt);
+		this.tickMapQuests(dt);
 		if (this.role !== "guest") {
 			this.tickMobs(dt);
+			this.enforceSafeZones();
 		} else this.tickGuestHurt(dt);
 		this.tickSpirits(dt);
 		this.tickTurns(dt);
 		if (this.rules === "hardcore" && !this.dead) this.tickSurvival(dt);
 		this.tickParty(dt);
+		this.tickLater(dt);
 		this.tickFx(dt);
 		this.netAcc += dt;
 		if (this.netAcc > .1) {
@@ -965,6 +1000,204 @@ export class TurbzGame {
 		const dungeon = buildProceduralDungeon(portal.seed, portal.level);
 		this.travel(id, dungeon.entry); return true;
 	}
+	// ---------- Day and night (Hardcore only) ----------
+	nightOn() {
+		return this.rules === "hardcore" || NIGHT_IN_STANDARD_MODE;
+	}
+	isNightNow() {
+		const s = this.save?.dayNight;
+		return !!s && this.nightOn() && isNight(s);
+	}
+	clockInfo() {
+		const s = this.save?.dayNight;
+		if (!s || !this.nightOn()) return { phase: "day", label: "Day", left: "", dark: 0, active: false };
+		return { ...clockLabel(s), dark: darkness(s), active: true };
+	}
+	tickDayNight(dt) {
+		const save = this.save;
+		if (!save || !this.nightOn()) return;
+		save.dayNight = save.dayNight ?? freshDayNight();
+		const s = save.dayNight;
+		const before = s.t;
+		const sleptNight = this.sleeping && isNight(s);
+		const flip = advanceDayNight(s, dt * skipRate(s, this.sleeping));
+		if (flip === "dusk") {
+			this.say(`Night falls. Foes are ${NIGHT.strength}x as strong, but give ${NIGHT.xp}x experience.`);
+			this.tone(110, .3, "sine");
+		} else if (flip === "dawn") {
+			if (sleptNight) {
+				this.sleeping = false;
+				if (save.survival) save.survival.rest = 100;
+				this.say("You slept through the night and wake at dawn.");
+			} else this.say("Dawn breaks. Foes weaken again.");
+			this.tone(520, .2, "triangle");
+		}
+		if (flip || Math.floor(before / 30) !== Math.floor(s.t / 30)) { this.persist(); this.syncHud(true); }
+	}
+	/** Keeps a foe's health in step with the clock: doubled at night, restored at dawn. */
+	applyNightScaling(m) {
+		const want = this.isNightNow();
+		if (want && !m.nightScaled) {
+			m.hp = Math.ceil(m.hp * NIGHT.strength);
+			m.max = Math.ceil(m.max * NIGHT.strength);
+			m.nightScaled = true;
+		} else if (!want && m.nightScaled) {
+			m.max = Math.max(1, Math.round(m.max / NIGHT.strength));
+			m.hp = Math.max(m.alive ? 1 : 0, Math.min(m.max, Math.ceil(m.hp / NIGHT.strength)));
+			m.nightScaled = false;
+		}
+	}
+	// ---------- Log building and the campfire safe zone (Hardcore) ----------
+	buildOn() {
+		return this.rules === "hardcore" && !!this.save?.survival;
+	}
+	syncSolids(map) {
+		if (!this.world) return;
+		this.world.solids = this.buildOn() ? solidsFor(this.save.survival.logs, map ?? this.save.map, this.world.w) : undefined;
+	}
+	toggleBuild(force) {
+		if (!this.buildOn() || this.dead) return;
+		this.buildMode = typeof force === "boolean" ? force : !this.buildMode;
+		this.dest = null;
+		this.say(this.buildMode ? "Build mode. Click a tile to place a log. Click a placed log to pick it up. F or Esc to stop." : "Build mode off.");
+		this.syncHud(true);
+	}
+	buildAt(x, y) {
+		const save = this.save;
+		if (!this.buildOn() || !this.world) return;
+		const { tx, ty } = tileAt(x, y);
+		const placed = save.survival.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty);
+		if (placed) this.removeLog(placed);
+		else this.placeLog(tx, ty);
+	}
+	placeLog(tx, ty) {
+		const save = this.save;
+		if (save.survival.logs.length >= MAX_LOG_TILES) { this.say("You have placed the most logs the frontier can hold. Pick some up."); return false; }
+		const check = checkPlaceLog({
+			world: this.world, map: save.map, logs: save.survival.logs, camps: save.survival.campfires, tx, ty, player: save, bag: save.bag,
+			terrainBlocked: (px, py) => blocked(this.world, px, py),
+			keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
+		});
+		if (!check.ok) { this.say(check.reason); return false; }
+		consumeMaterials(save.bag, LOG_COST);
+		save.survival.logs.push({ map: save.map, tx, ty });
+		this.world.solids = this.world.solids ?? new Set();
+		this.world.solids.add(ty * this.world.w + tx);
+		this.tone(190, .05, "square");
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	removeLog(l) {
+		const save = this.save;
+		if (Math.hypot(l.tx * 32 + 16 - save.x, l.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		save.survival.logs = save.survival.logs.filter((x) => x !== l);
+		this.world.solids?.delete(l.ty * this.world.w + l.tx);
+		this.giveItem("timber", 1);
+		this.tone(150, .05, "triangle");
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** The campfire whose 15x15 safe zone the player is standing in, if any. */
+	playerSafeCamp() {
+		const s = this.save;
+		if (this.rules !== "hardcore" || !s?.survival) return null;
+		return safeZoneAt(s.survival.campfires, s.map, s.x, s.y);
+	}
+	/** Foes cannot enter a safe zone: anything inside is pushed back out to its edge. */
+	enforceSafeZones() {
+		const save = this.save;
+		if (this.rules !== "hardcore" || !save?.survival?.campfires.length) return;
+		const camps = save.survival.campfires.filter((c) => c.map === save.map);
+		if (!camps.length) return;
+		for (const m of this.mobs) {
+			if (!m.alive) continue;
+			const c = safeZoneAt(camps, save.map, m.x, m.y);
+			if (!c) continue;
+			const p = pushOut(c, m.x, m.y);
+			m.x = p.x;
+			m.y = p.y;
+		}
+	}
+	holdActive() {
+		const h = this.save?.survival?.hold;
+		const s = this.save;
+		return !!h && this.rules === "hardcore" && h.map === s.map && s.survival.campfires.some((c) => c.map === h.map && c.x === h.x && c.y === h.y);
+	}
+	followerCount() {
+		return (this.activeSpirits?.()?.length ?? 0) + (this.save?.party?.length ?? 0);
+	}
+	/** Send followers to wait at the campfire you are standing in (or beside), or call them back. */
+	holdFollowers(on) {
+		const save = this.save;
+		if (!save || this.rules !== "hardcore" || this.dead) return;
+		if (!on) {
+			save.survival.hold = null;
+			this.say("Your followers rejoin you.");
+		} else {
+			let camp = this.playerSafeCamp();
+			if (!camp) {
+				let bd = SAFE_ZONE_TILES * 32;
+				for (const c of save.survival.campfires) {
+					if (c.map !== save.map) continue;
+					const d = Math.hypot(c.x - save.x, c.y - save.y);
+					if (d < bd) { bd = d; camp = c; }
+				}
+			}
+			if (!camp) return this.say("Stand near a campfire to send followers there.");
+			if (!this.followerCount()) return this.say("You have no followers to send.");
+			save.survival.hold = { map: save.map, x: camp.x, y: camp.y };
+			this.say("Your followers wait at the campfire. Nothing can reach them there.");
+		}
+		this.persist();
+		this.syncHud(true);
+	}
+	buildInfo() {
+		const save = this.save;
+		const sv = save?.survival;
+		return {
+			on: !!this.buildMode && this.buildOn(),
+			logs: save?.bag?.timber ?? 0,
+			placed: sv ? sv.logs.filter((l) => l.map === save.map).length : 0,
+			inZone: !!this.playerSafeCamp(),
+			holding: this.holdActive(),
+		};
+	}
+	// ---------- Timed effects so damage lands when the FX lands ----------
+	/** Plays a verse's FX and returns the seconds until it visually lands. */
+	playMoveFx(move, x0, y0, x1, y1, opts = {}) {
+		this.cfx = this.cfx ?? new CombatFx();
+		return this.cfx.cast(move, attackForm(move), moveTactic(move), x0, y0, x1, y1, opts);
+	}
+	/** Runs fn after `delay` seconds of game time (frozen while paused, dropped if the map changes). */
+	later(delay, fn) {
+		if (!(delay > 0.001)) { fn(); return; }
+		this.timers = this.timers ?? [];
+		this.timers.push({ t: delay, fn, map: this.save?.map });
+	}
+	tickLater(dt) {
+		if (!this.timers?.length) return;
+		const keep = [];
+		const due = [];
+		for (const e of this.timers) { e.t -= dt; (e.t <= 0 ? due : keep).push(e); }
+		this.timers = keep;
+		for (const e of due) if (!this.dead && e.map === this.save?.map) e.fn();
+	}
+	/**
+	 * Fires a verse at a foe. Accuracy is rolled now so the FX can show it: a hit chases the foe and
+	 * lands on it, a miss flies past it. Damage and floaters happen when the FX arrives. If the foe is
+	 * already gone by then, the shot simply lands on empty ground.
+	 */
+	strike(move, ox, oy, mob, { fromPet = false, mult = 1, volley = false } = {}) {
+		const missed = Math.random() * 100 > move.accuracy;
+		const sx = Math.random() < .5 ? -1 : 1;
+		const off = missed ? { x: sx * (34 + Math.random() * 18), y: (Math.random() - .5) * 28 } : { x: 0, y: 0 };
+		const follow = () => (mob.alive ? [mob.x + off.x, mob.y - 12 + off.y] : null);
+		const delay = this.playMoveFx(move, ox, oy, mob.x + off.x, mob.y - 12 + off.y, { follow, miss: missed, volley });
+		this.later(delay, () => { if (mob.alive) this.resolveHit(move, mob, fromPet, mult, { missed, stagger: volley ? VOLLEY_GAP : 0 }); });
+		return delay;
+	}
 	nearCamp() {
 		const save = this.save;
 		return !!save?.survival?.campfires.some(c => c.map === save.map && Math.hypot(c.x - save.x, c.y - save.y) <= 80);
@@ -974,7 +1207,7 @@ export class TurbzGame {
 		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
 		const damage = advanceSurvival(s, dt, this.sleeping);
 		if (damage > 0) { this.save.hp -= damage; if (this.save.hp <= 0) this.die(); }
-		if (this.sleeping && s.rest >= 100) { this.sleeping = false; this.say("Rested. Your wounds still need a healing spell."); }
+		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.say("Rested. Your wounds still need a healing spell."); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
 	survivalAction(action) {
@@ -1001,7 +1234,7 @@ export class TurbzGame {
 			else {
 				if (!this.nearCamp()) return this.say("Build a campfire before sleeping.");
 				if (this.inFight() || this.combat > 0) return this.say("Clear nearby enemies before sleeping.");
-				this.dest = null; this.sleeping = true; this.autoplay = false; this.channel = null; this.closePanel(); this.say("Sleeping by the fire. Food and water still drain.");
+				this.dest = null; this.sleeping = true; this.autoplay = false; this.channel = null; this.closePanel(); this.say(this.isNightNow() ? "Sleeping by the fire. You will wake at dawn. Food and water still drain." : "Sleeping by the fire. Food and water still drain.");
 			}
 		} else {
 			// Anything else is a campfire recipe from CAMP_RECIPE_LIST (src/game/survival.ts).
@@ -1129,6 +1362,11 @@ export class TurbzGame {
 	tickAutoplay(dt) {
 		const save = this.save;
 		if (this.dead || !this.world) return;
+		// Autogrind rotates skills. Fishing never runs out of fish, so without a time limit it
+		// kept recasting forever and the other skills never got a turn.
+		if (this.grind !== this.grindSeen) { this.grindSeen = this.grind; this.grindT = 0; }
+		this.grindT = (this.grindT ?? 0) + dt;
+		if (this.grind === "fishing" && this.grindT > FISH_GRIND_SECONDS && !this.channel) { this.skipGrind("fishing", FISH_GRIND_PAUSE); return; }
 		if (this.channel) return;
 		const gathering = this.grind === "mining" || this.grind === "woodcutting" || this.grind === "shroom" || this.grind === "alchemy";
 		if (gathering) {
@@ -1168,6 +1406,8 @@ export class TurbzGame {
 			this.path = [];
 			this.pathI = 0;
 			this.autoPlan = 0;
+			// Cannot get to the shore (blocked, or the water is out of reach): try another skill for a while.
+			if (this.grind === "fishing") { this.skipGrind("fishing", 60); return; }
 		}
 		this.autoPlan -= dt;
 		let step = this.path[this.pathI];
@@ -1197,6 +1437,16 @@ export class TurbzGame {
 		else if (dx > 2) this.facing = 1;
 		return Math.hypot(x - save.x, y - save.y);
 	}
+	/** Stop grinding `id` for `seconds` so autogrind moves on to something else. */
+	skipGrind(id, seconds) {
+		this.grindSkip = { ...(this.grindSkip ?? {}), [id]: this.clock + seconds };
+		this.grind = "looking";
+		this.path = [];
+		this.pathI = 0;
+		this.dest = null;
+		this.autoPlan = 0;
+		this.grindT = 0;
+	}
 	planGrind() {
 		const save = this.save;
 		if (!save) return;
@@ -1205,7 +1455,10 @@ export class TurbzGame {
 			const B = save.skills[b];
 			return A.level - B.level || A.xp - B.xp;
 		});
-		for (const id of order) if (this.aimSkill(id)) {
+		const skip = this.grindSkip ?? {};
+		const open = order.filter((id) => (skip[id] ?? 0) <= this.clock);
+		// Skipped skills still run as a last resort, so autogrind never idles when they are all that is left.
+		for (const id of [...open, ...order.filter((id) => !open.includes(id))]) if (this.aimSkill(id)) {
 			this.grind = id;
 			return;
 		}
@@ -1594,6 +1847,13 @@ export class TurbzGame {
 	}
 	pointAt(x, y) {
 		if (snap.mode !== "play" || this.dead || !this.save) return;
+		if (this.save.map.startsWith("custom-")) for (const n of this.mapNpcs) {
+			const nx = n.tx * 32 + 16, ny = n.ty * 32 + 20;
+			if (Math.hypot(nx - x, ny - y) > 42) continue;
+			if (Math.hypot(this.save.x - nx, this.save.y - ny) <= 64) { this.openTalk(`cm:${n.id}`); this.dest = null; }
+			else this.dest = { x: nx, y: ny + 18, mob: null };
+			return;
+		}
 		if (this.save.map === "world") for (const n of NPCS) {
 			if (n.map !== "world") continue;
 			const at = scaleTile(n.tx, n.ty);
@@ -1688,19 +1948,31 @@ export class TurbzGame {
 		this.say(foe ? "Moves are still cooling." : "Nothing in range.");
 		return false;
 	}
+	/** The verses you have equipped (at most 9). Casting, auto-battle and autogrind only use these. */
 	arsenal(save) {
-		return Object.keys(save.abilityRanks ?? {}).filter(id => MOVE_BY_ID[id]).map(id => MOVE_BY_ID[id]);
+		const set = new Set(save.loadout ?? []);
+		return Object.keys(save.abilityRanks ?? {}).filter(id => MOVE_BY_ID[id] && (save.loadout ? set.has(id) : true)).sort((a, b) => (save.loadout ? save.loadout.indexOf(a) - save.loadout.indexOf(b) : 0)).map(id => MOVE_BY_ID[id]);
 	}
 	spendAbility(id) {
-		if (!this.save || this.dead || !spendAbilityPoint(this.save, id)) return false;
+		if (!this.save || this.dead) return false;
+		this.syncArsenal(this.save);
+		const first = !this.save.abilityRanks?.[id];
+		if (!spendAbilityPoint(this.save, id)) return false;
+		// A newly unlocked verse goes straight onto the bar while there is room.
+		if (first && this.save.loadout.length < MAX_EQUIPPED) this.save.loadout.push(id);
 		this.syncArsenal(this.save);
 		this.say(`${MOVE_BY_ID[id].name} rank ${this.save.abilityRanks[id]}.`);
 		this.persist(); this.syncHud(true); return true;
 	}
 	syncArsenal(save) {
-		const list = this.arsenal(save).map((m) => m.id);
-		save.known = list;
-		save.bar = list;
+		const unlocked = Object.keys(save.abilityRanks ?? {}).filter((id) => MOVE_BY_ID[id]);
+		const seen = new Set();
+		let loadout = (Array.isArray(save.loadout) ? save.loadout : unlocked).filter((id) => unlocked.includes(id) && !seen.has(id) && seen.add(id));
+		// First time (or an old save): equip the first 9 unlocked verses.
+		if (!Array.isArray(save.loadout)) loadout = loadout.slice(0, MAX_EQUIPPED);
+		save.loadout = loadout.slice(0, MAX_EQUIPPED);
+		save.known = unlocked;
+		save.bar = save.loadout;
 	}
 	autoBattle() {
 		const save = this.save;
@@ -1759,18 +2031,8 @@ export class TurbzGame {
 			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
 			return false;
 		}
-		const swift = this.chan("swift");
 		const form = attackForm(move);
-		let cd = Math.max(.28, (.55 + move.power / 90 - move.priority * .08) * (1 - Math.min(.4, swift / 100)));
-		if (tactic === "heavy" || tactic === "channel") cd *= 1.7;
-		else if (form === "spell") cd *= 1.35 * (1 - Math.min(.45, this.skillN("magic") * 0.00113)) * (1 - Math.min(.35, this.chan("focus") / 100));
-		else if (form === "melee") cd *= .8;
-		if (tactic === "roll") cd = Math.max(cd, 2.6);
-		if (tactic === "ward") cd = Math.max(cd, 5.5);
-		if (tactic === "heal") cd = Math.max(cd, 3.2);
-		if (tactic === "dash") cd = Math.max(cd, 1.6);
-		if (tactic === "surge") cd = Math.max(cd, 8);
-		cd = Math.max(.2, cd * (1 - Math.max(-.4, Math.min(.45, this.mod("haste") / 100))));
+		const cd = this.moveCooldown(move);
 		this.cds[move.id] = cd;
 		this.cdMax = this.cdMax ?? {};
 		this.cdMax[move.id] = cd;
@@ -1868,8 +2130,8 @@ export class TurbzGame {
 			if (Math.random() * 100 < failPct) {
 				this.defFatigue = (this.defFatigue ?? 0) + 1;
 				this.float(save.x, save.y - 46, "SNAG", "#c4473a");
-				this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12);
-				if (move.power > 0) this.resolveHit(move, target, false, 0.24);
+				const d = this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12);
+				if (move.power > 0) this.later(d, () => { if (target.alive) this.resolveHit(move, target, false, 0.24); });
 				return true;
 			}
 			this.defFatigue = Math.max(0, (this.defFatigue ?? 0) - 0.2);
@@ -1884,8 +2146,9 @@ export class TurbzGame {
 			}
 			this.facing = behind > 0 ? -1 : 1;
 			this.float(save.x, save.y - 46, "BLINK", "#b4a6ff");
-			this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12);
-			if (move.power > 0) this.resolveHit(move, target, false, 0.55);
+			const blinkMiss = Math.random() * 100 > move.accuracy;
+			const d = this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12, { miss: blinkMiss });
+			if (move.power > 0) this.later(d, () => { if (target.alive) this.resolveHit(move, target, false, 0.55, { missed: blinkMiss }); });
 			return true;
 		}
 		if (tactic === "lunge" && target) {
@@ -1914,18 +2177,18 @@ export class TurbzGame {
 			this.castLockMax = tactic === "channel" ? 1.15 : .62;
 			this.castLock = this.castLockMax;
 		}
-		this.playMoveFx(move, save.x, save.y - 24, target ? target.x : save.x + this.facing * 30, target ? target.y - 16 : save.y - 20);
 		this.tone(140 + move.priority * 40 + move.power, .06, move.type === "electric" ? "sawtooth" : "square");
 		if (move.effect === "shell") {
+			this.playMoveFx(move, save.x, save.y - 24, save.x + this.facing * 30, save.y - 20);
 			this.shield = Math.max(this.shield, 20 + move.power);
 			this.wardT = Math.max(this.wardT, 1.2);
 			this.say("Urn shell.");
 			return true;
 		}
 		if (target) {
-			if (tactic === "heavy") this.resolveHit(move, target, false, 1.7);
-			else this.resolveHit(move, target, false, tactic === "channel" ? 1.25 : 1);
-		}
+			const volley = form === "ranged" && rangedStyle(move) === "volley";
+			this.strike(move, save.x, save.y - 24, target, { mult: tactic === "heavy" ? 1.7 : tactic === "channel" ? 1.25 : 1, volley });
+		} else this.playMoveFx(move, save.x, save.y - 24, save.x + this.facing * 30, save.y - 20);
 		if (form === "spell" || tactic === "channel") this.gainSkill("magic", 3);
 		else this.gainSkill("physical", 2);
 		return true;
@@ -1944,15 +2207,93 @@ export class TurbzGame {
 			lung.hit = true;
 			const mob = this.mobs.find((m) => m.id === lung.mob && m.alive);
 			const move = MOVE_BY_ID[lung.moveId] ?? MOVES.find((m) => moveTactic(m) === "lunge") ?? MOVES[0];
-			this.playMoveFx(move, save.x, save.y - 16, lung.tx, lung.ty);
-			if (mob) this.resolveHit(move, mob, false, lung.failed ? 0.22 : 0.72);
+			const lungeMiss = Math.random() * 100 > move.accuracy;
+			const d = this.playMoveFx(move, save.x, save.y - 16, lung.tx, lung.ty, { miss: lungeMiss });
+			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, lung.failed ? 0.22 : 0.72, { missed: lungeMiss }); });
 		}
 		if (u >= 1) this.lunge = null;
 	}
-	resolveHit(move, mob, fromPet, mult = 1) {
+	/**
+	 * Every multiplier that goes into one hit, in one place. resolveHit uses it for real damage and the
+	 * character sheet uses it to show the same numbers, so the sheet can never drift from combat.
+	 * With no `mob`, target-specific parts (type chart, hide, conditional bonuses) are left neutral and a
+	 * reference armor of a same-level foe is used for ranged hits.
+	 */
+	damageParts(move, mob = null, { fromPet = false, mult = 1, crit = false } = {}) {
 		const save = this.save;
 		const form = attackForm(move);
-		if (Math.random() * 100 > move.accuracy) {
+		const tactic = moveTactic(move);
+		const pure = form === "spell";
+		const magicLike = pure || tactic === "channel";
+		const weapon = this.piece("weapon");
+		const weaponDmg = weapon ? equipmentStats(weapon).damage : 0;
+		const base = 6 + move.power * .42 + (form !== "spell" && weapon ? weaponDmg * .35 : 0);
+		const f = [];
+		const add = (id, label, value) => { f.push({ id, label, value }); };
+		add("level", "Level", 1 + save.level * .045);
+		add("stab", "Matching element gear", pure ? 1 : this.stab(move.type));
+		if (mob) add("tm", "Element vs target", pure ? 1 : typeChart(move.type, mob.type));
+		add("might", "Might enchants", 1 + this.chan("might") / 100);
+		add("hunting", "Hunting skill", 1 + this.skillN("hunting") * 0.002);
+		if (form === "ranged") add("form_enchant", "Hunter's Eye", 1 + this.chan("hunter_eye") / 100);
+		else if (form !== "spell") add("form_enchant", "Keen Edge", 1 + this.chan("edge") / 100);
+		if (save.hp < this.maxHp() * 0.4) add("last_stand", "Last Stand", 1 + this.chan("last_stand") / 100);
+		if (mob && mob.max > 0 && mob.hp < mob.max * 0.35) add("execute", "Execute", 1 + this.chan("execute") / 100);
+		if (mob && mob.level > save.level) add("giant_bane", "Giant Bane", 1 + this.chan("giant_bane") / 100);
+		if (mob?.boss) add("boss", "Boss Bane", 1 + this.chan("boss_bane") / 100);
+		if (this.status.some((s) => s.id === "gloom")) add("gloom", "Gloom", .8);
+		if (!pure) add("phys", "Physical skill", 1 + this.skillN("physical") * (form === "melee" ? .02 : .015));
+		if (pure) {
+			add("mag", "Magic skill", 1.45 * (1 + this.skillN("magic") * .025));
+			add("spellweave", "Spellweave + Hymn", (1 + this.chan("spellweave") / 100) * (1 + this.chan("hymn") / 100));
+		}
+		if (form === "melee") add("melee", "Melee strength", 1.35);
+		if (mob) {
+			const read = bodyRead(mob.type);
+			add("hide", "Target's hide", magicLike ? (read.kind === "magic" ? 1.2 : .8) : (read.kind === "physical" ? 1.2 : .8));
+		}
+		if (mult !== 1) add("mult", "Move shape", mult);
+		if (fromPet) add("pet", "Spirit strength", .62);
+		if (crit) add("crit", "Critical hit", 1.75 * (1 + Math.min(.8, this.chan("crit_force") / 100)));
+		if (!fromPet) {
+			add("rank", "Verse rank", abilityMultiplier(save, move.id));
+			add("class", magicLike ? "Class Arcana" : "Class Might", Math.max(.2, 1 + this.mod(magicLike ? "arcana" : "might") / 100));
+			if (move.type === CLASS_BY_ID[save.classId]?.type) add("affinity", "Element Affinity", 1 + this.mod("affinity") / 100);
+		}
+		let dmg = base;
+		for (const x of f) dmg *= x.value;
+		let armor = 0;
+		if (form === "ranged") {
+			const targetArmor = mob ? this.mobArmor(mob) : 4 + save.level * 2;
+			armor = targetArmor - this.chan("armor_crack");
+			dmg = mitigate(dmg, armor);
+			add("armor", `Target armor ${Math.max(0, Math.round(armor))}`, 100 / (100 + Math.max(0, armor)));
+		}
+		if (mob?.status?.some((s) => s.id === "expose")) { dmg *= 1.25; add("expose", "Exposed", 1.25); }
+		return { dmg: Math.max(1, dmg), base, factors: f, form };
+	}
+	critChanceOf(move) {
+		return move.crit + this.chan("crit_edge") + (this.buff.t > 0 ? this.buff.crit : 0) + this.mod("crit");
+	}
+	/** Seconds before this verse can be cast again. castMove and the sheet both use this. */
+	moveCooldown(move) {
+		const tactic = moveTactic(move);
+		const form = attackForm(move);
+		let cd = Math.max(.28, (.55 + move.power / 90 - move.priority * .08) * (1 - Math.min(.4, this.chan("swift") / 100)));
+		if (tactic === "heavy" || tactic === "channel") cd *= 1.7;
+		else if (form === "spell") cd *= 1.35 * (1 - Math.min(.45, this.skillN("magic") * 0.00113)) * (1 - Math.min(.35, this.chan("focus") / 100));
+		else if (form === "melee") cd *= .8;
+		if (tactic === "roll") cd = Math.max(cd, 2.6);
+		if (tactic === "ward") cd = Math.max(cd, 5.5);
+		if (tactic === "heal") cd = Math.max(cd, 3.2);
+		if (tactic === "dash") cd = Math.max(cd, 1.6);
+		if (tactic === "surge") cd = Math.max(cd, 8);
+		return Math.max(.2, cd * (1 - Math.max(-.4, Math.min(.45, this.mod("haste") / 100))));
+	}
+	resolveHit(move, mob, fromPet, mult = 1, opts = {}) {
+		const save = this.save;
+		const form = attackForm(move);
+		if (opts.missed ?? Math.random() * 100 > move.accuracy) {
 			this.float(mob.x, mob.y - 36, "MISS", "#e8dcc4");
 			return;
 		}
@@ -1962,32 +2303,16 @@ export class TurbzGame {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
 		}
-		const gearStab = pure ? 1 : this.stab(move.type);
-		const might = 1 + this.chan("might") / 100;
-		const boss = mob.boss ? 1 + this.chan("boss_bane") / 100 : 1;
-		const gloom = this.status.some((s) => s.id === "gloom") ? .8 : 1;
-		const critChance = move.crit + this.chan("crit_edge") + (this.buff.t > 0 ? this.buff.crit : 0) + this.mod("crit");
-		const crit = Math.random() * 100 < critChance;
-		const phys = form === "spell" ? 1 : 1 + this.skillN("physical") * (form === "melee" ? .02 : .015);
-		const mag = form === "spell" ? 1.45 * (1 + this.skillN("magic") * .025) * (1 + this.chan("spellweave") / 100) * (1 + this.chan("hymn") / 100) : 1;
-		const melee = form === "melee" ? 1.35 : 1;
-		const read = bodyRead(mob.type);
-		const hide = form === "spell" || moveTactic(move) === "channel" ? read.kind === "magic" ? 1.2 : .8 : read.kind === "physical" ? 1.2 : .8;
-		let dmg = (6 + move.power * .42 + (form !== "spell" && this.piece("weapon") ? equipmentStats(this.piece("weapon")).damage * .35 : 0)) * (1 + save.level * .045) * gearStab * tm * might * this.offenseFactor(mob, form) * boss * gloom * phys * mag * melee * hide * mult * (fromPet ? .62 : 1) * (crit ? 1.75 * (1 + Math.min(.8, this.chan("crit_force") / 100)) : 1);
-		if (!fromPet) dmg *= abilityMultiplier(save, move.id);
-		if (!fromPet) {
-			dmg *= Math.max(.2, 1 + this.mod(form === "spell" || moveTactic(move) === "channel" ? "arcana" : "might") / 100);
-			if (move.type === CLASS_BY_ID[save.classId]?.type) dmg *= 1 + this.mod("affinity") / 100;
-		}
-		if (form === "ranged") dmg = mitigate(dmg, this.mobArmor(mob) - this.chan("armor_crack"));
-		if (mob.status.some((s) => s.id === "expose")) dmg *= 1.25;
-		dmg = Math.max(1, dmg);
+		const crit = Math.random() * 100 < this.critChanceOf(move);
+		let dmg = this.damageParts(move, mob, { fromPet, mult, crit }).dmg;
 		let hits = Math.random() * 100 < Math.min(85, this.chan("double_strike")) ? 2 : 1;
 		if (form === "ranged" && rangedStyle(move) === "volley") {
 			hits = 3;
 			dmg *= .55;
 		}
-		for (let i = 0; i < hits; i++) this.damageMob(mob, dmg, crit && i === 0);
+		this.damageMob(mob, dmg, crit);
+		// Extra strikes (double strike, volleys) land one after another instead of all at once.
+		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false); });
 		this.applyEffect(move, mob, true);
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
 		if (!fromPet && this.chan("leech_edge") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.chan("leech_edge") / 100);
@@ -2022,6 +2347,7 @@ export class TurbzGame {
 		if (!save || !mob?.alive || this.dead) return;
 		mob.alive = false;
 		mob.hp = 0;
+		this.mapQuestEvent({ t: "kill", species: mob.species });
 		mob.respawn = mob.zone?.respawn ?? (mob.boss ? 70 : 22);
 		const portal = save.dungeons?.portals.find(p => p.id === save.map);
 		if (portal) {
@@ -2029,7 +2355,7 @@ export class TurbzGame {
 			if (mob.boss) { portal.cleared = true; this.say("Dungeon cleared. Return through the entrance rift."); }
 			this.room?.send({ t: "dungeons", dungeons: save.dungeons });
 		}
-		const xp = Math.floor((8 + mob.level * 3) * (mob.boss ? 4 : 1) * (1 + this.chan("xp_boost") / 100));
+		const xp = Math.floor((8 + mob.level * 3) * (mob.boss ? 4 : 1) * (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1));
 		this.gainXp(xp);
 		this.gainSkill("hunting", mob.boss ? 28 : 10);
 		save.kyo += Math.floor((2 + mob.level) * (mob.boss ? 6 : 1) * (1 + this.chan("kyo_find") / 100) * Math.max(.2, 1 + this.mod("kyo") / 100));
@@ -2379,6 +2705,7 @@ export class TurbzGame {
 		for (const m of this.mobs) {
 			m.hurt = Math.max(0, m.hurt - dt * 3);
 			m.walk += dt * 4;
+			this.applyNightScaling(m);
 			m.status.forEach((s) => s.t -= dt);
 			m.status = m.status.filter((s) => s.t > 0);
 			if (!m.alive) {
@@ -2537,6 +2864,10 @@ export class TurbzGame {
 	}
 	mobHitsPlayer(m, move, dist = 99) {
 		const save = this.save;
+		if (this.playerSafeCamp()) {
+			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
+			return;
+		}
 		const form = dist < 46 && (attackForm(move) === "melee" || m.animal) ? "melee" : attackForm(move);
 		const pure = form === "spell";
 		const tm = pure ? 1 : typeChart(move.type, this.armorType());
@@ -2552,6 +2883,7 @@ export class TurbzGame {
 			if (w) dmg += equipmentStats(w).damage * 0.28 * (m.power ?? 1);
 		}
 		dmg *= this.threat().dmg;
+		if (this.isNightNow()) dmg *= NIGHT.strength;
 		dmg *= 1 - Math.min(.45, this.chan("ward") / 160 + this.buff.ward);
 		if (this.status.some((s) => s.id === "shell")) dmg *= .7;
 		dmg *= 1 - Math.max(-.5, Math.min(.6, this.mod("guard") / 100));
@@ -2691,7 +3023,7 @@ export class TurbzGame {
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
-		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); this.sleeping = false; }
+		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); }
 		save.kyo = Math.floor(save.kyo * .85);
 		save.bag = {
 			potion: 2,
@@ -2709,6 +3041,7 @@ export class TurbzGame {
 		save.innate = known;
 		save.known = known;
 		save.bar = known;
+		save.loadout = undefined;
 		save.progressionVersion = undefined;
 		normalizeAbilities(save);
 		if (wear) this.wearSet(wear);
@@ -2925,6 +3258,7 @@ export class TurbzGame {
 	}
 	spiritTurn(spirit: Spirit) {
 		const save = this.save!;
+		if (this.holdActive()) return;
 		const moves = (spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter(Boolean);
 		if (!moves.length) return;
 		const aid = moves.filter((m) => spiritAidsPlayer(m));
@@ -2948,8 +3282,7 @@ export class TurbzGame {
 		const at = this.mates[slot] ?? { x: save.x - 20, y: save.y, swing: 0 };
 		at.swing = 1;
 		if (slot >= 0) this.mates[slot] = at;
-		this.playMoveFx(move, at.x, at.y - 12, foe.x, foe.y - 12);
-		this.resolveHit(move, foe, true, 0.75 + spirit.rarity * 0.12);
+		this.strike(move, at.x, at.y - 12, foe, { fromPet: true, mult: 0.75 + spirit.rarity * 0.12 });
 	}
 	applySpiritAid(spirit, move) {
 		const save = this.save;
@@ -2998,14 +3331,17 @@ export class TurbzGame {
 			const spirit = spirits[Math.floor(Math.random() * spirits.length)]!;
 			const slot = this.activeSpirits().indexOf(spirit);
 			const at = this.mates[slot] ?? { x: save.x, y: save.y, swing: 0 };
-			this.playMoveFx(move, m.x, m.y - 16, at.x, at.y - 10);
-			const dmg = Math.max(4, Math.floor((6 + m.level * 1.4 + move.power * 0.08) * (m.power ?? 1)));
-			spirit.hp -= dmg;
-			this.float(at.x, at.y - 28, `${dmg}`, "#c4473a");
-			if (spirit.hp <= 0) {
-				spirit.hp = 0;
-				this.say(`${spirit.name} drops.`);
-			}
+			const spiritDelay = this.playMoveFx(move, m.x, m.y - 16, at.x, at.y - 10, { follow: () => [at.x, at.y - 10] });
+			const dmg = Math.max(4, Math.floor((6 + m.level * 1.4 + move.power * 0.08) * (m.power ?? 1) * (this.isNightNow() ? NIGHT.strength : 1)));
+			this.later(spiritDelay, () => {
+				if (this.holdActive() && safeZoneAt(this.save.survival.campfires, this.save.map, at.x, at.y)) { this.float(at.x, at.y - 28, "SAFE", "#9ad8c8"); return; }
+				spirit.hp -= dmg;
+				this.float(at.x, at.y - 28, `${dmg}`, "#c4473a");
+				if (spirit.hp <= 0) {
+					spirit.hp = 0;
+					this.say(`${spirit.name} drops.`);
+				}
+			});
 			return;
 		}
 		this.queueStrike(m, move);
@@ -3028,17 +3364,27 @@ export class TurbzGame {
 			const m = this.mobs.find((x) => x.id === hit.id && x.alive);
 			if (!m || this.dead) continue;
 			const move = MOVE_BY_ID[hit.move] ?? MOVES[0];
-			const dist = Math.hypot(save.x - m.x, save.y - m.y);
-			const moved = Math.hypot(save.x - hit.ax, save.y - hit.ay);
-			this.playMoveFx(move, m.x, m.y - 16, hit.form === "melee" ? save.x : hit.ax, (hit.form === "melee" ? save.y : hit.ay) - 18);
-			const reach = hit.form === "melee" || m.animal ? 62 : attackRange(move) + 24;
-			if (dist > reach || (hit.form !== "melee" && moved > 46)) {
-				this.float(save.x, save.y - 44, "DODGED", "#9ad8c8");
-				this.cfx?.evade(save.x, save.y - 18);
-				this.gainSkill("adventuring", 1);
-				continue;
-			}
-			this.mobHitsPlayer(m, move, dist);
+			const melee = hit.form === "melee" || m.animal;
+			const reach = melee ? 62 : attackRange(move) + 24;
+			const firedOutOfReach = Math.hypot(save.x - m.x, save.y - m.y) > reach;
+			// The shot flies to the spot it was aimed at. What happens to you is decided when it lands.
+			const aimX = hit.form === "melee" ? save.x : hit.ax;
+			const aimY = hit.form === "melee" ? save.y : hit.ay;
+			const follow = hit.form === "melee" ? () => [save.x, save.y - 18] : undefined;
+			const delay = this.playMoveFx(move, m.x, m.y - 16, aimX, aimY - 18, { follow });
+			this.later(delay, () => {
+				if (this.dead) return;
+				const dist = Math.hypot(save.x - m.x, save.y - m.y);
+				const offSpot = hit.form !== "melee" && Math.hypot(save.x - aimX, save.y - aimY) > 46;
+				const tooFar = hit.form === "melee" ? dist > reach : firedOutOfReach;
+				if (tooFar || offSpot) {
+					this.float(save.x, save.y - 44, "DODGED", "#9ad8c8");
+					this.cfx?.evade(save.x, save.y - 18);
+					this.gainSkill("adventuring", 1);
+					return;
+				}
+				this.mobHitsPlayer(m, move, dist);
+			});
 		}
 		this.incoming = keep;
 	}
@@ -3056,11 +3402,12 @@ export class TurbzGame {
 				at.y += (save.y + 14 - at.y) * Math.min(1, dt * 2);
 				return;
 			}
-			const foe = this.fightTarget();
-			const ang = this.clock * 1.7 + i * 2.05;
-			const rad = foe ? 34 + i * 16 : 22 + i * 12;
-			const tx = foe ? foe.x + Math.cos(ang) * rad : save.x - this.facing * (26 + i * 16);
-			const ty = foe ? foe.y + Math.sin(ang) * rad * 0.45 : save.y + 8 + i * 6;
+			const hold = this.holdActive() ? save.survival.hold : null;
+			const foe = hold ? null : this.fightTarget();
+			const ang = this.clock * (hold ? .35 : 1.7) + i * 2.05;
+			const rad = foe ? 34 + i * 16 : hold ? 38 + i * 12 : 22 + i * 12;
+			const tx = foe ? foe.x + Math.cos(ang) * rad : hold ? hold.x + Math.cos(ang) * rad : save.x - this.facing * (26 + i * 16);
+			const ty = foe ? foe.y + Math.sin(ang) * rad * 0.45 : hold ? hold.y + 18 + Math.sin(ang) * rad * 0.45 : save.y + 8 + i * 6;
 			at.x += (tx - at.x) * Math.min(1, dt * 5);
 			at.y += (ty - at.y) * Math.min(1, dt * 5);
 		});
@@ -3074,14 +3421,15 @@ export class TurbzGame {
 			if (!npc) return;
 			const key = `mate-${id}`;
 			this.mateCd[key] = (this.mateCd[key] ?? 0) - dt;
-			const foe = this.nearestMob(save.x, save.y, 190);
+			const hold = this.holdActive() ? save.survival.hold : null;
+			const foe = hold ? null : this.nearestMob(save.x, save.y, 190);
 			const px = this.mateCd[`${key}x`] ?? save.x;
 			const py = this.mateCd[`${key}y`] ?? save.y;
 			const dist = foe ? Math.hypot(foe.x - px, foe.y - py) : 999;
 			const ang = this.clock * .9 + i * 2.1;
 			const orbit = foe ? dist > 80 ? 70 : 36 : 28;
-			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : save.x + Math.cos(ang) * 28;
-			const homeY = foe ? foe.y + Math.sin(ang) * 22 : save.y + 10 + i * 8;
+			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : hold ? hold.x + Math.cos(ang * .4) * (36 + i * 12) : save.x + Math.cos(ang) * 28;
+			const homeY = foe ? foe.y + Math.sin(ang) * 22 : hold ? hold.y + 22 + Math.sin(ang * .4) * 14 : save.y + 10 + i * 8;
 			if (foe && dist > 90 && dist < 160 && (this.mateCd[`${key}blink`] ?? 0) <= 0) {
 				const behind = foe.x >= save.x ? 1 : -1;
 				this.mateCd[`${key}x`] = foe.x + behind * 26;
@@ -3099,8 +3447,9 @@ export class TurbzGame {
 			if (Math.hypot(foe.x - (this.mateCd[`${key}x`] ?? 0), foe.y - (this.mateCd[`${key}y`] ?? 0)) > reach) return;
 			this.mateCd[key] = dist > 70 ? 1.35 : .9;
 			const move = dist > 70 ? huntMove(npc.shrine ?? "normal") : MOVES.find((m) => m.type === (npc.shrine ?? "normal") && attackForm(m) === "melee") ?? huntMove(npc.shrine ?? "normal");
-			this.playMoveFx(move, this.mateCd[`${key}x`] ?? save.x, (this.mateCd[`${key}y`] ?? save.y) - 20, foe.x, foe.y - 12);
-			this.damageMob(foe, (dist > 70 ? 6 : 9) + save.level * 1.4, false);
+			const mateDmg = (dist > 70 ? 6 : 9) + save.level * 1.4;
+			const mateDelay = this.playMoveFx(move, this.mateCd[`${key}x`] ?? save.x, (this.mateCd[`${key}y`] ?? save.y) - 20, foe.x, foe.y - 12, { follow: () => (foe.alive ? [foe.x, foe.y - 12] : null) });
+			this.later(mateDelay, () => { if (foe.alive) this.damageMob(foe, mateDmg, false); });
 		});
 	}
 	tickFx(dt) {
@@ -3123,10 +3472,6 @@ export class TurbzGame {
 		this.floats = this.floats.filter((f) => f.life > 0);
 		this.shake = Math.max(0, this.shake - dt * 18);
 		for (const id of Object.keys(this.nodeCd)) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
-	}
-	playMoveFx(move, x0, y0, x1, y1) {
-		this.cfx = this.cfx ?? new CombatFx();
-		this.cfx.cast(move, attackForm(move), moveTactic(move), x0, y0, x1, y1);
 	}
 	legacyMoveFx(move, x0, y0, x1, y1) {
 		const color = TYPES[move.type].color;
@@ -3213,7 +3558,8 @@ export class TurbzGame {
 	interact() {
 		const save = this.save;
 		if (!save || this.dead || !this.world) return;
-		if (save.map !== "world") {
+		if (save.map.startsWith("custom-") && this.interactMapPlace()) return;
+		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
 			if (Math.hypot(save.x - ex.x, save.y - ex.y) < 36) {
 				this.travel("world", save.dungeons?.portals.find(p => p.id === save.map) ?? WORLD_RETURN[save.map] ?? hearthXY());
@@ -3310,6 +3656,7 @@ export class TurbzGame {
 			this.giveItem("fish", n);
 			this.gainSkill("fishing", 16);
 			this.say(`A bite! Fish x${n}.`);
+			this.mapQuestEvent({ t: "gather", node: "fish" });
 			this.boardEvent("fish");
 			this.persist();
 			if (this.autoplay) this.autoPlan = 0;
@@ -3340,10 +3687,208 @@ export class TurbzGame {
 			this.say("The patch gives.");
 		}
 		this.boardEvent(node as BoardKind);
+		this.mapQuestEvent({ t: "gather", node });
 		this.persist();
 		if (this.autoplay) this.autoPlan = 0;
 	}
+	// ---- Designer maps: story, NPCs, quests and placed places --------------------------------
+	mapId() { return this.customFile?.id ?? ""; }
+	questCtx() {
+		const npcs = this.mapNpcs;
+		return {
+			npcName: (id) => npcs.find((n) => n.id === id)?.name ?? "someone",
+			itemName: (id) => ITEMS.find((i) => i.id === id)?.name ?? id,
+			speciesName: (id) => MONSTER_BY_ID[id]?.name ?? ANIMAL_BY_ID[id]?.name ?? id
+		};
+	}
+	openMapStory() {
+		const file = this.customFile;
+		const save = this.save;
+		if (!file || !save || !file.intro) return;
+		save.mapSeen = save.mapSeen ?? [];
+		if (save.mapSeen.includes(file.id)) return;
+		save.mapSeen.push(file.id);
+		this.storyPages = file.intro.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+		if (!this.storyPages.length) return;
+		this.talkId = "cm:~story";
+		this.talkI = 0;
+		this.shop = null;
+		publish({ panel: "talk" });
+		this.syncHud(true);
+	}
+	talkLines(n) { return n.lines?.length ? n.lines : ["…"]; }
+	openMapTalk(id) {
+		const save = this.save;
+		const n = this.mapNpcs.find((x) => x.id === id);
+		const file = this.customFile;
+		if (!n || !save || !file) return;
+		save.mapQuests = save.mapQuests ?? {};
+		this.talkId = `cm:${n.id}`;
+		this.talkI = 0;
+		this.talkOverride = null;
+		this.shop = null;
+		// Talking can finish "talk" and "bring" steps and hand in finished quests.
+		this.mapQuestEvent({ t: "talk", npcId: n.id });
+		let q;
+		while ((q = turnInMapQuest(file, n.id, save.mapQuests))) {
+			const r = q.reward ?? {};
+			if (r.kyo) save.kyo += r.kyo;
+			if (r.xp) this.gainXp(r.xp);
+			for (const it of r.items ?? []) this.giveItem(it.itemId, it.count);
+			const bits = [r.kyo ? `${r.kyo} kyo` : "", r.xp ? `${r.xp} xp` : "", ...(r.items ?? []).map((i) => `${i.count} ${this.questCtx().itemName(i.itemId)}`)].filter(Boolean);
+			this.say(`Quest done: ${q.name}${bits.length ? ` (${bits.join(", ")})` : ""}.`);
+			if (q.done) this.talkOverride = q.done;
+			this.tone(660, .12, "square");
+		}
+		this.persist();
+		publish({ panel: "talk" });
+		this.syncHud(true);
+	}
+	acceptMapQuestById(qid) {
+		const save = this.save;
+		const file = this.customFile;
+		const n = this.mapNpcs.find((x) => `cm:${x.id}` === this.talkId);
+		if (!save || !file || !n) return;
+		const q = offerableQuests(file, n.id, save.mapQuests).find((x) => x.id === qid);
+		if (!q || !acceptMapQuest(file, q.id, save.mapQuests)) return;
+		this.say(`Quest accepted: ${q.name}.`);
+		this.talkOverride = null;
+		// A step may already be satisfied (items in the bag).
+		this.mapQuestEvent({ t: "talk", npcId: n.id });
+		this.persist();
+		this.syncHud(true);
+	}
+	mapTalkSnap() {
+		if (!this.talkId?.startsWith("cm:")) return null;
+		if (this.talkId === "cm:~story") {
+			return { id: "story", name: this.customFile?.name ?? "Story", role: "The story so far", line: this.storyPages?.[this.talkI] ?? "", shop: null, shrine: null, quests: { offers: [], active: [] }, more: this.talkI < (this.storyPages?.length ?? 1) - 1 };
+		}
+		const n = this.mapNpcs.find((x) => `cm:${x.id}` === this.talkId);
+		const file = this.customFile;
+		const save = this.save;
+		if (!n || !file || !save) return null;
+		const c = this.questCtx();
+		const states = save.mapQuests ?? {};
+		const offers = offerableQuests(file, n.id, states).map((q) => ({
+			id: q.id, name: q.name, about: q.offer || q.about, steps: q.steps.map((s) => stepText(s, q, c)),
+			reward: [q.reward?.kyo ? `${q.reward.kyo} kyo` : "", q.reward?.xp ? `${q.reward.xp} xp` : "", ...(q.reward?.items ?? []).map((i) => `${i.count} ${c.itemName(i.itemId)}`)].filter(Boolean).join(", ")
+		}));
+		const active = openQuests(file, states, n.id).map((q) => ({ id: q.id, name: q.name, lines: progressLines(q, states[qkey(file.id, q.id)], c), ready: states[qkey(file.id, q.id)].status === "ready", say: q.progress }));
+		const lines = this.talkLines(n);
+		let line = this.talkOverride ?? lines[this.talkI] ?? lines[0];
+		if (!this.talkOverride && this.talkI === 0) {
+			const first = active.find((a) => !a.ready && a.say);
+			if (!offers.length && first) line = first.say;
+		}
+		return { id: n.id, name: n.name, role: n.role || "Villager", line, shop: null, shrine: null, quests: { offers, active }, more: !this.talkOverride && this.talkI < lines.length - 1 };
+	}
+	mapQuestLog() {
+		const file = this.customFile;
+		const save = this.save;
+		if (!file || !save || !save.map.startsWith("custom-")) return [];
+		const c = this.questCtx();
+		return openQuests(file, save.mapQuests ?? {}).map((q) => {
+			const s = save.mapQuests[qkey(file.id, q.id)];
+			return { id: q.id, name: q.name, lines: progressLines(q, s, c), ready: s.status === "ready", turnIn: c.npcName(turnInOf(q)) };
+		});
+	}
+	mapQuestEvent(ev) {
+		const save = this.save;
+		const file = this.customFile;
+		if (!save || !file || !save.map.startsWith("custom-") || !file.quests?.length) return;
+		save.mapQuests = save.mapQuests ?? {};
+		let touched = false;
+		for (const q of file.quests) {
+			const s = save.mapQuests[qkey(file.id, q.id)];
+			if (!s || s.status !== "active") continue;
+			const a = advanceMapQuest(q, s, ev, save.bag);
+			if (a.consumed) { save.bag[a.consumed.itemId] = Math.max(0, (save.bag[a.consumed.itemId] ?? 0) - a.consumed.count); }
+			if (!a.changed) continue;
+			touched = true;
+			if (a.ready) this.say(`${q.name}: all done. Report to ${this.questCtx().npcName(turnInOf(q))}.`);
+			else if (ev.t !== "kill" && ev.t !== "gather") this.say(`${q.name}: step done.`);
+			else if (s.n === 0) this.say(`${q.name}: step done.`);
+		}
+		if (touched) { this.persist(); this.syncHud(true); }
+	}
+	tickMapQuests(dt) {
+		const save = this.save;
+		if (!save || !save.map.startsWith("custom-") || !this.customFile?.quests?.length) return;
+		this.questTick = (this.questTick ?? 0) - dt;
+		if (this.questTick > 0) return;
+		this.questTick = .4;
+		this.mapQuestEvent({ t: "goto", tx: Math.floor(save.x / 32), ty: Math.floor(save.y / 32) });
+	}
+	/** E near a designer-placed bounty board, arena, shrine, hearth, door or NPC. Returns true when handled. */
+	interactMapPlace() {
+		const save = this.save;
+		const file = this.customFile;
+		if (!save || !file) return false;
+		let best = null;
+		let bd = 1e9;
+		for (const n of this.mapNpcs) {
+			const d = Math.hypot(n.tx * 32 + 16 - save.x, n.ty * 32 + 20 - save.y);
+			if (d <= 64 && d < bd) { bd = d; best = { npc: n }; }
+		}
+		for (const it of file.interactables ?? []) {
+			if (it.kind === "node") continue;
+			const d = Math.hypot(it.tx * 32 + 16 - save.x, it.ty * 32 + 16 - save.y);
+			if (d <= 64 && d < bd) { bd = d; best = { it }; }
+		}
+		if (!best) return false;
+		if (best.npc) { this.openTalk(`cm:${best.npc.id}`); return true; }
+		const it = best.it;
+		if (it.kind === "bounty") this.openBounty({ name: it.label || "Bounty Board" });
+		else if (it.kind === "arena") this.startShrine(Object.keys(TYPES)[Math.floor(Math.random() * Object.keys(TYPES).length)]);
+		else if (it.kind === "shrine") this.startShrine(TYPES[it.type] ? it.type : "light");
+		else if (it.kind === "hearth") {
+			if (this.rules !== "hardcore") save.hp = this.maxHp();
+			this.status = [];
+			this.say(this.rules === "hardcore" ? "The hearth offers shelter. Only healing spells mend your wounds." : "The hearth mends you.");
+		} else if (it.kind === "dungeon") {
+			if (it.mapId === "world") this.leaveCustom();
+			else if (savedMaps().some((m) => m.id === it.mapId)) this.enterCustom(it.mapId);
+			else this.say("This door leads nowhere yet. Save the target map in the Map Builder.");
+		}
+		return true;
+	}
+	drawMapPlaces(ctx) {
+		const file = this.customFile;
+		const save = this.save;
+		if (!file || !save) return;
+		for (const it of file.interactables ?? []) {
+			if (it.kind === "node") continue;
+			const x = it.tx * 32 + 16, y = it.ty * 32 + 16;
+			const col = it.kind === "bounty" ? "#e8c46a" : it.kind === "arena" ? "#c4473a" : it.kind === "shrine" ? "#8fd0ff" : it.kind === "hearth" ? "#ff9a4a" : "#c9a6e8";
+			const bob = Math.sin(this.clock * 2 + it.tx) * 2;
+			ctx.save();
+			ctx.fillStyle = "rgba(0,0,0,.35)";
+			ctx.beginPath(); ctx.ellipse(x, y + 12, 12, 5, 0, 0, Math.PI * 2); ctx.fill();
+			ctx.fillStyle = col;
+			if (it.kind === "bounty") { ctx.fillRect(x - 10, y - 14, 20, 24); ctx.fillStyle = "#3a2a1a"; ctx.fillRect(x - 7, y - 10, 14, 4); ctx.fillRect(x - 7, y - 3, 14, 4); }
+			else if (it.kind === "hearth") { ctx.beginPath(); ctx.moveTo(x, y - 14 + bob); ctx.lineTo(x + 9, y + 8); ctx.lineTo(x - 9, y + 8); ctx.closePath(); ctx.fill(); ctx.fillStyle = "#ffe08a"; ctx.fillRect(x - 3, y - 2, 6, 8); }
+			else if (it.kind === "dungeon") { ctx.fillRect(x - 12, y - 18, 24, 28); ctx.fillStyle = "#140e0c"; ctx.fillRect(x - 7, y - 12, 14, 22); }
+			else { ctx.beginPath(); ctx.moveTo(x, y - 18 + bob); ctx.lineTo(x + 10, y); ctx.lineTo(x, y + 10); ctx.lineTo(x - 10, y); ctx.closePath(); ctx.fill(); }
+			ctx.restore();
+			const label = it.kind === "dungeon" ? it.name || "Door" : it.kind === "shrine" ? it.name || "Shrine" : it.kind === "bounty" || it.kind === "arena" ? it.label || (it.kind === "bounty" ? "Bounty Board" : "Arena") : "Hearth";
+			drawShadowName(ctx, label, x, y - 24, col);
+		}
+		const states = save.mapQuests ?? {};
+		for (const n of this.mapNpcs) {
+			const x = n.tx * 32 + 16, y = n.ty * 32 + 20;
+			const outfit = n.outfit ?? ((n.id.length * 7 + n.tx) % 8);
+			drawActor(ctx, {
+				x, y, race: "vesper", female: !!n.female, hair: n.hair ?? (n.tx + n.ty) % 6, skin: outfit % 5, facing: Math.sin(this.clock * .4 + n.tx) > 0 ? 1 : -1,
+				walk: .2, attack: 0, hurt: 0, setFx: null, setOn: false, time: this.clock,
+				pieces: ["chest", "legs", "feet"].map((slot, i) => ({ slot, style: outfit, type: "normal", fxSeed: i, quality: 0 }))
+			});
+			drawShadowName(ctx, n.name.split(" ").slice(-1)[0], x, y - 44, "#f0e2c8");
+			const mk = questMarker(file, n, states);
+			if (mk) drawShadowName(ctx, mk, x, y - 60 + Math.sin(this.clock * 4) * 2, mk === "!" ? "#ffe08a" : "#8fd06a");
+		}
+	}
 	openTalk(id) {
+		if (typeof id === "string" && id.startsWith("cm:")) return this.openMapTalk(id.slice(3));
 		const npc = NPCS.find((n) => n.id === id);
 		if (!npc) return;
 		this.talkId = id;
@@ -3371,6 +3916,12 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	nextLine() {
+		if (this.talkId?.startsWith("cm:")) {
+			const n = this.mapNpcs.find((x) => `cm:${x.id}` === this.talkId);
+			if (n) this.talkI = Math.min(this.talkLines(n).length - 1, this.talkI + 1);
+			this.syncHud(true);
+			return;
+		}
 		const npc = NPCS.find((n) => n.id === this.talkId);
 		if (!npc) return;
 		this.talkI = Math.min(npc.lines.length - 1, this.talkI + 1);
@@ -3497,7 +4048,7 @@ export class TurbzGame {
 		this.loadMap(map, true);
 		this.cam.x = save.x;
 		this.cam.y = save.y;
-		if (map.startsWith("custom-")) { this.persist(); return; }
+		if (map.startsWith("custom-")) { this.persist(); this.openMapStory(); return; }
 		this.say(map === "world" ? "Back under the sky." : map === "crypt" ? "The Tiny Crypt breathes." : map.startsWith("rift-") ? "A new dungeon. Its guardian waits in the final room." : "The Ash Kiln is awake.");
 		if (map === "crypt") {
 			if (!save.quests.bone_king.done && save.regions.includes("bone")) {}
@@ -3719,8 +4270,23 @@ export class TurbzGame {
 		this.toggle("moves");
 		this.say("Spend character skill points to unlock or upgrade attacks and spells.");
 	}
-	setBar(_index, _moveId) {
-		this.say("Auto uses your unlocked abilities. Upgrade them in Attacks & Spells.");
+	/** Equip `moveId` (into slot `index`, or the next free one) or, with an empty id, unequip slot `index`. */
+	setBar(index, moveId) {
+		const save = this.save;
+		if (!save) return;
+		this.syncArsenal(save);
+		const list = [...save.loadout];
+		if (!moveId) {
+			if (index >= 0 && index < list.length) list.splice(index, 1);
+		} else {
+			if (!save.abilityRanks?.[moveId] || list.includes(moveId)) return;
+			if (list.length >= MAX_EQUIPPED) { this.say(`All ${MAX_EQUIPPED} verse slots are full. Unequip one first.`); return; }
+			list.splice(Math.max(0, Math.min(list.length, index)), 0, moveId);
+		}
+		save.loadout = list;
+		this.syncArsenal(save);
+		this.persist();
+		this.syncHud(true);
 	}
 	select(uid) {
 		this.selected = uid;
@@ -4211,6 +4777,7 @@ export class TurbzGame {
 	}
 	escape() {
 		if (this.dead) return;
+		if (this.buildMode && !snap.panel) { this.toggleBuild(false); return; }
 		if (snap.panel) publish({ panel: null });
 		else if (snap.mode === "play") publish({ panel: "pause" });
 	}
@@ -4376,6 +4943,9 @@ export class TurbzGame {
 			save.classMovesV = 2;
 		}
 		save.dungeons = normalizeDungeonState(save.dungeons);
+		if (this.rules === "hardcore") save.dayNight = normalizeDayNight(save.dayNight);
+		save.mapQuests = sanitizeQuestStates(save.mapQuests);
+		save.mapSeen = Array.isArray(save.mapSeen) ? save.mapSeen.filter((x) => typeof x === "string").slice(-200) : [];
 		if (this.rules === "hardcore") {
 			const fresh = !save.survival; save.survival = normalizeSurvival(save.survival);
 			if (fresh) { save.bag.trail_ration = (save.bag.trail_ration ?? 0) + 2; }
@@ -4989,6 +5559,184 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	buildSheet() {
+		const base = this.buildSheetBase();
+		if (snap.panel === "sheet" || !this.sheetExtraCache) this.sheetExtraCache = this.sheetExtras(base);
+		return { ...base, ...this.sheetExtraCache, moves: base.moves.map((m) => ({ kind: "utility", form: "", acc: 0, range: 0, cd: 0, hit: 0, critHit: 0, critPct: 0, heal: 0, shield: 0, rankMult: 1, shape: [], note: "", ...m, ...(this.sheetExtraCache.verses[m.id] ?? {}) })) };
+	}
+	/** Breakdown tables for the character sheet. Every number comes from the same functions combat uses. */
+	sheetExtras(base) {
+		const save = this.save;
+		const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"];
+		const gearOf = (id) => SLOTS.reduce((n, s) => n + (this.piece(s)?.enchants ?? []).reduce((a, e) => a + (e.id === id ? e.power : 0), 0), 0);
+		const acctOf = (id) => save.perks?.[id] ?? 0;
+		const ename = (id) => ENCHANT_BY_ID[id]?.name ?? id;
+		const prof = this.profile();
+		const sgn = (v, d = 0) => `${v >= 0 ? "+" : "-"}${Math.abs(v).toFixed(d)}`;
+		const parts = [];
+		const P = (label, value, src) => parts.push({ label, value, src });
+		const enchParts = (id, fmt) => {
+			const g = gearOf(id), a = acctOf(id);
+			const out = [];
+			if (g) out.push({ label: `${ename(id)} · gear`, value: fmt(g), src: "gear" });
+			if (a) out.push({ label: `${ename(id)} · account`, value: fmt(a), src: "account" });
+			return out;
+		};
+		const numbers = [];
+		const num = (id, label, value, list, note) => numbers.push({ id, label, value, parts: list, note: note ?? "" });
+		const pct = (v) => `${v >= 0 ? "+" : "-"}${Math.abs(v)}%`;
+
+		// Maximum health
+		{
+			const l = [{ label: "Base", value: "78", src: "base" }, { label: `Level ${save.level} × 12`, value: String(save.level * 12), src: "level" }];
+			l.push(...enchParts("spark_life", (n) => sgn(n)), ...enchParts("vitality", (n) => sgn(n)));
+			if (prof.stats.hp) l.push({ label: "Class / trait Vitality", value: `×${(1 + prof.stats.hp / 100).toFixed(2)}`, src: "class" });
+			num("hp", "Maximum health", String(this.maxHp()), l);
+		}
+		// Weapon
+		{
+			const w = this.piece("weapon");
+			const l = [];
+			if (w) {
+				const q = Math.max(0, ["worn", "common", "fine", "rare", "epic", "legendary"].indexOf(w.quality));
+				l.push({ label: `${w.name} base`, value: "8", src: "gear" }, { label: `Gear level ${w.level || 1} × 2`, value: String((w.level || 1) * 2), src: "gear" }, { label: `${w.quality} quality`, value: String(q * 6), src: "gear" });
+				const wh = (w.enchants ?? []).filter((e) => e.id === "whetstone").reduce((n, e) => n + e.power, 0);
+				if (wh) l.push({ label: "Whetstone", value: sgn(wh), src: "gear" });
+			} else l.push({ label: "Bare hands", value: "8", src: "base" });
+			num("weapon", "Weapon damage", String(w ? equipmentStats(w).damage : 8), l, "Each verse uses 35% of this on top of its own power.");
+		}
+		// Armor
+		{
+			const l = [];
+			for (const slot of ["head", "chest", "legs", "feet", "relic"]) {
+				const g = this.piece(slot);
+				l.push({ label: `${slot[0].toUpperCase()}${slot.slice(1)}${g ? ` · ${g.name}` : ""}`, value: g ? String(equipmentStats(g).armor) : "0", src: "gear" });
+			}
+			num("armor", "Armor", String(this.playerArmor()), l, "Armor cuts ranged physical damage by 100 ÷ (100 + armor).");
+		}
+		// Crit
+		{
+			const l = [];
+			if (prof.stats.crit) l.push({ label: "Class / trait Precision", value: sgn(prof.stats.crit), src: "class" });
+			l.push(...enchParts("crit_edge", (n) => sgn(n)));
+			if (this.buff.t > 0 && this.buff.crit) l.push({ label: "Battle edge (timed)", value: sgn(this.buff.crit), src: "buff" });
+			num("crit", "Crit chance bonus", `${sgn(this.critChanceOf({ crit: 0 }))}%`, l, "Added to each verse's own crit chance.");
+		}
+		// Cooldowns
+		{
+			const haste = Math.max(-.4, Math.min(.45, prof.stats.haste / 100));
+			const swiftCut = Math.min(.4, this.chan("swift") / 100);
+			const atk = (1 - swiftCut) * (1 - haste);
+			const spl = atk * (1 - Math.min(.45, this.skillN("magic") * 0.00113)) * (1 - Math.min(.35, this.chan("focus") / 100));
+			const l = [];
+			if (prof.stats.haste) l.push({ label: "Class / trait Haste", value: pct(-prof.stats.haste), src: "class" });
+			l.push(...enchParts("swift", (n) => `-${n}%`));
+			l.push(...enchParts("focus", (n) => `-${n}% spells`));
+			if (this.skillN("magic")) l.push({ label: `Magic skill ${this.skillN("magic") + 1} (spells)`, value: `-${(Math.min(.45, this.skillN("magic") * 0.00113) * 100).toFixed(1)}%`, src: "skill" });
+			num("cd", "Cooldown length", `Attacks ${Math.round(atk * 100)}% · Spells ${Math.round(spl * 100)}%`, l, "100% is the verse's normal cooldown. Lower is faster.");
+		}
+		// Move speed
+		{
+			const l = [{ label: "Base", value: "118", src: "base" }];
+			if (prof.stats.speed) l.push({ label: "Class / trait Agility", value: `×${(1 + prof.stats.speed / 100).toFixed(2)}`, src: "class" });
+			l.push(...enchParts("swift_step", (n) => `×${(1 + n / 100).toFixed(2)}`));
+			if (this.status.some((s) => s.id === "swift")) l.push({ label: "Swift (timed)", value: "×1.45", src: "buff" });
+			num("speed", "Move speed", String(Math.round(118 * this.speedMult())), l, "Soak slows you by 38% and Hardcore exhaustion by 30%.");
+		}
+		// Damage taken
+		{
+			const wardRed = Math.min(.45, this.chan("ward") / 160 + (this.buff?.ward ?? 0));
+			const guardRed = Math.max(-.5, Math.min(.6, prof.stats.guard / 100));
+			const night = this.isNightNow() ? NIGHT.strength : 1;
+			const l = [];
+			if (prof.stats.guard) l.push({ label: "Class / trait Guard", value: pct(-prof.stats.guard), src: "class" });
+			l.push(...enchParts("ward", (n) => `-${(n / 1.6).toFixed(1)}%`));
+			l.push(...enchParts("echo_guard", (n) => `${n}% to ignore a hit`));
+			l.push(...enchParts("thorns", (n) => `${n}% returned`));
+			if (night > 1) l.push({ label: "Night", value: `×${night}`, src: "buff" });
+			num("taken", "Damage taken", `${Math.round((1 - wardRed) * (1 - guardRed) * night * 100)}%`, l, "Before armor. Ward caps at 45%, Echo Guard at 40%, Thorns at 35%.");
+		}
+		// XP
+		{
+			const insight = Math.max(.2, 1 + prof.stats.xp / 100);
+			const boost = 1 + this.chan("xp_boost") / 100;
+			const hc = this.rules === "hardcore" ? .72 : 1;
+			const night = this.isNightNow() ? NIGHT.xp : 1;
+			const l = [];
+			if (prof.stats.xp) l.push({ label: "Class / trait Insight", value: `×${insight.toFixed(2)}`, src: "class" });
+			l.push(...enchParts("xp_boost", (n) => `×${(1 + n / 100).toFixed(2)}`));
+			if (hc !== 1) l.push({ label: "Hardcore", value: "×0.72", src: "base" });
+			if (night > 1) l.push({ label: "Night", value: `×${night}`, src: "buff" });
+			num("xp", "Experience gained", `${Math.round(insight * boost * hc * night * 100)}%`, l);
+		}
+		// Kyo
+		{
+			const fort = Math.max(.2, 1 + prof.stats.kyo / 100);
+			const l = [];
+			if (prof.stats.kyo) l.push({ label: "Class / trait Fortune", value: `×${fort.toFixed(2)}`, src: "class" });
+			l.push(...enchParts("kyo_find", (n) => `×${(1 + n / 100).toFixed(2)}`));
+			num("kyo", "Kyo from kills", `${Math.round(fort * (1 + this.chan("kyo_find") / 100) * 100)}%`, l);
+		}
+		// Basic swing
+		{
+			const w = this.piece("weapon");
+			const type = w?.type ?? "normal";
+			const phys = 1 + (save.skills.physical.level - 1) * .02;
+			const raw = (11 + save.level * 2.4 + (w ? equipmentStats(w).damage : 8)) * phys * this.stab(type) * (1 + this.chan("might") / 100) * Math.max(.2, 1 + prof.stats.might / 100) * this.offenseFactor(null, "melee");
+			const l = [{ label: "Base 11 + level × 2.4 + weapon", value: String(Math.round(11 + save.level * 2.4 + (w ? equipmentStats(w).damage : 8))), src: "base" }, { label: `Physical skill ${save.skills.physical.level}`, value: `×${phys.toFixed(2)}`, src: "skill" }];
+			l.push(...enchParts("might", (n) => `×${(1 + n / 100).toFixed(2)}`), ...enchParts("edge", (n) => `×${(1 + n / 100).toFixed(2)}`));
+			if (prof.stats.might) l.push({ label: "Class / trait Might", value: `×${Math.max(.2, 1 + prof.stats.might / 100).toFixed(2)}`, src: "class" });
+			num("basic", "Basic swing (Attack key)", String(Math.round(raw)), l, "Against a neutral target. Element match, boss bane and similar apply on top.");
+		}
+
+		// Enchant / perk table
+		const ids = [...new Set([...ENCHANTS.map((e) => e.id).filter((id) => gearOf(id) || acctOf(id))])];
+		const bonuses = ids.map((id) => {
+			const g = gearOf(id), a = acctOf(id);
+			const def = ENCHANT_BY_ID[id];
+			return {
+				id, name: ename(id), gear: g, account: a, total: g + a,
+				effect: def ? def.gear(g + a) : "",
+				slots: SLOTS.map((s) => ({ slot: s, power: (this.piece(s)?.enchants ?? []).reduce((n, e) => n + (e.id === id ? e.power : 0), 0) })).filter((x) => x.power > 0),
+			};
+		}).sort((x, y) => y.total - x.total);
+
+		// Verses: real numbers for every move the character can use
+		const verses = {};
+		for (const m of base.moves) {
+			const mv = MOVE_BY_ID[m.id];
+			if (!mv) continue;
+			const tactic = moveTactic(mv), form = attackForm(mv);
+			const rank = save.abilityRanks?.[m.id] ?? 0;
+			const out = { form, acc: mv.accuracy, range: attackRange(mv), cd: Math.round(this.moveCooldown(mv) * 100) / 100, kind: "utility", hit: 0, critHit: 0, critPct: 0, heal: 0, shield: 0, rankMult: abilityMultiplier(save, m.id), shape: [], note: "" };
+			if (tactic === "heal" || mv.effect === "mend") { out.kind = "heal"; out.heal = Math.floor((18 + Math.max(8, mv.power) * .45) * abilityMultiplier(save, m.id)); }
+			else if (tactic === "ward") { out.kind = "ward"; out.shield = Math.floor((12 + mv.power) * abilityMultiplier(save, m.id)); }
+			else if (mv.power > 0 && tactic !== "surge") {
+				out.kind = "damage";
+				const shapeMult = tactic === "heavy" ? 1.7 : tactic === "channel" ? 1.25 : tactic === "blink" ? .55 : tactic === "lunge" ? .72 : tactic === "dash" ? .6 : tactic === "roll" ? .36 : 1;
+				const normal = this.damageParts(mv, null, { mult: shapeMult });
+				const crit = this.damageParts(mv, null, { mult: shapeMult, crit: true });
+				let hits = 1, each = 1;
+				if (form === "ranged" && rangedStyle(mv) === "volley") { hits = 3; each = .55; }
+				out.hit = Math.max(1, Math.floor(normal.dmg * each));
+				out.critHit = Math.max(1, Math.floor(crit.dmg * each));
+				out.critPct = Math.max(0, Math.min(100, Math.round(this.critChanceOf(mv))));
+				out.shape = [{ label: "Base", value: normal.base.toFixed(1) }, ...normal.factors.map((x) => ({ label: x.label, value: `×${x.value.toFixed(2)}` }))];
+				if (hits > 1) out.note = `Fires ${hits} shots, each ${out.hit}. Total ${out.hit * hits}.`;
+				const ds = Math.min(85, this.chan("double_strike"));
+				if (ds > 0) out.note = `${out.note} ${ds}% chance to hit twice.`.trim();
+			}
+			verses[m.id] = out;
+		}
+
+		// Skills with what they currently do
+		const skills = SKILLS.map((sk) => {
+			const st = save.skills[sk.id];
+			return { id: sk.id, name: sk.name, level: st.level, xp: st.xp, need: skillNeed(st.level), line: skillLine(sk.id, st.level), mult: aptitudeOf(save.classId, sk.id) };
+		});
+		const night = this.nightOn() ? { on: true, phase: this.isNightNow() ? "night" : "day", rules: `Night: foes ${NIGHT.strength}x health and damage, ${NIGHT.xp}x experience.` } : { on: false, phase: "day", rules: "Standard mode has no night." };
+		return { numbers, bonuses, verses, skillsFull: skills, night };
+	}
+	buildSheetBase() {
 		const save = this.save;
 		const c = CLASS_BY_ID[save.classId];
 		const prof = this.profile();
@@ -4996,7 +5744,7 @@ export class TurbzGame {
 		const cls = buffLines(c.stats, c.immune ?? []);
 		const tr = t ? buffLines(t.stats, t.immune ?? []) : { buffs: [], debuffs: [] };
 		const pct = (v) => `${v > 0 ? "+" : ""}${v}%`;
-		const stats = Object.entries(STAT_LABEL).map(([id, l]) => ({ id, name: l.name, about: l.about, mod: prof.stats[id] ?? 0, value: id === "crit" ? `${prof.stats.crit > 0 ? "+" : ""}${prof.stats.crit}` : pct(prof.stats[id] ?? 0) }));
+		const stats = Object.entries(STAT_LABEL).map(([id, l]) => ({ id, name: l.name, about: l.about, mod: prof.stats[id] ?? 0, cls: c.stats[id] ?? 0, trait: t?.stats?.[id] ?? 0, value: id === "crit" ? `${prof.stats.crit > 0 ? "+" : ""}${prof.stats.crit}` : pct(prof.stats[id] ?? 0) }));
 		const GOOD = new Set(["swift", "shell"]);
 		const NAMES = { swift: "Swift (+45% speed)", shell: "Shell (-30% damage)", burn: "Burning", soak: "Soaked (slowed)", root: "Rooted", sleep: "Asleep", gloom: "Gloom (-20% damage)", silence: "Silenced", spark: "Sparked", expose: "Exposed", leech: "Drained" };
 		const effects = this.status.filter((st) => st.t > 0).map((st) => ({ id: st.id, label: NAMES[st.id] ?? st.id, t: Math.ceil(st.t), good: GOOD.has(st.id) }));
@@ -5049,6 +5797,8 @@ export class TurbzGame {
 			name: save.name,
 			classId: save.classId,
 			sheet: this.buildSheet(),
+			clock: this.clockInfo(),
+			build: this.buildInfo(),
 			lobby: this.lobbyInfo(),
 			race: save.race,
 			level: save.level,
@@ -5117,14 +5867,15 @@ export class TurbzGame {
 				count: save.bag[it.id] ?? 0,
 				about: it.about, useProblem: this.itemProblem(it)
 			})),
-			talk: npc ? {
+			mapQuests: this.mapQuestLog(),
+			talk: this.mapTalkSnap() ?? (npc ? {
 				id: npc.id,
 				name: npc.name,
 				role: npc.role,
 				line: npc.lines[this.talkI] ?? npc.lines[0],
 				shop: npc.shop ?? null,
 				shrine: npc.shrine ?? null
-			} : null,
+			} : null),
 			shrine: this.shrine ? `${TYPES[this.shrine.type].name} shrine · round ${this.shrine.round}/3` : "",
 			companion: this.activeSpirits().filter((s) => s.hp > 0).map((s) => `${s.name} lv${s.level}`).join(", ") || "No spirits out",
 			spirits: (save.spirits ?? []).map((s) => ({
@@ -5329,6 +6080,7 @@ export class TurbzGame {
 				drawShadowName(ctx, npc.name.split(" ").slice(-1)[0], pos.x, pos.y - 44, "#f0e2c8");
 			}
 		}
+		else if (save.map.startsWith("custom-")) this.drawMapPlaces(ctx);
 		else {
 			const ex = this.dungeonExitAt();
 			drawRift(ctx, ex.x, ex.y + 8);
@@ -5347,6 +6099,7 @@ export class TurbzGame {
 			ctx.fillStyle = "#ffc45b"; ctx.fillRect(fire.x - 4, fire.y - 16, 8, 10);
 			drawShadowName(ctx, "CAMP", fire.x, fire.y - 40, "#ffc45b");
 		}
+		if (this.rules === "hardcore") this.drawBuild(ctx, w, h);
 		for (const node of this.world.spawns) if (node.kind === "node") {
 			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
 			paintNode(ctx, node.node, node.x, node.y + 2);
@@ -5609,6 +6362,7 @@ export class TurbzGame {
 			ctx.fillText(f.text, f.x, f.y);
 		}
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+		this.drawNight(ctx, w, h);
 		if (this.channel || this.castLock > 0) {
 			const p = this.channel ? this.channel.t / this.channel.need : 1 - this.castLock / Math.max(.05, this.castLockMax);
 			ctx.fillStyle = "#1a1214";
@@ -5616,6 +6370,91 @@ export class TurbzGame {
 			ctx.fillStyle = this.castLock > 0 ? "#e6c15a" : "#f0e2c8";
 			ctx.fillRect(w / 2 - 46, h / 2 - 78, 92 * Math.max(0, Math.min(1, p)), 6);
 		}
+	}
+	paintLog(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fillRect(x + 2, y + 27, 30, 4);
+		for (let i = 0; i < 4; i++) {
+			const by = y + 2 + i * 7;
+			ctx.fillStyle = "#4a2e1a"; ctx.fillRect(x + 1, by, 30, 7);
+			ctx.fillStyle = i % 2 ? "#8a5a34" : "#9a6a3c"; ctx.fillRect(x + 2, by + 1, 28, 5);
+			ctx.fillStyle = "#6b4528"; ctx.fillRect(x + 2, by + 4, 28, 2);
+			ctx.fillStyle = "#d2a566"; ctx.fillRect(x + 1, by + 1, 5, 5);
+			ctx.fillStyle = "#a97a45"; ctx.fillRect(x + 3, by + 3, 2, 2);
+		}
+	}
+	/** World-space pass: placed logs, safe zone outlines and the build cursor. */
+	drawBuild(ctx, w, h) {
+		const save = this.save;
+		const sv = save.survival;
+		if (!sv) return;
+		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
+		for (const l of sv.logs) {
+			if (l.map !== save.map) continue;
+			const x = l.tx * 32, y = l.ty * 32;
+			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
+			this.paintLog(ctx, x, y);
+		}
+		const inside = this.playerSafeCamp();
+		ctx.save();
+		for (const c of sv.campfires) {
+			if (c.map !== save.map) continue;
+			const r = zoneRect(c);
+			if (r.x1 < this.cam.x - halfW || r.x0 > this.cam.x + halfW || r.y1 < this.cam.y - halfH || r.y0 > this.cam.y + halfH) continue;
+			const on = !!inside && inside.x === c.x && inside.y === c.y;
+			ctx.fillStyle = `rgba(255,196,91,${on ? .09 : .04})`;
+			ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+			ctx.strokeStyle = `rgba(255,196,91,${on ? .8 : .45})`;
+			ctx.lineWidth = 2;
+			ctx.setLineDash([8, 6]);
+			ctx.strokeRect(r.x0 + 1, r.y0 + 1, r.x1 - r.x0 - 2, r.y1 - r.y0 - 2);
+		}
+		ctx.restore();
+		if (this.buildMode && this.mouseWorld) {
+			const { tx, ty } = tileAt(this.mouseWorld.x, this.mouseWorld.y);
+			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty);
+			const check = placed ? { ok: true } : checkPlaceLog({
+				world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
+				terrainBlocked: (px, py) => blocked(this.world, px, py),
+				keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
+			});
+			ctx.save();
+			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";
+			ctx.fillRect(tx * 32, ty * 32, 32, 32);
+			ctx.strokeStyle = placed ? "#ffa03c" : check.ok ? "#78e678" : "#e65046";
+			ctx.lineWidth = 2;
+			ctx.strokeRect(tx * 32 + 1, ty * 32 + 1, 30, 30);
+			ctx.strokeStyle = "rgba(255,255,255,.18)";
+			ctx.setLineDash([4, 6]);
+			ctx.beginPath(); ctx.arc(save.x, save.y, BUILD_REACH, 0, Math.PI * 2); ctx.stroke();
+			ctx.restore();
+		}
+	}
+	/** Screen-space pass: night tint with warm light around you and campfires. */
+	drawNight(ctx, w, h) {
+		const s = this.save?.dayNight;
+		if (!s || !this.nightOn()) return;
+		const d = darkness(s);
+		if (d <= .01) return;
+		ctx.fillStyle = `rgba(8,10,34,${(.58 * d).toFixed(3)})`;
+		ctx.fillRect(0, 0, w, h);
+		ctx.save();
+		ctx.globalCompositeOperation = "lighter";
+		const sx = (x) => w / 2 + (x - this.cam.x) * this.zoom;
+		const sy = (y) => h / 2 + (y - this.cam.y) * this.zoom;
+		const glow = (x, y, r, a, rgb) => {
+			const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+			g.addColorStop(0, `rgba(${rgb},${a})`);
+			g.addColorStop(1, `rgba(${rgb},0)`);
+			ctx.fillStyle = g;
+			ctx.fillRect(x - r, y - r, r * 2, r * 2);
+		};
+		glow(sx(this.save.x), sy(this.save.y - 10), 90 * this.zoom, .2 * d, "255,214,150");
+		for (const c of this.save.survival?.campfires ?? []) {
+			if (c.map !== this.save.map) continue;
+			const flick = 1 + Math.sin(this.clock * 9 + c.x) * .06;
+			glow(sx(c.x), sy(c.y - 12), 200 * this.zoom * flick, .34 * d, "255,150,60");
+		}
+		ctx.restore();
 	}
 	clearMenu() {
 		this.menu = null;

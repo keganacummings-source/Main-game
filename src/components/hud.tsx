@@ -60,6 +60,11 @@ export function Vitals({ snap }: { snap: Snap }) {
       </div>
       <Meter label="HP" value={snap.hp} max={snap.maxHp} kind="hp" extra={snap.shield > 0 ? ` +${snap.shield}` : ""} testid="vitals-hp" />
       <Meter label="XP" value={snap.xp} max={snap.xpNeed} kind="xp" testid="vitals-xp" />
+      {snap.mapQuests?.[0] && (
+        <p className="truncate text-kyo" data-testid="vitals-map-quest" title={snap.mapQuests[0].lines.join("\n")}>
+          ◆ {snap.mapQuests[0].name}: {snap.mapQuests[0].ready ? `report to ${snap.mapQuests[0].turnIn}` : (snap.mapQuests[0].lines.find((l) => l.startsWith("[ ]")) ?? "").slice(4)}
+        </p>
+      )}
       {effects.length > 0 && (
         <div className="effect-row" data-testid="vitals-effects">
           {effects.map((e) => (
