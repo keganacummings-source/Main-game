@@ -42,12 +42,12 @@ function Delta({ snap, g }: { snap: Snap; g: Gear }) {
   return <span className={d > 0 ? "stat-up" : "stat-down"}>{d > 0 ? "▲" : "▼"} {Math.abs(d)}</span>;
 }
 
-function GearCard({ snap, g, selected, onPick, children }: { snap: Snap; g: Gear; selected?: boolean; onPick?: () => void; children?: React.ReactNode }) {
+function GearCard({ snap, g, selected, onPick, onEquip, children }: { snap: Snap; g: Gear; selected?: boolean; onPick?: (e: React.MouseEvent) => void; onEquip?: () => void; children?: React.ReactNode }) {
   const worn = snap.equipped.includes(g.uid);
   const locked = snap.locked.includes(g.uid);
   return (
     <div className={`gear-card q-${g.quality} ${selected ? "gear-card-on" : ""}`}>
-      <button type="button" className="gear-card-main" onClick={onPick} aria-pressed={selected}>
+      <button type="button" className="gear-card-main" onClick={onPick} onDoubleClick={onEquip} title={onEquip ? "Double-click to wear" : undefined} aria-pressed={selected}>
         <span className="gear-card-name">{g.name}</span>
         <span className="gear-card-meta">
           Lv {g.level} · {SLOT_LABEL[g.slot]} · <span className={`type-${g.type}`}>{TYPES[g.type]?.name ?? g.type}</span>
@@ -258,10 +258,11 @@ export function Bag({ snap, game }: Props) {
                 </label>
               </div>
               <SellAllBar snap={snap} game={game} />
+              <p className="text-dim">Click a piece to read it. Double-click to wear it.</p>
               {gear.length ? (
                 <div className="gear-grid">
                   {gear.map((g) => (
-                    <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(snap.selected === g.uid ? null : g.uid)} />
+                    <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
                   ))}
                 </div>
               ) : (
@@ -567,6 +568,90 @@ export function LootPicker({ snap, game }: Props) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Loot chest (Hardcore). The world keeps running while this is open.
+// ---------------------------------------------------------------------------
+
+export function ChestPanel({ snap, game }: Props) {
+  const chest = snap.chest;
+  const [pick, setPick] = useState<{ kind: "gear" | "item"; key: string } | null>(null);
+  if (!chest) return <p className="text-dim">No chest open. Walk up to a chest and press E, or click it.</p>;
+  const take = (kind: "gear" | "item", key: string) => {
+    game?.takeFromChest(chest.id, kind, key);
+    setPick(null);
+  };
+  const click = (kind: "gear" | "item", key: string) => (e: React.MouseEvent) => {
+    if (e.shiftKey) take(kind, key);
+    else setPick(pick?.kind === kind && pick.key === key ? null : { kind, key });
+  };
+  const gearPick = pick?.kind === "gear" ? chest.gear.find((g) => g.uid === pick.key) ?? null : null;
+  const itemPick = pick?.kind === "item" ? chest.items.find((it) => it.id === pick.key) ?? null : null;
+  const mm = Math.floor(chest.t / 60);
+  const ss = String(chest.t % 60).padStart(2, "0");
+  return (
+    <div className="ui-stack" data-testid="chest-panel">
+      <div className="ui-row">
+        <span className="text-kyo">{chest.title}</span>
+        <span className={chest.t < 60 ? "text-blood" : "text-dim"}>Gone in {mm}:{ss}</span>
+      </div>
+      <p className="text-dim">Click to inspect · Shift+click to take · the game keeps running.{chest.near ? "" : " Walk back to the chest to take things."}</p>
+      <div className="gear-actions">
+        <button type="button" className="px-btn px-btn-kyo" data-testid="chest-take-all" disabled={!chest.near} onClick={() => game?.takeAllChest(chest.id)}>Take everything</button>
+      </div>
+      {gearPick && (
+        <div className={`gear-detail q-${gearPick.quality}`} data-testid="chest-detail">
+          <div className="gear-detail-head">
+            <div>
+              <p className="gear-card-name">{gearPick.name}</p>
+              <p className="text-dim">
+                Lv {gearPick.level} · {SLOT_LABEL[gearPick.slot]} · {QUALITY_LABEL[gearPick.quality]} · <span className={`type-${gearPick.type}`}>{TYPES[gearPick.type]?.name ?? gearPick.type}</span> · {statLine(gearPick)} · score {gearScore(gearPick)} <Delta snap={snap} g={gearPick} />
+              </p>
+              <p className="text-dim">{(() => { const w = wornIn(snap, gearPick.slot); return w ? `You wear: ${w.name}, Lv ${w.level}, score ${gearScore(w)}.` : "Nothing worn in this slot."; })()}</p>
+            </div>
+            <button type="button" className="float-win-btn" aria-label="Close details" onClick={() => setPick(null)}>×</button>
+          </div>
+          <EnchantList g={gearPick} />
+          <p className="text-dim">{fxLine(gearPick)}</p>
+          <div className="gear-actions">
+            <button type="button" className="px-btn px-btn-kyo" disabled={!chest.near} onClick={() => take("gear", gearPick.uid)}>Take</button>
+          </div>
+        </div>
+      )}
+      {itemPick && (
+        <div className="gear-detail" data-testid="chest-detail">
+          <div className="gear-detail-head">
+            <div>
+              <p className="gear-card-name">{itemPick.name} <span className="text-kyo">×{itemPick.count}</span></p>
+              <p className="text-dim">{itemPick.about}</p>
+            </div>
+            <button type="button" className="float-win-btn" aria-label="Close details" onClick={() => setPick(null)}>×</button>
+          </div>
+          <div className="gear-actions">
+            <button type="button" className="px-btn px-btn-kyo" disabled={!chest.near} onClick={() => take("item", itemPick.id)}>Take</button>
+          </div>
+        </div>
+      )}
+      {chest.gear.length > 0 && (
+        <div className="gear-grid">
+          {chest.gear.map((g) => (
+            <GearCard key={g.uid} snap={snap} g={g} selected={gearPick?.uid === g.uid} onPick={click("gear", g.uid)} />
+          ))}
+        </div>
+      )}
+      {chest.items.length > 0 && (
+        <div className="item-grid">
+          {chest.items.map((it) => (
+            <button key={it.id} type="button" className={`item-card text-left ${itemPick?.id === it.id ? "gear-card-on" : ""}`} onClick={click("item", it.id)}>
+              <span className="item-card-name">{it.name} <span className="text-kyo">×{it.count}</span></span>
+              <span className="text-dim item-card-about">{it.about}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

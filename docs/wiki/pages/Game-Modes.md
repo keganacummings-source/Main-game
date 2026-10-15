@@ -11,7 +11,7 @@ From the hub you can pick:
 | **Designer Mode** | The Map Builder and the Enemy Designer. See [Designer Mode](Designer-Mode). |
 | **Options** | Account and friends. |
 
-TurboHunt and Hardcore keep **separate saves**. Your account-wide progress (skills, account level, perks, Account Score and ghost slots) is shared. See [Death and Account](Death-and-Account).
+TurboHunt and Hardcore keep **separate saves**. Your account-wide progress (skills, account level, perks and Account Score) is shared. See [Death and Account](Death-and-Account).
 
 ## TurboHunt vs Hardcore
 

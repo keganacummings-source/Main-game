@@ -3,6 +3,7 @@ import { ALCHEMY_RECIPES, ITEM_BY_ID, TYPES, type TypeId } from "@/game/content"
 import { classGendered, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
+import { BUILD_PIECES, BUILD_PIECE_IDS } from "@/game/building";
 import { resetLayout } from "@/game/ui-layout";
 import { listChat, postChat } from "@/game/social-client";
 import type { ChatLine } from "@/game/social-types";
@@ -539,25 +540,28 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
-  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "skillPoints"] as const);
+  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "ghostStore", "ghostBox", "rules", "bag"] as const);
   const [open, setOpen] = useState<string | null>(null);
+  const [swap, setSwap] = useState<string | null>(null);
   const following = s.spirits.filter((x) => x.active).length;
   const sel = s.spirits.find((x) => x.uid === open) ?? null;
+  const hc = s.rules === "hardcore";
+  const boxCost = Object.entries(BUILD_PIECES.ghostbox.cost).map(([id, n]) => `${n} ${ITEM_BY_ID[id]?.name ?? id}`).join(", ");
+  const haveBoxMats = Object.entries(BUILD_PIECES.ghostbox.cost).every(([id, n]) => (s.bag.find((it) => it.id === id)?.count ?? 0) >= n);
+  const shinyTag = (on: boolean) => (on ? <span className="shiny-tag">✦ SHINY</span> : null);
   return (
     <div className="ui-stack" data-testid="spirit-panel">
       <div className="ui-row">
-        <span>Following <span className="text-kyo">{following}/{s.spiritSlots}</span> · Party {s.spirits.length}/{s.spiritCap}</span>
-        <button type="button" className="px-btn ui-btn-sm" disabled={s.skillPoints < 1 || s.spiritSlots >= 10} onClick={() => game?.spendGhostSlot()}>
-          {s.spiritSlots >= 10 ? "Slots maxed" : `+1 slot · 1 pt (${s.skillPoints})`}
-        </button>
+        <span>Out <span className="text-kyo">{following}/{s.spiritSlots}</span> · Party <span className="text-kyo">{s.spirits.length}/{s.spiritCap}</span> · Ghost Box {s.ghostStore.length}</span>
       </div>
+      <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Catch more and they go to your Ghost Box.</p>
       {s.jarLeft > 0 && <p className="text-kyo">Ghost jar humming · {s.jarLeft}s</p>}
       {!s.spirits.length && <Empty>No spirits yet. A fallen foe may stay and join you; a ghost jar raises the odds for a minute.</Empty>}
       {sel && (
         <div className="gear-detail">
           <div className="gear-detail-head">
             <div>
-              <p className={typeClass(sel.type)}>{sel.name} <span className="text-dim">Lv {sel.level}</span></p>
+              <p className={typeClass(sel.type)}>{sel.name} <span className="text-dim">Lv {sel.level}</span> {shinyTag(sel.shiny)}</p>
               <p className="text-dim">{sel.known.filter((m) => m.slotted).length}/3 readied · {sel.known.length} known · tap a move to ready it</p>
             </div>
             <button type="button" className="float-win-btn" aria-label="Close" onClick={() => setOpen(null)}>×</button>
@@ -572,6 +576,7 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
           </div>
           <div className="gear-actions">
             <button type="button" className="px-btn px-btn-kyo" onClick={() => game?.setSpiritActive(sel.uid, !sel.active)}>{sel.active ? "Call back" : "Send out"}</button>
+            {s.ghostBox.near && <button type="button" className="px-btn" onClick={() => { game?.storeSpirit(sel.uid); setOpen(null); }}>Put in Ghost Box</button>}
             <ConfirmButton plain label="Dismiss" confirm="Tap again" onConfirm={() => { game?.dismissSpirit(sel.uid); setOpen(null); }} />
           </div>
         </div>
@@ -579,12 +584,44 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
       <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties}>
         {s.spirits.map((sp) => (
           <button key={sp.uid} type="button" className={`ui-card spirit-card ${sp.active ? "ui-card-hl" : ""} ${open === sp.uid ? "gear-card-on" : ""}`} data-testid={`spirit-${sp.uid}`} onClick={() => setOpen(open === sp.uid ? null : sp.uid)}>
-            <span className="ui-row"><span className={typeClass(sp.type)}>{sp.name}</span><span className="text-dim">Lv {sp.level}</span></span>
+            <span className="ui-row"><span className={`${typeClass(sp.type)} ${sp.shiny ? "shiny-name" : ""}`}>{sp.shiny ? "✦ " : ""}{sp.name}</span><span className="text-dim">Lv {sp.level}</span></span>
             <Meter value={sp.hp} max={sp.max} small kind={sp.hp / sp.max < 0.3 ? "bad" : "good"} />
-            <span className="text-dim">{sp.active ? "Following" : "Benched"} · {sp.known.filter((m) => m.slotted).length}/3 ready</span>
+            <span className="text-dim">{sp.active ? "Out" : "In party"} · {sp.known.filter((m) => m.slotted).length}/3 ready</span>
           </button>
         ))}
       </div>
+      <Section title="GHOST BOX" right={<span className={s.ghostBox.near ? "text-kyo" : "text-dim"}>{!s.ghostBox.placed ? "Not built" : s.ghostBox.near ? "Open" : "At your camp"} · {s.ghostStore.length}/{s.ghostBox.max}</span>}>
+        {!s.ghostBox.placed && (
+          <div className="ui-stack">
+            <p className="text-dim">{hc ? `Build a Ghost Box inside a camp (${boxCost}) from Survival & Camp → Build, or stand in a camp and place it here.` : `Place a Ghost Box in the overworld (${boxCost}). Stand by it to store, swap and release ghosts.`}</p>
+            <button type="button" className="px-btn px-btn-kyo" data-testid="place-ghostbox" disabled={!haveBoxMats} onClick={() => game?.placeGhostBoxHere()}>Place Ghost Box here</button>
+          </div>
+        )}
+        {s.ghostBox.placed && !s.ghostBox.near && <p className="text-dim">Walk to your Ghost Box to manage the {s.ghostStore.length} ghosts inside.</p>}
+        {s.ghostBox.placed && s.ghostBox.near && (
+          <div className="ui-stack" data-testid="ghostbox-open">
+            {s.spirits.length >= s.spiritCap && <p className="text-dim">Party full: pick a party ghost to swap out, then Take.{" "}
+              <select className="px-input" aria-label="Swap out" value={swap ?? ""} onChange={(e) => setSwap(e.target.value || null)}>
+                <option value="">Swap with…</option>
+                {s.spirits.map((sp) => <option key={sp.uid} value={sp.uid}>{sp.name} Lv {sp.level}</option>)}
+              </select>
+            </p>}
+            {!s.ghostStore.length && <Empty>The box is empty. Open a party ghost above and choose "Put in Ghost Box".</Empty>}
+            <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties}>
+              {s.ghostStore.map((g) => (
+                <div key={g.uid} className="ui-card spirit-card">
+                  <span className="ui-row"><span className={`${typeClass(g.type)} ${g.shiny ? "shiny-name" : ""}`}>{g.shiny ? "✦ " : ""}{g.name}</span><span className="text-dim">Lv {g.level}</span></span>
+                  <div className="gear-actions">
+                    <button type="button" className="px-btn ui-btn-sm px-btn-kyo" disabled={s.spirits.length >= s.spiritCap && !swap} onClick={() => { game?.takeSpirit(g.uid, swap); setSwap(null); }}>Take</button>
+                    <ConfirmButton plain label="Release" confirm="Sure?" onConfirm={() => game?.releaseStored(g.uid)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+            {!hc && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.pickUpGhostBox()}>Pack up the Ghost Box</button>}
+          </div>
+        )}
+      </Section>
     </div>
   );
 });
@@ -663,10 +700,28 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
       <Section title="CAMP" right={<span className={s.nearCamp ? "text-kyo" : "text-dim"}>{s.nearCamp ? "Campfire in reach" : "No campfire near"}</span>}>
         <div className="gear-actions">
           <button type="button" className="px-btn" disabled={s.nearCamp || count("timber") < 3} onClick={() => game?.survivalAction("fire")}>Build campfire · 3 logs</button>
-          <button type="button" className="px-btn" data-testid="build-toggle-btn" disabled={!s.build.on && count("timber") < 1} onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build walls (F)"}</button>
-          <button type="button" className="px-btn" data-testid="hold-followers-btn" onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Followers wait here"}</button>
+          <button type="button" className="px-btn" data-testid="build-toggle-btn" onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build (F)"}</button>
+          <button type="button" className="px-btn" data-testid="hold-followers-btn" disabled={!s.build.holding && !s.build.beds} onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Send followers to bed"}</button>
         </div>
-        <p className="text-dim">A campfire makes a 15×15 safe zone. Logs placed: {s.build.placed}.{s.build.inZone ? " You are inside a safe zone." : ""}</p>
+        <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="build-pieces">
+          {BUILD_PIECE_IDS.map((id) => {
+            const def = BUILD_PIECES[id];
+            const have = Object.entries(def.cost).every(([k, n]) => count(k) >= n);
+            const on = s.build.on && s.build.piece === id;
+            return (
+              <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={id === "ghostbox" && s.build.ghostBox} onClick={() => game?.setBuildPiece(id)}>
+                <span className="text-kyo">{def.name}{id === "ghostbox" && s.build.ghostBox ? " · placed" : ""}</span>
+                <span className="cost-row">
+                  {Object.entries(def.cost).map(([k, n]) => (
+                    <span key={k} className={`cost-chip ${count(k) >= n ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[k]?.name ?? k} {count(k)}/{n}</span>
+                  ))}
+                </span>
+                <span className="text-dim">{have ? def.about : "Missing materials"}</span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-dim">A campfire makes a 15×15 safe zone. Walls go anywhere; beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up. Walls placed: {s.build.placed} · Beds: {s.build.beds}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
       </Section>
       <Section title="CAMPFIRE CRAFTING">
         <div className="ui-grid" style={{ "--min": "210px" } as React.CSSProperties}>

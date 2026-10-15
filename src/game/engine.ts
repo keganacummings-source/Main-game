@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL } from "./item-use";
-import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, type DayNightState } from "./daynight";
-import { BUILD_REACH, LOG_COST, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
+import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
+import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, buildProceduralDungeon, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonState } from "./procedural-dungeon";
@@ -33,6 +33,7 @@ import {
   SET_BY_ID,
   SETS,
   SKILLS,
+  masteryOf,
   TILE,
   TYPES,
   WITCH_NAMES,
@@ -117,7 +118,7 @@ import { initActorSprites } from "./actor-sprites";
 import { isPinned } from "./ui-layout-store";
 import { enemyDesignFor, installEnemyDesigns } from "./enemy-design";
 import {
-	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
+	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_ENRAGE, DEATH_MARK, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
 	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, enemyHitDamage, enemyTargets,
 	gearSellValue, hardcoreGrowth, itemSellValue, rollEnemyKit, standardGrowth,
 } from "./balance";
@@ -141,7 +142,7 @@ import {
   type WorldData,
 } from "./world";
 
-export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot";
+export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest";
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
 export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
@@ -189,9 +190,14 @@ export type Snap = {
   shrine: string;
   companion: string;
   box: string[];
-  spirits: { uid: string; name: string; type: TypeId; level: number; rarity: number; hp: number; max: number; active: boolean; known: { id: string; name: string; about: string; type: TypeId; player: boolean; slotted: boolean }[]; slots: string[] }[];
+  spirits: { uid: string; name: string; type: TypeId; level: number; rarity: number; hp: number; max: number; active: boolean; shiny: boolean; known: { id: string; name: string; about: string; type: TypeId; player: boolean; slotted: boolean }[]; slots: string[] }[];
   spiritSlots: number;
   spiritCap: number;
+  /** Ghosts kept in the Ghost Box. */
+  ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean }[];
+  ghostBox: { placed: boolean; near: boolean; max: number };
+  /** The loot chest you have open (Hardcore). */
+  chest: ChestView | null;
   jarLeft: number;
   known: { id: string; name: string; type: TypeId }[];
   stash: string[];
@@ -247,7 +253,7 @@ export type Snap = {
   classId: string;
   sheet: Sheet | null;
   clock: { phase: "day" | "night"; label: string; left: string; dark: number; active: boolean };
-  build: { on: boolean; logs: number; placed: number; inZone: boolean; holding: boolean };
+  build: { on: boolean; logs: number; placed: number; inZone: boolean; holding: boolean; piece: string; beds: number; ghostBox: boolean };
   lobby: { code: string; role: "solo" | "host" | "guest"; net: string; members: { id: string; name: string; classId: string; className: string; level: number; hp: number; max: number; map: string; self: boolean; host: boolean }[] };
 };
 export type Sheet = {
@@ -284,7 +290,7 @@ type Mob = {
 type Spirit = {
   uid: string; species: string; name: string; type: TypeId; template: number; level: number; rarity: number;
   look: GhostLook; move: string; hp: number; max: number; speed: number;
-  known?: string[]; slots?: string[]; active?: boolean;
+  known?: string[]; slots?: string[]; active?: boolean; shiny?: boolean;
 };
 type GhostPet = { species: string; level: number; rarity: number; look?: GhostLook; move?: string; name?: string; type?: TypeId; template?: number; hp?: number; max?: number; speed?: number };
 type SkillState = Record<SkillId, { level: number; xp: number }>;
@@ -332,12 +338,25 @@ type HuntState = {
   waveIn: number;
   squads: number;
 };
+export type ChestView = { id: string; title: string; t: number; near: boolean; gear: Gear[]; items: { id: string; name: string; about: string; count: number }[] };
 type PendingLoot = { title: string; kyo: number; items: { id: string; count: number }[]; gear: Gear[]; tier: number };
 type Part = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: string };
 type Flo = { x: number; y: number; text: string; life: number; color: string };
 type TurnStep = { side: "you" | "foe" | "spirit"; id: string };
 
 const SAVE_KEY = "turbz-v3";
+/** Ghosts out with you at once, ghosts in the party, and ghosts the Ghost Box can hold. */
+const OUT_MAX = 3;
+const PARTY_MAX = 6;
+const GHOST_STORE_MAX = 300;
+/** One ghost in a hundred is shiny: lava-lamp colours, livelier, and it circles you. */
+const SHINY_CHANCE = 0.01;
+const rollShiny = () => Math.random() < SHINY_CHANCE;
+/** Ghost verses recharge this much slower than yours. */
+const GHOST_CD_MULT = 1.5;
+/** Hardcore loot chests: how long they last and how close you must be to open one. */
+const CHEST_SECONDS = 300;
+const CHEST_REACH = 56;
 const HC_KEY = "turbz-hardcore-v1";
 const emptySnap = (): Snap => ({
 	mode: "title",
@@ -383,7 +402,10 @@ const emptySnap = (): Snap => ({
 	box: [],
 	spirits: [],
 	spiritSlots: 3,
-	spiritCap: 20,
+	spiritCap: 6,
+	ghostStore: [],
+	ghostBox: { placed: false, near: false, max: 300 },
+	chest: null,
 	jarLeft: 0,
 	known: [],
 	stash: [],
@@ -428,7 +450,7 @@ const emptySnap = (): Snap => ({
 	sheet: null,
 	clock: { phase: "day", label: "Day", left: "", dark: 0, active: false },
 	mapQuests: [],
-	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false },
+	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false, piece: "wood", beds: 0, ghostBox: false },
 	lobby: { code: "", role: "solo", net: "", members: [] }
 });
 let snap: Snap = emptySnap();
@@ -928,12 +950,19 @@ export class TurbzGame {
 	boot(save) {
 		this.direction = "down";
 		this.duel = null; this.sleeping = false;
+		this.refundNote = 0;
 		this.normalize(save);
 		this.save = save;
+		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
 		// Enemy Designer creations join (or replace) the monster tables before the world is built.
 		try { installEnemyDesigns(); } catch { /* a broken design must not stop the game */ }
-		this.overworld = buildWorld(save.seed, this.rules === "hardcore");
+		// The overworld is always the embedded Veilreach. It is rebuilt fresh for every boot (rejoining from
+		// the main menu used to keep the old generated world here).
+		this.overworld = null;
+		this.overworldFile = null;
 		this.mobs = [];
+		this.nodeStash = [];
+		this.chests = null;
 		this.dormant = [];
 		this.populationMap = "";
 		this.contract = [];
@@ -1001,7 +1030,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save) return;
 		if (map === "world") {
-			// The overworld is Veilreach (main-world.ts) for both modes; the generated world is the fallback.
+			// The overworld is Veilreach (main-world.ts), embedded in the game, for both modes.
 			const main = mainWorldFile();
 			if (!this.overworld || this.overworldFile !== main) {
 				this.overworldFile = main;
@@ -1015,7 +1044,7 @@ export class TurbzGame {
 					}
 					w.entry = { x: (main.spawn?.tx ?? 1) * 32 + 16, y: (main.spawn?.ty ?? 1) * 32 + 16 };
 					this.overworld = w;
-				} else this.overworld = buildWorld(save.seed, this.rules === "hardcore");
+				}
 			}
 			this.world = this.overworld;
 			this.world.cache = null;
@@ -1045,6 +1074,7 @@ export class TurbzGame {
 			this.world.cache = null;
 		}
 		if (!map.startsWith("custom-") && !(map === "world" && this.overworldFile)) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
+		this.applyTakenNodes(map);
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
 		// Rebuild when the map's population isn't this map's. Returning from a rift or crypt used to
@@ -1227,7 +1257,8 @@ export class TurbzGame {
 		const party = m.party ? .55 : m.summoner ? .7 : 1;
 		const shrine = m.id?.startsWith?.("shrine") ? 1 + (this.shrine?.round ?? 1) * .25 : 1;
 		const base = Math.max(floorHp, this.powerRef.hit * t.hits) * stats.hp * party * shrine;
-		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1);
+		const bountyRage = m.enraged && (m.bounty || m.bountySpirit);
+		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1) * (bountyRage ? BOUNTY_ENRAGE.hp : 1);
 		const max = Math.max(1, Math.floor(base * mult));
 		const ratio = fresh || !(m.max > 0) ? 1 : Math.max(0, Math.min(1, m.hp / m.max));
 		m.level = level;
@@ -1236,7 +1267,7 @@ export class TurbzGame {
 		m.baseMax = Math.floor(base);
 		m.frac = t.frac * party;
 		m.nightScaled = this.isNightNow();
-		m.speed = Math.max(1, Math.round((this.playerSpeed() + t.speedOffset) * stats.speed * (m.enraged ? 1.25 : 1)));
+		m.speed = Math.max(1, Math.round((this.playerSpeed() + t.speedOffset) * stats.speed * (m.enraged ? 1.25 : 1) * (bountyRage ? BOUNTY_ENRAGE.speed : 1)));
 	}
 	step(dt) {
 		if (!this.save || snap.mode !== "play" || this.dead) {
@@ -1269,9 +1300,11 @@ export class TurbzGame {
 			this.enforceSafeZones();
 		} else this.tickGuestHurt(dt);
 		this.tickSpirits(dt);
+		this.tickGhostCombat(dt);
 		this.tickTurns(dt);
 		if (this.rules === "hardcore" && !this.dead) this.tickSurvival(dt);
 		this.tickParty(dt);
+		this.tickChests(dt);
 		this.tickLater(dt);
 		this.tickFx(dt);
 		this.netAcc += dt;
@@ -1338,6 +1371,7 @@ export class TurbzGame {
 		const before = s.t;
 		const sleptNight = this.sleeping && isNight(s);
 		const flip = advanceDayNight(s, dt * skipRate(s, this.sleeping));
+		if (flip === "dawn") this.regrowNodes(sleptNight ? "sleep" : "day");
 		if (flip === "dusk") {
 			this.say(`Night falls. Foes are ${NIGHT.strength}x as strong, but give ${NIGHT.xp}x experience.`);
 			this.tone(110, .3, "sine");
@@ -1373,11 +1407,27 @@ export class TurbzGame {
 		if (!this.world) return;
 		this.world.solids = this.buildOn() ? solidsFor(this.save.survival.logs, map ?? this.save.map, this.world.w) : undefined;
 	}
+	/** Picks what build mode places: a wooden or brick wall, a bed, or the Ghost Box. */
+	setBuildPiece(piece) {
+		if (!BUILD_PIECES[piece]) return;
+		this.buildPiece = piece;
+		if (this.buildOn() && !this.dead) {
+			this.buildMode = true;
+			this.dest = null;
+			const def = BUILD_PIECES[piece];
+			this.say(`Building ${def.name} (${this.costLine(def.cost)}). Click a tile to place it; click a placed piece to pick it up. F or Esc to stop.`);
+		}
+		this.syncHud(true);
+	}
+	costLine(cost) {
+		return costText(cost, Object.fromEntries(Object.keys(cost).map((id) => [id, ITEM_BY_ID[id]?.name ?? id])));
+	}
 	toggleBuild(force?: boolean) {
 		if (!this.buildOn() || this.dead) return;
 		this.buildMode = typeof force === "boolean" ? force : !this.buildMode;
 		this.dest = null;
-		this.say(this.buildMode ? "Build mode. Click a tile to place a log. Click a placed log to pick it up. F or Esc to stop." : "Build mode off.");
+		const def = BUILD_PIECES[this.buildPiece ?? "wood"] ?? BUILD_PIECES.wood;
+		this.say(this.buildMode ? `Build mode: ${def.name} (${this.costLine(def.cost)}). Click a tile to place it. Click a placed piece to pick it up. F or Esc to stop.` : "Build mode off.");
 		this.syncHud(true);
 	}
 	buildAt(x, y) {
@@ -1385,23 +1435,51 @@ export class TurbzGame {
 		if (!this.buildOn() || !this.world) return;
 		const { tx, ty } = tileAt(x, y);
 		const placed = save.survival.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty);
-		if (placed) this.removeLog(placed);
-		else this.placeLog(tx, ty);
+		if (placed) return this.removeLog(placed);
+		const bed = save.survival.beds.find((b) => b.map === save.map && b.tx === tx && b.ty === ty);
+		if (bed) return this.removeFurniture("bed", bed);
+		const box = save.ghostBox;
+		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
+		const piece = this.buildPiece ?? "wood";
+		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
+		return this.placeLog(tx, ty, piece);
 	}
-	placeLog(tx, ty) {
+	/** Shared placement rules for every camp piece. */
+	checkPiece(piece, tx, ty) {
 		const save = this.save;
-		if (save.survival.logs.length >= MAX_LOG_TILES) { this.say("You have placed the most logs the frontier can hold. Pick some up."); return false; }
-		const check = checkPlaceLog({
-			world: this.world, map: save.map, logs: save.survival.logs, camps: save.survival.campfires, tx, ty, player: save, bag: save.bag,
+		const sv = save.survival;
+		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : [])];
+		return checkPlaceLog({
+			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
 			terrainBlocked: (px, py) => blocked(this.world, px, py),
 			keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
+			cost: BUILD_PIECES[piece].cost,
+			furniture,
+			needZone: piece === "bed" || piece === "ghostbox",
 		});
+	}
+	/** Spends a piece's materials. The Building skill may hand one back. */
+	payForPiece(piece, xp) {
+		const save = this.save;
+		const cost = BUILD_PIECES[piece].cost;
+		consumeMaterials(save.bag, cost);
+		this.gainSkill("building", xp);
+		if (Math.random() * 100 < bend(this.skillN("building") * 0.25, 50, 85)) {
+			const ids = Object.keys(cost);
+			const id = ids[Math.floor(Math.random() * ids.length)];
+			if (id) { this.giveItem(id, 1); this.float(save.x, save.y - 52, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a"); }
+		}
+	}
+	placeLog(tx, ty, piece = "wood") {
+		const save = this.save;
+		if (save.survival.logs.length >= MAX_LOG_TILES) { this.say("You have placed the most walls the frontier can hold. Pick some up."); return false; }
+		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
-		consumeMaterials(save.bag, LOG_COST);
-		save.survival.logs.push({ map: save.map, tx, ty });
+		this.payForPiece(piece, piece === "brick" ? 8 : 6);
+		save.survival.logs.push({ map: save.map, tx, ty, kind: piece === "brick" ? "brick" : "wood" });
 		this.world.solids = this.world.solids ?? new Set();
 		this.world.solids.add(ty * this.world.w + tx);
-		this.tone(190, .05, "square");
+		this.tone(piece === "brick" ? 150 : 190, .05, "square");
 		this.persist();
 		this.syncHud(true);
 		return true;
@@ -1411,7 +1489,43 @@ export class TurbzGame {
 		if (Math.hypot(l.tx * 32 + 16 - save.x, l.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
 		save.survival.logs = save.survival.logs.filter((x) => x !== l);
 		this.world.solids?.delete(l.ty * this.world.w + l.tx);
-		this.giveItem("timber", 1);
+		// Old saves placed bare logs (one log each); new walls refund what they cost.
+		const cost = l.kind === "brick" ? BUILD_PIECES.brick.cost : l.kind === "wood" ? BUILD_PIECES.wood.cost : { timber: 1 };
+		for (const [id, n] of Object.entries(cost)) this.giveItem(id, n);
+		this.tone(150, .05, "triangle");
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	placeFurniture(piece, tx, ty) {
+		const save = this.save;
+		if (piece === "bed" && save.survival.beds.length >= MAX_BEDS) { this.say(`${MAX_BEDS} beds is the most a hunter can keep. Pick one up first.`); return false; }
+		if (piece === "ghostbox" && save.ghostBox) { this.say("You already have a Ghost Box. Click it in build mode to pick it up and move it."); return false; }
+		if (piece === "ghostbox" && save.map !== "world") { this.say("Place the Ghost Box at a camp in the overworld."); return false; }
+		const check = this.checkPiece(piece, tx, ty);
+		if (!check.ok) { this.say(check.reason); return false; }
+		this.payForPiece(piece, piece === "ghostbox" ? 20 : 12);
+		if (piece === "bed") {
+			save.survival.beds.push({ map: save.map, tx, ty });
+			this.say(`Bed built (${save.survival.beds.filter((b) => b.map === save.map).length} here). Send followers home from Survival & Camp.`);
+		} else {
+			save.ghostBox = { map: save.map, tx, ty };
+			this.say(`Ghost Box placed. Stand by it and open Spirits (G) to store, swap and release ghosts. ${save.ghostStore?.length ?? 0} wait inside.`);
+		}
+		this.tone(260, .08, "triangle");
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	removeFurniture(piece, f) {
+		const save = this.save;
+		if (Math.hypot(f.tx * 32 + 16 - save.x, f.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		if (piece === "bed") save.survival.beds = save.survival.beds.filter((b) => b !== f);
+		else {
+			save.ghostBox = null;
+			this.say(`Ghost Box packed up. The ${save.ghostStore?.length ?? 0} ghosts inside are safe; place it again to reach them.`);
+		}
+		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) this.giveItem(id, n);
 		this.tone(150, .05, "triangle");
 		this.persist();
 		this.syncHud(true);
@@ -1438,21 +1552,41 @@ export class TurbzGame {
 			m.y = p.y;
 		}
 	}
+	/** Followers were sent home to their beds (they stay there whichever map you are on). */
 	holdActive() {
 		const h = this.save?.survival?.hold;
 		const s = this.save;
-		return !!h && this.rules === "hardcore" && h.map === s.map && s.survival.campfires.some((c) => c.map === h.map && c.x === h.x && c.y === h.y);
+		return !!h && this.rules === "hardcore" && s.survival.campfires.some((c) => c.map === h.map && c.x === h.x && c.y === h.y);
+	}
+	/** Followers are home and that home is on this map. */
+	holdHere() {
+		return this.holdActive() && this.save.survival.hold.map === this.save.map;
+	}
+	/** Beds inside the safe zone of the camp followers are sent to. */
+	homeBeds() {
+		const h = this.save?.survival?.hold;
+		if (!h) return [];
+		return (this.save.survival.beds ?? []).filter((b) => b.map === h.map && safeZoneAt([{ map: h.map, x: h.x, y: h.y }], h.map, b.tx * 32 + 16, b.ty * 32 + 16));
+	}
+	/** Where follower `k` rests: its own bed, or a shared one when there are more followers than beds. */
+	bedSpot(k) {
+		const beds = this.homeBeds();
+		const h = this.save.survival.hold;
+		if (!beds.length) return { x: h.x + Math.cos(k * 2.1) * 36, y: h.y + 18 + Math.sin(k * 2.1) * 14 };
+		const b = beds[k % beds.length];
+		const share = Math.floor(k / beds.length);
+		return { x: b.tx * 32 + 16 + share * 10, y: b.ty * 32 + 14 - share * 4 };
 	}
 	followerCount() {
 		return (this.activeSpirits?.()?.length ?? 0) + (this.save?.party?.length ?? 0);
 	}
-	/** Send followers to wait at the campfire you are standing in (or beside), or call them back. */
+	/** Send followers home to the beds at the camp you are in (or beside), or call them back. */
 	holdFollowers(on) {
 		const save = this.save;
 		if (!save || this.rules !== "hardcore" || this.dead) return;
 		if (!on) {
 			save.survival.hold = null;
-			this.say("Your followers rejoin you.");
+			this.say("Your followers leave their beds and rejoin you.");
 		} else {
 			let camp = this.playerSafeCamp();
 			if (!camp) {
@@ -1463,10 +1597,13 @@ export class TurbzGame {
 					if (d < bd) { bd = d; camp = c; }
 				}
 			}
-			if (!camp) return this.say("Stand near a campfire to send followers there.");
+			if (!camp) return this.say("Stand in a camp to send followers home.");
+			const beds = (save.survival.beds ?? []).filter((b) => b.map === camp.map && safeZoneAt([camp], camp.map, b.tx * 32 + 16, b.ty * 32 + 16));
+			if (!beds.length) return this.say(`Build a bed in this camp first (${this.costLine(BUILD_PIECES.bed.cost)}). Followers you send home rest in beds.`);
 			if (!this.followerCount()) return this.say("You have no followers to send.");
 			save.survival.hold = { map: save.map, x: camp.x, y: camp.y };
-			this.say("Your followers wait at the campfire. Nothing can reach them there.");
+			const n = this.followerCount();
+			this.say(`Your followers go to bed at this camp (${n} follower${n === 1 ? "" : "s"}, ${beds.length} bed${beds.length === 1 ? "" : "s"}). Nothing can reach them there. They stay until you call them back.`);
 		}
 		this.persist();
 		this.syncHud(true);
@@ -1480,6 +1617,9 @@ export class TurbzGame {
 			placed: sv ? sv.logs.filter((l) => l.map === save.map).length : 0,
 			inZone: !!this.playerSafeCamp(),
 			holding: this.holdActive(),
+			piece: this.buildPiece ?? "wood",
+			beds: sv ? sv.beds.length : 0,
+			ghostBox: save?.ghostBox ? true : false,
 		};
 	}
 	// ---------- Timed effects so damage lands when the FX lands ----------
@@ -1507,13 +1647,13 @@ export class TurbzGame {
 	 * lands on it, a miss flies past it. Damage and floaters happen when the FX arrives. If the foe is
 	 * already gone by then, the shot simply lands on empty ground.
 	 */
-	strike(move, ox, oy, mob, { fromPet = false, mult = 1, volley = false } = {}) {
+	strike(move, ox, oy, mob, { fromPet = false, mult = 1, volley = false, pet = null } = {}) {
 		const missed = Math.random() * 100 > move.accuracy;
 		const sx = Math.random() < .5 ? -1 : 1;
 		const off = missed ? { x: sx * (34 + Math.random() * 18), y: (Math.random() - .5) * 28 } : { x: 0, y: 0 };
 		const follow = () => (mob.alive ? [mob.x + off.x, mob.y - 12 + off.y] : null);
 		const delay = this.playMoveFx(move, ox, oy, mob.x + off.x, mob.y - 12 + off.y, { follow, miss: missed, volley });
-		this.later(delay, () => { if (mob.alive) this.resolveHit(move, mob, fromPet, mult, { missed, stagger: volley ? VOLLEY_GAP : 0 }); });
+		this.later(delay, () => { if (mob.alive) this.resolveHit(move, mob, fromPet, mult, { missed, stagger: volley ? VOLLEY_GAP : 0, pet }); });
 		return delay;
 	}
 	nearCamp() {
@@ -1525,7 +1665,7 @@ export class TurbzGame {
 		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
 		const damage = advanceSurvival(s, dt, this.sleeping, 1 - bend(this.skillN("survival") * 0.002, 0.5, 0.82));
 		if (damage > 0) { this.save.hp -= damage; if (this.save.hp <= 0) this.die(); }
-		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); }
+		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
 	survivalAction(action) {
@@ -2006,30 +2146,67 @@ export class TurbzGame {
 		}
 		return best;
 	}
-	/** A harvested node is destroyed. A replacement of the same kind appears elsewhere after a delay. */
+	/**
+	 * A harvested node is used up where it stands. It does not move or multiply: it grows back in the
+	 * same spot when the land regrows, which is when you finish a sleep or a new day dawns (Hardcore),
+	 * or once every in-game day (Standard). Used-up nodes are saved, so a reload or a trip through a
+	 * door does not bring them back early.
+	 */
 	depleteNode(id) {
 		const i = this.world.spawns.findIndex((n) => n.id === id && n.kind === "node");
 		if (i < 0) return;
 		const [node] = this.world.spawns.splice(i, 1);
 		delete this.nodeCd[id];
-		if (NODE_RESPAWN_SECONDS[node.node] != null) this.nodeRespawn.push({ node: node.node, auto: !!node.auto, map: this.save.map, t: NODE_RESPAWN_SECONDS[node.node] });
+		this.nodeStash = this.nodeStash ?? [];
+		this.nodeStash.push({ world: this.world, node });
+		const key = this.nodeKey(this.save.map);
+		if (!key) return;
+		const taken = this.save.nodesTaken = this.save.nodesTaken ?? {};
+		const list = taken[key] = taken[key] ?? [];
+		if (!list.includes(id)) list.push(id);
 	}
+	/** Which maps remember used-up nodes. Rifts and the Green Cave are rebuilt fresh, so they do not. */
+	nodeKey(map) {
+		if (!map || map.startsWith("rift-") || map === `custom-${GREEN_CAVE_ID}`) return "";
+		return map;
+	}
+	/** After a map loads: nodes used up earlier today stay gone. */
+	applyTakenNodes(map) {
+		const key = this.nodeKey(map);
+		const ids = key ? this.save?.nodesTaken?.[key] : null;
+		if (!ids?.length || !this.world) return;
+		const gone = new Set(ids);
+		const keep = [];
+		this.nodeStash = this.nodeStash ?? [];
+		for (const n of this.world.spawns) {
+			if (n.kind === "node" && gone.has(n.id)) {
+				if (!this.nodeStash.some((e) => e.world === this.world && e.node.id === n.id)) this.nodeStash.push({ world: this.world, node: n });
+			} else keep.push(n);
+		}
+		this.world.spawns = keep;
+	}
+	/** Every used-up node grows back in its own spot. */
+	regrowNodes(why) {
+		const save = this.save;
+		if (!save) return;
+		let n = 0;
+		for (const e of this.nodeStash ?? []) {
+			if (!e.world?.spawns || e.world.spawns.some((x) => x.id === e.node.id)) continue;
+			e.world.spawns.push(e.node);
+			n += 1;
+		}
+		const had = Object.values(save.nodesTaken ?? {}).some((l) => l?.length);
+		this.nodeStash = [];
+		save.nodesTaken = {};
+		save.regrowT = 0;
+		if (n || had) this.say(why === "sleep" ? "You wake to a regrown land: trees, ore and mushrooms are back in their groves." : "A new day: trees, ore and mushrooms grow back in their groves.");
+	}
+	/** Standard has no nights or sleep: the land regrows once per in-game day. */
 	tickNodeRespawn(dt) {
-		if (!this.nodeRespawn.length || !this.save || !this.world) return;
-		const due = [];
-		for (const r of this.nodeRespawn) {
-			if (r.map !== this.save.map) continue;
-			r.t -= dt;
-			if (r.t <= 0) due.push(r);
-		}
-		if (!due.length) return;
-		this.nodeRespawn = this.nodeRespawn.filter((r) => !due.includes(r));
-		if (this.reachWorld !== this.world) { this.reachWorld = this.world; this.reachTiles = reachableFrom(this.world, this.save.x, this.save.y); }
-		for (const r of due) {
-			const spot = pickNodeSpot(this.world, this.reachTiles, this.save);
-			if (!spot) { this.nodeRespawn.push({ ...r, t: 10 }); continue; }
-			this.world.spawns.push({ id: `${r.node}-r${++this.nodeSeq}`, kind: "node", node: r.node, auto: r.auto, x: spot.x, y: spot.y, level: 1 });
-		}
+		const save = this.save;
+		if (!save || this.nightOn()) return;
+		save.regrowT = (save.regrowT ?? 0) + dt;
+		if (save.regrowT >= DAY_SECONDS) this.regrowNodes("day");
 	}
 	/** Fish from the nearest water tile. A bite takes 1-10 seconds; Fish Luck shortens it. */
 	startFishing() {
@@ -2184,6 +2361,12 @@ export class TurbzGame {
 	}
 	pointAt(x, y) {
 		if (snap.mode !== "play" || this.dead || !this.save) return;
+		for (const c of this.save.chests ?? []) {
+			if (c.map !== this.save.map || Math.abs(c.x - x) > 16 || y < c.y - 24 || y > c.y + 6) continue;
+			if (Math.hypot(c.x - this.save.x, c.y - this.save.y) <= CHEST_REACH) this.openChest(c.id);
+			else { this.pendingChest = c.id; this.dest = { x: c.x, y: c.y + 4, mob: null }; }
+			return;
+		}
 		if (this.customFile) for (const n of this.mapNpcs) {
 			const nx = n.tx * 32 + 16, ny = n.ty * 32 + 20;
 			if (Math.hypot(nx - x, ny - y) > 42) continue;
@@ -2375,6 +2558,8 @@ export class TurbzGame {
 		this.cdMax[move.id] = cd;
 		this.attackT = tactic === "heavy" ? 1 : .8;
 		this.combat = 3;
+		// Every verse you cast grinds the mastery of its element.
+		this.gainSkill(masteryOf(move.type), 3);
 		if (target && target.x < save.x) this.facing = -1;
 		else if (target) this.facing = 1;
 		if (tactic === "ward") {
@@ -2541,7 +2726,7 @@ export class TurbzGame {
 	 * With no `mob`, target-specific parts (type chart, hide, conditional bonuses) are left neutral and a
 	 * reference armor of a same-level foe is used for ranged hits.
 	 */
-	damageParts(move, mob = null, { fromPet = false, mult = 1, crit = false } = {}) {
+	damageParts(move, mob = null, { fromPet = false, mult = 1, crit = false, pet = null } = {}) {
 		const save = this.save;
 		const form = attackForm(move);
 		const tactic = moveTactic(move);
@@ -2552,7 +2737,8 @@ export class TurbzGame {
 		const base = 6 + move.power * .42 + (form !== "spell" && weapon ? weaponDmg * .35 : 0);
 		const f = [];
 		const add = (id, label, value) => { f.push({ id, label, value }); };
-		add("level", "Level", 1 + save.level * .045);
+		// A ghost hits with its own level, not yours.
+		add("level", pet ? "Ghost level" : "Level", 1 + (pet ? Math.min(pet.level ?? 1, save.level) : save.level) * .045);
 		add("stab", "Matching element gear", pure ? 1 : this.stab(move.type));
 		if (mob) add("tm", "Element vs target", pure ? 1 : typeChart(move.type, mob.type));
 		add("might", "Might enchants", 1 + this.chan("might") / 100);
@@ -2563,6 +2749,8 @@ export class TurbzGame {
 		if (mob && mob.max > 0 && mob.hp < mob.max * 0.35) add("execute", "Execute", 1 + this.chan("execute") / 100);
 		if (mob && mob.level > save.level) add("giant_bane", "Giant Bane", 1 + this.chan("giant_bane") / 100);
 		if (mob?.boss) add("boss", "Boss Bane", 1 + this.chan("boss_bane") / 100);
+		if (this.skillN(masteryOf(move.type))) add("mastery", `${TYPES[move.type]?.name ?? ""} Mastery`, 1 + this.skillN(masteryOf(move.type)) * .006);
+		if (mob && (mob.bounty || mob.witch || mob.hunter) && this.skillN("bountyhunting")) add("bountyhunting", "Bounty Hunting skill", 1 + this.skillN("bountyhunting") * .005);
 		if (this.status.some((s) => s.id === "gloom")) add("gloom", "Gloom", .8);
 		if (!pure) add("phys", "Physical skill", 1 + this.skillN("physical") * (form === "melee" ? .02 : .015));
 		if (pure) {
@@ -2575,7 +2763,10 @@ export class TurbzGame {
 			add("hide", "Target's hide", magicLike ? (read.kind === "magic" ? 1.2 : .8) : (read.kind === "physical" ? 1.2 : .8));
 		}
 		if (mult !== 1) add("mult", "Move shape", mult);
-		if (fromPet) add("pet", "Spirit strength", .62);
+		if (fromPet) {
+			add("pet", "Ghost strength", .62);
+			if (this.skillN("ghostkeeping")) add("ghostkeeping", "Ghostkeeping skill", 1 + this.skillN("ghostkeeping") * .004);
+		}
 		if (crit) add("crit", "Critical hit", 1.75 * (1 + bend(this.chan("crit_force") / 100, 0.8, 0.97)));
 		if (!fromPet) {
 			add("rank", "Verse rank", abilityMultiplier(save, move.id));
@@ -2633,6 +2824,7 @@ export class TurbzGame {
 		const form = attackForm(move);
 		let cd = baseMoveCooldown(move) * (1 - bend(this.chan("swift") / 100, 0.4, 0.75));
 		if (form === "spell" && tactic !== "heavy" && tactic !== "channel") cd *= (1 - bend(this.skillN("magic") * 0.00113, 0.45, 0.75)) * (1 - bend(this.chan("focus") / 100, 0.35, 0.7));
+		cd *= 1 - bend(this.skillN(masteryOf(move.type)) * 0.0005, 0.2, 0.4);
 		if (tactic === "roll") cd = Math.max(cd, 2.6);
 		if (tactic === "ward") cd = Math.max(cd, 5.5);
 		if (tactic === "heal") cd = Math.max(cd, 3.2);
@@ -2653,14 +2845,14 @@ export class TurbzGame {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
 		}
-		if (Math.random() < bend(Math.max(0, mob.stats?.dodge ?? 0), 0.35, 0.8)) {
+		if (Math.random() < bend(Math.max(0, (mob.stats?.dodge ?? 0) + (mob.enraged && (mob.bounty || mob.bountySpirit) ? BOUNTY_ENRAGE.dodge : 0)), 0.35, 0.8)) {
 			this.float(mob.x, mob.y - 36, "DODGE", "#e7d9ff");
 			return;
 		}
-		const crit = Math.random() * 100 < this.critChanceOf(move);
-		let dmg = this.damageParts(move, mob, { fromPet, mult, crit }).dmg;
+		const crit = Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
+		let dmg = this.damageParts(move, mob, { fromPet, mult, crit, pet: opts.pet }).dmg;
 		dmg *= 1 - bend(Math.max(0, pure ? (mob.stats?.spellRes ?? 0) : (mob.stats?.physRes ?? 0)), 0.55, 0.88);
-		let hits = Math.random() * 100 < Math.min(100, Math.max(0, this.chan("double_strike"))) ? 2 : 1;
+		let hits = !fromPet && Math.random() * 100 < Math.min(100, Math.max(0, this.chan("double_strike"))) ? 2 : 1;
 		if (form === "ranged" && rangedStyle(move) === "volley") {
 			hits = 3;
 			dmg *= .55;
@@ -2696,6 +2888,7 @@ export class TurbzGame {
 	applyMobDamage(mob, amount, crit = false) {
 		if (!mob?.alive || !Number.isFinite(amount) || amount <= 0 || this.dead) return;
 		if (mob.enchants?.includes("warded")) amount = Math.max(1, Math.floor(amount * .85));
+		if (mob.wardT > 0) amount = Math.max(1, Math.floor(amount * .6));
 		mob.hp -= amount;
 		mob.hurt = 1;
 		// Any hit wakes a sleeper (and leaves it immune to sleep for a while).
@@ -2748,14 +2941,15 @@ export class TurbzGame {
 		}
 		if (mob.witch && !mob.party) {
 			// The evil witch still drops her whole kit, re-rolled at your level.
-			for (const g of mob.lootGear) this.receiveGear({
+			for (const g of mob.lootGear) this.lootGear(mob, {
 				...g,
 				uid: nextUid()
 			});
-			for (const [id, n] of Object.entries(mob.lootBag)) if (n > 0) this.giveItem(id, n);
+			for (const [id, n] of Object.entries(mob.lootBag)) if (n > 0) this.lootItem(mob, id, n);
 			save.kyo += mob.lootKyo;
-			this.say(`${mob.name} drops everything. ${mob.lootKyo} kyo, her bag, her gear.`);
+			this.say(this.chestsOn() ? `${mob.name} falls. ${mob.lootKyo} kyo, and her bag and gear wait in a chest where she fell.` : `${mob.name} drops everything. ${mob.lootKyo} kyo, her bag, her gear.`);
 			this.gainSkill("hunting", 24);
+			this.gainSkill("bountyhunting", 30);
 			this.gainAccount(40 + mob.level * 4);
 			this.persist();
 			return;
@@ -2766,11 +2960,13 @@ export class TurbzGame {
 			return;
 		}
 		if (mob.animal) {
-			const meat = mob.species === "stag" || mob.species === "boar" ? 2 : 1;
-			const hide = mob.species === "stag" ? 2 : mob.species === "crow" ? 1 : 1;
-			this.giveItem("meat", meat);
-			this.giveItem("leather", hide);
-			this.say(`${mob.name}: meat ${meat}, leather ${hide}.`);
+			const skin = Math.random() * 100 < bend(this.skillN("skinning") * 0.3, 60, 90) ? 1 : 0;
+			const meat = (mob.species === "stag" || mob.species === "boar" ? 2 : 1) + skin;
+			const hide = (mob.species === "stag" ? 2 : 1) + skin;
+			this.gainSkill("skinning", 10);
+			this.lootItem(mob, "meat", meat);
+			this.lootItem(mob, "leather", hide);
+			if (!this.chestsOn()) this.say(`${mob.name}: meat ${meat}, leather ${hide}.`);
 			this.gainSkill("hunting", 8);
 			this.gainSkill("physical", 4);
 			this.persist();
@@ -2790,8 +2986,8 @@ export class TurbzGame {
 				floor: mob.boss ? save.level > 14 ? "rare" : "fine" : floors[tier] ?? null,
 				typeBias: mob.boss ? mob.type : null
 			});
-			this.receiveGear(piece);
-			this.say(`Found ${piece.name} (Lv ${piece.level}).`);
+			this.lootGear(mob, piece);
+			if (!this.chestsOn()) this.say(`Found ${piece.name} (Lv ${piece.level}).`);
 			this.tone(520, .1, "triangle");
 		}
 		if (mob.boss) {
@@ -2802,13 +2998,13 @@ export class TurbzGame {
 				raceBias: save.race,
 				floor: "epic"
 			});
-			this.receiveGear(piece);
-			this.say(`Warlord relic: ${piece.name}.`);
+			this.lootGear(mob, piece);
+			this.say(this.chestsOn() ? `${mob.name} falls. Its chest holds a warlord relic.` : `Warlord relic: ${piece.name}.`);
 			if (mob.bossId && !mob.dungeonBoss) save.bosses[mob.bossId] = (save.bosses[mob.bossId] ?? 0) + 1;
 		}
-		if (Math.random() < Math.min(0.8, 0.22 + mob.level * 0.012 + mob.rarity * 0.06)) this.giveItem(mob.type === "water" ? "fish" : mob.type === "earth" ? "mushroom" : "meat", 1 + (mob.level >= 20 ? 1 : 0));
-		if (Math.random() < Math.min(0.55, 0.08 + mob.level * 0.008 + mob.rarity * 0.05)) this.giveItem("cleanse_salt", 1);
-		if (mob.rarity >= 3 && Math.random() < 0.12 + mob.level * 0.004) this.giveItem("ghost_jar", 1);
+		if (Math.random() < Math.min(0.8, 0.22 + mob.level * 0.012 + mob.rarity * 0.06)) this.lootItem(mob, mob.type === "water" ? "fish" : mob.type === "earth" ? "mushroom" : "meat", 1 + (mob.level >= 20 ? 1 : 0));
+		if (Math.random() < Math.min(0.55, 0.08 + mob.level * 0.008 + mob.rarity * 0.05)) this.lootItem(mob, "cleanse_salt", 1);
+		if (mob.rarity >= 3 && Math.random() < 0.12 + mob.level * 0.004) this.lootItem(mob, "ghost_jar", 1);
 		if (this.shrine && mob.id.startsWith("shrine")) this.shrineClear();
 		if (this.role === "host") this.room?.send({
 			t: "dead",
@@ -2825,24 +3021,135 @@ export class TurbzGame {
 		const raw = 0.12 + this.skillN("catching") * 0.0012 + this.chan("catch_boost") / 220 + mob.rarity * 0.03 + jar;
 		const chance = bend(raw, 0.92, 0.99);
 		if (Math.random() > chance) return;
-		save.spirits = save.spirits ?? [];
-		if (save.spirits.length >= 20) {
-			this.say(`${mob.name} almost stayed. The spirit party is full (20). Dismiss one.`);
-			return;
-		}
 		const spirit = this.spiritFrom(mob);
-		const cap = this.spiritCap();
-		const following = save.spirits.filter((s) => s.active).length;
-		spirit.active = following < cap;
-		save.spirits.push(spirit);
-		this.say(spirit.active ? `${spirit.name} stays, and follows.` : `${spirit.name} stays in the party. Call them out from Spirits.`);
+		if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
 		this.gainSkill("catching", 16);
 		save.catches[mob.type] = (save.catches[mob.type] ?? 0) + 1;
 		this.boardEvent("catch");
 		this.noteCatch(mob);
 	}
+	/** Ghosts that can be out with you at once. */
 	spiritCap() {
-		return 3 + Math.max(0, Math.min(7, this.save?.ghostSlots ?? 0));
+		return OUT_MAX;
+	}
+	/**
+	 * A new ghost joins: it follows if fewer than 3 are out, waits in the party (6 at most), or goes to
+	 * the Ghost Box when the party is full. With a full party and no Ghost Box it slips away.
+	 */
+	adoptSpirit(spirit, missed = "") {
+		const save = this.save;
+		save.spirits = save.spirits ?? [];
+		save.ghostStore = save.ghostStore ?? [];
+		const shine = spirit.shiny ? " ✦ SHINY ✦" : "";
+		if (spirit.shiny) { this.float(save.x, save.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.tone(980, .25, "triangle"); }
+		if (save.spirits.length >= PARTY_MAX) {
+			if (!save.ghostBox) {
+				this.say(`${missed || spirit.name + " would have joined"}, but your party is full (${PARTY_MAX}). Build a Ghost Box at your camp to store more ghosts.`);
+				return false;
+			}
+			if (save.ghostStore.length >= GHOST_STORE_MAX) {
+				this.say(`${missed || spirit.name + " would have joined"}, but the Ghost Box is full (${GHOST_STORE_MAX}). Release some.`);
+				return false;
+			}
+			spirit.active = false;
+			save.ghostStore.push(spirit);
+			this.say(`${spirit.name}${shine} stays. Your party is full, so it waits in your Ghost Box.`);
+			return true;
+		}
+		spirit.active = save.spirits.filter((s) => s.active).length < OUT_MAX;
+		save.spirits.push(spirit);
+		this.say(spirit.active ? `${spirit.name}${shine} stays, and follows.` : `${spirit.name}${shine} stays in the party. Send it out from Spirits.`);
+		return true;
+	}
+	nearGhostBox() {
+		const save = this.save;
+		const b = save?.ghostBox;
+		return !!b && b.map === save.map && Math.hypot(b.tx * 32 + 16 - save.x, b.ty * 32 + 16 - save.y) <= 96;
+	}
+	/** Ghost Box: move a party ghost into storage. */
+	storeSpirit(uid) {
+		const save = this.save;
+		if (!save) return;
+		if (!this.nearGhostBox()) return this.say(save.ghostBox ? "Walk to your Ghost Box to store ghosts." : "Build a Ghost Box at your camp first.");
+		const s = save.spirits.find((x) => x.uid === uid);
+		if (!s) return;
+		if (save.ghostStore.length >= GHOST_STORE_MAX) return this.say("The Ghost Box is full.");
+		s.active = false;
+		save.spirits = save.spirits.filter((x) => x !== s);
+		save.ghostStore.push(s);
+		this.say(`${s.name} goes into the Ghost Box.`);
+		this.gainSkill("ghostkeeping", 2);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Ghost Box: take a stored ghost into the party (swap with `swapUid` when the party is full). */
+	takeSpirit(uid, swapUid = null) {
+		const save = this.save;
+		if (!save) return;
+		if (!this.nearGhostBox()) return this.say("Walk to your Ghost Box to take ghosts out.");
+		const s = save.ghostStore.find((x) => x.uid === uid);
+		if (!s) return;
+		if (save.spirits.length >= PARTY_MAX) {
+			const out = swapUid ? save.spirits.find((x) => x.uid === swapUid) : null;
+			if (!out) return this.say(`Your party is full (${PARTY_MAX}). Store a ghost first, or swap.`);
+			out.active = false;
+			save.spirits = save.spirits.filter((x) => x !== out);
+			save.ghostStore.push(out);
+		}
+		save.ghostStore = save.ghostStore.filter((x) => x !== s);
+		s.hp = s.max;
+		s.active = save.spirits.filter((x) => x.active).length < OUT_MAX;
+		save.spirits.push(s);
+		this.say(`${s.name} leaves the Ghost Box${s.active ? " and follows you" : " and joins the party"}.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Ghost Box: let a stored ghost go for good. */
+	releaseStored(uid) {
+		const save = this.save;
+		if (!save) return;
+		if (!this.nearGhostBox()) return this.say("Walk to your Ghost Box to release ghosts.");
+		const s = save.ghostStore.find((x) => x.uid === uid);
+		if (!s) return;
+		save.ghostStore = save.ghostStore.filter((x) => x !== s);
+		this.say(`${s.name} is released.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Standard mode has no camps: the Ghost Box goes down where you stand in the overworld. Hardcore needs a camp. */
+	placeGhostBoxHere() {
+		const save = this.save;
+		if (!save || this.dead) return;
+		if (save.ghostBox) return this.say("You already have a Ghost Box.");
+		if (this.rules === "hardcore") {
+			if (!this.playerSafeCamp()) return this.say("Stand inside a camp (a campfire's safe zone) to place the Ghost Box.");
+			this.buildPiece = "ghostbox";
+		}
+		if (save.map !== "world") return this.say("Place the Ghost Box in the overworld.");
+		const cost = BUILD_PIECES.ghostbox.cost;
+		const missing = Object.entries(cost).filter(([id, n]) => (save.bag[id] ?? 0) < n);
+		if (missing.length) return this.say(`The Ghost Box needs ${this.costLine(cost)}.`);
+		const { tx, ty } = tileAt(save.x, save.y + 24);
+		const spot = blocked(this.world, tx * 32 + 16, ty * 32 + 16) ? tileAt(save.x, save.y) : { tx, ty };
+		if (this.rules === "hardcore") { this.placeFurniture("ghostbox", spot.tx, spot.ty); return; }
+		consumeMaterials(save.bag, cost);
+		this.gainSkill("building", 20);
+		save.ghostBox = { map: save.map, tx: spot.tx, ty: spot.ty };
+		this.say(`Ghost Box placed. Stand by it and open Spirits (G) to store, swap and release ghosts.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Standard mode: pick the Ghost Box back up (Hardcore uses build mode). */
+	pickUpGhostBox() {
+		const save = this.save;
+		if (!save?.ghostBox) return;
+		if (!this.nearGhostBox()) return this.say("Walk to your Ghost Box to pick it up.");
+		if (this.rules === "hardcore") return this.removeFurniture("ghostbox", save.ghostBox);
+		for (const [id, n] of Object.entries(BUILD_PIECES.ghostbox.cost)) this.giveItem(id, n);
+		save.ghostBox = null;
+		this.say("Ghost Box packed up. The ghosts inside are safe; place it again to reach them.");
+		this.persist();
+		this.syncHud(true);
 	}
 	activeSpirits() {
 		const save = this.save;
@@ -2856,7 +3163,7 @@ export class TurbzGame {
 		return {
 			uid: nextUid(), species: mob.species, name: mob.name, type: mob.type, template: mob.template,
 			level: mob.level, rarity: mob.rarity, look, move: kit.slots[0] ?? mob.move, known: kit.known, slots: kit.slots,
-			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false
+			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false, shiny: rollShiny()
 		};
 	}
 	spiritPower(s: Spirit) {
@@ -2955,6 +3262,159 @@ export class TurbzGame {
 	giveItem(id, n) {
 		const save = this.save;
 		save.bag[id] = (save.bag[id] ?? 0) + n;
+	}
+	// ---------- Loot chests (Hardcore) ----------
+	/** Hardcore drops go into a chest where the foe fell. Other modes hand loot straight to you. */
+	chestsOn() {
+		return this.rules === "hardcore";
+	}
+	/** The chest this kill's loot goes into (made on first use). */
+	chestFor(mob) {
+		const save = this.save;
+		if (this.openDrop?.src === mob.id && this.openDrop.chest && save.chests.includes(this.openDrop.chest)) return this.openDrop.chest;
+		const life = CHEST_SECONDS + this.skillN("looting") * 0.5;
+		const at = this.world && blocked(this.world, mob.x, mob.y) ? nearestOpen(this.world, mob.x, mob.y) : { x: mob.x, y: mob.y };
+		const chest = { id: `chest-${nextUid()}`, map: save.map, x: at.x, y: at.y, t: life, max: life, gear: [], items: {}, title: mob.bounty ? `${mob.name} · tier ${mob.tier ?? 1} bounty` : mob.boss ? `${mob.name} · world boss` : mob.witch ? `${mob.name}'s pack` : `${mob.name}'s drop`, boss: !!(mob.boss || mob.bounty || mob.witch) };
+		save.chests = save.chests ?? [];
+		save.chests.push(chest);
+		if (save.chests.length > 40) save.chests.splice(0, save.chests.length - 40);
+		this.openDrop = { src: mob.id, chest };
+		if (Math.random() * 100 < bend(this.skillN("looting") * 0.15, 40, 75)) {
+			const extra = ["potion", "cleanse_salt", "meat", "leather", "ore", "timber", "mushroom"][Math.floor(Math.random() * 7)];
+			chest.items[extra] = (chest.items[extra] ?? 0) + 1;
+		}
+		return chest;
+	}
+	/** An item from a kill: into the chest in Hardcore, into the bag elsewhere. */
+	lootItem(mob, id, n) {
+		if (!(n > 0)) return;
+		if (this.chestsOn() && mob) {
+			const c = this.chestFor(mob);
+			c.items[id] = (c.items[id] ?? 0) + n;
+			return;
+		}
+		this.giveItem(id, n);
+	}
+	/** A gear piece from a kill: into the chest in Hardcore, onto you elsewhere. */
+	lootGear(mob, g) {
+		if (this.chestsOn() && mob) {
+			this.chestFor(mob).gear.push(g);
+			return;
+		}
+		this.receiveGear(g);
+	}
+	chestById(id) {
+		return (this.save?.chests ?? []).find((c) => c.id === id) ?? null;
+	}
+	chestEmpty(c) {
+		return !c.gear.length && !Object.values(c.items).some((n) => n > 0);
+	}
+	nearestChest(reach = CHEST_REACH) {
+		const save = this.save;
+		let best = null, bd = reach;
+		for (const c of save?.chests ?? []) {
+			if (c.map !== save.map) continue;
+			const d = Math.hypot(c.x - save.x, c.y - save.y);
+			if (d <= bd) { bd = d; best = c; }
+		}
+		return best;
+	}
+	/** Opens a chest's window. The world keeps running. */
+	openChest(id) {
+		const c = this.chestById(id);
+		if (!c) return;
+		this.chestOpen = c.id;
+		this.pendingChest = null;
+		this.dest = null;
+		publish({ panel: "chest" });
+		this.tone(420, .06, "triangle");
+		this.syncHud(true);
+	}
+	/** Chests count down every frame; empty or expired chests vanish. */
+	tickChests(dt) {
+		const save = this.save;
+		if (!save?.chests?.length) return;
+		let changed = false;
+		for (const c of save.chests) c.t -= dt;
+		const keep = save.chests.filter((c) => c.t > 0 && !this.chestEmpty(c));
+		if (keep.length !== save.chests.length) {
+			changed = true;
+			for (const c of save.chests) if (!keep.includes(c) && c.t <= 0 && c.map === save.map) this.float(c.x, c.y - 24, "CHEST GONE", "#8a7a6a");
+			save.chests = keep;
+		}
+		if (this.pendingChest) {
+			const c = this.chestById(this.pendingChest);
+			if (!c || c.map !== save.map) this.pendingChest = null;
+			else if (Math.hypot(c.x - save.x, c.y - save.y) <= CHEST_REACH) this.openChest(c.id);
+		}
+		if (snap.panel === "chest") {
+			const c = this.chestById(this.chestOpen);
+			if (!c || c.map !== save.map || Math.hypot(c.x - save.x, c.y - save.y) > CHEST_REACH * 2.2) { this.chestOpen = null; publish({ panel: null }); changed = true; }
+		}
+		if (changed) { this.persist(); this.syncHud(true); }
+	}
+	/** Takes one thing from the open chest: kind "gear" with a uid, or "item" with an item id. */
+	takeFromChest(chestId, kind, key) {
+		const save = this.save;
+		const c = this.chestById(chestId);
+		if (!save || !c || this.dead) return;
+		if (c.map !== save.map || Math.hypot(c.x - save.x, c.y - save.y) > CHEST_REACH * 2.2) return this.say("Too far from the chest.");
+		if (kind === "gear") {
+			const g = c.gear.find((x) => x.uid === key);
+			if (!g) return;
+			c.gear = c.gear.filter((x) => x !== g);
+			this.receiveGear({ ...g, uid: nextUid() });
+			this.say(`Took ${g.name} (Lv ${g.level}). Double-click it in the Bag to wear it.`);
+		} else {
+			const n = c.items[key] ?? 0;
+			if (n <= 0) return;
+			delete c.items[key];
+			this.giveItem(key, n);
+			this.say(`Took ${ITEM_BY_ID[key]?.name ?? key} x${n}.`);
+		}
+		this.gainSkill("looting", 3);
+		this.tone(560, .05, "triangle");
+		if (this.chestEmpty(c)) {
+			save.chests = save.chests.filter((x) => x !== c);
+			if (this.chestOpen === c.id) { this.chestOpen = null; publish({ panel: null }); }
+		}
+		this.persist();
+		this.syncHud(true);
+	}
+	takeAllChest(chestId) {
+		const c = this.chestById(chestId);
+		if (!c) return;
+		for (const id of Object.keys(c.items)) if (this.chestById(chestId)) this.takeFromChest(chestId, "item", id);
+		for (const g of [...c.gear]) if (this.chestById(chestId)) this.takeFromChest(chestId, "gear", g.uid);
+	}
+	chestView() {
+		const save = this.save;
+		if (!save || !this.chestOpen) return null;
+		const c = this.chestById(this.chestOpen);
+		if (!c) return null;
+		const key = `${c.id}|${c.gear.length}|${Object.entries(c.items).map(([k, n]) => k + n).join(",")}|${Math.ceil(c.t)}`;
+		if (this.chestViewCache?.key === key) return this.chestViewCache.view;
+		const view = {
+			id: c.id, title: c.title, t: Math.ceil(c.t), near: Math.hypot(c.x - save.x, c.y - save.y) <= CHEST_REACH * 2.2,
+			gear: c.gear.slice(),
+			items: Object.entries(c.items).filter(([, n]) => n > 0).map(([id, count]) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, about: ITEM_BY_ID[id]?.about ?? "", count })),
+		};
+		this.chestViewCache = { key, view };
+		return view;
+	}
+	paintChest(ctx, x, y, t, rich) {
+		const blink = t < 30 && Math.floor(t * 3) % 2 === 0;
+		ctx.save();
+		if (blink) ctx.globalAlpha = .55;
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x - 12, y + 2, 24, 4);
+		if (rich) { ctx.fillStyle = `rgba(255,209,102,${.18 + Math.sin(this.clock * 3) * .08})`; ctx.beginPath(); ctx.arc(x, y - 8, 18, 0, Math.PI * 2); ctx.fill(); }
+		ctx.fillStyle = "#3a2214"; ctx.fillRect(x - 11, y - 14, 22, 16);
+		ctx.fillStyle = "#7a4a26"; ctx.fillRect(x - 10, y - 13, 20, 14);
+		ctx.fillStyle = "#94603a"; ctx.fillRect(x - 11, y - 19, 22, 7);
+		ctx.fillStyle = rich ? "#ffd166" : "#c9a24a"; ctx.fillRect(x - 11, y - 13, 22, 2); ctx.fillRect(x - 2, y - 14, 4, 6);
+		ctx.fillStyle = "#2a1a10"; ctx.fillRect(x - 1, y - 11, 2, 2);
+		ctx.restore();
+		drawShadowName(ctx, `CHEST ${Math.ceil(t / 60)}m`, x, y - 26, rich ? "#ffd166" : "#e6c15a");
 	}
 	/** Builds this frame's nameplate for a foe on screen. Names, level and traits show at any range. */
 	queuePlate(m) {
@@ -3065,21 +3525,14 @@ export class TurbzGame {
 		mob.ghost = false;
 		this.rekitMob(mob);
 		this.mobs.push(mob);
-		for (let i = 0; i < 2; i++) {
-			const pool = MONSTERS.filter((d) => d.type === "spirit" || d.type === race.type);
-			const spec = pool[Math.floor(Math.random() * pool.length)] ?? MONSTERS[0]!;
-			const pet = this.makeMob({
-				id: `witch-spirit-${nextUid()}`, species: spec.id, x: x + (i === 0 ? -28 : 28), y: y + 16,
-				level: Math.max(1, lvl - 1), template: spec.template, type: spec.type, name: spec.name
-			});
-			pet.master = mob.id;
+		// Her escort are real ghosts, built the way yours are: ghost kits, aid verses, a 1-in-100 shiny.
+		const n = Math.min(OUT_MAX, 2 + (lvl >= 60 ? 1 : 0));
+		for (let i = 0; i < n; i++) {
+			const pet = this.makeEnemyGhost(mob, i, n, Math.max(1, lvl - 1), { rarity: 2 });
 			pet.aggro = true;
-			if (pet.look) pet.look.aggression = "hunt";
-			pet.rarity = Math.max(pet.rarity, 2);
-			this.rekitMob(pet);
 			this.mobs.push(pet);
 		}
-		this.say(`${name} is coming to hunt you. She brings two spirits.`);
+		this.say(`${name} is coming to hunt you. She brings ${n} ghosts.`);
 		this.tone(90, .22, "sawtooth");
 	}
 	gainSkill(id, amount) {
@@ -3121,7 +3574,7 @@ export class TurbzGame {
 	 * Hardcore overworld foes, bosses included, always take two minutes.
 	 */
 	respawnSecondsFor(m) {
-		const special = !!(m?.witch || m?.bounty || m?.bountySpirit || m?.hunter || m?.dungeonBoss || String(m?.id ?? "").startsWith("shrine"));
+		const special = !!(m?.witch || m?.bounty || m?.bountySpirit || m?.enemyGhost || m?.hunter || m?.dungeonBoss || String(m?.id ?? "").startsWith("shrine"));
 		return respawnSeconds({
 			hardcore: this.rules === "hardcore",
 			map: this.save?.map ?? "",
@@ -3219,6 +3672,7 @@ export class TurbzGame {
 				}
 				for (const id of Object.keys(m.kcd ?? {})) m.kcd[id] = Math.max(0, m.kcd[id] - dt);
 				m.thornT = Math.max(0, (m.thornT ?? 0) - dt);
+				if (m.wardT > 0) m.wardT = Math.max(0, m.wardT - dt);
 				if (m.enchants?.includes("regenerating") && m.hp < m.max) m.hp = Math.min(m.max, m.hp + m.max * .004 * dt);
 			}
 			m.status = tickStatuses(m.status, dt, this.toughFoe(m));
@@ -3261,6 +3715,20 @@ export class TurbzGame {
 			if (m.bountySpirit) {
 				this.tickBountySpirit(m, dt);
 				continue;
+			}
+			if (m.enemyGhost) {
+				const lead = this.mobs.find((x) => x.id === m.master && x.alive);
+				if (!lead) {
+					// Her ghosts fade with her.
+					m.alive = false;
+					m.hp = 0;
+					this.float(m.x, m.y - 30, "FADES", "#c9a6e8");
+					continue;
+				}
+				else {
+					this.tickEnemyGhostAid(m, dt);
+					if (!this.wantsFight(m, d) && !m.status.some((st) => st.id === "root")) { this.orbitMaster(m, lead, dt); continue; }
+				}
 			}
 			const aggro = this.wantsFight(m, d);
 			if (aggro) {
@@ -3372,14 +3840,14 @@ export class TurbzGame {
 		if (this.rules === "hardcore") return { hp: 1 + save.level * .05 + gear * .03 + depth * .06, dmg: 1 + save.level * .04 + gear * .02 + depth * .05, lv: Math.floor(save.level / 6 + depth / 2) };
 		return { hp: 1 + save.level * .012, dmg: 1 + save.level * .008, lv: 0 };
 	}
-	mobHitsPlayer(m, move, dist = 99) {
+	mobHitsPlayer(m, move, dist = 99, mult = 1) {
 		const save = this.save;
 		if (this.playerSafeCamp()) {
 			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
 			return;
 		}
-		let dmg = this.foeHitRaw(m, move, dist);
-		const crit = Math.random() < bendChance(m.stats?.crit ?? .03);
+		let dmg = this.foeHitRaw(m, move, dist) * mult;
+		const crit = Math.random() < bendChance((m.stats?.crit ?? .03) + (m.enraged && (m.bounty || m.bountySpirit) ? BOUNTY_ENRAGE.crit : 0));
 		if (crit) {
 			dmg *= 1.75;
 			this.float(m.x, m.y - 48, "CRIT", "#ff6a4a");
@@ -3389,6 +3857,11 @@ export class TurbzGame {
 		dmg *= 1 - bendSigned(this.mod("guard") / 100, -0.8, -0.5, 0.6, 0.9);
 		if (Math.random() * 100 < bend(this.chan("echo_guard"), 40, 75)) {
 			this.float(save.x, save.y - 36, "ECHO", "#6a4cff");
+			return;
+		}
+		if (this.skillN("evasion") && Math.random() * 100 < bend(this.skillN("evasion") * 0.05, 15, 35)) {
+			this.float(save.x, save.y - 36, "SLIP", "#9ad8c8");
+			this.gainSkill("evasion", 2);
 			return;
 		}
 		const evaded = (this.evadeT ?? 0) > 0 || this.wardT > 0;
@@ -3420,6 +3893,7 @@ export class TurbzGame {
 			frenzied: !!m.enchants?.includes("frenzied") && m.hp < m.max * .5,
 		});
 		if (m.dungeonBoss) dmg *= .9;
+		if (m.enraged && (m.bounty || m.bountySpirit)) dmg *= BOUNTY_ENRAGE.dmg;
 		return dmg;
 	}
 	tickGuestHurt(dt) {
@@ -3433,6 +3907,7 @@ export class TurbzGame {
 		if ((this.evadeT ?? 0) > 0) {
 			this.float(save.x, save.y - 36, "EVADE", "#e7d9ff");
 			this.cfx?.evade(save.x, save.y - 18);
+			this.gainSkill("evasion", 2);
 			return;
 		}
 		if (this.wardT > 0) {
@@ -3586,7 +4061,7 @@ export class TurbzGame {
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
-		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); }
+		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; }
 		save.kyo = Math.floor(save.kyo * .85);
 		save.bag = {
 			potion: 2,
@@ -3805,9 +4280,8 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save) return;
 		// Foes no longer wait in this queue: they attack on their own cooldowns (tickMobAttack).
-		const q: TurnStep[] = [{ side: "you", id: "you" }];
-		for (const s of this.activeSpirits().filter((s) => s.hp > 0)) q.push({ side: "spirit", id: s.uid });
-		this.turnQ = q;
+		// Ghosts no longer wait in this queue either: they cast on their own cooldowns (tickGhostCombat).
+		this.turnQ = [{ side: "you", id: "you" }];
 	}
 	tickTurns(dt: number) {
 		const save = this.save;
@@ -3847,33 +4321,117 @@ export class TurbzGame {
 			this.fought = false;
 		}
 	}
+	/** Kept for old turn steps; ghosts now act through tickGhostCombat. */
 	spiritTurn(spirit: Spirit) {
-		const save = this.save!;
-		if (this.holdActive()) return;
-		const moves = (spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter(Boolean);
-		if (!moves.length) return;
-		const aid = moves.filter((m) => spiritAidsPlayer(m));
+		this.ghostAct(spirit, this.activeSpirits().indexOf(spirit), true);
+	}
+	/** Seconds before a ghost can use this verse again: your base cooldown, slowed for a ghost. */
+	ghostCooldown(spirit, move) {
+		const tactic = moveTactic(move);
+		let cd = baseMoveCooldown(move) * GHOST_CD_MULT;
+		if (tactic === "heal" || move.effect === "mend") cd = Math.max(cd, 6);
+		if (tactic === "ward" || move.effect === "shell") cd = Math.max(cd, 8);
+		if (move.effect === "cleanse") cd = Math.max(cd, 5);
+		if (tactic === "surge") cd = Math.max(cd, 10);
+		cd *= 1 - bend(this.skillN(masteryOf(move.type)) * 0.0005, 0.2, 0.4);
+		return Math.max(.6, cd * (spirit.shiny ? 0.9 : 1));
+	}
+	/**
+	 * Ghosts fight on the same system you do: each readied verse has its own cooldown and range, a
+	 * strike flies from the ghost and lands with the FX, and aid verses go on you. Their hits use the
+	 * ghost's own level and rarity and a ghost's strength, not your verse ranks or class.
+	 */
+	tickGhostCombat(dt) {
+		const save = this.save;
+		if (!save || this.dead || this.role === "guest" || this.holdActive()) return;
+		const list = this.activeSpirits();
+		this.ghostCd = this.ghostCd ?? {};
+		list.forEach((spirit, i) => {
+			const cds = this.ghostCd[spirit.uid] = this.ghostCd[spirit.uid] ?? { gap: .4 };
+			for (const k of Object.keys(cds)) cds[k] = Math.max(0, cds[k] - dt);
+			if (spirit.hp <= 0 || cds.gap > 0) return;
+			if (this.ghostAct(spirit, i, false)) cds.gap = .55 + Math.random() * .25;
+			else cds.gap = .2;
+		});
+	}
+	ghostAct(spirit, slot, forced) {
+		const save = this.save;
+		if (!save || this.holdActive()) return false;
+		const cds = (this.ghostCd = this.ghostCd ?? {})[spirit.uid] = this.ghostCd[spirit.uid] ?? { gap: 0 };
+		const ready = (spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && (forced || (cds[m.id] ?? 0) <= 0));
+		if (!ready.length) return false;
+		const aid = ready.filter((m) => spiritAidsPlayer(m));
 		let move = null;
 		if (save.hp < this.maxHp() * 0.5) move = aid.find((m) => m.effect === "mend" || moveTactic(m) === "heal") ?? null;
-		if (!move && this.status.length && Math.random() < 0.7) move = aid.find((m) => m.effect === "cleanse") ?? null;
-		if (!move && this.wardT <= 0 && save.hp < this.maxHp() * 0.8) move = aid.find((m) => m.effect === "shell" || moveTactic(m) === "ward") ?? null;
-		if (!move && Math.random() < 0.18) move = aid.find((m) => moveTactic(m) === "surge") ?? null;
-		if (!move) {
-			const offs = moves.filter((m) => !spiritAidsPlayer(m));
-			move = offs.length ? offs[Math.floor(Math.random() * offs.length)] : null;
-		}
-		if (!move) return;
-		if (spiritAidsPlayer(move)) {
+		if (!move && this.status.some((st) => !GOOD_STATUS.has(st.id)) && Math.random() < 0.7) move = aid.find((m) => m.effect === "cleanse") ?? null;
+		if (!move && this.wardT <= 0 && save.hp < this.maxHp() * 0.8 && this.inFight()) move = aid.find((m) => m.effect === "shell" || moveTactic(m) === "ward") ?? null;
+		if (!move && this.inFight() && Math.random() < 0.18) move = aid.find((m) => moveTactic(m) === "surge") ?? null;
+		if (move) {
+			cds[move.id] = this.ghostCooldown(spirit, move);
 			this.applySpiritAid(spirit, move);
-			return;
+			return true;
 		}
-		const foe = this.fightTarget();
-		if (!foe) return;
-		const slot = this.activeSpirits().indexOf(spirit);
+		const foe = this.fightTarget() ?? this.nearestMob(save.x, save.y, 200);
+		if (!foe || !foe.alive) return false;
 		const at = this.mates[slot] ?? { x: save.x - 20, y: save.y, swing: 0 };
+		const d = Math.hypot(foe.x - at.x, foe.y - at.y);
+		const offs = ready.filter((m) => !spiritAidsPlayer(m) && m.power > 0);
+		// Like you, a ghost only casts what reaches. Melee verses send it darting in.
+		const reaches = offs.filter((m) => (attackForm(m) === "melee" ? 120 : attackRange(m) + 16) >= d);
+		if (!reaches.length) return false;
+		const weights = reaches.map((m) => 1 + m.power / 50);
+		let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+		move = reaches[reaches.length - 1];
+		for (let k = 0; k < reaches.length; k++) { roll -= weights[k]; if (roll <= 0) { move = reaches[k]; break; } }
+		cds[move.id] = this.ghostCooldown(spirit, move);
 		at.swing = 1;
+		if (attackForm(move) === "melee") { at.dashT = .38; at.dashX = foe.x - (foe.x > at.x ? 14 : -14); at.dashY = foe.y; }
 		if (slot >= 0) this.mates[slot] = at;
-		this.strike(move, at.x, at.y - 12, foe, { fromPet: true, mult: 0.75 + spirit.rarity * 0.12 });
+		this.strike(move, at.x, at.y - 12, foe, { fromPet: true, mult: 0.75 + spirit.rarity * 0.12, pet: spirit });
+		this.gainSkill("ghostkeeping", 1);
+		if (Math.random() < .5) this.gainSkill(masteryOf(move.type), 1);
+		return true;
+	}
+	/**
+	 * How a ghost moves. Normal ghosts trail you and circle what they fight at a range their verses
+	 * reach. Shiny ghosts loop around you the whole time, bobbing and weaving, and dart out to strike.
+	 */
+	moveGhost(spirit, at, i, dt) {
+		const save = this.save;
+		at.t = (at.t ?? Math.random() * 10) + dt;
+		if (Math.hypot(at.x - save.x, at.y - save.y) > 640) { at.x = save.x; at.y = save.y; }
+		const foe = this.fightTarget();
+		let tx, ty, k = 5;
+		if (spirit.shiny) {
+			const ang = this.clock * 1.9 + i * 2.09 + Math.sin(at.t * .7 + i) * .7;
+			const r = 30 + Math.sin(at.t * 2.6 + i) * 9 + (Math.sin(at.t * .45) > .92 ? 14 : 0);
+			tx = save.x + Math.cos(ang) * r;
+			ty = save.y - 8 + Math.sin(ang) * r * .55 + Math.sin(at.t * 5.3 + i) * 3.5;
+			k = 9;
+		} else if (foe) {
+			const reach = Math.max(40, Math.min(150, ...((spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && !spiritAidsPlayer(m)).map((m) => (attackForm(m) === "melee" ? 50 : attackRange(m) * .6)))));
+			const ang = this.clock * 1.3 + i * 2.05;
+			const rad = Number.isFinite(reach) ? reach : 60;
+			tx = foe.x + Math.cos(ang) * rad;
+			ty = foe.y + Math.sin(ang) * rad * .5 + Math.sin(at.t * 3 + i) * 3;
+		} else {
+			const wander = Math.sin(at.t * 1.3 + i * 2) * 7;
+			tx = save.x - this.facing * (26 + i * 16) + wander;
+			ty = save.y + 6 + i * 6 + Math.cos(at.t * 1.7 + i) * 4;
+		}
+		if (at.dashT > 0) {
+			at.dashT -= dt;
+			const p = Math.max(0, at.dashT / .38);
+			const out = Math.sin(p * Math.PI);
+			tx = tx + (at.dashX - tx) * out;
+			ty = ty + (at.dashY - ty) * out;
+			k = 14;
+		}
+		const px = at.x;
+		at.x += (tx - at.x) * Math.min(1, dt * k);
+		at.y += (ty - at.y) * Math.min(1, dt * k);
+		if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
+		at.spin = spirit.shiny && Math.sin(at.t * .45) > .92 ? (at.spin ?? 0) + dt * 12 : 0;
 	}
 	applySpiritAid(spirit, move) {
 		const save = this.save;
@@ -3922,6 +4480,7 @@ export class TurbzGame {
 		if (m.atkCd > 0) return;
 		if (this.playerSafeCamp()) { m.atkCd = 0.6; return; }
 		if (this.incoming?.some((h) => h.id === m.id)) return;
+		if (m.bounty && this.tryDeathMark(m, d, dt)) return;
 		const move = this.pickFoeMove(m);
 		const reach = attackForm(move) === "melee" || m.animal ? 62 : attackRange(move) + 24;
 		if (d > reach) { m.atkCd = 0.15; return; }
@@ -3939,6 +4498,7 @@ export class TurbzGame {
 		let gap = baseMoveCooldown(move);
 		if (m.enchants?.includes("swift")) gap *= 0.85;
 		if (m.enraged) gap *= 0.85;
+		if (m.enraged && (m.bounty || m.bountySpirit)) gap *= BOUNTY_ENRAGE.gap;
 		return Math.max(0.28, gap * (0.95 + Math.random() * 0.1));
 	}
 	mobAttack(m, move) {
@@ -3947,7 +4507,7 @@ export class TurbzGame {
 		m.kcd[move.id] = baseMoveCooldown(move);
 		m.move = move.id;
 		m.swing += 1;
-		const spirits = this.activeSpirits().filter((s) => s.hp > 0);
+		const spirits = this.holdActive() ? [] : this.activeSpirits().filter((s) => s.hp > 0);
 		if (spirits.length && Math.random() < 0.28) {
 			const spirit = spirits[Math.floor(Math.random() * spirits.length)]!;
 			const slot = this.activeSpirits().indexOf(spirit);
@@ -3987,6 +4547,42 @@ export class TurbzGame {
 		}
 		return pool[pool.length - 1];
 	}
+	/**
+	 * A bounty's Death Mark: every few seconds she marks the ground under you and swings a blow worth
+	 * several normal hits. Move out of the ring, blink, roll, dash or ward in time, or it lands.
+	 */
+	tryDeathMark(m, d, dt) {
+		m.markCd = (m.markCd ?? DEATH_MARK.every * 0.6) - Math.max(dt, 0.016);
+		if (m.markCd > 0 || d > 280) return false;
+		const save = this.save;
+		if (this.world && wallBetween(this.world, m.x, m.y, save.x, save.y)) return false;
+		m.markCd = m.enraged ? DEATH_MARK.everyEnraged : DEATH_MARK.every;
+		const kit = (m.kit ?? []).map((id) => MOVE_BY_ID[id]).filter(Boolean);
+		const move = [...kit].sort((a, b) => b.power - a.power)[0] ?? MOVE_BY_ID[m.move] ?? MOVES[0];
+		const wind = m.enraged ? DEATH_MARK.windEnraged : DEATH_MARK.wind;
+		this.incoming = this.incoming ?? [];
+		this.incoming.push({ id: m.id, move: move.id, t: wind, t0: wind, ax: save.x, ay: save.y, form: "spell", heavy: true, mult: DEATH_MARK.mult });
+		this.float(m.x, m.y - 50, "DEATH MARK", "#ff3a2a");
+		this.float(save.x, save.y - 60, "MOVE!", "#ff6a4a");
+		this.tone(70, .3, "sawtooth");
+		m.atkCd = Math.max(m.atkCd ?? 0, wind + 0.4);
+		return true;
+	}
+	/** Red rings on the ground where a Death Mark will land. */
+	drawTelegraphs(ctx) {
+		for (const hit of this.incoming ?? []) {
+			if (!hit.heavy) continue;
+			const p = 1 - Math.max(0, hit.t) / (hit.t0 || 1);
+			ctx.save();
+			ctx.fillStyle = `rgba(255,40,30,${0.12 + p * 0.25})`;
+			ctx.beginPath(); ctx.arc(hit.ax, hit.ay, DEATH_MARK.radius * p, 0, Math.PI * 2); ctx.fill();
+			ctx.strokeStyle = `rgba(255,80,60,${0.6 + Math.sin(this.clock * 20) * 0.3})`;
+			ctx.lineWidth = 2;
+			ctx.setLineDash([6, 4]);
+			ctx.beginPath(); ctx.arc(hit.ax, hit.ay, DEATH_MARK.radius, 0, Math.PI * 2); ctx.stroke();
+			ctx.restore();
+		}
+	}
 	queueStrike(m, move) {
 		const save = this.save;
 		const form = attackForm(move);
@@ -4016,15 +4612,17 @@ export class TurbzGame {
 			this.later(delay, () => {
 				if (this.dead) return;
 				const dist = Math.hypot(save.x - m.x, save.y - m.y);
-				const offSpot = hit.form !== "melee" && Math.hypot(save.x - aimX, save.y - aimY) > 46;
-				const tooFar = hit.form === "melee" ? dist > reach : firedOutOfReach;
+				const offSpot = hit.form !== "melee" && Math.hypot(save.x - aimX, save.y - aimY) > (hit.heavy ? DEATH_MARK.radius : 46);
+				const tooFar = hit.heavy ? false : hit.form === "melee" ? dist > reach : firedOutOfReach;
 				if (tooFar || offSpot) {
 					this.float(save.x, save.y - 44, "DODGED", "#9ad8c8");
 					this.cfx?.evade(save.x, save.y - 18);
 					this.gainSkill("adventuring", 1);
+					this.gainSkill("evasion", hit.heavy ? 12 : 3);
 					return;
 				}
-				this.mobHitsPlayer(m, move, dist);
+				if (hit.heavy) { this.shake = Math.max(this.shake, 9); this.float(save.x, save.y - 52, "MARKED", "#ff3a2a"); }
+				this.mobHitsPlayer(m, move, dist, hit.mult ?? 1);
 			});
 		}
 		this.incoming = keep;
@@ -4043,14 +4641,14 @@ export class TurbzGame {
 				at.y += (save.y + 14 - at.y) * Math.min(1, dt * 2);
 				return;
 			}
-			const hold = this.holdActive() ? save.survival.hold : null;
-			const foe = hold ? null : this.fightTarget();
-			const ang = this.clock * (hold ? .35 : 1.7) + i * 2.05;
-			const rad = foe ? 34 + i * 16 : hold ? 38 + i * 12 : 22 + i * 12;
-			const tx = foe ? foe.x + Math.cos(ang) * rad : hold ? hold.x + Math.cos(ang) * rad : save.x - this.facing * (26 + i * 16);
-			const ty = foe ? foe.y + Math.sin(ang) * rad * 0.45 : hold ? hold.y + 18 + Math.sin(ang) * rad * 0.45 : save.y + 8 + i * 6;
-			at.x += (tx - at.x) * Math.min(1, dt * 5);
-			at.y += (ty - at.y) * Math.min(1, dt * 5);
+			if (this.holdActive()) {
+				// Home in bed: a slow drift over its own bed.
+				const bed = this.bedSpot(i);
+				at.x += (bed.x + Math.sin(this.clock * .6 + i) * 3 - at.x) * Math.min(1, dt * 4);
+				at.y += (bed.y - 6 + Math.cos(this.clock * .5 + i) * 2 - at.y) * Math.min(1, dt * 4);
+				return;
+			}
+			this.moveGhost(spirit, at, i, dt);
 		});
 	}
 	tickParty(dt) {
@@ -4062,15 +4660,15 @@ export class TurbzGame {
 			if (!npc) return;
 			const key = `mate-${id}`;
 			this.mateCd[key] = (this.mateCd[key] ?? 0) - dt;
-			const hold = this.holdActive() ? save.survival.hold : null;
+			const hold = this.holdActive() ? this.bedSpot(this.activeSpirits().length + i) : null;
 			const foe = hold ? null : this.nearestMob(save.x, save.y, 190);
 			const px = this.mateCd[`${key}x`] ?? save.x;
 			const py = this.mateCd[`${key}y`] ?? save.y;
 			const dist = foe ? Math.hypot(foe.x - px, foe.y - py) : 999;
 			const ang = this.clock * .9 + i * 2.1;
 			const orbit = foe ? dist > 80 ? 70 : 36 : 28;
-			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : hold ? hold.x + Math.cos(ang * .4) * (36 + i * 12) : save.x + Math.cos(ang) * 28;
-			const homeY = foe ? foe.y + Math.sin(ang) * 22 : hold ? hold.y + 22 + Math.sin(ang * .4) * 14 : save.y + 10 + i * 8;
+			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : hold ? hold.x : save.x + Math.cos(ang) * 28;
+			const homeY = foe ? foe.y + Math.sin(ang) * 22 : hold ? hold.y : save.y + 10 + i * 8;
 			if (foe && dist > 90 && dist < 160 && (this.mateCd[`${key}blink`] ?? 0) <= 0) {
 				const behind = foe.x >= save.x ? 1 : -1;
 				this.mateCd[`${key}x`] = foe.x + behind * 26;
@@ -4197,6 +4795,10 @@ export class TurbzGame {
 	interact() {
 		const save = this.save;
 		if (!save || this.dead || !this.world) return;
+		{
+			const chest = this.nearestChest();
+			if (chest) { this.openChest(chest.id); return; }
+		}
 		if (this.customFile && this.interactMapPlace()) return;
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
@@ -4794,7 +5396,7 @@ export class TurbzGame {
 		this.portalCd = 1.5;
 		const p = t.portal;
 		if (p.map === "world") {
-			const at = p.tx !== undefined ? nearestOpen(this.overworld ?? buildWorld(save.seed, this.rules === "hardcore"), p.tx * 32 + 16, p.ty * 32 + 16) : this.returnTo ?? hearthXY();
+			const at = p.tx !== undefined ? (this.overworld ? nearestOpen(this.overworld, p.tx * 32 + 16, p.ty * 32 + 16) : { x: p.tx * 32 + 16, y: p.ty * 32 + 16 }) : this.returnTo ?? hearthXY();
 			this.switchTo("world", at);
 			return;
 		}
@@ -4961,6 +5563,8 @@ export class TurbzGame {
 		if (!save) return;
 		save.gear.push(g);
 		this.noteFound(g);
+		// Hardcore never dresses you: pick what to wear in the Bag (double-click a piece).
+		if (this.rules === "hardcore") return;
 		const worn = this.piece(g.slot);
 		if (!worn || gearScore(g) > gearScore(worn)) {
 			save.equipped[g.slot] = g.uid;
@@ -5185,7 +5789,6 @@ export class TurbzGame {
 		const save = this.save;
 		const pet = save?.box?.[index];
 		if (!save || !pet) return;
-		if ((save.spirits ?? []).length >= 20) return this.say("The spirit party is full.");
 		const def = MONSTER_BY_ID[pet.species] ?? ANIMAL_BY_ID[pet.species];
 		if (!def) return;
 		const kit = rollSpiritKit(def.type, mulberry32((Date.now() ^ index) >>> 0 || 1), pet.move);
@@ -5195,12 +5798,10 @@ export class TurbzGame {
 			level: pet.level || 1, rarity: pet.rarity || 0,
 			look: pet.look || rollGhostLook(mulberry32(save.seed || 1), pet.rarity || 0, kit.slots[0] || "measured", "hunt"),
 			move: kit.slots[0] || "measured", known: kit.known, slots: kit.slots, hp: max, max, speed: 8 + (pet.level || 1),
-			active: this.activeSpirits().length < this.spiritCap()
+			active: false, shiny: !!pet.shiny
 		};
-		save.spirits = save.spirits ?? [];
-		save.spirits.push(spirit);
+		if (!this.adoptSpirit(spirit)) return;
 		save.box.splice(index, 1);
-		this.say(`${def.name} joins the spirit party.`);
 		this.persist();
 		this.syncHud(true);
 	}
@@ -5210,7 +5811,7 @@ export class TurbzGame {
 		if (!save || !spirit) return;
 		if (on) {
 			const used = save.spirits.filter((s) => s.active && s.uid !== uid).length;
-			if (used >= this.spiritCap()) return this.say(`Only ${this.spiritCap()} spirits can follow. Buy another ghost slot, or call one back.`);
+			if (used >= this.spiritCap()) return this.say(`Only ${this.spiritCap()} ghosts can be out at once. Call one back first.`);
 			spirit.active = true;
 			this.say(`${spirit.name} follows.`);
 		} else {
@@ -5243,17 +5844,6 @@ export class TurbzGame {
 			spirit.slots = [...slots, moveId];
 		}
 		spirit.move = spirit.slots[0] ?? spirit.move;
-		this.persist();
-		this.syncHud(true);
-	}
-	spendGhostSlot() {
-		const save = this.save;
-		if (!save) return;
-		if ((save.skillPoints ?? 0) < 1) return this.say("Need a skill point.");
-		if ((save.ghostSlots ?? 0) >= 7) return this.say("No more ghost slots. Ten spirits is the hunt's limit.");
-		save.skillPoints -= 1;
-		save.ghostSlots = (save.ghostSlots ?? 0) + 1;
-		this.say(`Ghost slots ${this.spiritCap()}. Another spirit can follow.`);
 		this.persist();
 		this.syncHud(true);
 	}
@@ -5377,12 +5967,23 @@ export class TurbzGame {
 		save.kyo += mob.lootKyo ?? 0;
 		const items = [];
 		for (const [id, n] of Object.entries(mob.lootBag ?? {})) if (n > 0) {
-			this.giveItem(id, n);
+			this.lootItem(mob, id, n);
 			items.push({ id, count: n });
 		}
 		this.gainSkill("hunting", 24 + tier * 2);
+		this.gainSkill("bountyhunting", 60 + tier * 6);
 		this.gainAccount(40 + mob.level * 4);
 		const gear = (mob.lootGear ?? []).map((g) => ({ ...g, uid: nextUid() }));
+		if (this.chestsOn()) {
+			// Hardcore: no pause and no pick-one window. Her whole kit and bag drop in a chest where she fell.
+			for (const g of gear) this.lootGear(mob, g);
+			this.say(`${mob.name} falls. ${mob.lootKyo} kyo is yours; her bag and all ${gear.length} pieces of her kit wait in a chest where she fell (5 minutes). A tier ${fresh.tier} mark is posted.`);
+			this.tone(660, .2, "triangle");
+			if (h.kills === 1) this.say("You have a name now. From here on, any kill can earn a Bounty Star. Ten stars and they put a price on you.");
+			this.persist();
+			this.syncHud(true);
+			return;
+		}
 		this.say(`${mob.name} falls. ${mob.lootKyo} kyo and ${items.length} kinds of supplies are yours. Choose one piece of their gear. A tier ${fresh.tier} mark is posted.`);
 		this.tone(660, .2, "triangle");
 		if (h.kills === 1) this.say("You have a name now. From here on, any kill can earn a Bounty Star. Ten stars and they put a price on you.");
@@ -5499,14 +6100,15 @@ export class TurbzGame {
 	hunterDown(mob) {
 		const save = this.save;
 		save.kyo += mob.lootKyo ?? 0;
-		for (const [id, n] of Object.entries(mob.lootBag ?? {})) if (n > 0) this.giveItem(id, n);
+		for (const [id, n] of Object.entries(mob.lootBag ?? {})) if (n > 0) this.lootItem(mob, id, n);
 		let note = "";
 		if (Math.random() < .35 && mob.lootGear?.length) {
 			const g = mob.lootGear[Math.floor(Math.random() * mob.lootGear.length)];
-			this.receiveGear({ ...g, uid: nextUid() });
-			note = ` They dropped ${g.name}.`;
+			this.lootGear(mob, { ...g, uid: nextUid() });
+			note = this.chestsOn() ? ` They dropped a chest with ${g.name}.` : ` They dropped ${g.name}.`;
 		}
 		this.gainSkill("hunting", 14);
+		this.gainSkill("bountyhunting", 15);
 		this.gainAccount(20 + mob.level * 2);
 		this.contract = (this.contract ?? []).filter((m) => m.alive);
 		const left = this.liveHunters().length;
@@ -5599,7 +6201,7 @@ export class TurbzGame {
 		};
 		bump(lead);
 		for (const s of this.contract ?? []) if (s.bountySpirit && s.master === lead.id && s.alive) bump(s);
-		this.say(`${lead.name} is done waiting. Twice as strong, and hunting you.`);
+		this.say(`${lead.name} is done waiting. Enraged: far tougher, faster and deadlier, and her Death Marks come quicker. She is hunting you.`);
 		this.tone(90, 0.22, "sawtooth");
 		if (this.save && lead.map !== this.save.map) this.bringBounty(lead);
 		else this.syncHud(true);
@@ -5667,39 +6269,93 @@ export class TurbzGame {
 	}
 	spawnBountySpirits(mob, level, tier) {
 		const save = this.save;
-		const n = Math.min(4, 2 + Math.floor(tier / 6));
+		// A bounty fights like you do: up to three ghosts out at once, rolled like yours.
+		const n = Math.min(OUT_MAX, 2 + Math.floor(tier / 6));
 		const spirits = [];
 		for (let i = 0; i < n; i++) {
-			const pool = MONSTERS.filter((d) => d.type === "spirit" || d.type === mob.type);
-			const spec = pool[Math.floor(Math.random() * pool.length)] ?? MONSTERS[0];
 			const spiritLevel = Math.max((save?.level ?? 1) + 3, level - (1 + i));
-			const at = nearestOpen(this.world, mob.x + (i - (n - 1) / 2) * 26, mob.y + 18);
-			const pet = this.makeMob({
-				id: `bounty-spirit-${nextUid()}`,
-				species: spec.id,
-				x: at.x,
-				y: at.y,
-				level: spiritLevel,
-				fixedLevel: true,
-				template: spec.template,
-				type: spec.type,
-				name: spec.name
-			});
-			pet.bountySpirit = true;
-			pet.master = mob.id;
+			const pet = this.makeEnemyGhost(mob, i, n, spiritLevel, { rarity: Math.min(4, 2 + Math.floor(tier / 5)), bounty: true });
 			pet.map = mob.map;
-			pet.level = spiritLevel;
-			pet.rarity = Math.min(4, 2 + Math.floor(tier / 5));
 			pet.aggro = false;
 			pet.seen = false;
 			pet.enraged = false;
-			pet.homeX = at.x;
-			pet.homeY = at.y;
-			if (pet.look) pet.look.aggression = "hunt";
-			this.rekitMob(pet);
 			spirits.push(pet);
 		}
 		return spirits;
+	}
+	/**
+	 * An enemy witch's ghost, made the same way the player's are: a ghost body and look, a ghost kit
+	 * (up to 3 readied verses from its element), aid verses it spends on its witch, and the same
+	 * 1-in-100 shiny roll. It cannot be caught.
+	 */
+	makeEnemyGhost(master, i, n, level, { rarity = 2, bounty = false } = {}) {
+		const pool = MONSTERS.filter((d) => !d.animal && (d.type === "spirit" || d.type === master.type));
+		const spec = pool[Math.floor(Math.random() * pool.length)] ?? MONSTERS[0];
+		const at = this.world ? nearestOpen(this.world, master.x + (i - (n - 1) / 2) * 28, master.y + 18) : { x: master.x, y: master.y + 18 };
+		const pet = this.makeMob({
+			id: `${bounty ? "bounty" : "witch"}-spirit-${nextUid()}`, species: spec.id, x: at.x, y: at.y,
+			level, fixedLevel: true, template: spec.template, type: spec.type, name: spec.name
+		});
+		pet.master = master.id;
+		pet.enemyGhost = true;
+		pet.ghost = true;
+		pet.bountySpirit = bounty;
+		pet.level = level;
+		pet.rarity = rarity;
+		pet.shiny = rollShiny();
+		pet.ghostSlot = i;
+		pet.homeX = at.x;
+		pet.homeY = at.y;
+		const rng = mulberry32(((Math.random() * 1e9) >>> 0) || 13);
+		pet.look = rollGhostLook(rng, rarity, spec.move ?? "measured", "hunt");
+		this.rekitMob(pet);
+		const kit = rollSpiritKit(spec.type, rng, pet.move);
+		const slots = kit.slots.map((id) => MOVE_BY_ID[id]).filter(Boolean);
+		const attacks = slots.filter((m) => !spiritAidsPlayer(m)).map((m) => m.id);
+		pet.kit = attacks.length ? attacks : pet.kit;
+		pet.aid = slots.filter((m) => spiritAidsPlayer(m)).map((m) => m.id);
+		pet.move = pet.kit[0] ?? pet.move;
+		pet.aidCd = 2 + Math.random() * 2;
+		if (pet.shiny) pet.name = `Shiny ${pet.name}`;
+		return pet;
+	}
+	/** Enemy ghosts heal, ward and hasten their witch the way your ghosts look after you. */
+	tickEnemyGhostAid(m, dt) {
+		if (!m.aid?.length) return;
+		m.aidCd = (m.aidCd ?? 3) - dt;
+		if (m.aidCd > 0) return;
+		m.aidCd = 3.5 + Math.random() * 2;
+		const lead = this.mobs.find((x) => x.id === m.master && x.alive);
+		if (!lead || Math.hypot(lead.x - m.x, lead.y - m.y) > 260) return;
+		const moves = m.aid.map((id) => MOVE_BY_ID[id]).filter(Boolean);
+		let move = null;
+		if (lead.hp < lead.max * 0.55) move = moves.find((mv) => mv.effect === "mend" || moveTactic(mv) === "heal");
+		if (!move && lead.status?.length) move = moves.find((mv) => mv.effect === "cleanse");
+		if (!move && (lead.wardT ?? 0) <= 0 && lead.hp < lead.max * 0.85) move = moves.find((mv) => mv.effect === "shell" || moveTactic(mv) === "ward");
+		if (!move) return;
+		this.playMoveFx(move, m.x, m.y - 12, lead.x, lead.y - 16);
+		if (move.effect === "cleanse") {
+			lead.status = [];
+			this.float(lead.x, lead.y - 48, "CLEAN", "#fff1a8");
+		} else if (move.effect === "mend" || moveTactic(move) === "heal") {
+			const heal = Math.floor(lead.max * (m.bountySpirit ? 0.05 : 0.04));
+			lead.hp = Math.min(lead.max, lead.hp + heal);
+			this.float(lead.x, lead.y - 50, `+${heal}`, "#9ad8c8");
+		} else {
+			lead.wardT = 2.5;
+			this.float(lead.x, lead.y - 48, "WARD", "#fff1a8");
+		}
+	}
+	/** Unengaged enemy ghosts circle their witch instead of standing in a line. */
+	orbitMaster(m, lead, dt) {
+		const n = 3;
+		const ang = this.clock * (m.shiny ? 1.6 : 0.9) + (m.ghostSlot ?? 0) * (Math.PI * 2 / n);
+		const rad = m.shiny ? 40 : 34;
+		const tx = lead.x + Math.cos(ang) * rad;
+		const ty = lead.y + 6 + Math.sin(ang) * rad * 0.5 + Math.sin(this.clock * 2.3 + (m.ghostSlot ?? 0)) * 4;
+		const hx = tx - m.x, hy = ty - m.y;
+		const hd = Math.hypot(hx, hy);
+		if (hd > 2) this.moveMob(m, hx / hd * Math.min(hd * 4, 110) * dt, hy / hd * Math.min(hd * 4, 110) * dt);
 	}
 	tickBountySpirit(m, dt) {
 		const save = this.save;
@@ -5723,12 +6379,16 @@ export class TurbzGame {
 				const sp = hunting ? 176 : 72;
 				this.moveMob(m, dx / d * sp * dt, dy / d * sp * dt);
 			} else if (!engage) {
-				const hx = lead.x - m.x;
-				const hy = lead.y + 16 - m.y;
-				const hd = Math.hypot(hx, hy);
-				if (hd > 34) this.moveMob(m, hx / hd * 78 * dt, hy / hd * 78 * dt);
+				if (m.enemyGhost) this.orbitMaster(m, lead, dt);
+				else {
+					const hx = lead.x - m.x;
+					const hy = lead.y + 16 - m.y;
+					const hd = Math.hypot(hx, hy);
+					if (hd > 34) this.moveMob(m, hx / hd * 78 * dt, hy / hd * 78 * dt);
+				}
 			}
 		}
+		if (m.enemyGhost && engage) this.tickEnemyGhostAid(m, dt);
 		m.aggro = engage;
 		if (engage) this.combat = 2;
 	}
@@ -5857,6 +6517,7 @@ export class TurbzGame {
 	}
 	closePanel() {
 		if (this.dead || snap.panel === "loot") return;
+		if (snap.panel === "chest") this.chestOpen = null;
 		publish({ panel: null });
 	}
 	toTitle() {
@@ -5970,12 +6631,30 @@ export class TurbzGame {
 			}
 			save.companion = null;
 		}
-		save.ghostSlots = Math.max(0, Math.min(7, save.ghostSlots | 0));
+		// Ghost slots are gone (3 out, 6 in the party, the rest in the Ghost Box). Points spent on them come back.
+		if ((save.ghostSlots | 0) > 0) {
+			save.skillPoints = (Number.isFinite(save.skillPoints) ? save.skillPoints : 0) + Math.min(7, save.ghostSlots | 0);
+			this.refundNote = Math.min(7, save.ghostSlots | 0);
+		}
+		save.ghostSlots = 0;
+		save.ghostStore = Array.isArray(save.ghostStore) ? save.ghostStore.filter((g) => g && typeof g.uid === "string" && g.species).slice(0, GHOST_STORE_MAX) : [];
+		{
+			const b = save.ghostBox;
+			save.ghostBox = b && typeof b.map === "string" && Number.isInteger(b.tx) && Number.isInteger(b.ty) ? { map: b.map, tx: b.tx, ty: b.ty } : null;
+		}
+		save.chests = Array.isArray(save.chests) ? save.chests.filter((c) => c && typeof c.id === "string" && Number.isFinite(c.x) && Number.isFinite(c.y) && c.t > 0).slice(-40) : [];
 		save.jarLeft = Math.max(0, save.jarLeft || 0);
+		{
+			const taken = {};
+			for (const [k, v] of Object.entries(save.nodesTaken && typeof save.nodesTaken === "object" ? save.nodesTaken : {})) {
+				if (Array.isArray(v)) taken[k] = v.filter((id) => typeof id === "string").slice(-4000);
+			}
+			save.nodesTaken = taken;
+			save.regrowT = Number.isFinite(save.regrowT) ? Math.max(0, save.regrowT) : 0;
+		}
 		save.box = save.box ?? [];
 		save.spirits = save.spirits ?? [];
 		for (const pet of save.box) {
-			if (save.spirits.length >= 20) break;
 			const def = MONSTER_BY_ID[pet.species] ?? ANIMAL_BY_ID[pet.species];
 			if (!def) continue;
 			const kit = rollSpiritKit(def.type, mulberry32(((pet.level || 1) * 997 + (pet.rarity || 0) * 13) >>> 0 || 1), pet.move);
@@ -5985,12 +6664,19 @@ export class TurbzGame {
 				level: pet.level || 1, rarity: pet.rarity || 0,
 				look: pet.look || rollGhostLook(mulberry32((save.seed || 1) + save.spirits.length), pet.rarity || 0, kit.slots[0] || "measured", "hunt"),
 				move: kit.slots[0] || "measured", known: kit.known, slots: kit.slots,
-				hp: pet.hp ?? max, max, speed: pet.speed ?? 8 + (pet.level || 1), active: false
+				hp: pet.hp ?? max, max, speed: pet.speed ?? 8 + (pet.level || 1), active: false, shiny: !!pet.shiny
 			});
 		}
 		save.box = [];
-		if (save.spirits.length > 20) save.spirits.length = 20;
-		const cap = 3 + save.ghostSlots;
+		// Six ghosts in the party at most; older saves keep the rest safe in the Ghost Box.
+		if (save.spirits.length > PARTY_MAX) {
+			const keep = [...save.spirits.filter((s) => s.active), ...save.spirits.filter((s) => !s.active)].slice(0, PARTY_MAX);
+			const extra = save.spirits.filter((s) => !keep.includes(s));
+			for (const s of extra) s.active = false;
+			save.ghostStore = [...save.ghostStore, ...extra].slice(0, GHOST_STORE_MAX);
+			save.spirits = save.spirits.filter((s) => keep.includes(s));
+		}
+		const cap = OUT_MAX;
 		let following = 0;
 		for (const s of save.spirits) {
 			if (!Array.isArray(s.known) || !s.known.length) {
@@ -6012,6 +6698,7 @@ export class TurbzGame {
 			s.move = s.slots[0] ?? s.move ?? "measured";
 			if (s.hp == null) s.hp = s.max ?? 30;
 			if (s.max == null) s.max = Math.max(s.hp, 30);
+			s.shiny = !!s.shiny;
 			if (s.active) {
 				if (following < cap) following += 1;
 				else s.active = false;
@@ -6237,7 +6924,7 @@ export class TurbzGame {
 			perkPoints: raw.perkPoints || 0,
 			perks: { ...(raw.perks || {}) },
 			accountScore: raw.accountScore || 0,
-			ghostSlots: raw.ghostSlots || 0
+			ghostSlots: 0
 		};
 		for (const sk of SKILLS) {
 			const had = raw.skills?.[sk.id];
@@ -6272,7 +6959,7 @@ export class TurbzGame {
 				if (v > (save.perks[id] ?? 0)) save.perks[id] = v;
 			}
 			save.accountScore = Math.max(save.accountScore ?? 0, meta.accountScore | 0 || 0);
-			save.ghostSlots = Math.max(save.ghostSlots | 0, meta.ghostSlots | 0 || 0);
+			save.ghostSlots = 0;
 		}
 		this.writeProgress(save);
 	}
@@ -7082,6 +7769,7 @@ export class TurbzGame {
 				hp: Math.max(0, Math.ceil(s.hp)),
 				max: Math.max(1, Math.ceil(s.max)),
 				active: !!s.active,
+				shiny: !!s.shiny,
 				slots: s.slots ?? [],
 				known: (s.known ?? []).map((id) => {
 					const m = MOVE_BY_ID[id];
@@ -7095,8 +7783,11 @@ export class TurbzGame {
 					};
 				})
 			})),
-			spiritSlots: !slow ? snap.spiritSlots : this.spiritCap(),
-			spiritCap: 20,
+			spiritSlots: OUT_MAX,
+			spiritCap: PARTY_MAX,
+			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny })),
+			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
+			chest: this.chestView(),
 			jarLeft: Math.ceil(save.jarLeft ?? 0),
 			accountScore: !slow ? snap.accountScore : save.accountScore ?? 0,
 			turn: this.duel ? (this.duel.phase === "yours" ? "Your verse" : `${this.duel.lead?.name ?? "They"} readies`) : this.turnQ[0] ? (this.turnQ[0].side === "you" ? "Your turn" : this.turnQ[0].side === "spirit" ? "Spirit" : "Enemy") : "",
@@ -7345,6 +8036,7 @@ export class TurbzGame {
 			drawShadowName(ctx, "CAMP", fire.x, fire.y - 40, "#ffc45b");
 		}
 		if (this.rules === "hardcore") this.drawBuild(ctx, w, h);
+		this.drawExtras(ctx, w, h);
 		for (const node of this.world.spawns) if (node.kind === "node") {
 			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
 			paintNode(ctx, node.node, node.x, node.y + 2);
@@ -7397,8 +8089,10 @@ export class TurbzGame {
 				boss: m.boss,
 				rarity: m.rarity,
 				ghost: !!m.ghost,
+				shiny: !!m.shiny,
 				animal: !!m.animal,
-				species: m.species,
+				// Witch and bounty ghosts wear the same ghost body as yours.
+				species: m.enemyGhost ? undefined : m.species,
 				look: m.look ?? null,
 				time: this.clock
 			});
@@ -7437,7 +8131,8 @@ export class TurbzGame {
 				"legendary"
 			].indexOf(g.quality)
 		}));
-		this.activeSpirits().forEach((spirit, i) => {
+		const homeAway = this.holdActive() && !this.holdHere();
+		if (!homeAway) this.activeSpirits().forEach((spirit, i) => {
 			const at = this.mates[i];
 			if (!at || spirit.hp <= 0) return;
 			drawMonster(ctx, {
@@ -7445,18 +8140,20 @@ export class TurbzGame {
 				y: at.y,
 				template: spirit.template,
 				type: spirit.type,
-				facing: this.facing,
+				facing: at.facing ?? this.facing,
 				walk: this.walk + i,
 				hurt: at.swing > 0 ? 0.2 : 0,
 				boss: false,
 				rarity: spirit.rarity,
 				ghost: true,
+				shiny: !!spirit.shiny,
+				spin: at.spin ?? 0,
 				look: spirit.look,
 				time: this.clock
 			});
-			drawShadowName(ctx, spirit.name, at.x, at.y - 36, TYPES[spirit.type].color);
+			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - 36, spirit.shiny ? `hsl(${(this.clock * 120) % 360},90%,70%)` : TYPES[spirit.type].color);
 		});
-		for (const id of save.party ?? []) {
+		if (!homeAway) for (const id of save.party ?? []) {
 			const npc = NPCS.find((n) => n.id === id);
 			if (!npc) continue;
 			const px = this.mateCd[`mate-${id}x`] ?? save.x + 20;
@@ -7626,6 +8323,59 @@ export class TurbzGame {
 			ctx.fillStyle = "#a97a45"; ctx.fillRect(x + 3, by + 3, 2, 2);
 		}
 	}
+	paintBrick(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 27, 30, 4);
+		ctx.fillStyle = "#3a2622"; ctx.fillRect(x, y, 32, 30);
+		for (let r = 0; r < 5; r++) {
+			const by = y + 1 + r * 6;
+			const off = r % 2 ? 0 : -6;
+			for (let c = -1; c < 4; c++) {
+				const bx = x + 1 + off + c * 11;
+				const x0 = Math.max(x + 1, bx), x1 = Math.min(x + 31, bx + 10);
+				if (x1 <= x0) continue;
+				ctx.fillStyle = (r + c) % 3 === 0 ? "#9c4a36" : (r + c) % 3 === 1 ? "#b35a40" : "#8a4030";
+				ctx.fillRect(x0, by, x1 - x0, 5);
+				ctx.fillStyle = "#cf7a5a"; ctx.fillRect(x0, by, x1 - x0, 1);
+			}
+		}
+	}
+	paintBed(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(x + 3, y + 26, 28, 4);
+		ctx.fillStyle = "#5a3820"; ctx.fillRect(x + 3, y + 4, 26, 24);
+		ctx.fillStyle = "#8a5a34"; ctx.fillRect(x + 4, y + 5, 24, 22);
+		ctx.fillStyle = "#efe6d2"; ctx.fillRect(x + 6, y + 6, 20, 6);
+		ctx.fillStyle = "#b8a88c"; ctx.fillRect(x + 6, y + 11, 20, 1);
+		ctx.fillStyle = "#8e3a3a"; ctx.fillRect(x + 5, y + 13, 22, 13);
+		ctx.fillStyle = "#a94848"; ctx.fillRect(x + 5, y + 13, 22, 3);
+		ctx.fillStyle = "#6e2c2c"; for (let i = 0; i < 3; i++) ctx.fillRect(x + 8 + i * 7, y + 18, 3, 1);
+	}
+	paintGhostBox(ctx, x, y, t) {
+		const glow = .55 + Math.sin(t * 2.2) * .25;
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 27, 28, 4);
+		ctx.fillStyle = `rgba(180,166,255,${glow * .25})`; ctx.beginPath(); ctx.arc(x + 16, y + 14, 20, 0, Math.PI * 2); ctx.fill();
+		ctx.fillStyle = "#231a33"; ctx.fillRect(x + 3, y + 8, 26, 20);
+		ctx.fillStyle = "#3b2d55"; ctx.fillRect(x + 4, y + 9, 24, 18);
+		ctx.fillStyle = "#4c3a6e"; ctx.fillRect(x + 2, y + 4, 28, 7);
+		ctx.fillStyle = "#e6c15a"; ctx.fillRect(x + 14, y + 10, 4, 5);
+		ctx.fillStyle = `rgba(200,180,255,${glow})`;
+		ctx.fillRect(x + 7, y + 16, 2, 6); ctx.fillRect(x + 23, y + 16, 2, 6); ctx.fillRect(x + 11, y + 20, 10, 2);
+		ctx.fillStyle = "#e7d9ff"; ctx.fillRect(x + 15, y + 1 - Math.sin(t * 3) * 2, 2, 2);
+	}
+	/** World-space pass: the Ghost Box, loot chests and attack telegraphs. */
+	drawExtras(ctx, w, h) {
+		const save = this.save;
+		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
+		const box = save.ghostBox;
+		if (box && box.map === save.map && Math.abs(box.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(box.ty * 32 + 16 - this.cam.y) < halfH) {
+			this.paintGhostBox(ctx, box.tx * 32, box.ty * 32, this.clock);
+			drawShadowName(ctx, `GHOST BOX · ${save.ghostStore?.length ?? 0}`, box.tx * 32 + 16, box.ty * 32 - 10, "#c9a6e8");
+		}
+		for (const c of save.chests ?? []) {
+			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
+			this.paintChest(ctx, c.x, c.y, c.t, c.boss);
+		}
+		this.drawTelegraphs(ctx);
+	}
 	/** World-space pass: placed logs, safe zone outlines and the build cursor. */
 	drawBuild(ctx, w, h) {
 		const save = this.save;
@@ -7636,7 +8386,14 @@ export class TurbzGame {
 			if (l.map !== save.map) continue;
 			const x = l.tx * 32, y = l.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
-			this.paintLog(ctx, x, y);
+			if (l.kind === "brick") this.paintBrick(ctx, x, y);
+			else this.paintLog(ctx, x, y);
+		}
+		for (const b of sv.beds ?? []) {
+			if (b.map !== save.map) continue;
+			const x = b.tx * 32, y = b.ty * 32;
+			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
+			this.paintBed(ctx, x, y);
 		}
 		const inside = this.playerSafeCamp();
 		ctx.save();
@@ -7655,12 +8412,10 @@ export class TurbzGame {
 		ctx.restore();
 		if (this.buildMode && this.mouseWorld) {
 			const { tx, ty } = tileAt(this.mouseWorld.x, this.mouseWorld.y);
-			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty);
-			const check = placed ? { ok: true } : checkPlaceLog({
-				world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
-				terrainBlocked: (px, py) => blocked(this.world, px, py),
-				keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
-			});
+			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty)
+				|| (sv.beds ?? []).some((b) => b.map === save.map && b.tx === tx && b.ty === ty)
+				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty);
+			const check = placed ? { ok: true } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
 			ctx.save();
 			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";
 			ctx.fillRect(tx * 32, ty * 32, 32, 32);

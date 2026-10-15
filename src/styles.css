@@ -1170,3 +1170,9 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .hover-traits b { font-weight: normal; color: #fff6e8; }
 .hover-moves { font-size: 15px; }
 @media (hover: none) { .hover-card { display: none; } }
+
+/* Shiny ghosts: lava-lamp name and tag */
+@keyframes shiny-hue { from { filter: hue-rotate(0deg); } to { filter: hue-rotate(360deg); } }
+.shiny-name { color: #ff7ae0 !important; animation: shiny-hue 3s linear infinite; }
+.shiny-tag { display: inline-block; padding: 0 4px; margin-left: 4px; font-size: 14px; color: #140e0c; background: linear-gradient(90deg, #ff5f6d, #ffc371, #6dd5ed, #c56cf0); animation: shiny-hue 3s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .shiny-name, .shiny-tag { animation: none; } }

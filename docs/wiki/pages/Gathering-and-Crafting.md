@@ -5,7 +5,10 @@
 Trees, ore veins and mushroom patches dot the world. Stand beside one and press **E** (or click it in the inspect menu) to gather.
 
 - Gathering takes **max(0.45, 1.15 − 0.008 × skill level)** seconds. Moving more than 64 px away cancels it.
-- A gathered node **disappears**, and a new one grows **somewhere else** after a while: trees 15 s, ore 25 s, mushrooms 20 s.
+- A gathered node is **used up where it stands**. It grows back **in the same spot**, never somewhere new, when the land regrows:
+  - **Hardcore:** when you finish a sleep at camp, or when a new day dawns.
+  - **TurboHunt:** once every in-game day (10 minutes of play).
+- Used-up nodes are saved, so reloading or walking through a door does not bring them back early.
 - **Starter nodes** near Crownfall are picked up just by walking over them (TurboHunt).
 
 | Node | You get | Skill |

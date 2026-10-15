@@ -48,7 +48,8 @@ export const BASE: Record<EnemyKind, Row> = {
   minion: { hits: 2, frac: 0.035, lv: 1, spd: 0 },
   boss: { hits: 10, frac: 0.105, lv: 4, spd: 3 },
   witch: { hits: 9, frac: 0.09, lv: 3, spd: 2 },
-  bounty: { hits: 8, frac: 0.07, lv: 3, spd: 4 },
+  // Bounties hit hard on purpose: a fumbled fight (no dodge, ward or blink when it matters) kills you.
+  bounty: { hits: 9, frac: 0.12, lv: 3, spd: 4 },
   hunter: { hits: 3, frac: 0.042, lv: 3, spd: 3 },
 };
 
@@ -84,7 +85,7 @@ export function enemyTargets(o: TargetOpts): EnemyTargets {
   }
   if (o.kind === "bounty") {
     hits = Math.min(30, hits + Math.max(0, tier - 1) * 0.5);
-    frac = Math.min(0.14, frac + Math.max(0, tier - 1) * 0.002);
+    frac = Math.min(0.22, frac + Math.max(0, tier - 1) * 0.003);
     lv += tier;
     spd += Math.min(6, Math.floor(tier / 3));
   }
@@ -435,6 +436,10 @@ export function bountyQuality(tier: number, roll: number): QualityId {
 export const BOUNTY_BOARD_SIZE = 3;
 /** Seconds before a posted mark gives up waiting, doubles and hunts you. */
 export const BOUNTY_HUNT_SECONDS = 300;
+/** Once the timer runs out a bounty enrages. These multiply on top of the usual enrage. */
+export const BOUNTY_ENRAGE = { hp: 1.3, dmg: 1.3, speed: 1.16, gap: 0.8, crit: 0.12, dodge: 0.08 } as const;
+/** A bounty's Death Mark: a telegraphed blow you must dodge, ward or blink out of. */
+export const DEATH_MARK = { every: 7, everyEnraged: 4.5, wind: 1.15, windEnraged: 0.9, mult: 3.2, radius: 64 } as const;
 /** Stars that put a price on your own head. */
 export const BOUNTY_STARS_NEEDED = 10;
 /** Hunters sent per wave once you are wanted. */

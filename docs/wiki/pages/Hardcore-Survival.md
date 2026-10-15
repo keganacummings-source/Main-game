@@ -88,3 +88,30 @@ A new Hardcore witch always wakes at the **world's starting point**, not in a ra
 ## The Green Cave
 
 At **level 30+**, the Black Market sometimes (40% of refreshes) sells a **Green Mushroom** for 300 + 15 × your level kyo. Eat it to wake in a **fresh copy** of the Green Cave: its own map, foes, nodes and quest, all reset each time. Find the door marked **Wake up** to return to where you were.
+
+## Camp building
+
+Press **F** (or **Survival & Camp → Build**) and pick a piece. Click a tile to place it; click a placed piece to pick it up and get its materials back.
+
+| Piece | Cost | Notes |
+| --- | --- | --- |
+| Wooden Wall | 2 Logs, 1 Vein Ore | Solid for everyone |
+| Brick Wall | 1 Log, 3 Vein Ore | Solid for everyone |
+| Bed | 3 Hide Leather, 2 Logs | Inside a camp only |
+| Ghost Box | 4 Logs, 4 Vein Ore | Inside a camp only; one per hunter. See [Spirits](Spirits) |
+
+**Send followers to bed** (Survival & Camp) sends your ghosts and companions home to the beds in the camp you stand in. They stay there, safe, even when you leave the map, until you call them back. You need at least one bed.
+
+## Loot chests
+
+In Hardcore, anything a foe drops goes into a **chest** where it fell: ordinary foes, animals, witches, hunters, world bosses and bounties.
+
+- Walk up and press **E**, or click the chest. The game does **not** pause.
+- **Click** an item to read it (gear shows its stats, enchantments and how it compares to what you wear). **Shift+click** to take it straight away, or use **Take everything**.
+- A chest vanishes after **5 minutes**, or as soon as it is empty.
+- Hardcore never puts gear on you by itself. **Double-click** a piece in the Bag to wear it.
+
+## Resource nodes
+
+Trees, ore and mushrooms grow back **in the same spot** when you finish a sleep or a new day dawns. They never move or multiply.
+

@@ -150,9 +150,9 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - **Main story, "The Sundered Crown".** It sends you to each continent's capital for a shard. Every chapter has you talk to people in sister towns, gather, fight and visit landmarks, then ends on Crownfall Isle.
   - Every town also has three side quests.
   - It is now the overworld (see below). Walking into a named area announces it and gives a little Adventuring XP the first time. Quests now say "Travel to *place*" instead of coordinates.
-  - Rebuild it with `node --import ./scripts/wiki/register.mjs scripts/maps/build-veilreach.mjs` (it writes `public/Maps/veilreach.json`). The generator lives in `src/game/map-gen.ts`.
+  - Rebuild it with `node --import ./scripts/wiki/register.mjs scripts/maps/build-veilreach.mjs` (it writes `src/game/maps/veilreach.json`, which is embedded in the game). The generator lives in `src/game/map-gen.ts`.
 - **Map Builder 2.**
-  - **Open a copy of Veilreach** (Files → Built-in worlds) to make your own edits. Saving it under the id `veilreach` replaces the built-in world on your device.
+  - **Open a copy of Veilreach** (Files → Built-in worlds) to make your own edits. Save it under a new id to play it as a designer map; the overworld is always the embedded Veilreach.
   - **Generate a world** (Files) builds a whole map for you, using your choice of size, continents, cities per continent, islands, seed and an optional main story.
   - **Areas tab.** Draw named areas (continent, city, resource, landmark, dungeon, water), each with a description and a level range. They are announced in game and shown on the map.
   - **New tools:**
@@ -188,7 +188,6 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
 
 - **Veilreach replaces both old overworlds** (TurboHunt and Hardcore). New hunters wake in Hearthmere's capital. Older saves on the old world wake at the new hearth once. Their campfires, logs and open rifts on the old world are cleared, because those spots no longer exist. Progress made on Veilreach while it was a separate map carries over.
 - **Classic sites moved to Hearthmere.** The hearth folk, taverns and bounty boards, the five shrines, the Tiny Crypt and Ash Kiln, and the Tide Tyrant, Void Cantor and Marrow Saint now stand on Hearthmere. Each keeps its old bearing from the hearth, snapped to open, reachable ground (`src/game/main-world.ts`). Rifts, witches, bounties, hunters and survival all work as before.
-- If you save your own copy of Veilreach in the Map Builder (same id), it becomes your world on that device.
 - **New map window (M).**
   - Drag to pan; wheel, pinch, double-click or the − and + buttons to zoom.
   - **Me** follows you; **Whole map** shows everything.
@@ -227,3 +226,16 @@ Three new account-wide skills (15 in total), built on the map and Hardcore camp 
 - **Levels, skills, account level, verse ranks and perks are not capped.** Ranks 1–5 stay +15% each (rank 5 = ×1.6). Later ranks add +8% each. Perks can be bought past their old maximum and still add their effect.
 - **Chance and reduction stats bend past the old knee** instead of slamming into a wall. Dodge, resists, ward, guard, haste, echo guard, thorns, cooldowns, shop prices and similar bonuses keep stacking but never reach immunity, a free shop, or a zero-second cooldown. Damage, health, sell price and wayfinding stay linear.
 - Code: `src/game/overmax.ts`, `src/game/respawn.ts`, hooks in `engine.ts`, `balance.ts`, `content.ts`, `ability-progression.ts`.
+
+## Camps, ghosts, chests and skills update
+
+- **Veilreach is the base map.** The 500×500 world is embedded in the game (`src/game/maps/veilreach.json`) instead of fetched at startup, and the old generated overworld is no longer used. Fixed: leaving to the main menu and rejoining used to load the old map.
+- **32 skills.** Six new activity skills (Building, Ghostkeeping, Evasion, Bounty Hunting, Skinning, Looting) and one Mastery per element (11), trained by casting that element's verses (+0.6% damage per level and a small cooldown cut for that element, yours and your ghosts').
+- **Resource nodes regrow in place.** A gathered tree, vein or patch is used up where it stands and comes back in the same spot when you finish a sleep or a new day dawns (Hardcore), or once per in-game day (TurboHunt). No more relocating or duplicating trees. Used-up nodes are saved (`save.nodesTaken`).
+- **Camp building (Hardcore).** Wooden Wall (2 logs, 1 ore), Brick Wall (1 log, 3 ore), Bed (3 hide, 2 logs) and Ghost Box (4 logs, 4 ore). Beds and the Ghost Box go inside a camp. "Send followers to bed" parks ghosts and companions on the camp's beds until you call them back.
+- **Ghosts.** 3 out at once, 6 in the party, the rest in the Ghost Box (store, take, swap, release while standing by it). Ghost slots are removed and their skill points refunded. Ghosts now fight on the player's system: per-verse cooldowns (1.5×), range checks and real strikes, at the ghost's own level and rarity. **Shiny ghosts** (1 in 100) get lava-lamp colours, circle you and move with more character.
+- **Enemy witches and bounties** bring real ghosts (ghost kits, aid verses that heal and ward her, the same shiny roll) instead of random monsters.
+- **Bounties are deadly.** Higher base damage (12% of your health per clean hit, climbing with tier) and a telegraphed **Death Mark** every few seconds that you must dodge, blink, roll or ward. Enraged bounties get more health, damage, speed, crit and dodge on top of the usual enrage.
+- **Hardcore loot chests.** Every drop lands in a chest where the foe fell (bounties and world bosses included; the bounty pick-one pause is TurboHunt only). Open with E or a click; the world keeps running. Click to inspect, Shift+click to take. Chests vanish after 5 minutes or when empty. Hardcore never auto-equips; double-click gear in the Bag to wear it (works in both modes).
+- Code: `building.ts` (pieces), `survival.ts` (beds), `content.ts` (skills), `balance.ts` (bounty numbers), `creature-sprites.ts` (ghost and shiny drawing), chest/ghost/node systems in `engine.ts`, `ChestPanel` in `inventory-ui.tsx`, Spirits and camp UI in `game-panels.tsx`.
+

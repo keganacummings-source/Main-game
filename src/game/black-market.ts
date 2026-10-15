@@ -236,10 +236,11 @@ export function installBlackMarket(game: any): void {
     if (!row) return this.say("That spirit is gone.");
     const p = this.price(row.price);
     if (save.kyo < p) return this.say("Need more Kyo.");
+    if ((save.spirits?.length ?? 0) >= 6 && !save.ghostBox) return this.say("Your party is full (6). Build a Ghost Box at camp before binding another ghost.");
     save.kyo -= p;
-    if (Array.isArray(save.box)) {
-      save.box.push({ species: row.species, level: row.level, uid: nextUid() });
-    }
+    if (!Array.isArray(save.box)) save.box = [];
+    save.box.push({ species: row.species, level: row.level, uid: nextUid(), shiny: Math.random() < 0.01 });
+    this.summonBox?.(save.box.length - 1);
     this.blackMarket.spirits = this.blackMarket.spirits.filter((s: BmSpirit) => s.id !== id);
     this.gainSkill?.("trading", 8);
     this.say(`Bound ${row.name}.`);

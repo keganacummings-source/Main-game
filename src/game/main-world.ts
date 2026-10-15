@@ -4,9 +4,9 @@
  * Kiln doors, the three world bosses) were laid out on an 84×60 chart; here they are re-homed around
  * Veilreach's starting capital in Hearthmere, each snapped to the nearest reachable open tile.
  *
- * If you save your own copy of Veilreach in the Map Builder (same id), that copy becomes the world.
+ * Veilreach is embedded in the game, so the overworld never falls back to the old generated world.
  */
-import { findMapFile } from "./builtin-maps";
+import { baseWorldFile } from "./builtin-maps";
 import { setTileRemap } from "./content";
 import type { MapFile } from "./map-format";
 import { reachable } from "./map-tools";
@@ -16,9 +16,9 @@ export const MAIN_WORLD_ID = "veilreach";
 
 let installedFor: MapFile | null = null;
 
-/** The map file that is the overworld, or null (then the classic generated world is used). */
+/** The map file that is the overworld: the embedded Veilreach. */
 export function mainWorldFile(): MapFile | null {
-  const f = findMapFile(MAIN_WORLD_ID) ?? null;
+  const f = baseWorldFile();
   if (f && f !== installedFor) install(f);
   return f;
 }

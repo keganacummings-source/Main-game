@@ -1,4 +1,4 @@
-import { sanitizeHold, sanitizeLogs, type HoldPoint, type LogTile } from "./building";
+import { sanitizeFurniture, sanitizeHold, sanitizeLogs, type Furniture, type HoldPoint, type LogTile } from "./building";
 export type Campfire = { map: string; x: number; y: number };
 export type SurvivalState = {
   hunger: number; thirst: number; rest: number; elapsed: number; campfires: Campfire[];
@@ -6,12 +6,14 @@ export type SurvivalState = {
   logs: LogTile[];
   /** When set, followers wait at this campfire instead of following the player. */
   hold: HoldPoint | null;
+  /** Beds placed in camps. Followers sent home rest on them. */
+  beds: Furniture[];
 };
 const bounded = (n: unknown, fallback: number) => typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : fallback;
 export function normalizeSurvival(raw?: Partial<SurvivalState>): SurvivalState {
   return { hunger: bounded(raw?.hunger, 100), thirst: bounded(raw?.thirst, 100), rest: bounded(raw?.rest, 100), elapsed: Number.isFinite(raw?.elapsed) ? Math.max(0, raw!.elapsed!) : 0,
     campfires: (Array.isArray(raw?.campfires) ? raw.campfires : []).filter(c => c && typeof c.map === 'string' && Number.isFinite(c.x) && Number.isFinite(c.y) && c.x >= 0 && c.y >= 0).slice(-100),
-    logs: sanitizeLogs(raw?.logs), hold: sanitizeHold(raw?.hold) };
+    logs: sanitizeLogs(raw?.logs), hold: sanitizeHold(raw?.hold), beds: sanitizeFurniture(raw?.beds) };
 }
 // Full reserves last 30 / 20 / 40 minutes of active play. Empty reserves cause injury.
 // `drain` scales how fast the bars empty: 1 is normal. The Survival skill bends this toward 0.18 and never to 0.

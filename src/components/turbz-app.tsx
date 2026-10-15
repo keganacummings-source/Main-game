@@ -15,7 +15,7 @@ import { ArenaScreen } from "@/components/arena-ui";
 import { Boards, ChatDock, DuelBanner, Hub, Options } from "@/components/hub-ui";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
-import { Bag, BlackMarket, BountyBoard, LootPicker } from "@/components/inventory-ui";
+import { Bag, BlackMarket, BountyBoard, ChestPanel, LootPicker } from "@/components/inventory-ui";
 import { ContextMenu, CraftPanel, GameChat, LobbyPanel, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel } from "@/components/game-panels";
 import { useSnapPick, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
@@ -305,14 +305,14 @@ function Create(props: { name: string; setName: (v: string) => void; pick: Pick;
 // In game
 // ---------------------------------------------------------------------------
 
-const PANEL_IDS = ["sheet", "lobby", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause"] as const;
+const PANEL_IDS = ["sheet", "lobby", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest"] as const;
 type PanelId = (typeof PANEL_IDS)[number];
 const PANEL_TITLE: Record<PanelId, string> = {
   sheet: "Character Sheet", lobby: "Multiplayer Lobby", bag: "Bag", skills: "Skills & Perks", moves: "Verses", quests: "Quests",
-  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu",
+  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest",
 };
 /** Default window widths. Rebuilt windows use new layout keys so an old, cramped saved size does not carry over. */
-const PANEL_W: Partial<Record<PanelId, number>> = { bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560, lobby: 440 };
+const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560, lobby: 440 };
 const REBUILT = new Set<PanelId>(["bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause", "lobby"]);
 
 function winId(panel: PanelId): string {
@@ -352,6 +352,10 @@ const SheetWin = memo(function SheetWin() {
   const { sheet } = useSnapPick(["sheet"] as const);
   return <CharacterSheet sheet={sheet} />;
 });
+const ChestWin = memo(function ChestWin({ game }: GameProp) {
+  const s = useSnapPick(["chest", "gear", "equipped", "locked", "sellMult"] as const);
+  return <ChestPanel snap={s as unknown as Snap} game={game} />;
+});
 const LootWin = memo(function LootWin({ game }: GameProp) {
   const s = useSnapPick(["loot", "gear", "equipped", "locked", "sellMult"] as const);
   return <LootPicker snap={s as unknown as Snap} game={game} />;
@@ -372,6 +376,7 @@ function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) 
     case "survival": return <SurvivalPanel game={game} />;
     case "trade": return <MarketWin game={game} />;
     case "pause": return <PausePanel game={game} />;
+    case "chest": return <ChestWin game={game} />;
   }
 }
 

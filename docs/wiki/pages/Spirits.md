@@ -5,8 +5,10 @@ Some foes **stay with you** after you beat them, as spirits that follow and figh
 ## In short
 
 - After a kill, there is a chance the foe stays (**catching**). **Ghost Jars** make it much more likely for a minute.
-- Up to **3 spirits follow** you at once; buy up to 7 more **ghost slots** with skill points (10 total).
-- You can keep **20** spirits in your party. Swap who follows in **Spirits** (**G**).
+- Up to **3 ghosts are out** with you at once.
+- Your **party holds 6**. Swap who is out in **Spirits** (**G**).
+- Everything else lives in your **Ghost Box**, a chest you place at your camp. Stand by it to store, take, swap and release ghosts.
+- **Shiny ghosts:** 1 in 100 ghosts is shiny. Its colours flow like a lava lamp, it circles you while it follows, and it is a little livelier in a fight.
 - Each spirit knows up to 10 verses and readies **3**. Healers will heal you, cleansers will cleanse you, and the rest attack.
 
 ## Catching
@@ -33,13 +35,13 @@ The chance is capped at 92%.
 
 ### What spirits do in a fight
 
-Spirits act between your turns, every 0.2 seconds. Each turn a spirit chooses:
+Ghosts fight on the same system you do: each readied verse has its own cooldown (1.5× your base cooldown) and range, and a ghost only casts what reaches. When a ghost is ready it chooses:
 
 1. A **heal** if you are under 50% health.
 2. A **cleanse** (70% of the time) if you have any effect on you.
 3. A **ward** if you have no ward and are under 80%.
 4. An 18% chance of a **surge** (speed and crit for you).
-5. Otherwise a random **attack** at your target. Spirit attacks use your level and gear bonuses, but not verse ranks or class stats, and deal 0.62 × (0.75 + 0.12 × rarity) of normal damage.
+5. Otherwise an **attack** at your target that is ready and in reach (stronger verses are picked more often). Ghost hits use the ghost's own level (never above yours) and rarity, not your verse ranks or class, and deal 0.62 × (0.75 + 0.12 × rarity) of normal damage. Melee verses send the ghost darting in.
 
 Foes aim 28% of their attacks at your spirits. A spirit at 0 health drops out of the fight and recovers **6 health per second** when the fight ends.
 
@@ -52,7 +54,14 @@ In **Spirits** (**G**):
 - **Dismiss** a spirit you no longer want.
 - **Box**: spirits bought from the Black Market wait in the box until you call them into the party.
 
-**Ghost slots** cost 1 skill point each (up to 7) and are account-wide.
+Ghost slots no longer exist. Any skill points spent on them were refunded.
+
+## The Ghost Box
+
+- **Hardcore:** build it inside a camp (a campfire's safe zone) from **Survival & Camp → Build**: 4 Logs and 4 Vein Ore. Click it in build mode to pick it up.
+- **TurboHunt:** place it anywhere in the overworld from **Spirits** (same cost).
+- When your party is full, new catches go straight into the box. Without a box, a catch with a full party slips away.
+- The box holds up to 300 ghosts. One per hunter.
 
 ## Spirit power
 

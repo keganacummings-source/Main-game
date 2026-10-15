@@ -47,7 +47,7 @@ Areas are named rectangles. Each has a kind (region, city, resource, landmark, d
 
 ### Worlds
 
-- **Open a copy to edit** (Files → Built-in worlds) loads [Veilreach](World-and-Regions#veilreach) into the builder. If you save it under the id `veilreach`, your version replaces the built-in world on this device. Change the File ID to keep both.
+- **Open a copy to edit** (Files → Built-in worlds) loads [Veilreach](World-and-Regions#veilreach) into the builder. Save it under a new File ID to play your version as a designer map. The overworld itself is always the Veilreach built into the game.
 - **Generate a world** (Files) builds a full map from your settings: size, number of continents (2–8), cities per continent (1–5), islands, seed, and optionally a main story that visits every continent. It includes continents split by sea, mountains, lakes, walled towns with shops, ports with ferries, roads, resource groves, enemy camps, NPCs and side quests. The same seed always gives the same world.
 
 Maps are stored in your browser's IndexedDB, which has room for several large worlds. Use **Export** to keep a file copy or share one.

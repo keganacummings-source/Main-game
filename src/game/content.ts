@@ -1012,7 +1012,30 @@ export const SKILLS = [
   { id: "wayfinding", name: "Wayfinding" },
   { id: "survival", name: "Survival" },
   { id: "cooking", name: "Cooking" },
+  { id: "building", name: "Building" },
+  { id: "ghostkeeping", name: "Ghostkeeping" },
+  { id: "evasion", name: "Evasion" },
+  { id: "bountyhunting", name: "Bounty Hunting" },
+  { id: "skinning", name: "Skinning" },
+  { id: "looting", name: "Looting" },
+  // One mastery per element: cast verses of that element to grind it.
+  { id: "m_normal", name: "Normal Mastery" },
+  { id: "m_fire", name: "Fire Mastery" },
+  { id: "m_water", name: "Water Mastery" },
+  { id: "m_earth", name: "Earth Mastery" },
+  { id: "m_air", name: "Air Mastery" },
+  { id: "m_electric", name: "Electric Mastery" },
+  { id: "m_ice", name: "Ice Mastery" },
+  { id: "m_void", name: "Void Mastery" },
+  { id: "m_light", name: "Light Mastery" },
+  { id: "m_spirit", name: "Spirit Mastery" },
+  { id: "m_ghoul", name: "Ghoul Mastery" },
 ] as const;
+
+/** The element mastery skill that verses of this element train. */
+export function masteryOf(type: string): SkillId {
+  return `m_${type}` as SkillId;
+}
 
 export type SkillId = (typeof SKILLS)[number]["id"];
 
@@ -1066,7 +1089,23 @@ export function skillLine(id: SkillId, level: number): string {
       return `${shown(n * 0.2, 50, 82)}% slower hunger, thirst and rest drain (Hardcore). 0.2% per level. Past 50% it still slows you, but the bars never stop draining.`;
     case "cooking":
       return `${shown(n * 0.15, 50, 85)}% chance a campfire recipe makes a second portion (Hardcore). 0.15% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
+    case "building":
+      return `${shown(n * 0.25, 50, 85)}% chance a wall, bed, campfire or Ghost Box refunds one material. 0.25% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
+    case "ghostkeeping":
+      return `Your ghosts deal +${(n * 0.4).toFixed(1)}% damage and have +${(n * 0.3).toFixed(1)}% health. 0.4% and 0.3% per level, no cap.`;
+    case "evasion":
+      return `${shown(n * 0.05, 15, 35)}% chance to slip a hit that lands on you. 0.05% per level. Past 15% the chance still climbs, but it never reaches 35%.`;
+    case "bountyhunting":
+      return `+${(n * 0.5).toFixed(1)}% damage against bounties, witches and hunters. 0.5% per level, no cap.`;
+    case "skinning":
+      return `${shown(n * 0.3, 60, 90)}% chance a hunted animal gives one more meat and hide. 0.3% per level. Past 60% the chance still climbs, but it never reaches 90%.`;
+    case "looting":
+      return `${shown(n * 0.15, 40, 75)}% chance a loot chest holds one extra supply, and chests last +${(n * 0.5).toFixed(0)} s. 0.15% per level (bends past 40%, never 75%) and 0.5 s per level.`;
     default:
+      if (id.startsWith("m_")) {
+        const t = TYPES[id.slice(2) as TypeId];
+        return `+${(n * 0.6).toFixed(1)}% damage with ${t?.name ?? ""} verses (yours and your ghosts'), and their cooldowns are ${shown(n * 0.05, 20, 40)}% shorter. 0.6% damage per level, no cap. Cooldown is 0.05% per level; past 20% it still climbs but never reaches 40%.`;
+      }
       return "";
   }
 }

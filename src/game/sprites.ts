@@ -1129,6 +1129,10 @@ export type MonsterDraw = {
   boss: boolean;
   rarity: number;
   ghost?: boolean;
+  /** Shiny ghosts: flowing lava-lamp colours. */
+  shiny?: boolean;
+  /** Radians of a playful spin (shiny ghosts loop now and then). */
+  spin?: number;
   animal?: boolean;
   species?: string;
   look?: GhostLook | null;

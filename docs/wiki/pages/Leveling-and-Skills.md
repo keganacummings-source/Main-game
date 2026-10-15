@@ -5,7 +5,7 @@ TURBZ has three kinds of progress:
 | | Belongs to | Kept when your witch dies? |
 | --- | --- | --- |
 | **Character level** (no cap) | This witch | No, a new witch starts at 1 |
-| **Skills** (15 of them, no cap) | Your account | Yes |
+| **Skills** (32 of them, no cap) | Your account | Yes |
 | **Account level** (no cap) and **perks** | Your account | Yes |
 
 ## Character level
@@ -29,7 +29,7 @@ Spend skill points in **Verses** (**V**, Library tab):
 
 - **Unlock** a new verse for 1 point. **Any verse in the game** can be unlocked by any class. It goes straight onto your bar if there is room.
 - **Rank up** a verse for 1 point. Ranks 1–5 are **+15%** each (rank 5 = ×1.6). Ranks past 5 keep stacking at **+8%** each.
-- **Ghost slot:** 1 point lets one more spirit follow you (up to 7 extra). See [Spirits](Spirits).
+- Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box holds the rest. Points spent on ghost slots were refunded. See [Spirits](Spirits).
 
 Your **loadout** holds up to **9** equipped verses, and only those are used. Reorder or swap them in the Loadout tab. Hotkeys 1–9 follow that order.
 
@@ -38,6 +38,10 @@ Your **loadout** holds up to **9** equipped verses, and only those are used. Reo
 Skills are **account-wide** and stay through every death and both modes. Each gives a bonus per level with no level cap. Chance and reduction bonuses (fishing, magic cooldown, survival, cooking, and the rest) bend once they pass their old knee so they keep stacking without hitting 100% or a free shop. Damage, sell price, wayfinding speed, mining and woodcutting stay linear. Train them by doing the thing. Your class's **aptitude** speeds up or slows down each one, and **Hardcore gives 2.4× skill experience**.
 
 **Wayfinding**, **Survival** and **Cooking** are the exploration and camp skills. Wayfinding works in both modes. Survival and Cooking only pay off in Hardcore, because only Hardcore has hunger, thirst, rest and campfire recipes. You can still train them there and keep them if you go back to TurboHunt, the same way Adventuring's healing only works in TurboHunt.
+
+**Element masteries.** Every element has its own skill: Normal, Fire, Water, Earth, Air, Electric, Ice, Void, Light, Spirit and Ghoul Mastery. Casting a verse trains the mastery of its element (your ghosts' casts train it a little too). Each level gives +0.6% damage with that element's verses, yours and your ghosts', and a small cooldown cut.
+
+**Activity skills.** Building (camp pieces may refund a material), Ghostkeeping (ghost damage and health; trained by your ghosts fighting), Evasion (a chance to slip hits; trained by dodging), Bounty Hunting (damage against bounties, witches and hunters), Skinning (extra meat and hide) and Looting (Hardcore chests hold more and last longer).
 
 <!-- gen:skills -->
 

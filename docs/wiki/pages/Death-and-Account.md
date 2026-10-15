@@ -4,7 +4,7 @@
 
 - **TurboHunt:** dying in a **dungeon, rift, shrine or designer map** only **knocks you out**. Dying in the **overworld** ends that witch.
 - **Hardcore:** every death ends that witch.
-- When a witch dies, her progress turns into **Account Score**. Your **skills, account level, perks, ghost slots and finished sets** stay.
+- When a witch dies, her progress turns into **Account Score**. Your **skills, account level, perks and finished sets** stay.
 - You then make the **next witch**, and can wake in a level-1 copy of a set that class has finished.
 
 ## Knock-outs (TurboHunt)
@@ -48,15 +48,15 @@ In Hardcore, survival bars, the clock and map quests reset too.
 
 | Kept through death | Lost with the witch |
 | --- | --- |
-| All 15 skills | Character level and experience |
+| All 32 skills | Character level and experience |
 | Account level, account XP and perk points | Verse ranks (back to your class's starting verses) |
 | Perks | Gear and bag |
 | Account Score | 15% of kyo |
-| Ghost slots | Bounty progress, stars and Wanted level |
+| Ghosts in your party and Ghost Box | Bounty progress, stars and Wanted level |
 | Finished sets (per class) | |
 | Caught spirits | |
 
-Skills, account level, perks, Account Score and ghost slots are shared between TurboHunt and Hardcore. Spirits and finished sets belong to each mode's own save.
+Skills, account level, perks and Account Score are shared between TurboHunt and Hardcore. Spirits and finished sets belong to each mode's own save.
 
 ## Second Chance
 

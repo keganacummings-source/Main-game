@@ -1,5 +1,5 @@
 # Maps
 
-- `main.json` — overworld (optional; procedural fallback if missing)
-- `arena.json` — Circle arena
-- Build maps in **Lets Build** using **MapAssets** tiles.
+- The base world, Veilreach (500×500), is embedded in the game at `src/game/maps/veilreach.json`.
+- Other designer maps can be exported here and opened by id.
+- Build maps in **Designer Mode** using **MapAssets** tiles.

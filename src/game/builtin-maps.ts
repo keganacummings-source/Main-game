@@ -2,37 +2,41 @@
  * Built-in maps shipped with the game.
  *
  * - Hidden maps (the Green Cave) are only reached through game mechanics.
- * - Playable worlds (Veilreach) are fetched from /Maps at startup, listed in the pause menu, and can
- *   be opened as a copy in the Map Builder.
+ * - Veilreach, the base overworld, is embedded in the bundle (src/game/maps/veilreach.json). It can be
+ *   opened as a copy in the Map Builder; a copy is never played as the overworld.
  */
 import { parseMapJson, savedMaps, type MapFile } from "./map-format";
 import greenCaveJson from "./maps/greencave.json";
+import veilreachJson from "./maps/veilreach.json";
 
-/** Worlds fetched from public/Maps. */
+/** Worlds built into the game. Veilreach is the base overworld and ships inside the bundle, so it is always there. */
 export const PLAYABLE_WORLDS: { id: string; name: string; about: string }[] = [
   { id: "veilreach", name: "Veilreach", about: "A 500×500 world of seven continents, 41 towns and a main story across the sea." },
 ];
 const playable = new Map<string, MapFile>();
-let loading: Promise<void> | null = null;
+let veilreach: MapFile | null = null;
 
-/** Fetches the playable worlds (once). Safe to call many times. */
-export function loadPlayableWorlds(): Promise<void> {
-  if (loading) return loading;
-  loading = (async () => {
-    if (typeof fetch === "undefined") return;
-    await Promise.all(PLAYABLE_WORLDS.map(async (w) => {
-      try {
-        const res = await fetch(`/Maps/${w.id}.json`, { cache: "no-cache" });
-        if (!res.ok) return;
-        playable.set(w.id, parseMapJson(await res.json()));
-      } catch { /* the world stays unavailable */ }
-    }));
-  })();
-  return loading;
+/** The embedded base world (parsed once). */
+export function baseWorldFile(): MapFile | null {
+  if (veilreach) return veilreach;
+  try {
+    veilreach = parseMapJson(veilreachJson);
+    playable.set(veilreach.id || "veilreach", veilreach);
+  } catch {
+    veilreach = null;
+  }
+  return veilreach;
 }
 
-/** Playable built-in worlds that have loaded. */
+/** Kept for callers that awaited the old fetch: the world is embedded now, so this resolves at once. */
+export function loadPlayableWorlds(): Promise<void> {
+  baseWorldFile();
+  return Promise.resolve();
+}
+
+/** Playable built-in worlds. */
 export function playableWorlds(): MapFile[] {
+  baseWorldFile();
   return [...playable.values()];
 }
 
@@ -78,5 +82,6 @@ export function isBuiltinMap(id: string): boolean {
 
 /** A designer map saved on this device (wins, so your own edits of a world are what you play), a playable world, or a hidden built-in map. */
 export function findMapFile(id: string): MapFile | undefined {
+  if (id === "veilreach") return baseWorldFile() ?? undefined;
   return savedMaps().find((m) => m.id === id) ?? playable.get(id) ?? builtinMaps().find((m) => m.id === id);
 }

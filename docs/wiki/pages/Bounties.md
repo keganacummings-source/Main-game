@@ -6,7 +6,8 @@ Bounties are rival witches with a price on their heads. They are the best source
 
 - Every **tavern** has a **bounty board** (walk to it and press **E**) with **3 postings**. You can hunt all three at once.
 - Each kill posts a **stronger** mark: the tier keeps climbing.
-- A mark gives you **5 minutes** to come to her. After that she **enrages** (twice as strong) and hunts you down, even through doors.
+- A mark gives you **5 minutes** to come to her. After that she **enrages** (far stronger) and hunts you down, even through doors.
+- Bounties hit hard. Every few seconds she lays a **Death Mark**: a red ring on the ground under you, then a blow worth over three normal hits. Step out of the ring, blink, roll, dash or ward in time. Fumble it and you can die.
 - When she falls, you get **all her kyo and her whole bag**, and the game pauses while you **choose one piece** of her six-piece kit.
 - After your first bounty, ordinary kills can earn **Bounty Stars**. At **10 stars** you become **Wanted**, and squads of **5 hunters** come after you until you pay to clear your name.
 
@@ -17,9 +18,9 @@ Each posting shows the mark's name, class and tier. Take one and she appears som
 A mark:
 
 - is a real class (with its signature verses) at **your level + 3 + tier**;
-- has **3–7 traits** and **2–4 spirits** guarding her;
+- has **3–7 traits** and **2–3 ghosts** guarding her. They are real ghosts like yours: they circle her, cast their own ghost verses and heal or ward her;
 - waits at her spot and turns to face you when you come within 200 px;
-- after **5 minutes** **enrages**: ×2 health, ×1.6 damage, faster, and she chases you across maps. Her spirits enrage with her.
+- after **5 minutes** **enrages**: ×2.6 health, about ×2.1 damage, faster attacks and Death Marks, better crits and dodge, and she chases you across maps. Her ghosts enrage with her.
 
 Once enraged, if you are far away she leaps toward you every couple of seconds, her spirits with her.
 
@@ -40,8 +41,10 @@ When she falls:
    - cleanse salt, spirit candy, ghost jars and smoke bombs;
    - leather, mushrooms, ore, timber and alchemy reagents;
    - in Hardcore, also rations, cooked meat and drinking water.
-3. **The pick**: the world **pauses** and a loot window shows her six pieces (one per slot), rolled at your level with a +5% + 2% per tier level bonus. Choose one. The window can't be skipped, and reloading reopens it.
+3. **The pick** (TurboHunt): the world **pauses** and a loot window shows her six pieces (one per slot), rolled at your level with a +5% + 2% per tier level bonus. Choose one. The window can't be skipped, and reloading reopens it.
 4. Hunting experience and account experience.
+
+In **Hardcore** there is no pause and no pick: her bag and all six pieces drop in a **loot chest** where she fell. See [Hardcore Survival](Hardcore-Survival).
 
 Her board posting is replaced by a new, higher tier.
 
