@@ -91,7 +91,8 @@ const MAX_EQUIPPED = 9;
 /** Autogrind fishes for this long, then lets another skill have a turn. */
 const FISH_GRIND_SECONDS = 75;
 const FISH_GRIND_PAUSE = 150;
-import { expandZones, mapToWorld, savedMaps } from "./map-format";
+import { FLOOR_COLOR, expandZones, mapToWorld, savedMaps } from "./map-format";
+import { tileImage } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import {
@@ -6500,7 +6501,112 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
+	/** Average colour of a tile picture, for the map. Null until the picture has loaded. */
+	spriteColor(path) {
+		this.spriteColors = this.spriteColors ?? new Map();
+		const hit = this.spriteColors.get(path);
+		if (hit !== undefined) return hit;
+		const img = tileImage(path);
+		if (!img.complete || img.naturalWidth <= 0) return null;
+		let col = null;
+		try {
+			const c = document.createElement("canvas");
+			c.width = c.height = 1;
+			const g = c.getContext("2d");
+			g.drawImage(img, 0, 0, 1, 1);
+			const [r, gr, b, a] = g.getImageData(0, 0, 1, 1).data;
+			col = a < 40 ? null : [r, gr, b];
+		} catch { col = null; }
+		this.spriteColors.set(path, col);
+		return col;
+	}
+	/** The map panel while you are inside a designer map: the whole map, its places, quests and you. */
+	drawCustomMap(canvas) {
+		const file = this.customFile;
+		const world = this.world;
+		const save = this.save;
+		const ctx = canvas.getContext("2d");
+		if (!ctx || !file || !world || !save) return;
+		const W = 560, H = 360;
+		if (canvas.width !== W) canvas.width = W;
+		if (canvas.height !== H) canvas.height = H;
+		ctx.fillStyle = "#0e0a09";
+		ctx.fillRect(0, 0, W, H);
+		const top = 18, bottom = 22;
+		const k = Math.min(W / file.w, (H - top - bottom) / file.h);
+		const ox = Math.floor((W - file.w * k) / 2), oy = top + Math.floor((H - top - bottom - file.h * k) / 2);
+		const img = document.createElement("canvas");
+		img.width = file.w; img.height = file.h;
+		const ig = img.getContext("2d");
+		const data = ig.createImageData(file.w, file.h);
+		const hex = (c) => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+		for (let i = 0; i < file.tiles.length; i++) {
+			const t = file.tiles[i];
+			let c = (t.sprite && this.spriteColor(t.sprite)) || hex(FLOOR_COLOR[t.floor] ?? "#3d5a3a");
+			if (t.layers?.length) { const top2 = this.spriteColor(t.layers[t.layers.length - 1]); if (top2) c = [(c[0] + top2[0]) >> 1, (c[1] + top2[1]) >> 1, (c[2] + top2[2]) >> 1]; }
+			if (t.floor === 2 && !t.sprite) c = [37, 139, 181];
+			if (t.block) c = [c[0] * .45 | 0, c[1] * .45 | 0, c[2] * .45 | 0];
+			if (t.portal) c = [180, 166, 255];
+			data.data.set([c[0], c[1], c[2], 255], i * 4);
+		}
+		ig.putImageData(data, 0, 0);
+		ctx.imageSmoothingEnabled = false;
+		ctx.drawImage(img, ox, oy, file.w * k, file.h * k);
+		ctx.strokeStyle = "#f0e2c8";
+		ctx.lineWidth = 1;
+		ctx.strokeRect(ox - .5, oy - .5, file.w * k + 1, file.h * k + 1);
+		const at = (tx, ty) => [ox + (tx + .5) * k, oy + (ty + .5) * k];
+		const dot = (tx, ty, color, r = 3.5, label = "") => {
+			const [x, y] = at(tx, ty);
+			ctx.fillStyle = color;
+			ctx.strokeStyle = "#1a1214";
+			ctx.lineWidth = 1.5;
+			ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+			if (label) { ctx.font = "13px VT323, monospace"; ctx.fillStyle = "#fff6e8"; ctx.textAlign = "left"; ctx.fillText(label, x + r + 3, y + 4); }
+		};
+		for (const z of file.zones ?? []) {
+			ctx.strokeStyle = "rgba(196,71,58,.9)"; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5;
+			ctx.strokeRect(ox + z.tx * k, oy + z.ty * k, z.tw * k, z.th * k);
+			ctx.setLineDash([]);
+		}
+		for (const n of world.spawns) if (n.kind === "node") dot(Math.floor(n.x / TILE), Math.floor(n.y / TILE), "#8fd06a", 2.5);
+		for (const m of this.mobs) if (m.alive && m.boss) dot(Math.floor(m.x / TILE), Math.floor(m.y / TILE), "#c4473a", 5, m.name);
+		for (const it of file.interactables ?? []) {
+			if (it.kind === "node") continue;
+			const color = it.kind === "dungeon" ? "#b4a6ff" : it.kind === "hearth" ? "#ff9a4a" : it.kind === "shrine" ? "#8fd0ff" : "#e6c15a";
+			const label = it.kind === "dungeon" ? it.name || "Door" : it.kind === "shrine" ? it.name || "Shrine" : it.kind === "hearth" ? "Hearth" : it.label || (it.kind === "bounty" ? "Bounty Board" : "Arena");
+			dot(it.tx, it.ty, color, 5, label);
+		}
+		const states = save.mapQuests ?? {};
+		for (const n of this.mapNpcs) {
+			const mk = questMarker(file, n, states);
+			dot(n.tx, n.ty, "#c9a6e8", 4, `${mk ? mk + " " : ""}${n.name}`);
+		}
+		// Where the open quests want you to go.
+		for (const q of openQuests(file, states)) {
+			const s = states[qkey(file.id, q.id)];
+			const step = s.status === "active" ? q.steps[s.step] : null;
+			const goal = s.status === "ready" ? this.mapNpcs.find((n) => n.id === turnInOf(q)) : step?.type === "goto" ? { tx: step.tx, ty: step.ty } : step?.type === "talk" ? this.mapNpcs.find((n) => n.id === step.npcId) : step?.type === "bring" ? this.mapNpcs.find((n) => n.id === (step.npcId || turnInOf(q))) : null;
+			if (!goal) continue;
+			const [x, y] = at(goal.tx, goal.ty);
+			ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 2;
+			ctx.beginPath(); ctx.arc(x, y, 8 + Math.sin(this.clock * 4) * 1.5, 0, Math.PI * 2); ctx.stroke();
+		}
+		for (const fire of save.survival?.campfires ?? []) if (fire.map === save.map) dot(Math.floor(fire.x / TILE), Math.floor(fire.y / TILE), "#ffac45", 3.5);
+		if (file.spawn) dot(file.spawn.tx, file.spawn.ty, "#8fd06a", 2.5);
+		const px = ox + save.x / TILE * k, py = oy + save.y / TILE * k;
+		ctx.fillStyle = "#fff6e8"; ctx.strokeStyle = "#1a1214"; ctx.lineWidth = 2;
+		ctx.beginPath(); ctx.moveTo(px, py - 7); ctx.lineTo(px + 5.5, py + 5); ctx.lineTo(px - 5.5, py + 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+		ctx.font = "15px VT323, monospace";
+		ctx.textAlign = "left";
+		ctx.fillStyle = "#e6c15a";
+		ctx.fillText(`${file.name} · ${file.w}×${file.h}`, 8, 13);
+		ctx.font = "14px VT323, monospace";
+		ctx.fillStyle = "#f0e2c8";
+		ctx.fillText("You · triangle   NPC · violet ('!' quest, '?' hand in)   gold ring · quest goal   red · boss/zone", 8, H - 6);
+	}
 	drawMap(canvas) {
+		if (this.save?.map?.startsWith("custom-") && this.customFile) return this.drawCustomMap(canvas);
 		const world = this.overworld ?? (this.save?.map === "world" ? this.world : null);
 		const save = this.save;
 		const ctx = canvas.getContext("2d");

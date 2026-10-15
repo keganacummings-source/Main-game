@@ -1321,6 +1321,7 @@ function Mini({ snap, game }: { snap: ReturnType<typeof getSnap>; game: TurbzGam
     const canvas = ref.current;
     if (!canvas || !game) return;
     game.drawMap(canvas);
-  }, [game, snap.mapX, snap.mapY, snap.map, JSON.stringify(snap.dungeonPortals), JSON.stringify(snap.survival?.campfires)]);
-  return <div className="grid gap-3"><p className="text-kyo">Next dungeon in {Math.floor(snap.dungeonCountdown / 60)}:{String(snap.dungeonCountdown % 60).padStart(2, "0")} of active play.</p><canvas ref={ref} className="map-canvas" aria-label="World map" />{snap.dungeonPortals.filter(p => !p.cleared).map(p => <button className="px-btn" key={p.id} disabled={snap.map !== "world"} onClick={() => game?.trackRift(p.id)}>Track / enter Dungeon {p.id.slice(5)}</button>)}</div>;
+  }, [game, snap.mapX, snap.mapY, snap.map, snap.mapQuests, JSON.stringify(snap.dungeonPortals), JSON.stringify(snap.survival?.campfires)]);
+  const custom = snap.map.startsWith("custom-");
+  return <div className="grid gap-3">{custom ? <p className="text-kyo" data-testid="custom-map-label">{snap.region}</p> : <p className="text-kyo">Next dungeon in {Math.floor(snap.dungeonCountdown / 60)}:{String(snap.dungeonCountdown % 60).padStart(2, "0")} of active play.</p>}<canvas ref={ref} className="map-canvas" aria-label="World map" />{snap.dungeonPortals.filter(p => !p.cleared).map(p => <button className="px-btn" key={p.id} disabled={snap.map !== "world"} onClick={() => game?.trackRift(p.id)}>Track / enter Dungeon {p.id.slice(5)}</button>)}</div>;
 }
