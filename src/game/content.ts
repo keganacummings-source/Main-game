@@ -31,8 +31,15 @@ export const TILE = 32;
 export const WORLD_W = 420;
 export const WORLD_H = 288;
 
-/** POIs were laid out on the old 84×60 chart. The live map stretches them. */
+let tileRemap: ((tx: number, ty: number) => { tx: number; ty: number }) | null = null;
+/** Installs where classic chart positions land on the main world (see main-world.ts). Null restores stretching. */
+export function setTileRemap(fn: ((tx: number, ty: number) => { tx: number; ty: number }) | null): void {
+  tileRemap = fn;
+}
+
+/** POIs were laid out on the old 84×60 chart. The live map stretches them (or the main world re-homes them). */
 export function scaleTile(tx: number, ty: number): { tx: number; ty: number } {
+  if (tileRemap) return tileRemap(tx, ty);
   return {
     tx: Math.max(3, Math.min(WORLD_W - 4, Math.round(tx * (WORLD_W / 84)))),
     ty: Math.max(3, Math.min(WORLD_H - 4, Math.round(ty * (WORLD_H / 60)))),

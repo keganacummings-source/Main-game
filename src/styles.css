@@ -253,6 +253,30 @@
   width: min(420px, calc(100vw - 16px));
 }
 
+.world-map { display: grid; grid-template-rows: auto 1fr; gap: 6px; height: 100%; min-height: 360px; }
+.world-map-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.world-map-tools { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.world-map-body { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 8px; min-height: 0; }
+.world-map-stage { position: relative; min-height: 320px; border: 2px solid var(--color-bone); background: #0b0807; overflow: hidden; }
+.world-map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; image-rendering: pixelated; }
+.world-map-canvas:active { cursor: grabbing; }
+.world-map-tip { position: absolute; z-index: 2; max-width: 260px; padding: 4px 8px; background: rgba(14, 10, 9, 0.94); border: 2px solid var(--color-kyo); pointer-events: none; font-size: 17px; line-height: 1.1; }
+.world-map-hint { position: absolute; right: 6px; bottom: 2px; margin: 0; font-size: 14px; pointer-events: none; }
+.world-map-side { display: grid; align-content: start; gap: 6px; min-height: 0; overflow: auto; }
+.world-map-results { display: grid; gap: 2px; max-height: 220px; overflow: auto; }
+.world-map-result { display: flex; justify-content: space-between; gap: 6px; padding: 2px 4px; text-align: left; font: inherit; color: var(--color-bone); background: transparent; border: 1px solid rgba(240, 226, 200, 0.2); cursor: pointer; }
+.world-map-result:hover { border-color: var(--color-kyo); }
+.world-map-layers { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; }
+.world-map-layers label { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.world-map-key { display: grid; gap: 2px; font-size: 15px; }
+.world-map-key i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border: 1px solid #140e0c; }
+@media (max-width: 700px) {
+  .world-map-body { grid-template-columns: 1fr; grid-template-rows: minmax(240px, 1fr) auto; }
+  .world-map-stage { min-height: 240px; }
+  .world-map-side { max-height: 200px; }
+  .world-map-key, .world-map-hint { display: none; }
+}
+
 .map-canvas {
   width: 100%;
   height: auto;

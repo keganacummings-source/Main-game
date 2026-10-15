@@ -107,6 +107,19 @@ export const TAVERNS: Tavern[] = TAVERN_DESIGN.map((t) => {
   return { ...t, tx: p.tx, ty: p.ty, boardTx: p.tx + 3, boardTy: p.ty + 6 };
 });
 
+/** Re-reads the classic site positions after the main world changes how chart positions map. */
+export function relocateClassicSites(): void {
+  TAVERN_DESIGN.forEach((t, i) => {
+    const board = scaleTile(t.tx + 0.5, t.ty + 1);
+    const p = scaleTile(t.tx, t.ty);
+    TAVERNS[i] = { ...t, tx: p.tx, ty: p.ty, boardTx: board.tx, boardTy: board.ty };
+  });
+  for (const [id, [x, y]] of [["crypt", [41, 47]], ["kiln", [18, 55]]] as const) {
+    const p = scaleTile(x, y);
+    WORLD_RETURN[id] = { x: p.tx * TILE + 16, y: p.ty * TILE + 16 };
+  }
+}
+
 function noise(x: number, y: number, seed: number): number {
   let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(seed, 1442695041)) >>> 0;
   n = Math.imul(n ^ (n >>> 13), 1274126177);
@@ -936,7 +949,7 @@ function paintRift(g: CanvasRenderingContext2D, x: number, y: number): void {
   drawRift(g, x, y);
 }
 
-function paintArena(g: CanvasRenderingContext2D, x: number, y: number): void {
+export function paintArena(g: CanvasRenderingContext2D, x: number, y: number): void {
   g.fillStyle = "rgba(0,0,0,0.28)";
   g.beginPath();
   g.ellipse(x, y + 6, 70, 16, 0, 0, Math.PI * 2);

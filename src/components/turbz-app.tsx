@@ -312,10 +312,11 @@ const PANEL_TITLE: Record<PanelId, string> = {
   map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu",
 };
 /** Default window widths. Rebuilt windows use new layout keys so an old, cramped saved size does not carry over. */
-const PANEL_W: Partial<Record<PanelId, number>> = { bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 560, bounty: 500, pause: 560, lobby: 440 };
+const PANEL_W: Partial<Record<PanelId, number>> = { bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560, lobby: 440 };
 const REBUILT = new Set<PanelId>(["bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause", "lobby"]);
 
 function winId(panel: PanelId): string {
+  if (panel === "map") return "panel-map-v3";
   return REBUILT.has(panel) ? `panel-${panel}-v2` : `panel-${panel}`;
 }
 
@@ -324,7 +325,7 @@ function panelDef(panel: PanelId) {
     if (narrow()) return { x: 8, y: Math.round(vh() * 0.12), w: vw() - 16, h: Math.round(vh() * 0.7) };
     const w = Math.min(vw() - 16, PANEL_W[panel] ?? 460);
     const h = Math.max(320, Math.min(vh() - 200, 820));
-    if (panel === "bag" || panel === "trade" || panel === "moves" || panel === "pause") {
+    if (panel === "bag" || panel === "trade" || panel === "moves" || panel === "pause" || panel === "map") {
       return { x: Math.max(8, Math.round((vw() - w) / 2)), y: Math.max(8, Math.round((vh() - h) / 2) - 40), w, h };
     }
     const step = PANEL_IDS.indexOf(panel) % 5;

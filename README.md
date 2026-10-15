@@ -149,7 +149,7 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - **Ferries.** Step onto the end of a pier to sail to the next port. The ports form a ring that links every continent.
   - **Main story, "The Sundered Crown".** It sends you to each continent's capital for a shard. Every chapter has you talk to people in sister towns, gather, fight and visit landmarks, then ends on Crownfall Isle.
   - Every town also has three side quests.
-  - Enter it from Menu → **Worlds & Designer Maps**. Walking into a named area announces it and gives a little Adventuring XP the first time. Quests now say "Travel to *place*" instead of coordinates.
+  - It is now the overworld (see below). Walking into a named area announces it and gives a little Adventuring XP the first time. Quests now say "Travel to *place*" instead of coordinates.
   - Rebuild it with `node --import ./scripts/wiki/register.mjs scripts/maps/build-veilreach.mjs` (it writes `public/Maps/veilreach.json`). The generator lives in `src/game/map-gen.ts`.
 - **Map Builder 2.**
   - **Open a copy of Veilreach** (Files → Built-in worlds) to make your own edits. Saving it under the id `veilreach` replaces the built-in world on your device.
@@ -183,3 +183,18 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
 - **Foes attack at the verse's own rate.** A foe's time between attacks is now the same base cooldown a hunter gets for that verse. Each move in its kit goes on that cooldown. Swift and enraged foes are 15% faster.
 - **Free movement verses.** Blink, lunge and dash go where you steer (movement keys or stick). With nothing held, they follow your click-to-move path or the way you face. They no longer snap onto a foe. Blink travels 96 px and can hop a wall, then hits the nearest foe within 72 px of where you land. Lunge travels 104 px, then strikes whatever is within 64 px. Auto-battle still aims them toward its target.
 - **Verses menu.** Tapping an equipped verse opens **Upgrade**, **Move**, **Unequip** and **Cancel**. Move, then tap another key slot: if that slot holds a verse, the two swap. You can also drag slots to reorder them.
+
+## Veilreach is the world & new map
+
+- **Veilreach replaces both old overworlds** (TurboHunt and Hardcore). New hunters wake in Hearthmere's capital. Older saves on the old world wake at the new hearth once. Their campfires, logs and open rifts on the old world are cleared, because those spots no longer exist. Progress made on Veilreach while it was a separate map carries over.
+- **Classic sites moved to Hearthmere.** The hearth folk, taverns and bounty boards, the five shrines, the Tiny Crypt and Ash Kiln, and the Tide Tyrant, Void Cantor and Marrow Saint now stand on Hearthmere. Each keeps its old bearing from the hearth, snapped to open, reachable ground (`src/game/main-world.ts`). Rifts, witches, bounties, hunters and survival all work as before.
+- If you save your own copy of Veilreach in the Map Builder (same id), it becomes your world on that device.
+- **New map window (M).**
+  - Drag to pan; wheel, pinch, double-click or the − and + buttons to zoom.
+  - **Me** follows you; **Whole map** shows everything.
+  - Hover to read areas, levels, people and places.
+  - Click to pin a spot. A red arrow by your hunter points to the pin with the distance.
+  - Find any town, place or person by name.
+  - Layer toggles: areas, people, places, foes, resources.
+  - Quest goals pulse gold, and edge arrows point to anything off-screen.
+

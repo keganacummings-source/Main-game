@@ -276,33 +276,243 @@ export const QuestsPanel = memo(function QuestsPanel({ game }: GameProp) {
 // World map
 // ---------------------------------------------------------------------------
 
+type MapView = { cx: number; cy: number; s: number };
+type MapLayers = { areas: boolean; people: boolean; places: boolean; foes: boolean; resources: boolean };
+const MAP_LAYER_LABEL: Record<keyof MapLayers, string> = { areas: "Areas", people: "People", places: "Places", foes: "Foes", resources: "Resources" };
+const PLACE_KIND_LABEL: Record<string, string> = { region: "Land", city: "Town", resource: "Resource", landmark: "Landmark", dungeon: "Dungeon", water: "Water", npc: "Person", boss: "Boss" };
+
+/**
+ * The world map: drag to pan, wheel or pinch to zoom, hover to read a spot, click to drop a pin
+ * (an arrow in the world points to it). Layers and a place finder sit beside it.
+ */
 export const MapPanel = memo(function MapPanel({ game }: GameProp) {
-  const s = useSnapPick(["map", "region", "dungeonCountdown", "dungeonPortals", "mapQuests", "survival", "mapX", "mapY"] as const);
+  const s = useSnapPick(["map", "region", "dungeonCountdown", "dungeonPortals"] as const);
   const ref = useRef<HTMLCanvasElement>(null);
-  const tx = Math.round(s.mapX / 64);
-  const ty = Math.round(s.mapY / 64);
+  const view = useRef<MapView | null>(null);
+  const [follow, setFollow] = useState(true);
+  const followRef = useRef(follow);
+  followRef.current = follow;
+  const [layers, setLayers] = useState<MapLayers>(() => {
+    try { return { areas: true, people: true, places: true, foes: true, resources: true, ...JSON.parse(localStorage.getItem("turbz-map-layers") ?? "{}") }; } catch { return { areas: true, people: true, places: true, foes: true, resources: true }; }
+  });
+  const layersRef = useRef(layers);
+  layersRef.current = layers;
+  const [hover, setHover] = useState<{ x: number; y: number; lines: string[] } | null>(null);
+  const [find, setFind] = useState("");
+  const [zoomLabel, setZoomLabel] = useState(1);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const drag = useRef<{ x: number; y: number; cx: number; cy: number; moved: boolean; pinch?: number; s0?: number } | null>(null);
+
+  const info = () => game?.mapInfo() ?? null;
+  const clampView = (v: MapView) => {
+    const i = info();
+    if (!i) return v;
+    const c = ref.current;
+    const minS = c ? Math.min(c.clientWidth / i.w, c.clientHeight / i.h) * 0.9 : 0.5;
+    v.s = Math.max(Math.min(minS, 1), Math.min(24, v.s));
+    v.cx = Math.max(0, Math.min(i.w, v.cx));
+    v.cy = Math.max(0, Math.min(i.h, v.cy));
+    return v;
+  };
+  const ensureView = () => {
+    if (!view.current) {
+      const i = info();
+      if (!i) return null;
+      view.current = clampView({ cx: i.px, cy: i.py, s: i.w * i.h > 120000 ? 3 : 4 });
+    }
+    return view.current;
+  };
+  const fitAll = () => {
+    const i = info(), c = ref.current;
+    if (!i || !c) return;
+    setFollow(false);
+    view.current = clampView({ cx: i.w / 2, cy: i.h / 2, s: Math.min(c.clientWidth / i.w, c.clientHeight / i.h) * 0.95 });
+  };
+  const centerMe = () => {
+    const i = info();
+    if (!i) return;
+    setFollow(true);
+    const v = ensureView();
+    if (v) { v.cx = i.px; v.cy = i.py; if (v.s < 2) v.s = 4; }
+  };
+  const zoomBy = (f: number, sx?: number, sy?: number) => {
+    const v = ensureView(), c = ref.current;
+    if (!v || !c) return;
+    const W = c.clientWidth, H = c.clientHeight;
+    const px = sx ?? W / 2, py = sy ?? H / 2;
+    const tx = v.cx + (px - W / 2) / v.s, ty = v.cy + (py - H / 2) / v.s;
+    v.s *= f;
+    clampView(v);
+    v.cx = tx - (px - W / 2) / v.s;
+    v.cy = ty - (py - H / 2) / v.s;
+    clampView(v);
+    if (sx !== undefined) setFollow(false);
+  };
+  const jump = (tx: number, ty: number, s?: number) => {
+    const v = ensureView();
+    if (!v) return;
+    setFollow(false);
+    v.cx = tx; v.cy = ty;
+    if (s) v.s = Math.max(v.s, s);
+    clampView(v);
+  };
+  const toTile = (clientX: number, clientY: number) => {
+    const v = ensureView(), c = ref.current;
+    if (!v || !c) return null;
+    const r = c.getBoundingClientRect();
+    return { tx: v.cx + (clientX - r.left - r.width / 2) / v.s, ty: v.cy + (clientY - r.top - r.height / 2) / v.s, x: clientX - r.left, y: clientY - r.top };
+  };
+
+  // Draw loop: about 12 frames a second while the window is open.
   useEffect(() => {
-    const canvas = ref.current;
-    if (canvas && game) game.drawMap(canvas);
-  }, [game, tx, ty, s.map, s.mapQuests, s.dungeonPortals, s.survival?.campfires]);
+    let raf = 0, last = 0, live = true;
+    const tick = (t: number) => {
+      if (!live) return;
+      raf = requestAnimationFrame(tick);
+      if (t - last < 80) return;
+      last = t;
+      const c = ref.current, v = ensureView(), i = info();
+      if (!c || !v || !game || !i) return;
+      if (followRef.current) { v.cx += (i.px - v.cx) * 0.35; v.cy += (i.py - v.cy) * 0.35; }
+      game.drawWorldMap(c, v, layersRef.current);
+      setZoomLabel(Math.round(v.s * 10) / 10);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { live = false; cancelAnimationFrame(raf); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game]);
+  // A new map (entering a dungeon, a designer map) resets the view.
+  useEffect(() => { view.current = null; setFollow(true); }, [s.map]);
+  useEffect(() => { try { localStorage.setItem("turbz-map-layers", JSON.stringify(layers)); } catch { /* per-viewer convenience only */ } }, [layers]);
+
+  const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const v = ensureView();
+    if (!v) return;
+    const pts = [...pointers.current.values()];
+    if (pts.length === 2) drag.current = { x: 0, y: 0, cx: v.cx, cy: v.cy, moved: true, pinch: Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y), s0: v.s };
+    else drag.current = { x: e.clientX, y: e.clientY, cx: v.cx, cy: v.cy, moved: false };
+  };
+  const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const p = toTile(e.clientX, e.clientY);
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const d = drag.current, v = view.current;
+    if (d && v) {
+      const pts = [...pointers.current.values()];
+      if (d.pinch && pts.length === 2) {
+        const dist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y);
+        v.s = (d.s0 ?? v.s) * (dist / d.pinch);
+        clampView(v);
+        setFollow(false);
+      } else if (!d.pinch) {
+        const dx = e.clientX - d.x, dy = e.clientY - d.y;
+        if (Math.hypot(dx, dy) > 4) { d.moved = true; setFollow(false); }
+        if (d.moved) { v.cx = d.cx - dx / v.s; v.cy = d.cy - dy / v.s; clampView(v); }
+      }
+      setHover(null);
+      return;
+    }
+    if (p && game) setHover({ x: p.x, y: p.y, lines: game.mapPick(p.tx, p.ty, Math.max(1.5, 10 / (v?.s ?? 4))) });
+  };
+  const onUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    pointers.current.delete(e.pointerId);
+    const d = drag.current;
+    if (pointers.current.size === 0) drag.current = null;
+    if (d && !d.moved && !d.pinch) {
+      const p = toTile(e.clientX, e.clientY);
+      if (p && game) game.setMapPin(p.tx - 0.5, p.ty - 0.5);
+    }
+  };
+  const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    const p = toTile(e.clientX, e.clientY);
+    if (!p) return;
+    zoomBy(e.deltaY < 0 ? 1.25 : 0.8, p.x, p.y);
+  };
+  // The canvas wheel must not scroll the window behind it.
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const stop = (e: WheelEvent) => e.preventDefault();
+    c.addEventListener("wheel", stop, { passive: false });
+    return () => c.removeEventListener("wheel", stop);
+  }, []);
+
+  const places = useMemo(() => {
+    const q = find.trim().toLowerCase();
+    if (q.length < 2 || !game) return [];
+    return game.mapPlaces().filter((p) => p.name.toLowerCase().includes(q)).slice(0, 30);
+  }, [find, game, s.map]);
   const custom = s.map.startsWith("custom-");
   const rifts = s.dungeonPortals.filter((p) => !p.cleared);
+  const pin = game?.mapInfo()?.pin ?? null;
   return (
-    <div className="ui-stack">
-      <div className="ui-row">
+    <div className="world-map" data-testid="world-map">
+      <div className="world-map-bar">
         <span className="text-kyo" data-testid={custom ? "custom-map-label" : undefined}>{s.region}</span>
-        {!custom && <span className="text-dim">Next rift {Math.floor(s.dungeonCountdown / 60)}:{String(s.dungeonCountdown % 60).padStart(2, "0")}</span>}
+        {s.map === "world" && <span className="text-dim">Next rift {Math.floor(s.dungeonCountdown / 60)}:{String(s.dungeonCountdown % 60).padStart(2, "0")}</span>}
+        <span className="world-map-tools">
+          <button type="button" className="px-btn ui-btn-sm" aria-label="Zoom out" onClick={() => zoomBy(0.7)}>−</button>
+          <span className="text-dim">×{zoomLabel}</span>
+          <button type="button" className="px-btn ui-btn-sm" aria-label="Zoom in" onClick={() => zoomBy(1.4)}>+</button>
+          <button type="button" className={`px-btn ui-btn-sm ${follow ? "px-btn-kyo" : ""}`} data-testid="map-me-btn" onClick={centerMe}>Me</button>
+          <button type="button" className="px-btn ui-btn-sm" data-testid="map-fit-btn" onClick={fitAll}>Whole map</button>
+          {pin && <button type="button" className="px-btn ui-btn-sm" onClick={() => jump(pin.tx, pin.ty)}>Pin</button>}
+        </span>
       </div>
-      <canvas ref={ref} className="map-canvas" aria-label="World map" />
-      {rifts.length > 0 && (
-        <Section title={`OPEN RIFTS · ${rifts.length}`}>
-          <div className="ui-row-gap">
-            {rifts.map((p) => (
-              <button key={p.id} type="button" className="px-btn ui-btn-sm" disabled={s.map !== "world"} onClick={() => game?.trackRift(p.id)}>Dungeon {p.id.slice(5)}</button>
-            ))}
-          </div>
-        </Section>
-      )}
+      <div className="world-map-body">
+        <div className="world-map-stage">
+          <canvas ref={ref} className="world-map-canvas" aria-label="World map" data-testid="world-map-canvas"
+            onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onPointerLeave={() => setHover(null)}
+            onWheel={onWheel} onDoubleClick={(e) => { const p = toTile(e.clientX, e.clientY); if (p) zoomBy(1.8, p.x, p.y); }} />
+          {hover && hover.lines.length > 0 && (
+            <div className="world-map-tip" style={{ left: Math.min(hover.x + 14, 9999), top: hover.y + 14 }}>
+              {hover.lines.map((l, i) => <div key={i} className={i === 0 ? "text-kyo" : "text-dim"}>{l}</div>)}
+            </div>
+          )}
+          <p className="world-map-hint text-dim">Drag to pan · wheel or pinch to zoom · click to pin</p>
+        </div>
+        <aside className="world-map-side">
+          <input className="px-input" placeholder="Find a town, place, person…" aria-label="Find on the map" value={find} onChange={(e) => setFind(e.target.value)} data-testid="map-find" />
+          {places.length > 0 && (
+            <div className="world-map-results">
+              {places.map((p, i) => (
+                <button key={i} type="button" className="world-map-result" onClick={() => jump(p.tx, p.ty, 4)}>
+                  <span>{p.name}</span><span className="text-dim">{PLACE_KIND_LABEL[p.kind] ?? p.kind}{p.levels ? ` · ${p.levels}` : ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {find.trim().length >= 2 && !places.length && <p className="text-dim">Nothing by that name here.</p>}
+          <Section title="SHOW">
+            <div className="world-map-layers">
+              {(Object.keys(MAP_LAYER_LABEL) as (keyof MapLayers)[]).map((k) => (
+                <label key={k}><input type="checkbox" checked={layers[k]} onChange={(e) => setLayers({ ...layers, [k]: e.target.checked })} /> {MAP_LAYER_LABEL[k]}</label>
+              ))}
+            </div>
+          </Section>
+          <Section title="KEY">
+            <div className="world-map-key">
+              <span><i style={{ background: "#fff6e8" }} />You</span>
+              <span><i style={{ background: "#e6c15a" }} />Town · board</span>
+              <span><i style={{ background: "#ffe08a" }} />! quest · ? hand in · ring = goal</span>
+              <span><i style={{ background: "#ff4a3a" }} />Boss · bounty</span>
+              <span><i style={{ background: "#b4a6ff" }} />Door · rift</span>
+              <span><i style={{ background: "#8fd0ff" }} />Shrine · arena</span>
+              <span><i style={{ background: "#ff6a4a" }} />Your pin</span>
+            </div>
+          </Section>
+          {rifts.length > 0 && (
+            <Section title={`OPEN RIFTS · ${rifts.length}`}>
+              <div className="ui-row-gap">
+                {rifts.map((p) => (
+                  <button key={p.id} type="button" className="px-btn ui-btn-sm" disabled={s.map !== "world"} onClick={() => { game?.trackRift(p.id); jump(p.x / 32, p.y / 32, 3); }}>Dungeon {p.id.slice(5)}</button>
+                ))}
+              </div>
+            </Section>
+          )}
+        </aside>
+      </div>
     </div>
   );
 });

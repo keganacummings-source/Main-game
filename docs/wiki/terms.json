@@ -92,7 +92,7 @@
   {"term": "Map Builder", "def": "Designer tool for making maps with zones, NPCs and quests.", "page": "Designer-Mode", "anchor": "Map Builder"},
   {"term": "Enemy Designer", "def": "Designer tool for making or replacing enemies.", "page": "Designer-Mode", "anchor": "Enemy Designer"},
   {"term": "Leaderboards", "def": "The grave ledger of fallen witches, ranked by Account Score.", "page": "Game-Modes", "aliases": ["grave ledger"]},
-  {"term": "Veilreach", "def": "A 500×500 world of seven continents, ferries and a main story. Entered from the Worlds & Designer Maps menu.", "page": "World-and-Regions", "anchor": "Veilreach", "aliases": ["Sundered Crown", "Crownfall Isle", "Hearthmere"]},
+  {"term": "Veilreach", "def": "A 500×500 world of seven continents, ferries and a main story. The overworld in both TurboHunt and Hardcore.", "page": "World-and-Regions", "anchor": "Veilreach", "aliases": ["Sundered Crown", "Crownfall Isle", "Hearthmere"]},
   {"term": "Ferry", "def": "A portal at the end of a pier that sails you to another port on the same map.", "page": "World-and-Regions", "anchor": "Veilreach", "aliases": ["ferries", "pier", "port"]},
   {"term": "Area", "def": "A named rectangle on a designer map (continent, town, grove…). It is announced when you walk in and gives Adventuring XP the first time.", "page": "Designer-Mode", "anchor": "Areas", "aliases": ["areas", "named area", "map region"]},
   {"term": "World generator", "def": "Map Builder tool that builds a whole world (continents, towns, roads, camps, quests) from a seed.", "page": "Designer-Mode", "anchor": "Worlds", "aliases": ["Generate a world", "seed"]}

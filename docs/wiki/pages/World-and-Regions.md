@@ -1,6 +1,21 @@
 # World and Regions
 
-The overworld is a large map split into seven regions around **Crownfall Citadel**. Visiting a new region for the first time gives Adventuring experience. Open the **Map** (**M**) to see where you are, rifts, and your bounty marks.
+The overworld, in both TurboHunt and Hardcore, is **[Veilreach](#veilreach)**: a 500×500 world of seven continents split by sea. Every hunter wakes at the hearth in Hearthmere's capital. The classic sites (the hearth folk, taverns and their bounty boards, the five shrines, the Tiny Crypt and Ash Kiln doors, and the three world bosses) stand on Hearthmere, the starting continent. Visiting a new region for the first time gives Adventuring experience.
+
+## The map (M)
+
+Press **M** for the world map:
+
+- **Pan and zoom.** Drag to pan, and use the mouse wheel, pinch or double-click to zoom. **−** and **+** zoom too. **Me** follows you again, and **Whole map** fits all of Veilreach.
+- **Hover** a spot to read it: the area, its foe levels and description, and the nearest person or place.
+- **Click** to drop a **pin**. A red arrow by your hunter points to it, with the distance in tiles. Click the pin again to remove it; it also clears when you arrive.
+- **Find** a town, place or person by name and jump to it.
+- **Show** turns layers on and off: areas, people, places, foes and resources. Resource nodes and ordinary foes only appear once you zoom in.
+- **What it shows:**
+  - **!** marks a quest offer (once you zoom in) and **?** a hand-in;
+  - a pulsing gold ring is your next quest goal;
+  - you'll also see bosses, bounty marks, rifts, campfires and your pin.
+  - Arrows at the edge point to anything off-screen.
 
 ## Regions
 
@@ -25,7 +40,7 @@ Companions fight beside you:
 
 ## Landmarks
 
-- **The hearth** (Crownfall): where a first witch wakes. In TurboHunt it heals you fully.
+- **The hearth** (Hearthmere's capital): where a first witch wakes. In TurboHunt it heals you fully.
 - **Shrines**: five elemental trials. See [Bosses and Dungeons](Bosses-and-Dungeons#shrines).
 - **Tiny Crypt** and **Ash Kiln**: fixed dungeons. See [Bosses and Dungeons](Bosses-and-Dungeons).
 - **World bosses**: Tide Tyrant, Void Cantor and Marrow Saint.
@@ -33,7 +48,7 @@ Companions fight beside you:
 
 ## Veilreach
 
-A second, hand-editable world of 500×500 tiles, made with the [Map Builder](Designer-Mode#worlds). Enter it from Menu → **Worlds & Designer Maps**. You arrive in Hearthmere's capital.
+The overworld: 500×500 tiles, built with the [Map Builder](Designer-Mode#worlds) and editable there. You start in Hearthmere's capital.
 
 | Continent | Theme | Foe levels (they overlap, so you can push ahead) |
 |---|---|---|
