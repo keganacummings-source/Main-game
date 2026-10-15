@@ -89,6 +89,7 @@ import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraCo
 import { geneSeedOf } from "./fx-gene";
 import { gearImbue } from "./gear-fx";
 import { drawGhostFx, ghostImbue } from "./ghost-fx";
+import { CHEST_BOTTOM, chestCanvas } from "./chest-sprite";
 /** Each set gets its own aura variant (tint, spin, size, crest) so the 10 aura kinds look like 100. */
 const SET_VARIANT: Record<string, number> = Object.fromEntries(SETS.map((s, i) => [s.id, i * 7 + s.style + 1]));
 const SET_PIECES = ["head", "chest", "legs", "feet", "relic"];
@@ -3385,7 +3386,8 @@ export class TurbzGame {
 		if (changed) { this.persist(); this.syncHud(true); }
 	}
 	/** Takes one thing from the open chest: kind "gear" with a uid, or "item" with an item id. */
-	takeFromChest(chestId, kind, key) {
+	takeFromChest(chestId, kind, key, quiet = false) {
+		let taken = null;
 		const save = this.save;
 		const c = this.chestById(chestId);
 		if (!save || !c || this.dead) return;
@@ -3394,8 +3396,9 @@ export class TurbzGame {
 			const g = c.gear.find((x) => x.uid === key);
 			if (!g) return;
 			c.gear = c.gear.filter((x) => x !== g);
-			this.receiveGear({ ...g, uid: nextUid() });
-			this.say(`Took ${g.name} (Lv ${g.level}). Double-click it in the Bag to wear it.`);
+			taken = { ...g, uid: nextUid() };
+			this.receiveGear(taken);
+			if (!quiet) this.say(`Took ${g.name} (Lv ${g.level}). Double-click it in the Bag to wear it.`);
 		} else {
 			const n = c.items[key] ?? 0;
 			if (n <= 0) return;
@@ -3411,6 +3414,12 @@ export class TurbzGame {
 		}
 		this.persist();
 		this.syncHud(true);
+		return taken;
+	}
+	/** Takes a gear piece out of a chest and puts it on straight away. */
+	equipFromChest(chestId, uid) {
+		const g = this.takeFromChest(chestId, "gear", uid, true);
+		if (g) this.equip(g.uid);
 	}
 	takeAllChest(chestId) {
 		const c = this.chestById(chestId);
@@ -3437,15 +3446,17 @@ export class TurbzGame {
 		const blink = t < 30 && Math.floor(t * 3) % 2 === 0;
 		ctx.save();
 		if (blink) ctx.globalAlpha = .55;
-		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x - 12, y + 2, 24, 4);
-		if (rich) { ctx.fillStyle = `rgba(255,209,102,${.18 + Math.sin(this.clock * 3) * .08})`; ctx.beginPath(); ctx.arc(x, y - 8, 18, 0, Math.PI * 2); ctx.fill(); }
-		ctx.fillStyle = "#3a2214"; ctx.fillRect(x - 11, y - 14, 22, 16);
-		ctx.fillStyle = "#7a4a26"; ctx.fillRect(x - 10, y - 13, 20, 14);
-		ctx.fillStyle = "#94603a"; ctx.fillRect(x - 11, y - 19, 22, 7);
-		ctx.fillStyle = rich ? "#ffd166" : "#c9a24a"; ctx.fillRect(x - 11, y - 13, 22, 2); ctx.fillRect(x - 2, y - 14, 4, 6);
-		ctx.fillStyle = "#2a1a10"; ctx.fillRect(x - 1, y - 11, 2, 2);
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x - 12, y + 1, 24, 4);
+		if (rich) { ctx.fillStyle = `rgba(255,209,102,${.18 + Math.sin(this.clock * 3) * .08})`; ctx.beginPath(); ctx.arc(x, y - 12, 20, 0, Math.PI * 2); ctx.fill(); }
+		const img = chestCanvas();
+		if (img) {
+			// Your 16×16 chest sprite at 2x, standing on the ground where the foe fell.
+			ctx.imageSmoothingEnabled = false;
+			const bob = Math.round(Math.sin(this.clock * 2) * .5);
+			ctx.drawImage(img, Math.round(x - 16), Math.round(y - (CHEST_BOTTOM + 1) * 2 + 2 + bob), 32, 32);
+		}
 		ctx.restore();
-		drawShadowName(ctx, `CHEST ${Math.ceil(t / 60)}m`, x, y - 26, rich ? "#ffd166" : "#e6c15a");
+		drawShadowName(ctx, `CHEST ${Math.ceil(t / 60)}m`, x, y - 34, rich ? "#ffd166" : "#e6c15a");
 	}
 	/** Builds this frame's nameplate for a foe on screen. Names, level and traits show at any range. */
 	queuePlate(m) {

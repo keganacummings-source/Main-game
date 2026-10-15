@@ -600,7 +600,7 @@ export function ChestPanel({ snap, game }: Props) {
         <span className="text-kyo">{chest.title}</span>
         <span className={chest.t < 60 ? "text-blood" : "text-dim"}>Gone in {mm}:{ss}</span>
       </div>
-      <p className="text-dim">Click to inspect · Shift+click to take · the game keeps running.{chest.near ? "" : " Walk back to the chest to take things."}</p>
+      <p className="text-dim">Click to inspect · Shift+click to take · double-click or Equip to wear it · the game keeps running.{chest.near ? "" : " Walk back to the chest to take things."}</p>
       <div className="gear-actions">
         <button type="button" className="px-btn px-btn-kyo" data-testid="chest-take-all" disabled={!chest.near} onClick={() => game?.takeAllChest(chest.id)}>Take everything</button>
       </div>
@@ -619,7 +619,8 @@ export function ChestPanel({ snap, game }: Props) {
           <EnchantList g={gearPick} />
           <p className="text-dim">{fxLine(gearPick)}</p>
           <div className="gear-actions">
-            <button type="button" className="px-btn px-btn-kyo" disabled={!chest.near} onClick={() => take("gear", gearPick.uid)}>Take</button>
+            <button type="button" className="px-btn px-btn-kyo" data-testid="chest-equip" disabled={!chest.near} onClick={() => { game?.equipFromChest(chest.id, gearPick.uid); setPick(null); }}>Equip</button>
+            <button type="button" className="px-btn" disabled={!chest.near} onClick={() => take("gear", gearPick.uid)}>Take</button>
           </div>
         </div>
       )}
@@ -640,7 +641,7 @@ export function ChestPanel({ snap, game }: Props) {
       {chest.gear.length > 0 && (
         <div className="gear-grid">
           {chest.gear.map((g) => (
-            <GearCard key={g.uid} snap={snap} g={g} selected={gearPick?.uid === g.uid} onPick={click("gear", g.uid)} />
+            <GearCard key={g.uid} snap={snap} g={g} selected={gearPick?.uid === g.uid} onPick={click("gear", g.uid)} onEquip={() => { game?.equipFromChest(chest.id, g.uid); setPick(null); }} />
           ))}
         </div>
       )}
