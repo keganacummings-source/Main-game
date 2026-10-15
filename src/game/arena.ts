@@ -29,6 +29,7 @@ import { CombatFx } from "./combat-fx";
 import { savedMaps, mapToWorld } from "./map-format";
 import type { GraveBody } from "./social-types";
 import { drawActor, drawMonster, drawShadowName } from "./sprites";
+import { geneSeedOf } from "./fx-gene";
 import { drawWorldSlice, type WorldData } from "./world";
 
 const TILE = 32;
@@ -186,7 +187,7 @@ type Fighter = {
   trap: number;
   moveIds: string[];
   weapon: Gear | null;
-  pieces: { slot: string; style: number; type: TypeId; fxSeed: number; quality: number }[];
+  pieces: { slot: string; style: number; type: TypeId; fxSeed: number; quality: number; gene?: number }[];
   template: number;
   look: GhostLook | null;
   master: string;
@@ -1226,6 +1227,7 @@ export class WitchArena {
       style: g.style,
       type: g.type,
       fxSeed: g.fxSeed,
+      gene: geneSeedOf(g),
       quality: Math.max(0, QUALITY.indexOf(g.quality)),
     }));
     return {

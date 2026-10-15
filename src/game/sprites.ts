@@ -1,6 +1,7 @@
 import type { FxId, GhostLook, RaceId, TypeId } from "./content";
 import { TYPES } from "./content";
 import { motifOf, paintMotif, paintSetAura } from "./fx-paint";
+import { fxGene } from "./fx-gene";
 import { drawCreatureSprite } from "./creature-sprites";
 import { tryDrawActorSprite } from "./actor-sprites";
 
@@ -47,9 +48,11 @@ export type ActorDraw = {
   attack: number;
   hurt: number;
   tall?: number;
-  pieces: { slot: string; style: number; type: TypeId; fxSeed: number; quality: number }[];
+  pieces: { slot: string; style: number; type: TypeId; fxSeed: number; quality: number; gene?: number }[];
   setFx: FxId | null;
   setOn: boolean;
+  /** The set's aura variant (tint, spin, size, crest). */
+  setVariant?: number;
   scale?: number;
   ghost?: boolean;
   /** Class id, when the actor knows which class it is. */
@@ -90,10 +93,14 @@ function edgeFx(
 }
 function paintFitted(ctx: CanvasRenderingContext2D, piece: WornPiece | undefined, t: number, sc: number, unsquat: boolean): void {
   if (!piece) return;
-  const { motif, variant } = motifOf(piece.type, piece.style * 5 + piece.fxSeed + piece.slot.length);
+  const n = piece.gene ? piece.gene + piece.fxSeed * 13 + piece.style : piece.style * 5 + piece.fxSeed + piece.slot.length;
+  const { motif, variant } = motifOf(piece.type, n);
+  const g = piece.gene ? fxGene(piece.gene, piece.type, piece.quality) : null;
   ctx.save();
   if (unsquat) ctx.scale(0.46 / WIDE, 0.46 / SQUAT);
-  paintMotif(ctx, motif, variant, t, piece.fxSeed * 3 + piece.style, typePal(piece.type), sc);
+  if (g) ctx.scale(g.dir * (0.85 + g.radius * 0.2), 0.85 + g.radius * 0.2);
+  const pal = g?.accent && g.phase > 0.5 ? typePal(g.accent) : typePal(piece.type);
+  paintMotif(ctx, motif, variant, g ? t * g.speed + g.phase * 5 : t, n % 9973, pal, sc);
   ctx.restore();
 }
 
@@ -103,7 +110,7 @@ export function drawActor(ctx: CanvasRenderingContext2D, a: ActorDraw): void {
   const skin = SKIN[a.skin] ?? SKIN[0]!;
   const hair = HAIR[a.hair] ?? "#241830";
   const fxT = a.time ?? a.walk;
-  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s);
+  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s, a.setVariant ?? 0);
   ctx.save();
   ctx.translate(a.x, a.y);
   ctx.scale(a.facing < 0 ? -s * WIDE : s * WIDE, s * SQUAT);
@@ -1006,10 +1013,81 @@ function drawWeapon(ctx: CanvasRenderingContext2D, style: number, pal: Pal, atta
   ctx.restore();
 }
 
-export function drawSetAura(ctx: CanvasRenderingContext2D, x: number, y: number, fx: FxId, t: number, scale = 1): void {
+const AURA_TINTS = ["#ff7a4a", "#5ab0e8", "#7ad06a", "#b48cff", "#ffe08a", "#d8f4ff", "#ff5a8a", "#4ae0c0"];
+
+function mixHex(a: string, b: string, u: number): string {
+  const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [r1, g1, b1] = p(a), [r2, g2, b2] = p(b);
+  const m = (x: number, y: number) => Math.round(x + (y - x) * u).toString(16).padStart(2, "0");
+  return `#${m(r1!, r2!)}${m(g1!, g2!)}${m(b1!, b2!)}`;
+}
+
+/** The set's own colour: its aura kind's colour pulled toward one of eight tints. */
+export function setAuraColor(fx: FxId, variant = 0): string {
+  const base = fxColor(fx);
+  if (!variant) return base;
+  return mixHex(base, AURA_TINTS[variant % AURA_TINTS.length]!, 0.18 + ((variant >> 3) % 3) * 0.12);
+}
+
+/** Extra crest drawn on top of the aura kind, picked by the set's variant. */
+function paintCrest(ctx: CanvasRenderingContext2D, kind: number, t: number, sc: number, color: string): void {
+  const dot = (x: number, y: number, n = 2) => ctx.fillRect(Math.round(x) - n / 2, Math.round(y) - n / 2, n, n);
+  ctx.fillStyle = color;
+  if (kind === 1) {
+    for (let i = 0; i < 5; i++) {
+      const a = t * 1.4 + (i / 5) * Math.PI * 2;
+      dot(Math.cos(a) * 20 * sc, -26 * sc + Math.sin(a) * 7 * sc, 3);
+    }
+  } else if (kind === 2) {
+    const r = 22 * sc;
+    for (let i = 0; i < 24; i++) {
+      if (i % 4 === 3) continue;
+      const a = t * -0.5 + (i / 24) * Math.PI * 2;
+      dot(Math.cos(a) * r, Math.sin(a) * r * 0.34);
+    }
+    for (let i = 0; i < 3; i++) {
+      const a = t * -0.5 + (i / 3) * Math.PI * 2;
+      dot(Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55 * 0.34, 3);
+    }
+  } else if (kind === 3) {
+    for (let i = 0; i < 7; i++) {
+      const life = (t * 0.6 + i / 7) % 1;
+      ctx.globalAlpha = 1 - life;
+      dot(Math.sin(i * 2.3) * 16 * sc, -life * 56 * sc, 2);
+    }
+    ctx.globalAlpha = 1;
+  } else if (kind === 4) {
+    for (const [y, w] of [[-58, 9], [-64, 6]] as const) {
+      for (let i = 0; i < 12; i++) {
+        const a = t * (y === -58 ? 1 : -1.4) + (i / 12) * Math.PI * 2;
+        if (Math.sin(a) < -0.3) continue;
+        dot(Math.cos(a) * w * sc, y * sc + Math.sin(a) * 2 * sc);
+      }
+    }
+  } else if (kind === 5) {
+    for (let i = -2; i <= 2; i++) {
+      const h = (i === 0 ? 8 : Math.abs(i) === 1 ? 5 : 3) + Math.sin(t * 3 + i) * 1;
+      for (let j = 0; j < h; j += 2) dot(i * 4 * sc, (-60 - j) * sc);
+    }
+  } else if (kind === 6) {
+    for (let i = 0; i < 8; i++) {
+      const life = (t * 0.35 + i / 8) % 1;
+      dot(Math.sin(t + i * 1.9) * 22 * sc, (-62 + life * 62) * sc, life < 0.2 ? 3 : 2);
+    }
+  }
+}
+
+export function drawSetAura(ctx: CanvasRenderingContext2D, x: number, y: number, fx: FxId, t: number, scale = 1, variant = 0): void {
   ctx.save();
   ctx.translate(x, y);
-  paintSetAura(ctx, fx, t, scale, fxColor(fx));
+  const color = setAuraColor(fx, variant);
+  const size = 0.85 + ((variant >> 2) % 4) * 0.11;
+  const speed = 0.8 + ((variant >> 1) % 4) * 0.15;
+  ctx.save();
+  if (variant % 2) ctx.scale(-1, 1);
+  paintSetAura(ctx, fx, t * speed, scale * size, color);
+  ctx.restore();
+  if (variant) paintCrest(ctx, Math.floor(variant / 3) % 7, t * speed, Math.max(0.75, scale), color);
   ctx.restore();
 }
 

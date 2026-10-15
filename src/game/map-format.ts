@@ -542,3 +542,4 @@ export async function fetchMapFile(id: string): Promise<MapFile | null> {
 }
 
 export { TILE, WORLD_W, WORLD_H };
+

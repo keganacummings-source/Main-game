@@ -68,7 +68,7 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
   const s = (a.scale ?? 1) * (a.tall ?? 1) * ACTOR_SPRITE_SCALE;
   const fxT = a.time ?? a.walk;
 
-  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE);
+  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE, a.setVariant ?? 0);
 
   if (a.pieces?.length) drawGearFx(ctx, a, fxT, s, "back");
   const step = actorWalkFrame(a.walk, a.moving ?? a.walk > 0.2);

@@ -1,38 +1,36 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MapBuilder } from "./map-builder";
-import { WeaponDesigner } from "./weapon-designer";
+import { EnemyDesigner } from "./enemy-designer";
+import { installEnemyDesigns, localEnemyDesigns } from "@/game/enemy-design";
+import { savedMaps } from "@/game/map-format";
+import { Tile } from "./ui-kit";
+
 export function DesignerMode({ onBack }: { onBack: () => void }) {
-  const [tool, setTool] = useState<"map" | "weapon" | null>(null);
+  const [tool, setTool] = useState<"map" | "enemy" | null>(null);
+  // Designed enemies show up in the Map Builder's spawn-zone lists too.
+  useEffect(() => {
+    try {
+      installEnemyDesigns();
+    } catch {
+      /* a broken design must not block the tools */
+    }
+  }, [tool]);
   if (tool === "map") return <MapBuilder onBack={() => setTool(null)} />;
-  if (tool === "weapon") return <WeaponDesigner onBack={() => setTool(null)} />;
+  if (tool === "enemy") return <EnemyDesigner onBack={() => setTool(null)} />;
   return (
     <div className="designer-screen">
       <header className="designer-header">
         <div>
-          <p className="font-display text-xs text-blood">DESIGNER MODE</p>
-          <h1 className="font-display text-lg">Builder Tools</h1>
+          <p className="screen-kicker">DESIGNER MODE</p>
+          <h1 className="screen-title">Builder tools</h1>
         </div>
-        <button className="px-btn" onClick={onBack}>
-          Back to main menu
-        </button>
+        <button className="px-btn" onClick={onBack}>Back to main menu</button>
       </header>
-      <div className="designer-tool-list">
-        <button className="px-panel designer-tool" onClick={() => setTool("map")}>
-          <span className="font-display text-kyo">Map Builder</span>
-          <p>Build Bossrooms, Dungeons, and full Worlds with the supplied tile collection.</p>
-          <p className="text-dim">Paint terrain · collision · spawns · save · import / export</p>
-        </button>
-        <button className="px-panel designer-tool" onClick={() => setTool("weapon")}>
-          <span className="font-display text-kyo">Weapon Designer</span>
-          <p>Create pixel weapon art and choose combat stats.</p>
-          <p className="text-dim">
-            Pixel editor · element · damage · speed · range · import / export
-          </p>
-        </button>
+      <div className="tile-grid designer-tiles">
+        <Tile primary title="Map Builder" about="Bossrooms, dungeons and whole worlds: terrain, collision, spawn zones, NPCs, quests, import / export." onClick={() => setTool("map")} badge={`${savedMaps().length} saved`} />
+        <Tile title="Enemy Designer" about="Make new enemies or replace built-in ones: sprite, element, stats, enchantments, moves, where they spawn and what they drop." onClick={() => setTool("enemy")} badge={`${localEnemyDesigns().length} saved`} />
       </div>
-      <p className="designer-status">
-        Designs are saved on this device. Export JSON files for future game updates.
-      </p>
+      <p className="designer-status">Designs are saved on this device and are live in your games. Export JSON to ship them in a game update.</p>
     </div>
   );
 }

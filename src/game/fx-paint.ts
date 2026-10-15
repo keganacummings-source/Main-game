@@ -15,24 +15,28 @@ export type Motif =
   | "ember"
   | "thorn";
 
+// Each element leans on its own motifs but borrows a few from neighbours, so pieces vary.
 const BANK: Record<TypeId, Motif[]> = {
-  fire: ["flame", "ember", "flame"],
-  water: ["drop", "cloud", "drop"],
-  earth: ["root", "thorn", "root"],
-  air: ["cloud", "ribbon", "cloud"],
-  electric: ["bolt", "bolt", "ray"],
-  ice: ["frost", "frost", "ray"],
-  void: ["rift", "ribbon", "rift"],
-  light: ["ray", "flame", "ray"],
-  spirit: ["ribbon", "cloud", "ribbon"],
-  ghoul: ["ichor", "ember", "rift"],
-  normal: ["ember", "ribbon", "thorn"],
+  fire: ["flame", "ember", "ray", "ichor", "thorn"],
+  water: ["drop", "cloud", "ribbon", "frost", "rift"],
+  earth: ["root", "thorn", "ember", "drop", "ribbon"],
+  air: ["cloud", "ribbon", "ray", "frost", "bolt"],
+  electric: ["bolt", "ray", "ember", "ribbon", "rift"],
+  ice: ["frost", "ray", "drop", "cloud", "thorn"],
+  void: ["rift", "ribbon", "ichor", "bolt", "ember"],
+  light: ["ray", "flame", "frost", "ribbon", "cloud"],
+  spirit: ["ribbon", "cloud", "rift", "ray", "drop"],
+  ghoul: ["ichor", "ember", "rift", "thorn", "root"],
+  normal: ["ember", "ribbon", "thorn", "ray", "cloud"],
 };
 
 export function motifOf(type: TypeId, n: number): { motif: Motif; variant: number } {
   const list = BANK[type] ?? BANK.normal;
-  const i = Math.abs(n) % list.length;
-  return { motif: list[i] ?? "flame", variant: Math.abs(n * 3 + 1) % 3 };
+  const a = Math.abs(Math.floor(n));
+  // The element's first two motifs come up most; the borrowed ones are rarer.
+  const r = a % 10;
+  const i = r < 3 ? 0 : r < 6 ? 1 : 2 + (Math.floor(a / 10) % (list.length - 2));
+  return { motif: list[i] ?? "flame", variant: Math.floor(a / 7) % 3 };
 }
 
 function hash(n: number): number {

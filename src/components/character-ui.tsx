@@ -44,7 +44,7 @@ function Lines({ buffs, debuffs }: { buffs: string[]; debuffs: string[] }) {
 
 export type Pick = { classId: ClassId; traitId: string | null; female: boolean };
 
-export function ClassPicker({ pick, setPick, game }: { pick: Pick; setPick: (p: Pick) => void; game: TurbzGame | null }) {
+export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPick: (p: Pick) => void; game: TurbzGame | null; badge?: (classId: string) => string | null }) {
   const [role, setRole] = useState<Role | "All">("All");
   const c = CLASS_BY_ID[pick.classId];
   const lines = buffLines(c.stats, (c as { immune?: readonly string[] }).immune as never);
@@ -70,6 +70,7 @@ export function ClassPicker({ pick, setPick, game }: { pick: Pick; setPick: (p: 
             <ClassCanvas classId={x.id} game={game} active={pick.classId === x.id} female={pick.female} />
             <span className="mt-1 block text-lg leading-tight">{x.name}</span>
             <span className={`block text-base ${typeClass(x.type)}`}>{TYPES[x.type].name} · {x.role}</span>
+            {badge?.(x.id) && <span className="class-card-badge">{badge(x.id)}</span>}
           </button>
         ))}
       </div>

@@ -657,6 +657,15 @@ export function drawWorldSlice(
   ctx.drawImage(cached.canvas, cached.left, cached.top);
 }
 
+function paintFallbackWall(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+  ctx.fillStyle = "#2a2226";
+  ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+  ctx.fillStyle = "#3d3338";
+  ctx.fillRect(x * TILE + 1, y * TILE + 1, TILE - 2, 10);
+  ctx.fillRect(x * TILE + 1, y * TILE + 17, 14, 10);
+  ctx.fillRect(x * TILE + 17, y * TILE + 17, 14, 10);
+}
+
 /** Paint only the camera window. The overworld is too large for one bitmap. */
 function paintWorldSlice(
   ctx: CanvasRenderingContext2D,
@@ -682,6 +691,11 @@ function paintWorldSlice(
       const t = world.tiles[idx(x, y, world.w)]!;
       if (t.sprite && drawAtlasTile(ctx, t.sprite, x * TILE, y * TILE, TILE)) {
         if (t.layers) for (const l of t.layers) drawAtlasTile(ctx, l, x * TILE, y * TILE, TILE);
+        continue;
+      }
+      if (t.sprite && t.block === 1 && t.decor === 0) {
+        // Art still loading: draw the wall as a wall so it is never invisible.
+        paintFallbackWall(ctx, x, y);
         continue;
       }
       ctx.fillStyle = FLOOR_COLOR[t.floor] ?? "#333";
@@ -1040,8 +1054,36 @@ export function buildDungeon(kind: "crypt" | "kiln", seed: number): WorldData {
     template: kind === "crypt" ? 22 : 3,
     type: kind === "crypt" ? "ghoul" : "fire",
   });
+  // Real tile art, matching the rift dungeons: walls you can see, floors that fit the place.
+  const art = DUNGEON_ART[kind];
+  tiles.forEach((t, i) => {
+    const x = i % w;
+    const y = Math.floor(i / w);
+    const n = (x * 7 + y * 13) >>> 0;
+    if (t.block) {
+      // Walls touching a floor get the carved face; deeper rock is plain dark stone.
+      const face = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => tiles[(y + dy!) * w + (x + dx!)]?.block === 0);
+      t.sprite = face ? art.wall[n % art.wall.length] : art.rock[n % art.rock.length];
+    } else {
+      t.sprite = art.floor[n % art.floor.length];
+    }
+  });
   return { w, h, tiles, spawns, cache: null };
 }
+
+const tilePath = (dir: string, names: string[]) => names.map((name) => `/MapAssets/${dir}/${name}.png`);
+const DUNGEON_ART: Record<"crypt" | "kiln", { wall: string[]; rock: string[]; floor: string[] }> = {
+  crypt: {
+    wall: tilePath("02_Walls_and_Cliffs", Array.from({ length: 16 }, (_, i) => `catacombs_${i}`)),
+    rock: tilePath("02_Walls_and_Cliffs", Array.from({ length: 4 }, (_, i) => `stone_dark_${i}`)),
+    floor: tilePath("01_Floor_and_Ground_Tiles", ["crypt_domino_1a", "crypt_domino_1b", "crypt_domino_2a", "crypt_domino_3a", "crypt_domino_4a", "crypt_domino_4b", "crypt_domino_5a", "crypt_domino_6a", "crypt_domino_7a", "crypt_domino_8a", "crypt_10", "crypt_11"]),
+  },
+  kiln: {
+    wall: tilePath("02_Walls_and_Cliffs", Array.from({ length: 7 }, (_, i) => `volcanic_wall_${i}`)),
+    rock: tilePath("02_Walls_and_Cliffs", Array.from({ length: 7 }, (_, i) => `brick_dark_${i}`)),
+    floor: tilePath("01_Floor_and_Ground_Tiles", Array.from({ length: 7 }, (_, i) => `volcanic_floor_${i}`)),
+  },
+};
 
 export function blocked(world: WorldData, x: number, y: number): boolean {
   const tx = Math.floor(x / TILE);

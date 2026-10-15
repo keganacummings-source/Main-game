@@ -1,9 +1,16 @@
 import type { ItemDef } from "./content";
 import { FOOD } from "./survival";
 
-export type ItemUseState = { hardcore: boolean; hp: number; maxHp: number; hunger?: number; thirst?: number };
+export type ItemUseState = { hardcore: boolean; hp: number; maxHp: number; hunger?: number; thirst?: number; level?: number };
+
+/** Level needed to eat a Green Mushroom (Hardcore only). */
+export const GREEN_MUSHROOM_LEVEL = 30;
 export function itemUseProblem(item: ItemDef, state: ItemUseState): string | null {
   if (item.id === "ghost_jar" || item.id === "smoke_bomb" || item.id === "cleanse_salt") return null;
+  if (item.id === "green_mushroom") {
+    if (!state.hardcore) return "The Green Cave only opens in Hardcore.";
+    return (state.level ?? 1) < GREEN_MUSHROOM_LEVEL ? `Too strong for you. Reach level ${GREEN_MUSHROOM_LEVEL} first.` : null;
+  }
   if (state.hardcore && FOOD[item.id]) return (state.hunger ?? 100) >= 100 ? "You are already full." : null;
   if (state.hardcore && item.id === "drinking_water") return (state.thirst ?? 100) >= 100 ? "You are already hydrated." : null;
   if (item.buff) return null;

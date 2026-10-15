@@ -12,6 +12,7 @@ import {
   type Slot,
   type QualityId,
 } from "./content";
+import { SOURCE_BONUS, gearSellValue, itemSellValue } from "./balance";
 
 type BmItem = { id: string; itemId: string; name: string; price: number; count: number };
 type BmEnchant = { id: string; enchantId: string; name: string; about: string; price: number };
@@ -29,15 +30,18 @@ export function installBlackMarket(game: any): void {
     if (!force && this.blackMarket && this.blackMarket.until > now) return;
     const lvl = Math.max(1, save.level | 0);
     const seed = (Math.floor(now / period) * 10007 + lvl * 13 + (save.name?.length || 0)) >>> 0;
+    // Same window, same level: keep the stock (and anything already bought out of it).
+    if (!force && this.blackMarket && this.blackMarket.seed === seed) return;
     const rng = mulberry32(seed);
     const slots: Slot[] = ["weapon", "head", "chest", "legs", "feet", "relic"];
     const floors: QualityId[] = ["fine", "rare", "epic", "legendary"];
     const gear: Gear[] = [];
     for (let i = 0; i < 8; i++) {
-      const bump = 5 + Math.floor(rng() * 46);
+      // Market gear starts at your level; quality and a market premium push it up a little.
       const g = rollGear(rng, {
         slot: slots[Math.floor(rng() * slots.length)],
-        level: lvl + bump,
+        level: lvl,
+        bonus: SOURCE_BONUS.market(rng()),
         luck: 20 + Math.floor(rng() * 40),
         floor: floors[Math.min(3, Math.floor(rng() * 4))],
       });
@@ -55,6 +59,10 @@ export function installBlackMarket(game: any): void {
       "cooked_meat",
     ];
     const items: BmItem[] = [];
+    // Hardcore, level 30+: the stall sometimes has a Green Mushroom (the way into the Green Cave).
+    if (this.rules === "hardcore" && lvl >= 30 && rng() < 0.4) {
+      items.push({ id: `bmi_${seed}_green`, itemId: "green_mushroom", name: ITEM_BY_ID.green_mushroom?.name ?? "Green Mushroom", price: 300 + lvl * 15, count: 1 });
+    }
     for (let i = 0; i < 6; i++) {
       const id = itemIds[Math.floor(rng() * itemIds.length)];
       const def = ITEM_BY_ID[id];
@@ -98,13 +106,26 @@ export function installBlackMarket(game: any): void {
   };
 
   game.blackMarketSnap = function blackMarketSnap() {
+    const save = this.save;
+    if (!save) return null;
     this.ensureBlackMarket(false);
     const bm = this.blackMarket;
     if (!bm) return null;
     const refreshIn = Math.max(0, Math.floor((bm.until - Date.now()) / 1000));
     const price = (n: number) => (typeof this.price === "function" ? this.price(n) : n);
+    const mult = typeof this.sellMult === "function" ? this.sellMult() : 1;
+    const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
+    const locked = new Set(save.locked ?? []);
     return {
       refreshIn,
+      sell: {
+        gear: (save.gear as Gear[])
+          .filter((g) => !worn.has(g.uid))
+          .map((g) => ({ uid: g.uid, name: g.name, level: g.level, quality: g.quality, slot: g.slot, locked: locked.has(g.uid), price: gearSellValue(gearPrice(g), mult) })),
+        items: Object.entries(save.bag as Record<string, number>)
+          .filter(([id, n]) => n > 0 && ITEM_BY_ID[id])
+          .map(([id, n]) => ({ id, name: ITEM_BY_ID[id]!.name, count: n, each: itemSellValue(ITEM_BY_ID[id]!.price, mult) })),
+      },
       gear: bm.gear.map((g: Gear) => ({
         uid: g.uid,
         name: g.name,
@@ -137,9 +158,27 @@ export function installBlackMarket(game: any): void {
     };
   };
 
+  // Market gear costs what the stall shows (the old path charged the base price).
+  const origBuyGear = game.buyGear?.bind(game);
+  game.buyGear = function (uid: string) {
+    const save = this.save;
+    const row = this.blackMarket?.gear?.find((g: Gear) => g.uid === uid);
+    if (!save || !row) return origBuyGear?.(uid);
+    const p = this.price(gearPrice(row) * 1.35);
+    if (save.kyo < p) return this.say("Need more Kyo.");
+    save.kyo -= p;
+    this.receiveGear(row);
+    this.blackMarket.gear = this.blackMarket.gear.filter((g: Gear) => g.uid !== uid);
+    this.shopStock = (this.shopStock ?? []).filter((g: Gear) => g.uid !== uid);
+    this.gainSkill?.("trading", 8);
+    this.say(`Bought ${row.name}.`);
+    this.persist?.();
+    this.syncHud?.(true);
+  };
+
   game.openBlackMarket = function openBlackMarket() {
     if (!this.save || this.dead) return;
-    this.ensureBlackMarket(true);
+    this.ensureBlackMarket(false);
     this.toggle("trade");
     this.say?.("Black market stock. Refreshes every 5 minutes.");
     this.syncHud?.(true);
