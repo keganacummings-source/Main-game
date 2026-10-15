@@ -6,6 +6,7 @@ import type { TypeId } from "@/game/content";
 import type { RaceId } from "@/game/content";
 import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
 import type { ActorDraw } from "@/game/sprites";
+import { Screen, Tabs, Tile } from "./ui-kit";
 
 const Q_NUM: Record<string, number> = {
   worn: 1,
@@ -279,44 +280,29 @@ export function Hub(props: {
 }) {
   const [busy, setBusy] = useState(false);
   return (
-    <div className="flex h-full items-center justify-center overflow-auto p-3 pb-24">
-      <div className="screen-card px-panel my-auto w-full max-w-xl p-4 sm:p-5">
-        <p className="font-display text-xs text-blood">TURBO ENGINE · V3</p>
-        <h1 className="font-display mt-3 text-lg text-bone sm:text-2xl">TURBZ</h1>
-        <p className="mt-3 text-dim">
-          Signed in as {props.username}. Pick a veil. The dead keep the score.
-        </p>
-        <div className="mt-5 grid gap-2">
-          <button className="px-btn px-btn-kyo" onClick={props.onHunt}>
-            TurboHunt
-          </button>
-          <button className="px-btn" onClick={props.onCircle}>
-            TurboCircle
-          </button>
-          <button className="px-btn" onClick={props.onHard}>
-            Hardcore
-          </button>
-          <button className="px-btn" onClick={props.onBoards}>
-            Leaderboards
-          </button>
-          <button className="px-btn" onClick={props.onDesigner}>Designer Mode</button>
-          <button className="px-btn" onClick={props.onOptions}>
-            Options
-          </button>
-          <button
-            className="px-btn"
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void staticSignOut().finally(() => setBusy(false));
-            }}
-          >
-            {busy ? "Signing out…" : "Logout"}
-          </button>
-        </div>
-        <p className="mt-4 text-dim">Hunt explores the rebuilt wilds. Circle is a battle simulator: load a map, plant teams, and watch them fight. Hardcore is a separate frontier: hunt, gather water, build campfires, and survive hunger, thirst and fatigue.</p>
+    <Screen kicker={`SIGNED IN · ${props.username}`} title="Pick a veil">
+      <p className="text-dim">The dead keep the score.</p>
+      <div className="tile-grid">
+        <Tile primary title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
+        <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
+        <Tile title="TurboCircle" about="Battle simulator: plant teams, watch them fight." onClick={props.onCircle} />
+        <Tile title="Leaderboards" about="The grave ledger of fallen witches." onClick={props.onBoards} />
+        <Tile title="Designer Mode" about="Map Builder and Enemy Designer." onClick={props.onDesigner} />
+        <Tile title="Options" about="Account and friends." onClick={props.onOptions} />
       </div>
-    </div>
+      <div className="screen-actions">
+        <button
+          className="px-btn ui-btn-sm"
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            void staticSignOut().finally(() => setBusy(false));
+          }}
+        >
+          {busy ? "Signing out…" : "Logout"}
+        </button>
+      </div>
+    </Screen>
   );
 }
 
@@ -349,18 +335,9 @@ export function Boards({ onBack }: { onBack: () => void }) {
   }, [mode]);
 
   return (
-    <div className="flex h-full justify-center overflow-auto p-3 pb-24">
-      <div className="px-panel my-auto w-full max-w-3xl p-4">
-        <p className="font-display text-xs text-blood">GRAVE LEDGER</p>
-        <h2 className="font-display mt-2 text-sm text-bone">Only the dead are counted</h2>
-        <p className="mt-2 text-dim">A global score of fallen witches. Open a name to see the body, kit FX, enchants, and the account that wore them.</p>
-        <div className="mt-3 grid grid-cols-2 gap-1">
-          {BOARDS.map((b) => (
-            <button key={b.id} className={`px-btn ${mode === b.id ? "px-btn-kyo" : ""}`} type="button" onClick={() => setMode(b.id)}>
-              {b.label}
-            </button>
-          ))}
-        </div>
+    <Screen kicker="GRAVE LEDGER" title="Only the dead are counted" wide>
+        <p className="text-dim">A global score of fallen witches. Open a name to see the body, kit, enchants and the account that wore them.</p>
+        <Tabs value={mode} onChange={setMode} tabs={BOARDS.map((b) => ({ id: b.id, label: b.label }))} />
         {err && <p className="mt-2 text-blood">{err}</p>}
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
           <div className="grave-list">
@@ -416,11 +393,12 @@ export function Boards({ onBack }: { onBack: () => void }) {
             </div>
           )}
         </div>
-        <button className="px-btn mt-4" type="button" onClick={onBack}>
-          Back to the veil
-        </button>
-      </div>
-    </div>
+        <div className="screen-actions">
+          <button className="px-btn" type="button" onClick={onBack}>
+            Back to the veil
+          </button>
+        </div>
+    </Screen>
   );
 }
 
@@ -442,17 +420,14 @@ export function Options({ username, onBack }: { username: string; onBack: () => 
   }, []);
 
   return (
-    <div className="flex h-full justify-center overflow-auto p-3 pb-24">
-      <div className="px-panel my-auto w-full max-w-xl p-4">
-        <p className="font-display text-xs text-blood">OPTIONS</p>
-        <h2 className="font-display mt-2 text-sm">The account</h2>
-        <p className="mt-2 text-dim">
+    <Screen kicker="OPTIONS" title="The account">
+        <p className="text-dim">
           Signed in as {username}.{" "}
           Your witch autosaves to this account, so you can pick up where you left off on any device.
         </p>
         <div className="mt-3"><AccountChip /></div>
-        <div className="mt-5 border-t-2 border-bone pt-4">
-          <p className="font-display text-xs text-kyo">Friends</p>
+        <div className="ui-card ui-stack-sm">
+          <span className="ui-section-title">FRIENDS</span>
           <p className="text-dim">Ask by the name they signed in with. Accepted friends share the friends channel.</p>
           <form
             className="mt-2 grid grid-cols-[1fr_auto] gap-1"
@@ -500,12 +475,13 @@ export function Options({ username, onBack }: { username: string; onBack: () => 
             ))}
           </div>
         </div>
-        <p className="mt-4 text-dim">Right-click in the wilds for Bag and Verses. In Hardcore, open Survival & Camp for chopping, cooking, purified water and sleep. Healing spells mend lasting wounds.</p>
-        <button className="px-btn mt-4" type="button" onClick={onBack}>
-          Back to the veil
-        </button>
-      </div>
-    </div>
+        <p className="text-dim">Right-click in the wilds for more actions. In Hardcore, open Survival & Camp (H) for chopping, cooking, purified water and sleep.</p>
+        <div className="screen-actions">
+          <button className="px-btn" type="button" onClick={onBack}>
+            Back to the veil
+          </button>
+        </div>
+    </Screen>
   );
 }
 

@@ -16,9 +16,10 @@ const buildingUrl = moduleUrl("../src/game/building.ts");
 const surv = await import(moduleUrl("../src/game/survival.ts", { "./building": buildingUrl }));
 const fx = await import(moduleUrl("../src/game/combat-fx.ts"));
 
-test("day and night are 30 minutes each and standard mode never has night", () => {
-  assert.equal(dn.DAY_SECONDS, 1800);
-  assert.equal(dn.NIGHT_SECONDS, 1800);
+test("day is 10 minutes, night is 15 minutes, and standard mode never has night", () => {
+  assert.equal(dn.DAY_SECONDS, 600);
+  assert.equal(dn.NIGHT_SECONDS, 900);
+  assert.equal(dn.CYCLE_SECONDS, 1500);
   assert.equal(dn.NIGHT.strength, 2);
   assert.equal(dn.NIGHT.xp, 3);
   assert.equal(dn.NIGHT_IN_STANDARD_MODE, false);
@@ -27,11 +28,11 @@ test("day and night are 30 minutes each and standard mode never has night", () =
 test("the clock flips at dusk and dawn and counts nights", () => {
   const s = dn.freshDayNight();
   assert.equal(dn.isNight(s), false);
-  assert.equal(dn.advanceDayNight(s, 1799), null);
+  assert.equal(dn.advanceDayNight(s, 599), null);
   assert.equal(dn.advanceDayNight(s, 2), "dusk");
   assert.equal(dn.isNight(s), true);
   assert.equal(dn.clockLabel(s).label, "Night 1");
-  assert.equal(dn.advanceDayNight(s, 1800), "dawn");
+  assert.equal(dn.advanceDayNight(s, 900), "dawn");
   assert.equal(dn.isNight(s), false);
   assert.equal(s.nights, 1);
   assert.equal(dn.clockLabel(s).label, "Day 2");
@@ -52,7 +53,7 @@ test("sleeping skips only the night, never the day", () => {
 
 test("a saved clock is repaired and darkness eases in and out", () => {
   assert.deepEqual(dn.normalizeDayNight(null), { t: 0, nights: 0 });
-  assert.deepEqual(dn.normalizeDayNight({ t: -5, nights: 2.9 }), { t: 3595, nights: 2 });
+  assert.deepEqual(dn.normalizeDayNight({ t: -5, nights: 2.9 }), { t: 1495, nights: 2 });
   assert.equal(dn.darkness({ t: 0, nights: 0 }), 0);
   assert.equal(dn.darkness({ t: dn.DAY_SECONDS + 500, nights: 0 }), 1);
   const mid = dn.darkness({ t: dn.DAY_SECONDS, nights: 0 });

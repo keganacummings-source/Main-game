@@ -24,7 +24,7 @@ export function normalizeDungeonState(raw: unknown): DungeonState {
             Number.isSafeInteger(p.seed) &&
             Number.isInteger(p.level) &&
             p.level >= 1 &&
-            p.level <= 50 &&
+            p.level <= 1000 &&
             Number.isFinite(p.x) &&
             Number.isFinite(p.y) &&
             p.x >= 0 &&

@@ -104,11 +104,12 @@ const abilities = await import(
 const dungeons = await import(
   moduleUrl("../src/game/procedural-dungeon.ts", { "./content": contentUrl })
 );
-const weapons = await import(
-  moduleUrl("../src/game/weapon-design.ts", { "./content": contentUrl })
-);
-const creatures = await import(
-  moduleUrl("../src/game/creature-sprites.ts", { "./content": contentUrl })
+const creaturesUrl = moduleUrl("../src/game/creature-sprites.ts", { "./content": contentUrl });
+const creatures = await import(creaturesUrl);
+const balanceUrl = moduleUrl("../src/game/balance.ts", { "./content": contentUrl });
+const shippedEnemies = `data:text/javascript;base64,${Buffer.from("export default [];").toString("base64")}`;
+const enemies = await import(
+  moduleUrl("../src/game/enemy-design.ts", { "./content": contentUrl, "./balance": balanceUrl, "./creature-sprites": creaturesUrl, "./enemies/custom-enemies.json": shippedEnemies })
 );
 const tilesStub = `data:text/javascript;base64,${Buffer.from("export const findAtlasTile=()=>null;").toString("base64")}`;
 const maps = await import(
@@ -245,17 +246,18 @@ test("map import round trip preserves art, collision and entities; invalid maps 
   assert.throws(() => maps.parseMapJson({ ...map, spawns: [...map.spawns, ...map.spawns] }));
 });
 
-test("weapon design round trip validates pixels and stat bounds", () => {
-  const w = weapons.newWeaponDesign();
-  assert.deepEqual(weapons.parseWeaponDesign(JSON.parse(JSON.stringify(w))), w);
-  for (const change of [
-    { damage: NaN },
-    { range: -1 },
-    { speed: 0 },
-    { pixels: ["red"] },
-    { type: "bogus" },
-  ])
-    assert.throws(() => weapons.parseWeaponDesign({ ...w, ...change }));
+test("enemy design round trip validates identity, sprite and moves, and clamps stats", () => {
+  const d = enemies.newEnemyDesign();
+  assert.deepEqual(enemies.parseEnemyDesign(JSON.parse(JSON.stringify(d))), d);
+  for (const change of [{ id: "bad id!" }, { name: "" }, { type: "bogus" }, { moves: [] }, { sprite: null }, { id: "onibi", replaces: null }])
+    assert.throws(() => enemies.parseEnemyDesign({ ...d, ...change }));
+  const wild = enemies.parseEnemyDesign({ ...d, stats: { hp: 99, dmg: -1, speed: 9, crit: 2, dodge: 2, physRes: 2, spellRes: 2 }, scale: 9, weight: 99, loot: 99 });
+  assert.equal(wild.stats.hp, 5);
+  assert.equal(wild.stats.dmg, 0.2);
+  assert.ok(wild.stats.dodge <= 0.35 && wild.stats.physRes <= 0.55 && wild.scale <= 3 && wild.weight <= 5 && wild.loot <= 3);
+  const remix = enemies.designFromBuiltin("onibi");
+  assert.equal(remix.replaces, "onibi");
+  assert.deepEqual(remix.sprite, { kind: "sheet", cell: creatures.CREATURE_CELLS.onibi });
 });
 
 test("every enemy and animal has a supplied pixel sprite", () => {

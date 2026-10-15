@@ -39,6 +39,19 @@ export const CREATURE_SPRITE_SCALE = 2;
 /** Bosses are one tile too. Raise this (e.g. 3) if you want them to tower over the map. */
 export const BOSS_SPRITE_SCALE = 2;
 let image: HTMLImageElement | null = null;
+
+/** Looks registered by the Enemy Designer: a sheet cell or a drawn 16×16 canvas, plus a size. */
+export type CustomSprite = { cell?: [number, number]; canvas?: HTMLCanvasElement | null; scale?: number };
+const customSprites = new Map<string, CustomSprite>();
+export function setCustomSprite(species: string, sprite: CustomSprite): void {
+  customSprites.set(species, sprite);
+}
+export function clearCustomSprites(): void {
+  customSprites.clear();
+}
+export function customSpriteFor(species: string): CustomSprite | undefined {
+  return customSprites.get(species);
+}
 const fallback = new Map<string, HTMLCanvasElement>();
 function pixelSpirit(type: string): HTMLCanvasElement {
   const cached = fallback.get(type);
@@ -82,15 +95,17 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
     image = new Image();
     image.src = "/sprites/creatures_roguelike.png";
   }
-  const cell = m.species ? CREATURE_CELLS[m.species] : undefined;
-  const scale = m.boss ? BOSS_SPRITE_SCALE : CREATURE_SPRITE_SCALE,
+  const custom = m.species ? customSprites.get(m.species) : undefined;
+  const cell = custom?.cell ?? (m.species ? CREATURE_CELLS[m.species] : undefined);
+  const scale = (m.boss ? BOSS_SPRITE_SCALE : CREATURE_SPRITE_SCALE) * (custom?.scale ?? 1),
     bob = Math.round(Math.sin(m.walk * 5) * 1);
   ctx.save();
   ctx.imageSmoothingEnabled = false;
   ctx.translate(Math.round(m.x), Math.round(m.y));
   ctx.scale(m.facing < 0 ? -1 : 1, 1);
   ctx.globalAlpha = m.hurt > 0 ? 0.65 : 1;
-  if (cell && image.complete && image.naturalWidth)
+  if (custom?.canvas) ctx.drawImage(custom.canvas, -8 * scale, -16 * scale + bob, 16 * scale, 16 * scale);
+  else if (cell && image.complete && image.naturalWidth)
     ctx.drawImage(
       image,
       cell[0] * 16,

@@ -729,6 +729,8 @@ export function rollGear(
     raceBias?: RaceId | null;
     typeBias?: TypeId | null;
     setId?: string | null;
+    /** Source bonus as a fraction of the hunter's level (boss 0.06, bounty tier…). See balance.ts SOURCE_BONUS. */
+    bonus?: number;
   },
 ): Gear {
   const slot = opts.slot ?? pick(rng, ["head", "chest", "legs", "feet", "relic", "weapon"] as Slot[]);
@@ -744,8 +746,8 @@ export function rollGear(
     style = set.style;
     title = set.name;
   }
-  const enchants = rollEnchants(rng, slot, opts.level, quality.id, opts.luck ?? 0);
-  const level = stretchGearLevel(opts.level, quality.id, opts.luck ?? 0);
+  const level = dropGearLevel(opts.level, quality.id, opts.bonus ?? 0, opts.luck ?? 0);
+  const enchants = rollEnchants(rng, slot, level, quality.id);
   const gear: Gear = {
     uid: nextUid(),
     slot,
@@ -777,7 +779,30 @@ export function clampGearLevel(level: number): number {
   return Math.max(1, Math.min(MAX_GEAR_LEVEL, Math.floor(level || 1)));
 }
 
-/** Rarity stretches a drop toward the 1–1000 gear band. A level-400 legendary can reach 1000. */
+/** Quality pushes a drop above the hunter's level: a percentage and a few flat levels. */
+export const QUALITY_LEVEL: Record<QualityId, { pct: number; flat: number }> = {
+  worn: { pct: -0.04, flat: -1 },
+  common: { pct: 0, flat: 0 },
+  fine: { pct: 0.03, flat: 0 },
+  rare: { pct: 0.06, flat: 1 },
+  epic: { pct: 0.11, flat: 2 },
+  legendary: { pct: 0.18, flat: 3 },
+};
+
+/**
+ * A drop's level (balance patch): it starts at the hunter's level, then quality, the source
+ * bonus (boss, bounty tier, market…) and luck push it up from there. It never compounds off
+ * gear you already wear. Bounty tiers keep raising the source bonus, which is the long road
+ * to level-1000 gear.
+ */
+export function dropGearLevel(playerLevel: number, quality: QualityId, bonusPct = 0, luck = 0): number {
+  const base = Math.max(1, Math.floor(playerLevel || 1));
+  const q = QUALITY_LEVEL[quality] ?? QUALITY_LEVEL.common;
+  const luckPct = Math.min(0.05, Math.max(0, luck) / 1000);
+  return clampGearLevel(Math.round(base * (1 + q.pct + Math.max(-0.2, bonusPct) + luckPct) + q.flat));
+}
+
+/** Legacy rule (pre balance patch): multiplied the source level by up to 2.35x. Kept for old callers; rollGear no longer uses it. */
 export function stretchGearLevel(sourceLevel: number, quality: QualityId, luck = 0): number {
   const q = Math.max(0, QUALITIES.findIndex((x) => x.id === quality));
   const stretch = 1 + (q / 5) * 1.35;
@@ -802,8 +827,7 @@ export function rollEnchantPower(rng: Rng, def: EnchantDef, level: number, quali
   return Math.max(1, Math.min(def.max, Math.round(def.max * Math.min(1, portion * variance))));
 }
 
-function rollEnchants(rng: Rng, slot: Slot, sourceLevel: number, quality: QualityId, luck: number): EnchantRoll[] {
-  const level = stretchGearLevel(sourceLevel, quality, luck);
+function rollEnchants(rng: Rng, slot: Slot, level: number, quality: QualityId): EnchantRoll[] {
   const n = enchantCountFor(rng, level, quality);
   const qIndex = Math.max(0, QUALITIES.findIndex((x) => x.id === quality));
   const prefer = slot === "weapon" ? "weapon" : slot === "relic" ? "relic" : "armor";
@@ -1045,6 +1069,7 @@ export const ITEMS: ItemDef[] = [
   { id: "meat", name: "Raw Meat", about: "From hunted animals. Cook on a campfire before eating in Hardcore.", price: 9, heal: 22 },
   { id: "leather", name: "Hide Leather", about: "Ten hides and ten mushrooms stitch a piece at your account level.", price: 14 },
   { id: "mushroom", name: "Shroom", about: "The patch was generous.", price: 11 },
+  { id: "green_mushroom", name: "Green Mushroom", about: "Hardcore, level 30+. Eat it and wake in a fresh Green Cave. Black market only.", price: 400 },
 ];
 
 export const ITEM_BY_ID: Record<string, ItemDef> = Object.fromEntries(ITEMS.map((i) => [i.id, i]));

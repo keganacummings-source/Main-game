@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { itemUseProblem, bestFood } from "./item-use";
+import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, type DayNightState } from "./daynight";
 import { BUILD_REACH, LOG_COST, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
@@ -88,10 +88,14 @@ import { readAccountMeta, writeAccountMeta } from "./account-save";
 import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor } from "./sprites";
 const MAX_EQUIPPED = 9;
+/** Burning lasts this long and takes this share of max health each second. */
+const BURN_SECONDS = 15;
+const BURN_PCT_PER_SECOND = 0.05;
 /** Autogrind fishes for this long, then lets another skill have a turn. */
 const FISH_GRIND_SECONDS = 75;
 const FISH_GRIND_PAUSE = 150;
 import { FLOOR_COLOR, expandZones, mapToWorld, savedMaps } from "./map-format";
+import { GREEN_CAVE_ID, findMapFile, isBuiltinMap } from "./builtin-maps";
 import { tileImage } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
@@ -101,6 +105,13 @@ import {
 } from "./quest-board";
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { initActorSprites } from "./actor-sprites";
+import { isPinned } from "./ui-layout-store";
+import { enemyDesignFor, installEnemyDesigns } from "./enemy-design";
+import {
+	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
+	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, enemyHitDamage, enemyTargets,
+	gearSellValue, hardcoreGrowth, itemSellValue, rollEnemyKit, standardGrowth,
+} from "./balance";
 import {
   BIOME_LABEL,
   TAVERNS,
@@ -120,7 +131,10 @@ import {
   type WorldData,
 } from "./world";
 
-export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft";
+export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot";
+export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
+export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
+export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
 export type Snap = {
   mode: "title" | "create" | "play";
   hasSave: boolean;
@@ -182,6 +196,20 @@ export type Snap = {
   perks: { id: string; name: string; power: number; max: number; about: string }[];
   bounty: string;
   bountyPlace: string;
+  /** The foe you are fighting, for the target frame. */
+  target: { name: string; level: number; type: TypeId; hp: number; max: number; enchants: string[]; boss: boolean; bounty: boolean; hunter: boolean; tier: number; hint: string } | null;
+  /** Status effects shown on the HUD. */
+  effects: { id: string; label: string; t: number; good: boolean }[];
+  /** The hunter's class name. */
+  className: string;
+  /** Every live bounty, one HUD line each. */
+  bounties: string[];
+  bountyBoard: BountyRow[];
+  hunt: HuntInfo;
+  loot: LootView | null;
+  locked: string[];
+  /** Multiplier on gear and item sale prices (Trading skill, Merchant Tongue). */
+  sellMult: number;
   unstuck: number;
   unlocked: { id: string; name: string; race: RaceId; bonus: string }[];
   hint: string;
@@ -262,7 +290,27 @@ type Save = {
   mapQuests?: QuestStates;
   /** Designer maps whose opening story this hunter has read. */
   mapSeen?: string[];
+  /** Bounty board, bounty tier, Bounty Stars and the price on your own head. */
+  hunt?: HuntState;
+  /** A bounty's gear waiting for you to pick one piece (survives a reload). */
+  pendingLoot?: PendingLoot | null;
+  /** Gear uids protected from Sell All. */
+  locked?: string[];
 };
+type BountyPosting = { id: string; classId: string; name: string; female: boolean; tier: number; levelBonus: number };
+type HuntState = {
+  /** Highest bounty tier killed. Each new posting is stronger than the last. */
+  tier: number;
+  kills: number;
+  board: BountyPosting[];
+  stars: number;
+  /** 0 = clean. Each time stars reach 10 this goes up and squads get stronger. */
+  wanted: number;
+  /** Seconds until the next hunter squad. */
+  waveIn: number;
+  squads: number;
+};
+type PendingLoot = { title: string; kyo: number; items: { id: string; count: number }[]; gear: Gear[]; tier: number };
 type Part = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number; kind: string };
 type Flo = { x: number; y: number; text: string; life: number; color: string };
 type TurnStep = { side: "you" | "foe" | "spirit"; id: string };
@@ -328,6 +376,15 @@ const emptySnap = (): Snap => ({
 	perks: [],
 	bounty: "",
 	bountyPlace: "",
+	target: null,
+	effects: [],
+	className: "",
+	bounties: [],
+	bountyBoard: [],
+	hunt: { tier: 0, kills: 0, stars: 0, need: 10, wanted: 0, waveIn: 0, hunters: 0, clearCost: 0, starsOn: false },
+	loot: null,
+	locked: [],
+	sellMult: 1,
 	unstuck: 0,
 	unlocked: [],
 	hint: "",
@@ -359,11 +416,35 @@ export function subscribe(fn: () => void): () => void {
 export function getSnap(): Snap {
 	return snap;
 }
+/** Structural equality for small snapshot values (depth-limited). Big lists are cached by the engine instead. */
+function same(a: unknown, b: unknown, depth = 0): boolean {
+	if (a === b) return true;
+	if (depth > 4 || typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+	if (Array.isArray(a)) {
+		if (!Array.isArray(b) || a.length !== b.length || a.length > 400) return false;
+		for (let i = 0; i < a.length; i++) if (!same(a[i], b[i], depth + 1)) return false;
+		return true;
+	}
+	if (Array.isArray(b)) return false;
+	const ka = Object.keys(a as object), kb = Object.keys(b as object);
+	if (ka.length !== kb.length) return false;
+	for (const k of ka) if (!same((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k], depth + 1)) return false;
+	return true;
+}
+/** Engine-cached values: a new identity always means new content. */
+const IDENTITY_KEYS = new Set<keyof Snap>(["gear", "abilities", "sheet"]);
+/** Only changed fields get a new identity, and nothing re-renders when nothing changed. */
 function publish(p: Partial<Snap>): void {
-	snap = {
-		...snap,
-		...p
-	};
+	let changed = false;
+	const next = { ...snap };
+	for (const k of Object.keys(p) as (keyof Snap)[]) {
+		const v = p[k];
+		if (IDENTITY_KEYS.has(k) ? snap[k] === v : same(snap[k], v)) continue;
+		(next as Record<string, unknown>)[k] = v;
+		changed = true;
+	}
+	if (!changed) return;
+	snap = next;
 	listeners.forEach((l) => l());
 }
 function blankSkills() {
@@ -527,7 +608,7 @@ export class TurbzGame {
 		this.events = new AbortController();
 		const options = { signal: this.events.signal };
 		const down = (e) => {
-			if (this.typing() || snap.mode !== "play" || this.dead || e.ctrlKey || e.metaKey || e.altKey) return;
+			if (this.typing() || snap.mode !== "play" || this.dead || e.ctrlKey || e.metaKey || e.altKey || snap.panel === "loot") return;
 			this.keys.add(e.code);
 			if (/^(Key[WASD]|Arrow(Up|Down|Left|Right))$/.test(e.code)) this.dest = null;
 			if ([
@@ -787,9 +868,13 @@ export class TurbzGame {
 		this.duel = null; this.sleeping = false;
 		this.normalize(save);
 		this.save = save;
+		// Enemy Designer creations join (or replace) the monster tables before the world is built.
+		try { installEnemyDesigns(); } catch { /* a broken design must not stop the game */ }
 		this.overworld = buildWorld(save.seed, this.rules === "hardcore");
 		this.mobs = [];
 		this.contract = [];
+		this.powerRef = null;
+		this.powerT = 0;
 		this.unstuckT = 0;
 		this.dead = !!save.deathBanked;
 		this.secondUsed = false;
@@ -824,6 +909,8 @@ export class TurbzGame {
 			panel: this.dead ? "rebirth" : null,
 			hasSave: true
 		});
+		this.ensureHunt();
+		if (!this.dead && save.pendingLoot?.gear?.length) this.openLoot();
 		this.syncHud(true);
 		this.persist();
 	}
@@ -835,7 +922,7 @@ export class TurbzGame {
 			this.world = this.overworld;
 			this.world.cache = null;
 		} else if (map.startsWith("custom-")) {
-			const file = savedMaps().find((m) => `custom-${m.id}` === map);
+			const file = findMapFile(map.slice(7));
 			if (!file) return this.loadMap("world", true);
 			this.customFile = file;
 			this.mapNpcs = file.npcs ?? [];
@@ -848,11 +935,12 @@ export class TurbzGame {
 			this.world = buildProceduralDungeon(portal.seed, portal.level);
 			this.world.spawns = this.world.spawns.filter(s => !portal.defeated.includes(s.id));
 		} else {
+			// Drawn live from tile art (like rifts) so walls show once the art loads; a one-time cache froze flat colours.
 			this.world = buildDungeon(map, save.seed);
-			paintWorld(this.world);
+			this.world.cache = null;
 		}
 		if (!map.startsWith("custom-")) { this.customFile = null; this.mapNpcs = []; }
-		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit) ?? null;
+		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
 		if (freshMobs || this.mobs.length === 0 || map !== "world") {
 			this.mobs = this.world.spawns.filter((s) => s.kind === "mob").map((s) => this.makeMob(s));
@@ -884,7 +972,11 @@ export class TurbzGame {
 		const lookRng = mulberry32(((s.x * 13 + s.y * 97 + level * 17 + rarity * 41 + Math.floor(Math.random() * 1e6)) >>> 0) || 1);
 		const look = ghost ? rollGhostLook(lookRng, rarity, picked, s.boss ? "hunt" : undefined) : null;
 		const speed = 8 + level + rarity * 4 + (look?.aggression === "hunt" ? 3 : 0) + (s.boss ? 6 : 0);
-		return {
+		// Every foe rolls its own stat line, enchantments and moves (balance.ts).
+		const design = enemyDesignFor(species);
+		const kind = animal ? "animal" : s.boss || s.dungeonBoss || design?.boss ? "boss" : "normal";
+		const kit = rollEnemyKit(lookRng, { species, type: design?.type ?? type, kind, rarity, playerLevel: hunter, hardcore: this.rules === "hardcore", signature: animal ? undefined : picked, design: design ?? undefined });
+		const mob = {
 			id: s.id,
 			species,
 			name: s.name ?? (s.bossId ? bossName(s.bossId) : def.name),
@@ -925,8 +1017,113 @@ export class TurbzGame {
 			master: "",
 			aggro: look?.aggression === "hunt",
 			zone: s.zone ?? null,
-			nightScaled: false
+			nightScaled: false,
+			spawnLevel: level,
+			kit: kit.moves,
+			kcd: {},
+			enchants: kit.enchants,
+			stats: kit.stats,
+			scaleT: 0,
+			thornT: 0
 		};
+		if (design) {
+			mob.type = design.type;
+			mob.name = s.name ?? design.name;
+			mob.move = kit.moves[0] ?? mob.move;
+			mob.designId = design.id;
+			mob.levelJitter = design.levelBonus;
+			mob.lootMult = design.loot;
+			mob.flee = design.behaviour === "flee";
+			mob.drift = design.behaviour === "drift";
+			mob.aggro = design.behaviour === "hunt" && !mob.flee;
+			if (design.boss) mob.boss = true;
+		}
+		if (this.save) this.scaleMob(mob, true);
+		return mob;
+	}
+	/** Re-rolls a foe's kit after it becomes a bounty, hunter, witch or minion. */
+	rekitMob(m, extra = {}) {
+		const rng = mulberry32(((Math.random() * 1e9) >>> 0) || 5);
+		const design = !m.bounty && !m.hunter && !m.witch ? enemyDesignFor(m.species) : null;
+		const kit = rollEnemyKit(rng, { species: m.species, type: m.type, kind: this.enemyKind(m), rarity: m.rarity, playerLevel: this.save?.level ?? 1, hardcore: this.rules === "hardcore", signature: m.move, design: design ?? undefined, ...extra });
+		m.kit = kit.moves;
+		m.kcd = {};
+		m.enchants = kit.enchants;
+		m.stats = kit.stats;
+		this.scaleMob(m, true);
+	}
+	enemyKind(m) {
+		if (m.bounty) return "bounty";
+		if (m.hunter) return "hunter";
+		if (m.witch) return "witch";
+		if (m.boss || m.dungeonBoss) return "boss";
+		if (m.bountySpirit || m.master) return "minion";
+		if (m.animal) return "animal";
+		return "normal";
+	}
+	/** Difficulty growth: Hardcore climbs with level, nights and bounty tier; Standard climbs gently. */
+	growth() {
+		const save = this.save;
+		if (!save) return 1;
+		const tier = save.hunt?.tier ?? 0;
+		return this.rules === "hardcore" ? hardcoreGrowth(save.level, save.dayNight?.nights ?? 0, tier) : standardGrowth(save.level, tier);
+	}
+	/** What the hunter can do right now: average hit, health and armor. */
+	measurePlayer() {
+		const save = this.save;
+		const offense = this.arsenal(save).filter((m) => this.isOffense(m) && m.power > 0);
+		let hit = 0;
+		for (const m of offense.length ? offense : [MOVE_BY_ID.measured ?? MOVES[0]]) {
+			const d = this.damageParts(m, null).dmg;
+			if (d > hit) hit = d;
+		}
+		const crit = Math.min(.9, Math.max(0, (offense[0]?.crit ?? 5) + this.chan("crit_edge") + this.mod("crit")) / 100);
+		const dbl = Math.min(.85, this.chan("double_strike") / 100);
+		hit *= (1 + dbl) * (1 + crit * .75);
+		return { hit: Math.max(1, hit), maxHp: this.maxHp(), armor: this.playerArmor() };
+	}
+	/** Foes read a smoothed copy of the hunter's power. It rises in a minute or two and falls slowly. */
+	refreshPower(dt) {
+		this.powerT = (this.powerT ?? 0) - dt;
+		if (this.powerRef && this.powerT > 0) return;
+		const step = this.powerRef ? .5 - this.powerT : 0;
+		this.powerT = .5;
+		const now = this.measurePlayer();
+		const hc = this.rules === "hardcore";
+		if (!this.powerRef) this.powerRef = { ...now };
+		else {
+			this.powerRef.hit = adaptToward(this.powerRef.hit, now.hit, step, hc);
+			this.powerRef.maxHp = adaptToward(this.powerRef.maxHp, now.maxHp, step, hc);
+			this.powerRef.armor = adaptToward(Math.max(1, this.powerRef.armor), Math.max(1, now.armor), step, hc);
+		}
+	}
+	/**
+	 * Resizes a live foe to the hunter: never below your level, health measured in your hits,
+	 * damage measured in your health. Keeps the foe's health fraction.
+	 */
+	scaleMob(m, fresh = false) {
+		const save = this.save;
+		if (!save || !m) return;
+		if (!this.powerRef) this.refreshPower(0);
+		const kind = this.enemyKind(m);
+		const hc = this.rules === "hardcore";
+		const t = enemyTargets({ kind, rarity: m.rarity, hardcore: hc, growth: this.growth(), tier: m.tier ?? 0, wanted: m.wanted ?? 1 });
+		const stats = m.stats ?? { hp: 1, dmg: 1, speed: 1, crit: .03, dodge: 0, physRes: 0, spellRes: 0 };
+		const level = Math.max(m.spawnLevel ?? 1, save.level + t.levelOffset + (m.levelJitter ?? 0));
+		const floorHp = (26 + level * 16) * (kind === "boss" ? 3 : kind === "bounty" || kind === "witch" ? 3.5 : kind === "hunter" ? 2 : 1) * (kind === "animal" ? .45 : 1);
+		const party = m.party ? .55 : m.summoner ? .7 : 1;
+		const shrine = m.id?.startsWith?.("shrine") ? 1 + (this.shrine?.round ?? 1) * .25 : 1;
+		const base = Math.max(floorHp, this.powerRef.hit * t.hits) * stats.hp * party * shrine;
+		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1);
+		const max = Math.max(1, Math.floor(base * mult));
+		const ratio = fresh || !(m.max > 0) ? 1 : Math.max(0, Math.min(1, m.hp / m.max));
+		m.level = level;
+		m.max = max;
+		m.hp = m.alive === false ? 0 : Math.max(1, Math.ceil(max * ratio));
+		m.baseMax = Math.floor(base);
+		m.frac = t.frac * party;
+		m.nightScaled = this.isNightNow();
+		m.speed = Math.max(1, Math.round((this.playerSpeed() + t.speedOffset) * stats.speed * (m.enraged ? 1.25 : 1)));
 	}
 	step(dt) {
 		if (!this.save || snap.mode !== "play" || this.dead) {
@@ -935,6 +1132,12 @@ export class TurbzGame {
 			return;
 		}
 		if (document.hidden) return;
+		// A bounty's loot menu stops the world until you pick a piece.
+		if (snap.panel === "loot") {
+			this.vx = 0;
+			this.vy = 0;
+			return;
+		}
 		if (this.role !== "guest") this.tickContract(dt);
 		this.tickUnstuck(dt);
 		if (snap.panel === "pause" || snap.panel === "death") {
@@ -1056,7 +1259,7 @@ export class TurbzGame {
 		if (!this.world) return;
 		this.world.solids = this.buildOn() ? solidsFor(this.save.survival.logs, map ?? this.save.map, this.world.w) : undefined;
 	}
-	toggleBuild(force) {
+	toggleBuild(force?: boolean) {
 		if (!this.buildOn() || this.dead) return;
 		this.buildMode = typeof force === "boolean" ? force : !this.buildMode;
 		this.dest = null;
@@ -1320,7 +1523,7 @@ export class TurbzGame {
 		}
 		this.hurt = Math.max(0, this.hurt - dt * 3);
 		this.attackT = Math.max(0, this.attackT - dt * 3);
-		if (this.status.find((s) => s.id === "burn")) this.hurtSelf(8 * dt, "burn");
+		this.tickBurn(dt);
 		const adv = save.skills.adventuring.level;
 		if (this.rules !== "hardcore" && this.combat <= 0) save.hp = Math.min(this.maxHp(), save.hp + (1.2 + adv * .15) * dt * Math.max(0, 1 + this.mod("regen") / 100));
 		this.combat = Math.max(0, this.combat - dt);
@@ -2304,8 +2507,13 @@ export class TurbzGame {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
 		}
+		if (Math.random() < (mob.stats?.dodge ?? 0)) {
+			this.float(mob.x, mob.y - 36, "DODGE", "#e7d9ff");
+			return;
+		}
 		const crit = Math.random() * 100 < this.critChanceOf(move);
 		let dmg = this.damageParts(move, mob, { fromPet, mult, crit }).dmg;
+		dmg *= 1 - Math.min(.55, pure ? (mob.stats?.spellRes ?? 0) : (mob.stats?.physRes ?? 0));
 		let hits = Math.random() * 100 < Math.min(85, this.chan("double_strike")) ? 2 : 1;
 		if (form === "ranged" && rangedStyle(move) === "volley") {
 			hits = 3;
@@ -2333,9 +2541,16 @@ export class TurbzGame {
 			return;
 		}
 		this.applyMobDamage(mob, amount, crit);
+		// Thorned foes bite back, at most 4% of your health a hit and three times a second.
+		if (mob.enchants?.includes("thorned") && (mob.thornT ?? 0) <= 0 && !this.dead && this.save) {
+			mob.thornT = .33;
+			const back = Math.min(this.maxHp() * .04, amount * .12);
+			if (back >= 1) this.hurtSelf(back, null);
+		}
 	}
 	applyMobDamage(mob, amount, crit = false) {
 		if (!mob?.alive || !Number.isFinite(amount) || amount <= 0 || this.dead) return;
+		if (mob.enchants?.includes("warded")) amount = Math.max(1, Math.floor(amount * .85));
 		mob.hp -= amount;
 		mob.hurt = 1;
 		this.float(mob.x, mob.y - 30, `${amount}${crit ? "!" : ""}`, crit ? "#fff1a8" : "#f0e2c8");
@@ -2359,7 +2574,7 @@ export class TurbzGame {
 		const xp = Math.floor((8 + mob.level * 3) * (mob.boss ? 4 : 1) * (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1));
 		this.gainXp(xp);
 		this.gainSkill("hunting", mob.boss ? 28 : 10);
-		save.kyo += Math.floor((2 + mob.level) * (mob.boss ? 6 : 1) * (1 + this.chan("kyo_find") / 100) * Math.max(.2, 1 + this.mod("kyo") / 100));
+		save.kyo += Math.floor((2 + mob.level) * (mob.boss ? 6 : 1) * (mob.lootMult ?? 1) * (1 + this.chan("kyo_find") / 100) * Math.max(.2, 1 + this.mod("kyo") / 100));
 		save.wins += 1;
 		const regen = this.chan("regen");
 		if (regen && this.rules !== "hardcore") save.hp = Math.min(this.maxHp(), save.hp + regen * .4);
@@ -2367,27 +2582,38 @@ export class TurbzGame {
 		this.tone(90, .08, "triangle");
 		this.questKill(mob);
 		if (!mob.ghost) this.boardEvent("kills", { species: mob.species, type: mob.type, boss: !!mob.boss });
-		if (mob.witch || mob.bounty) {
-			if (mob.bounty) {
-				for (const pool of [this.mobs, this.contract ?? []]) {
-					for (const s of pool) if (s.bountySpirit && s.master === mob.id) {
-						s.alive = false;
-						s.hp = 0;
-					}
+		this.rollBountyStar(mob);
+		if (mob.bounty) {
+			for (const pool of [this.mobs, this.contract ?? []]) {
+				for (const s of pool) if (s.bountySpirit && s.master === mob.id) {
+					s.alive = false;
+					s.hp = 0;
 				}
-				this.contract = (this.contract ?? []).filter((m) => m.alive);
 			}
+			this.contract = (this.contract ?? []).filter((m) => m.alive);
+			this.claimBounty(mob);
+			return;
+		}
+		if (mob.hunter) {
+			this.hunterDown(mob);
+			return;
+		}
+		if (mob.witch && !mob.party) {
+			// The evil witch still drops her whole kit, re-rolled at your level.
 			for (const g of mob.lootGear) this.receiveGear({
 				...g,
 				uid: nextUid()
 			});
 			for (const [id, n] of Object.entries(mob.lootBag)) if (n > 0) this.giveItem(id, n);
 			save.kyo += mob.lootKyo;
-			this.say(mob.bounty
-				? `${mob.name} drops everything they carried. ${mob.lootKyo} kyo and ${mob.lootGear.length} pieces of gear.`
-				: `${mob.name} drops everything. ${mob.lootKyo} kyo, her bag, her gear.`);
+			this.say(`${mob.name} drops everything. ${mob.lootKyo} kyo, her bag, her gear.`);
 			this.gainSkill("hunting", 24);
 			this.gainAccount(40 + mob.level * 4);
+			this.persist();
+			return;
+		}
+		if (mob.witch) {
+			save.kyo += mob.lootKyo ?? 0;
 			this.persist();
 			return;
 		}
@@ -2403,24 +2629,27 @@ export class TurbzGame {
 			return;
 		}
 		const luck = this.chan("loot_find") + this.chan("fortune");
-		const dropP = mob.boss ? 1 : Math.min(0.92, 0.12 + mob.level * 0.016 + mob.rarity * 0.08 + luck / 200);
+		const dropP = mob.boss ? 1 : Math.min(0.85, (0.12 + Math.min(100, save.level) * 0.003 + mob.rarity * 0.08 + luck / 200) * (mob.lootMult ?? 1));
 		if (Math.random() < dropP) {
+			// Drops start at your level; rarity, bosses and luck push them up from there.
 			const floors = [null, "fine", "rare", "epic", "legendary"];
-			const tier = Math.min(4, mob.rarity + (mob.level >= 24 ? 1 : 0) + (mob.level >= 40 ? 1 : 0));
+			const tier = Math.min(4, mob.rarity + (save.level >= 24 ? 1 : 0) + (save.level >= 40 ? 1 : 0));
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-				level: Math.max(1, mob.level + mob.rarity * 2),
-				luck: luck + mob.rarity * 14 + mob.level * 0.45,
+				level: save.level,
+				bonus: mob.boss ? SOURCE_BONUS.boss : SOURCE_BONUS.mob(mob.rarity),
+				luck: luck + mob.rarity * 14,
 				raceBias: save.race,
-				floor: mob.boss ? mob.level > 14 ? "rare" : "fine" : floors[tier] ?? null,
+				floor: mob.boss ? save.level > 14 ? "rare" : "fine" : floors[tier] ?? null,
 				typeBias: mob.boss ? mob.type : null
 			});
 			this.receiveGear(piece);
-			this.say(`Found ${piece.name}.`);
+			this.say(`Found ${piece.name} (Lv ${piece.level}).`);
 			this.tone(520, .1, "triangle");
 		}
 		if (mob.boss) {
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-				level: mob.level + 2,
+				level: save.level,
+				bonus: SOURCE_BONUS.boss,
 				luck: luck + 20,
 				raceBias: save.race,
 				floor: "epic"
@@ -2636,7 +2865,7 @@ export class TurbzGame {
 		const rng = mulberry32(((Date.now() ^ (Math.random() * 1e9)) >>> 0) || 3);
 		const best = [...MOVES].filter((m) => m.power >= 48 && m.effect !== "mend").sort((a, b) => b.power - a.power);
 		const spell = best.find((m) => m.type === race.type) ?? best[0] ?? huntMove(race.type);
-		const gear = [0, 1, 2].map(() => rollGear(rng, { level: lvl + 4, luck: 28, raceBias: race.id, floor: "epic", typeBias: race.type }));
+		const gear = [0, 1, 2].map(() => rollGear(rng, { level: save.level, bonus: SOURCE_BONUS.witch, luck: 28, raceBias: race.id, floor: "epic", typeBias: race.type }));
 		const mob = this.makeMob({ id: `witch-${nextUid()}`, species: "muma", x, y, level: lvl + 2, template: 20, type: race.type, name });
 		mob.witch = true;
 		mob.race = race.id;
@@ -2651,6 +2880,7 @@ export class TurbzGame {
 		mob.huntIn = 18;
 		mob.seen = true;
 		mob.ghost = false;
+		this.rekitMob(mob);
 		this.mobs.push(mob);
 		for (let i = 0; i < 2; i++) {
 			const pool = MONSTERS.filter((d) => d.type === "spirit" || d.type === race.type);
@@ -2663,7 +2893,7 @@ export class TurbzGame {
 			pet.aggro = true;
 			if (pet.look) pet.look.aggression = "hunt";
 			pet.rarity = Math.max(pet.rarity, 2);
-			pet.hp = pet.max = Math.floor(pet.max * 1.35);
+			this.rekitMob(pet);
 			this.mobs.push(pet);
 		}
 		this.say(`${name} is coming to hunt you. She brings two spirits.`);
@@ -2703,14 +2933,26 @@ export class TurbzGame {
 	}
 	tickMobs(dt) {
 		const save = this.save;
+		this.refreshPower(dt);
+		this.tickWanted(dt);
 		for (const m of this.mobs) {
 			m.hurt = Math.max(0, m.hurt - dt * 3);
 			m.walk += dt * 4;
-			this.applyNightScaling(m);
+			// Foes keep pace with the hunter as the game goes, not just when they respawn.
+			if (m.alive) {
+				m.scaleT = (m.scaleT ?? 0) - dt;
+				if (m.scaleT <= 0 || m.nightScaled !== this.isNightNow()) {
+					m.scaleT = .25;
+					this.scaleMob(m);
+				}
+				for (const id of Object.keys(m.kcd ?? {})) m.kcd[id] = Math.max(0, m.kcd[id] - dt);
+				m.thornT = Math.max(0, (m.thornT ?? 0) - dt);
+				if (m.enchants?.includes("regenerating") && m.hp < m.max) m.hp = Math.min(m.max, m.hp + m.max * .004 * dt);
+			}
 			m.status.forEach((s) => s.t -= dt);
 			m.status = m.status.filter((s) => s.t > 0);
 			if (!m.alive) {
-				if (this.save.map.startsWith("rift-") || m.id.startsWith("shrine") || m.witch || m.bounty || m.bountySpirit) continue;
+				if (this.save.map.startsWith("rift-") || m.id.startsWith("shrine") || m.witch || m.bounty || m.bountySpirit || m.hunter) continue;
 				m.respawn -= dt;
 				if (m.respawn <= 0) {
 					let spec = m;
@@ -2735,7 +2977,7 @@ export class TurbzGame {
 				continue;
 			}
 			if (!m.boss && !m.witch && !m.master && Math.hypot(m.x - save.x, m.y - save.y) > 1200) continue;
-			if (m.status.some((s) => s.id === "burn")) m.hp -= 6 * dt;
+			if (m.status.some((s) => s.id === "burn")) m.hp -= Math.max(6, m.max * .01) * dt;
 			if (m.hp <= 0) {
 				this.killMob(m);
 				continue;
@@ -2745,7 +2987,7 @@ export class TurbzGame {
 			const dy = save.y - m.y;
 			const d = Math.hypot(dx, dy);
 			const rooted = m.status.some((s) => s.id === "root");
-			if (m.animal && m.species !== "wolf" && m.species !== "boar") {
+			if ((m.animal && m.species !== "wolf" && m.species !== "boar") || m.flee) {
 				if (!rooted && d < 120 && d > 1) {
 					this.moveMob(m, -dx / d * 70 * dt, -dy / d * 70 * dt);
 					m.facing = dx < 0 ? 1 : -1;
@@ -2784,8 +3026,9 @@ export class TurbzGame {
 			if (boss && (boss.seen || boss.huntIn <= 0 || boss.hurt > 0 || boss.aggro)) return d < 240;
 			return false;
 		}
+		if (m.flee) return false;
 		if (m.hurt > 0 || m.aggro || m.hp < m.max) return d < (m.boss ? 280 : 240);
-		if (m.look?.aggression === "drift" && !m.boss && !m.witch) return false;
+		if ((m.drift || m.look?.aggression === "drift") && !m.boss && !m.witch) return false;
 		return d < (m.boss ? 240 : m.animal ? 110 : 168);
 	}
 	moveMob(m, dx, dy) {
@@ -2832,7 +3075,7 @@ export class TurbzGame {
 			}
 		}
 		if (!engage) m.aggro = false;
-		if (m.bounty && hunting && this.world) {
+		if ((m.bounty || m.hunter) && hunting && this.world) {
 			m.chaseT = (m.chaseT ?? 0) + dt;
 			if (m.chaseT > 2.2) {
 				m.chaseT = 0;
@@ -2869,22 +3112,12 @@ export class TurbzGame {
 			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
 			return;
 		}
-		const form = dist < 46 && (attackForm(move) === "melee" || m.animal) ? "melee" : attackForm(move);
-		const pure = form === "spell";
-		const tm = pure ? 1 : typeChart(move.type, this.armorType());
-		let dmg = (4 + m.level * 1.25 + move.power * (form === "spell" ? .16 : .08)) * (pure ? 1 : tm === 0 ? .2 : tm) * (m.boss ? 1.35 : 1);
-		if (form === "melee") dmg *= 1.3;
-		else if (form === "ranged") dmg = mitigate(dmg, this.playerArmor());
-		if (m.party) dmg *= 0.58;
-		if (m.summoner) dmg *= 0.82;
-		if (m.dungeonBoss) dmg *= .6;
-		dmg *= m.power ?? 1;
-		if (m.bounty) {
-			const w = m.lootGear?.find((g) => g.slot === "weapon");
-			if (w) dmg += equipmentStats(w).damage * 0.28 * (m.power ?? 1);
+		let dmg = this.foeHitRaw(m, move, dist);
+		const crit = Math.random() < (m.stats?.crit ?? .03);
+		if (crit) {
+			dmg *= 1.75;
+			this.float(m.x, m.y - 48, "CRIT", "#ff6a4a");
 		}
-		dmg *= this.threat().dmg;
-		if (this.isNightNow()) dmg *= NIGHT.strength;
 		dmg *= 1 - Math.min(.45, this.chan("ward") / 160 + this.buff.ward);
 		if (this.status.some((s) => s.id === "shell")) dmg *= .7;
 		dmg *= 1 - Math.max(-.5, Math.min(.6, this.mod("guard") / 100));
@@ -2893,8 +3126,34 @@ export class TurbzGame {
 			return;
 		}
 		const evaded = (this.evadeT ?? 0) > 0 || this.wardT > 0;
+		const hpBefore = save.hp;
 		this.hurtSelf(dmg, move.effect);
 		if (!evaded) this.applyEffect(move, null, false);
+		if (save.hp < hpBefore && m.alive && m.enchants?.includes("vampiric")) {
+			m.hp = Math.min(m.max, m.hp + m.max * .015);
+			this.float(m.x, m.y - 40, "DRAIN", "#c4473a");
+		}
+	}
+	/** One clean hit from this foe before the hunter's ward, shell, guard and dodges. */
+	foeHitRaw(m, move, dist = 99) {
+		const form = dist < 46 && (attackForm(move) === "melee" || m.animal) ? "melee" : attackForm(move);
+		const ref = this.powerRef ?? this.measurePlayer();
+		if (!(m.frac > 0)) this.scaleMob(m);
+		let dmg = enemyHitDamage({
+			maxHpRef: ref.maxHp,
+			frac: m.frac ?? .05,
+			dmgMult: m.stats?.dmg ?? 1,
+			movePower: move.power,
+			form,
+			typeMult: form === "spell" ? 1 : typeChart(move.type, this.armorType()),
+			armor: this.playerArmor(),
+			armorRef: ref.armor,
+			night: this.isNightNow() ? NIGHT.strength : 1,
+			enraged: !!m.enraged,
+			frenzied: !!m.enchants?.includes("frenzied") && m.hp < m.max * .5,
+		});
+		if (m.dungeonBoss) dmg *= .9;
+		return dmg;
 	}
 	tickGuestHurt(dt) {
 		for (const m of this.mobs) {
@@ -2955,6 +3214,41 @@ export class TurbzGame {
 				return;
 			}
 			this.die();
+		}
+	}
+	/** Burning: 5% of max health every second for 15 seconds. Shields soak it; dodges and wards do not. Cleanse Salt puts it out. */
+	tickBurn(dt) {
+		const save = this.save;
+		const burn = this.status.find((s) => s.id === "burn");
+		if (!save || !burn || this.dead) return;
+		burn.tick = (burn.tick ?? 1) - dt;
+		while (burn.tick <= 0 && !this.dead) {
+			burn.tick += 1;
+			let dmg = this.maxHp() * BURN_PCT_PER_SECOND;
+			if (this.shield > 0) {
+				const use = Math.min(this.shield, dmg);
+				this.shield -= use;
+				dmg -= use;
+			}
+			if (dmg <= 0) continue;
+			this.sleeping = false;
+			save.hp -= dmg;
+			this.hurt = Math.max(this.hurt, .6);
+			this.combat = Math.max(this.combat, 2);
+			this.float(save.x, save.y - 42, `${Math.ceil(dmg)}`, "#ffb15e");
+			if (save.hp <= 0) {
+				if (this.chan("second_chance") >= 1 && !this.secondUsed) {
+					this.secondUsed = true;
+					save.hp = 1;
+					this.status = this.status.filter((s) => s.id !== "burn");
+					this.say("Second Chance. The flames go out.");
+					return;
+				}
+				this.say("Burned to death.");
+				this.die();
+				return;
+			}
+			if (this.rules === "hardcore") this.persist();
 		}
 	}
 	die() {
@@ -3038,6 +3332,15 @@ export class TurbzGame {
 		save.companion = null;
 		save.jarLeft = 0;
 		save.deathBanked = false;
+		save.pendingLoot = null;
+		save.locked = [];
+		// A new witch has no name yet: fresh bounty board, no stars, no price on her head.
+		save.hunt = undefined;
+		this.contract = [];
+		this.mobs = this.mobs.filter((m) => !m.bounty && !m.bountySpirit);
+		this.powerRef = null;
+		this.contract = (this.contract ?? []).filter((m) => !m.hunter);
+		this.mobs = this.mobs.filter((m) => !m.hunter);
 		const known = [...CLASS_BY_ID[classId].starterMoves];
 		save.innate = known;
 		save.known = known;
@@ -3049,7 +3352,7 @@ export class TurbzGame {
 		else {
 			const type = CLASS_BY_ID[save.classId].type;
 			const weapon = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-				level: Math.max(1, save.accountLevel),
+				level: 1,
 				slot: "weapon",
 				floor: "common",
 				typeBias: type,
@@ -3069,6 +3372,7 @@ export class TurbzGame {
 		this.shrine = null;
 		this.dead = false;
 		this.loadMap("world", false);
+		this.ensureHunt();
 		const spot = nearestOpen(this.world, save.x, save.y);
 		save.x = spot.x;
 		save.y = spot.y;
@@ -3098,7 +3402,7 @@ export class TurbzGame {
 			"feet",
 			"relic"
 		].map((slot) => rollGear(rng, {
-			level: Math.max(1, save.accountLevel),
+			level: Math.max(1, save.level),
 			slot,
 			setId,
 			floor,
@@ -3107,7 +3411,7 @@ export class TurbzGame {
 			luck: 8
 		}));
 		const weapon = rollGear(rng, {
-			level: Math.max(1, save.accountLevel),
+			level: Math.max(1, save.level),
 			slot: "weapon",
 			floor,
 			typeBias: type,
@@ -3318,14 +3622,17 @@ export class TurbzGame {
 			this.float(m.x, m.y - 36, "ASLEEP", "#e7d9ff");
 			return;
 		}
-		const move = MOVE_BY_ID[m.move] ?? MOVES[0]!;
+		const move = this.pickFoeMove(m);
 		const form = attackForm(move);
 		m.cd = Math.max(0, (m.cd ?? 0) - 0.55);
 		if (m.cd > 0) {
 			this.float(m.x, m.y - 34, "WAIT", "#c8c0b0");
 			return;
 		}
-		m.cd = (form === "spell" ? 1.05 : form === "ranged" ? 0.72 : 0.48) * (m.boss || m.witch ? 0.85 : 1);
+		m.cd = (form === "spell" ? 1.05 : form === "ranged" ? 0.72 : 0.48) * (m.boss || m.witch ? 0.85 : 1) * (m.enchants?.includes("swift") ? .8 : 1);
+		m.kcd = m.kcd ?? {};
+		m.kcd[move.id] = 1.2 + move.power / 60;
+		m.move = move.id;
 		m.swing += 1;
 		const spirits = this.activeSpirits().filter((s) => s.hp > 0);
 		if (spirits.length && Math.random() < 0.28) {
@@ -3333,7 +3640,7 @@ export class TurbzGame {
 			const slot = this.activeSpirits().indexOf(spirit);
 			const at = this.mates[slot] ?? { x: save.x, y: save.y, swing: 0 };
 			const spiritDelay = this.playMoveFx(move, m.x, m.y - 16, at.x, at.y - 10, { follow: () => [at.x, at.y - 10] });
-			const dmg = Math.max(4, Math.floor((6 + m.level * 1.4 + move.power * 0.08) * (m.power ?? 1) * (this.isNightNow() ? NIGHT.strength : 1)));
+			const dmg = Math.max(4, Math.floor(spirit.max * (m.frac ?? .05) * 1.25 * (m.stats?.dmg ?? 1) * (m.enraged ? 1.6 : 1) * (this.isNightNow() ? NIGHT.strength : 1)));
 			this.later(spiritDelay, () => {
 				if (this.holdActive() && safeZoneAt(this.save.survival.campfires, this.save.map, at.x, at.y)) { this.float(at.x, at.y - 28, "SAFE", "#9ad8c8"); return; }
 				spirit.hp -= dmg;
@@ -3347,10 +3654,28 @@ export class TurbzGame {
 		}
 		this.queueStrike(m, move);
 	}
+	/** A foe picks from its own kit: something ready that reaches you, its signature if nothing else. */
+	pickFoeMove(m) {
+		const save = this.save;
+		const kit = (m.kit ?? []).map((id) => MOVE_BY_ID[id]).filter(Boolean);
+		if (!kit.length) return MOVE_BY_ID[m.move] ?? MOVES[0];
+		const d = save ? Math.hypot(save.x - m.x, save.y - m.y) : 0;
+		const ready = kit.filter((mv) => (m.kcd?.[mv.id] ?? 0) <= 0);
+		const reach = ready.filter((mv) => (attackForm(mv) === "melee" || m.animal ? 62 : attackRange(mv) + 24) >= d);
+		const pool = reach.length ? reach : ready.length ? ready : kit;
+		// Strong moves are favoured but not certain.
+		const weights = pool.map((mv) => 1 + mv.power / 40);
+		let roll = Math.random() * weights.reduce((a, b) => a + b, 0);
+		for (let i = 0; i < pool.length; i++) {
+			roll -= weights[i];
+			if (roll <= 0) return pool[i];
+		}
+		return pool[pool.length - 1];
+	}
 	queueStrike(m, move) {
 		const save = this.save;
 		const form = attackForm(move);
-		const wind = (form === "melee" ? .34 : form === "ranged" ? .42 : .55) * (m.boss ? .85 : 1) * (this.rules === "hardcore" ? Math.max(.7, 1 - (save.level ?? 1) * .006) : 1);
+		const wind = (form === "melee" ? .34 : form === "ranged" ? .42 : .55) * (m.boss ? .85 : 1) * (m.enchants?.includes("swift") ? .8 : 1) * (this.rules === "hardcore" ? Math.max(.7, 1 - (save.level ?? 1) * .006) : 1);
 		this.incoming = this.incoming ?? [];
 		this.incoming.push({ id: m.id, move: move.id, t: wind, ax: save.x, ay: save.y, form });
 		this.float(m.x, m.y - 40, "!", "#ff6a4a");
@@ -3848,7 +4173,7 @@ export class TurbzGame {
 			this.say(this.rules === "hardcore" ? "The hearth offers shelter. Only healing spells mend your wounds." : "The hearth mends you.");
 		} else if (it.kind === "dungeon") {
 			if (it.mapId === "world") this.leaveCustom();
-			else if (savedMaps().some((m) => m.id === it.mapId)) this.enterCustom(it.mapId);
+			else if (findMapFile(it.mapId) && !isBuiltinMap(it.mapId)) this.enterCustom(it.mapId);
 			else this.say("This door leads nowhere yet. Save the target map in the Map Builder.");
 		}
 		return true;
@@ -3961,7 +4286,7 @@ export class TurbzGame {
 		mob.name = `${TYPES[this.shrine.type].name} Saint ${this.shrine.round}`;
 		mob.move = (list[this.shrine.round] ?? list[0] ?? MOVES[0]).id;
 		mob.boss = this.shrine.round === 3;
-		mob.hp = mob.max = Math.floor(mob.max * (1 + this.shrine.round * .25));
+		this.rekitMob(mob);
 		this.mobs.push(mob);
 		this.dest = {
 			x: mob.x,
@@ -3974,7 +4299,8 @@ export class TurbzGame {
 		if (!this.shrine) return;
 		if (this.shrine.round >= 3) {
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-				level: save.level + 3,
+				level: save.level,
+				bonus: SOURCE_BONUS.shrine,
 				floor: "rare",
 				typeBias: this.shrine.type,
 				raceBias: save.race,
@@ -4010,11 +4336,34 @@ export class TurbzGame {
 	}
 	enterCustom(id) {
 		const file = savedMaps().find((m) => m.id === id);
-		if (!file || !this.save) return;
+		if (!file || !this.save || isBuiltinMap(id)) return;
 		this.closePanel();
 		this.returnTo = this.save.map === "world" ? { x: this.save.x, y: this.save.y } : hearthXY();
 		this.switchTo(`custom-${id}`, { x: (file.spawn?.tx ?? 1) * 32 + 16, y: (file.spawn?.ty ?? 1) * 32 + 16 });
 		this.say(`You step into ${file.name}.`);
+	}
+	/** Hardcore, level 30+: eat a Green Mushroom and wake in a brand new Green Cave. */
+	eatGreenMushroom() {
+		const save = this.save;
+		if (!save || this.dead || (save.bag.green_mushroom ?? 0) <= 0) return;
+		if (this.rules !== "hardcore") return this.say("The Green Cave only opens in Hardcore.");
+		if (save.level < GREEN_MUSHROOM_LEVEL) return this.say(`Too strong for you. Reach level ${GREEN_MUSHROOM_LEVEL} first.`);
+		const file = findMapFile(GREEN_CAVE_ID);
+		if (!file) return this.say("The mushroom tastes of nothing.");
+		save.bag.green_mushroom -= 1;
+		// A fresh instance: the map, its foes and nodes are rebuilt, and its quest starts over.
+		const prefix = `${GREEN_CAVE_ID}:`;
+		for (const key of Object.keys(save.mapQuests ?? {})) if (key.startsWith(prefix)) delete save.mapQuests[key];
+		if (save.map === "world") this.returnTo = { x: save.x, y: save.y };
+		else if (!save.map.startsWith("custom-")) this.returnTo = hearthXY();
+		this.closePanel();
+		this.dest = null;
+		this.incoming = [];
+		this.sleeping = false;
+		this.switchTo(`custom-${GREEN_CAVE_ID}`, { x: (file.spawn?.tx ?? 1) * 32 + 16, y: (file.spawn?.ty ?? 1) * 32 + 16 });
+		this.say(`You eat the Green Mushroom. The world melts into ${file.name}. Find the door marked "Wake up" to leave.`);
+		this.tone(300, .3, "sine");
+		this.syncHud(true);
 	}
 	leaveCustom() {
 		if (!this.save?.map.startsWith("custom-")) return;
@@ -4099,7 +4448,7 @@ export class TurbzGame {
 	}
 	itemProblem(def) {
 		const save = this.save;
-		return itemUseProblem(def, { hardcore: this.rules === "hardcore", hp: save.hp, maxHp: this.maxHp(), hunger: save.survival?.hunger, thirst: save.survival?.thirst });
+		return itemUseProblem(def, { hardcore: this.rules === "hardcore", hp: save.hp, maxHp: this.maxHp(), hunger: save.survival?.hunger, thirst: save.survival?.thirst, level: save.level });
 	}
 	eatFood() {
 		if (!this.save || this.rules !== "hardcore" || this.dead) return;
@@ -4113,6 +4462,7 @@ export class TurbzGame {
 		const issue = this.itemProblem(def);
 		if (issue) return this.say(issue);
 		if (id === "ghost_jar") return this.catchSpirit();
+		if (id === "green_mushroom") return this.eatGreenMushroom();
 		if (id === "smoke_bomb") {
 			save.bag[id] -= 1;
 			this.dest = null;
@@ -4138,7 +4488,8 @@ export class TurbzGame {
 		}
 		if (def.heal || def.buff) save.bag[id] -= 1;
 		if (def.heal && this.rules !== "hardcore") {
-			const heal = Math.floor(def.heal * (1 + this.chan("potion_sip") / 100));
+			// Potions heal a share of max health so they stay useful at every level (45 → 15%, 110 → 37%).
+			const heal = Math.floor(Math.max(def.heal, this.maxHp() * def.heal / 300) * (1 + this.chan("potion_sip") / 100));
 			save.hp = Math.min(this.maxHp(), save.hp + heal);
 			this.say(`${def.name}.`);
 		}
@@ -4200,12 +4551,72 @@ export class TurbzGame {
 		if (i < 0) return;
 		const g = save.gear[i];
 		if (Object.values(save.equipped).includes(uid)) return this.say("Equip a replacement before selling worn gear.");
-		const mult = (1 + this.skillN("trading") * 0.002) * (1 + this.chan("sell_boost") / 100);
-		save.kyo += Math.floor(gearPrice(g) * .45 * mult);
+		if ((save.locked ?? []).includes(uid)) return this.say("That piece is locked. Unlock it to sell it.");
+		const value = gearSellValue(gearPrice(g), this.sellMult());
+		save.kyo += value;
 		save.gear.splice(i, 1);
 		if (this.selected === uid) this.selected = null;
 		this.gainSkill("trading", 8);
-		this.say("Sold.");
+		this.say(`Sold ${g.name} for ${value} kyo.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Trading skill and Merchant Tongue on every sale. */
+	sellMult() {
+		return (1 + this.skillN("trading") * 0.002) * (1 + this.chan("sell_boost") / 100);
+	}
+	/** Gear Sell All would take: not worn, not locked, optionally at or below a quality. */
+	sellableGear(maxQuality: string | null = null) {
+		const save = this.save;
+		if (!save) return [];
+		const worn = new Set(Object.values(save.equipped).filter(Boolean));
+		const locked = new Set(save.locked ?? []);
+		const order = ["worn", "common", "fine", "rare", "epic", "legendary"];
+		const cap = maxQuality ? order.indexOf(maxQuality) : 99;
+		return save.gear.filter((g) => !worn.has(g.uid) && !locked.has(g.uid) && order.indexOf(g.quality) <= cap);
+	}
+	/** Sells every unequipped, unlocked piece in one go. */
+	sellAllUnequipped(maxQuality: string | null = null) {
+		const save = this.save;
+		if (!save) return;
+		const list = this.sellableGear(maxQuality);
+		if (!list.length) return this.say(maxQuality ? `No unlocked spare gear at ${maxQuality} or below.` : "No unequipped gear to sell. Locked pieces are kept.");
+		const mult = this.sellMult();
+		let kyo = 0;
+		const gone = new Set(list.map((g) => g.uid));
+		for (const g of list) kyo += gearSellValue(gearPrice(g), mult);
+		save.gear = save.gear.filter((g) => !gone.has(g.uid));
+		if (gone.has(this.selected)) this.selected = null;
+		save.kyo += kyo;
+		this.gainSkill("trading", Math.min(80, 6 + list.length * 3));
+		this.say(`Sold ${list.length} piece${list.length === 1 ? "" : "s"} for ${kyo} kyo.`);
+		this.tone(620, .1, "triangle");
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Locked gear is skipped by Sell All and cannot be sold until unlocked. */
+	toggleLock(uid) {
+		const save = this.save;
+		if (!save || !save.gear.some((g) => g.uid === uid)) return;
+		const set = new Set(save.locked ?? []);
+		if (set.has(uid)) set.delete(uid);
+		else set.add(uid);
+		save.locked = [...set];
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Sell bag items. n = Infinity sells the whole stack. */
+	sellItem(id: string, n: number = 1) {
+		const save = this.save;
+		const def = ITEM_BY_ID[id];
+		const have = save?.bag?.[id] ?? 0;
+		if (!save || !def || have <= 0 || this.dead) return;
+		const count = Math.max(1, Math.min(have, Number.isFinite(n) ? Math.floor(n) : have));
+		const each = itemSellValue(def.price, this.sellMult());
+		save.bag[id] = have - count;
+		save.kyo += each * count;
+		this.gainSkill("trading", Math.min(30, 2 + count));
+		this.say(`Sold ${count} ${def.name} for ${each * count} kyo.`);
 		this.persist();
 		this.syncHud(true);
 	}
@@ -4395,30 +4806,70 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
-	takeBounty() {
+	// ---------- Bounties: a board of marks, each one stronger than the last ----------
+	ensureHunt() {
+		const save = this.save;
+		if (!save) return null;
+		const h = save.hunt ?? (save.hunt = { tier: 0, kills: 0, board: [], stars: 0, wanted: 0, waveIn: 0, squads: 0 });
+		h.board = (Array.isArray(h.board) ? h.board : []).filter((p) => p && typeof p.id === "string" && CLASS_BY_ID[p.classId]);
+		while (h.board.length < BOUNTY_BOARD_SIZE) h.board.push(this.makePosting(this.nextPostingTier()));
+		return h;
+	}
+	nextPostingTier() {
+		const h = this.save?.hunt;
+		const top = Math.max(h?.tier ?? 0, ...(h?.board ?? []).map((p) => p.tier));
+		return top + 1;
+	}
+	makePosting(tier) {
+		const cls = CLASSES[Math.floor(Math.random() * CLASSES.length)] ?? CLASSES[0];
+		return {
+			id: `post-${nextUid()}`,
+			classId: cls.id,
+			name: WITCH_NAMES[Math.floor(Math.random() * WITCH_NAMES.length)] ?? "Harrow Nia",
+			female: classGendered(cls.id) ? Math.random() < .5 : true,
+			tier,
+			levelBonus: 3 + tier,
+		};
+	}
+	/** Every live bounty mark, wherever it is. */
+	liveBounties() {
+		const seen = new Set();
+		const out = [];
+		for (const m of [...(this.contract ?? []), ...this.mobs]) {
+			if (!m.bounty || !m.alive || seen.has(m.id)) continue;
+			seen.add(m.id);
+			out.push(m);
+		}
+		return out;
+	}
+	/** Takes a posting off the board (the first free one when no id is given). */
+	takeBounty(postingId: string | null = null) {
 		const save = this.save;
 		if (!save || !this.world) return this.say("The board is blank out here.");
-		const live = this.liveBounty();
-		if (live) {
-			this.say(`You already hunt ${live.name}.`);
-			publish({ panel: null });
-			return;
-		}
-		const cls = CLASSES[Math.floor(Math.random() * CLASSES.length)];
-		if (!cls) return;
-		const female = classGendered(cls.id) ? Math.random() < 0.5 : true;
+		const h = this.ensureHunt();
+		const live = this.liveBounties();
+		const busy = new Set(live.map((m) => m.postingId));
+		const posting = postingId ? h.board.find((p) => p.id === postingId) : h.board.find((p) => !busy.has(p.id));
+		if (!posting) return this.say("Every posting is already being hunted.");
+		if (busy.has(posting.id)) return this.say(`You already hunt ${posting.name}.`);
+		const tier = posting.tier;
+		const cls = CLASS_BY_ID[posting.classId] ?? CLASSES[0];
 		const raceId = CLASS_RACE[cls.id] ?? "vesper";
-		const bonus = 5 + Math.floor(Math.random() * 46);
-		const level = Math.max(1, save.level + bonus);
+		const level = Math.max(1, save.level + posting.levelBonus);
 		const spot = this.bountySpot();
 		const rng = mulberry32(((Date.now() ^ (Math.random() * 1e9)) >>> 0) || 7);
-		const gear = (["weapon", "head", "chest", "legs", "feet", "relic"] as Slot[]).map((slot) => this.superiorPiece(slot, level, rng, raceId, cls.type));
+		// A full kit at your level, pushed up by the bounty tier. You pick one piece when they fall.
+		const gear = (["weapon", "head", "chest", "legs", "feet", "relic"] as Slot[]).map((slot) => rollGear(rng, {
+			level: save.level,
+			slot,
+			bonus: SOURCE_BONUS.bounty(tier),
+			luck: 30 + tier * 3,
+			raceBias: raceId,
+			floor: bountyQuality(tier, rng()),
+			typeBias: cls.type,
+		}));
 		const offensive = cls.starterMoves.map((id) => MOVE_BY_ID[id]).filter((m) => m && !["heal", "ward", "roll", "dash", "surge"].includes(moveTactic(m)) && m.effect !== "mend" && m.effect !== "shell");
 		const spell = [...offensive].sort((a, b) => b.power - a.power)[0] ?? huntMove(cls.type);
-		const who = WITCH_NAMES[Math.floor(Math.random() * WITCH_NAMES.length)] ?? "Harrow Nia";
-		const name = who;
-		const hpMod = 1 + Math.max(0, (cls.stats.hp ?? 0) / 100) + Math.max(0, (cls.stats.guard ?? 0) / 220);
-		const max = Math.floor((110 + level * 26) * hpMod);
 		const mob = this.makeMob({
 			id: `bounty-${nextUid()}`,
 			species: "muma",
@@ -4428,45 +4879,216 @@ export class TurbzGame {
 			fixedLevel: true,
 			template: 20,
 			type: cls.type,
-			name
+			name: posting.name
 		});
 		mob.bounty = true;
 		mob.witch = true;
+		mob.tier = tier;
+		mob.postingId = posting.id;
 		mob.classId = cls.id;
-		mob.female = female;
+		mob.female = posting.female;
 		mob.race = raceId;
 		mob.map = save.map;
-		mob.name = name;
-		mob.level = level;
+		mob.name = posting.name;
 		mob.move = spell.id;
-		mob.baseMax = max;
-		mob.hp = mob.max = max;
-		mob.power = 1;
 		mob.enraged = false;
-		mob.speed = 12 + Math.floor(level * 0.35) + Math.max(0, cls.stats.speed ?? 0) / 10;
+		mob.rarity = 3;
 		mob.lootGear = gear;
-		mob.lootBag = {};
-		mob.lootKyo = 40 + level * 24 + bonus * 8;
-		mob.huntIn = 300;
+		mob.lootBag = bountyInventory(rng, tier, this.rules === "hardcore");
+		mob.lootKyo = bountyKyo(save.level, tier);
+		mob.huntIn = BOUNTY_HUNT_SECONDS;
 		mob.seen = false;
 		mob.aggro = false;
 		mob.homeX = spot.x;
 		mob.homeY = spot.y;
-		const spirits = this.spawnBountySpirits(mob, level, bonus);
+		this.rekitMob(mob, { tier });
+		const spirits = this.spawnBountySpirits(mob, level, tier);
 		this.mobs.push(mob, ...spirits);
 		this.contract = [...(this.contract ?? []).filter((m) => m.alive), mob, ...spirits];
 		publish({ panel: null });
 		const tiles = Math.max(1, Math.round(Math.hypot(spot.x - save.x, spot.y - save.y) / 32));
-		this.say(`Bounty: ${name} the ${cls.name}, level ${level}. ${spirits.length} spirits. ${tiles} tiles ${this.compass(spot.x - save.x, spot.y - save.y)}. Five minutes.`);
+		this.say(`Bounty tier ${tier}: ${posting.name} the ${cls.name}, level ${mob.level}. ${spirits.length} spirits. ${tiles} tiles ${this.compass(spot.x - save.x, spot.y - save.y)}. Five minutes.`);
 		this.tone(180, 0.14, "triangle");
 		this.persist();
 		this.syncHud(true);
 	}
+	/** A bounty falls: kyo and their whole bag are yours, then the world stops while you pick one piece of gear. */
+	claimBounty(mob) {
+		const save = this.save;
+		const h = this.ensureHunt();
+		const tier = mob.tier ?? 1;
+		h.tier = Math.max(h.tier, tier);
+		h.kills += 1;
+		const i = h.board.findIndex((p) => p.id === mob.postingId);
+		const fresh = this.makePosting(this.nextPostingTier());
+		if (i >= 0) h.board[i] = fresh;
+		else if (h.board.length < BOUNTY_BOARD_SIZE) h.board.push(fresh);
+		save.kyo += mob.lootKyo ?? 0;
+		const items = [];
+		for (const [id, n] of Object.entries(mob.lootBag ?? {})) if (n > 0) {
+			this.giveItem(id, n);
+			items.push({ id, count: n });
+		}
+		this.gainSkill("hunting", 24 + tier * 2);
+		this.gainAccount(40 + mob.level * 4);
+		const gear = (mob.lootGear ?? []).map((g) => ({ ...g, uid: nextUid() }));
+		this.say(`${mob.name} falls. ${mob.lootKyo} kyo and ${items.length} kinds of supplies are yours. Choose one piece of their gear. A tier ${fresh.tier} mark is posted.`);
+		this.tone(660, .2, "triangle");
+		if (h.kills === 1) this.say("You have a name now. From here on, any kill can earn a Bounty Star. Ten stars and they put a price on you.");
+		if (gear.length) {
+			save.pendingLoot = { title: `${mob.name} · tier ${tier} bounty`, kyo: mob.lootKyo ?? 0, items, gear, tier };
+			this.openLoot();
+		}
+		this.persist();
+		this.syncHud(true);
+	}
+	openLoot() {
+		const save = this.save;
+		if (!save?.pendingLoot?.gear?.length) return;
+		this.resetInput();
+		this.incoming = [];
+		publish({ panel: "loot" });
+		this.syncHud(true);
+	}
+	/** Pick one piece from a fallen bounty. The rest stays with the body. */
+	pickLoot(index) {
+		const save = this.save;
+		const loot = save?.pendingLoot;
+		const piece = loot?.gear?.[index];
+		if (!piece) return;
+		save.pendingLoot = null;
+		this.receiveGear({ ...piece, uid: nextUid() });
+		this.say(`Took ${piece.name} (Lv ${piece.level}).`);
+		publish({ panel: null });
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Each kill after your first bounty may earn a star. Ten put a bounty on you. */
+	rollBountyStar(mob) {
+		const save = this.save;
+		const h = save?.hunt;
+		if (!h || h.kills < 1 || mob.id?.startsWith?.("shrine")) return;
+		if (Math.random() >= bountyStarChance(this.enemyKind(mob), mob.rarity ?? 0, this.rules === "hardcore")) return;
+		h.stars += 1;
+		this.float(save.x, save.y - 60, "★ BOUNTY STAR", "#ffd166");
+		if (h.stars < BOUNTY_STARS_NEEDED) {
+			this.say(`Bounty Star ${h.stars}/${BOUNTY_STARS_NEEDED}.`);
+			return;
+		}
+		h.stars = 0;
+		h.wanted += 1;
+		h.waveIn = 6;
+		this.say(`WANTED. There is a price on your head (level ${h.wanted}). Hunters are coming, five at a time, stronger than you. Clear your name at a bounty board.`);
+		this.tone(80, .35, "sawtooth");
+	}
+	liveHunters() {
+		const seen = new Set();
+		const out = [];
+		for (const m of [...(this.contract ?? []), ...this.mobs]) {
+			if (!m.hunter || !m.alive || seen.has(m.id)) continue;
+			seen.add(m.id);
+			out.push(m);
+		}
+		return out;
+	}
+	tickWanted(dt) {
+		const save = this.save;
+		const h = save?.hunt;
+		if (!h || h.wanted <= 0 || this.dead || this.role === "guest" || this.shrine) return;
+		if (this.liveHunters().length) return;
+		h.waveIn = (h.waveIn ?? 0) - dt;
+		if (h.waveIn > 0) return;
+		h.waveIn = this.rules === "hardcore" ? HUNTER_WAVE_GAP.hardcore : HUNTER_WAVE_GAP.standard;
+		this.spawnHunterSquad();
+	}
+	/** Five hunters, each a playable class in a full kit, sent after a wanted witch. */
+	spawnHunterSquad() {
+		const save = this.save;
+		const h = save?.hunt;
+		if (!save || !h || !this.world) return;
+		const ang0 = Math.random() * Math.PI * 2;
+		const dist = 9 * 32;
+		const anchor = nearestOpen(this.world, save.x + Math.cos(ang0) * dist, save.y + Math.sin(ang0) * dist);
+		const squad = [];
+		for (let i = 0; i < HUNTER_SQUAD; i++) {
+			const cls = CLASSES[Math.floor(Math.random() * CLASSES.length)] ?? CLASSES[0];
+			const raceId = CLASS_RACE[cls.id] ?? "vesper";
+			const at = nearestOpen(this.world, anchor.x + ((i % 3) - 1) * 30, anchor.y + (Math.floor(i / 3) - .5) * 28);
+			const rng = mulberry32(((Date.now() ^ (Math.random() * 1e9)) >>> 0) || 11);
+			const offensive = cls.starterMoves.map((id) => MOVE_BY_ID[id]).filter((m) => m && this.isOffense(m));
+			const spell = [...offensive].sort((a, b) => b.power - a.power)[0] ?? huntMove(cls.type);
+			const mob = this.makeMob({ id: `hunter-${nextUid()}`, species: "muma", x: at.x, y: at.y, level: save.level + 3, fixedLevel: true, template: 20, type: cls.type, name: WITCH_NAMES[Math.floor(Math.random() * WITCH_NAMES.length)] ?? "Hunter" });
+			mob.hunter = true;
+			mob.witch = true;
+			mob.wanted = h.wanted;
+			mob.classId = cls.id;
+			mob.female = classGendered(cls.id) ? Math.random() < .5 : true;
+			mob.race = raceId;
+			mob.map = save.map;
+			mob.move = spell.id;
+			mob.rarity = 2;
+			mob.huntIn = 0;
+			mob.seen = true;
+			mob.aggro = true;
+			mob.ghost = false;
+			mob.lootGear = (["weapon", "chest", "head"] as Slot[]).map((slot) => rollGear(rng, { level: save.level, slot, bonus: SOURCE_BONUS.hunter(h.wanted), luck: 20, raceBias: raceId, typeBias: cls.type }));
+			mob.lootBag = { potion: 1 + Math.floor(Math.random() * 2), cleanse_salt: Math.random() < .5 ? 1 : 0 };
+			mob.lootKyo = Math.floor(20 + save.level * 6 * (1 + h.wanted * .2));
+			mob.levelJitter = Math.floor(Math.random() * 3);
+			this.rekitMob(mob, { wanted: h.wanted });
+			squad.push(mob);
+		}
+		this.mobs.push(...squad);
+		this.contract = [...(this.contract ?? []).filter((m) => m.alive), ...squad];
+		h.squads = (h.squads ?? 0) + 1;
+		this.say(`A hunter squad has found you. Five of them, ${this.compass(anchor.x - save.x, anchor.y - save.y)}.`);
+		this.tone(70, .3, "sawtooth");
+		this.syncHud(true);
+	}
+	hunterDown(mob) {
+		const save = this.save;
+		save.kyo += mob.lootKyo ?? 0;
+		for (const [id, n] of Object.entries(mob.lootBag ?? {})) if (n > 0) this.giveItem(id, n);
+		let note = "";
+		if (Math.random() < .35 && mob.lootGear?.length) {
+			const g = mob.lootGear[Math.floor(Math.random() * mob.lootGear.length)];
+			this.receiveGear({ ...g, uid: nextUid() });
+			note = ` They dropped ${g.name}.`;
+		}
+		this.gainSkill("hunting", 14);
+		this.gainAccount(20 + mob.level * 2);
+		this.contract = (this.contract ?? []).filter((m) => m.alive);
+		const left = this.liveHunters().length;
+		const gap = this.rules === "hardcore" ? HUNTER_WAVE_GAP.hardcore : HUNTER_WAVE_GAP.standard;
+		this.say(left ? `Hunter down. ${left} left.${note}` : `The squad is down.${note} More will come in about ${gap} seconds unless you clear your name.`);
+		this.persist();
+	}
+	/** Pay the board to take the price off your head. */
+	clearName() {
+		const save = this.save;
+		const h = save?.hunt;
+		if (!save || !h || h.wanted <= 0) return this.say("Nobody is hunting you.");
+		const cost = clearNameCost(save.level, h.wanted);
+		if (save.kyo < cost) return this.say(`Clearing your name costs ${cost} kyo.`);
+		save.kyo -= cost;
+		h.wanted = 0;
+		h.stars = 0;
+		h.waveIn = 0;
+		for (const m of this.liveHunters()) {
+			m.alive = false;
+			m.hp = 0;
+		}
+		this.contract = (this.contract ?? []).filter((m) => m.alive);
+		this.mobs = this.mobs.filter((m) => !m.hunter);
+		this.say(`Paid ${cost} kyo. Your name is clean and the hunters stand down.`);
+		this.persist();
+		this.syncHud(true);
+	}
 	liveBounty() {
-		return (this.contract ?? []).find((m) => m.bounty && m.alive) ?? this.mobs.find((m) => m.bounty && m.alive) ?? null;
+		return this.liveBounties()[0] ?? null;
 	}
 	stashContract() {
-		const live = this.mobs.filter((m) => (m.bounty || m.bountySpirit) && m.alive);
+		const live = this.mobs.filter((m) => (m.bounty || m.bountySpirit || m.hunter) && m.alive);
 		if (!this.contract) this.contract = [];
 		for (const m of live) {
 			const i = this.contract.findIndex((c) => c.id === m.id);
@@ -4476,29 +5098,50 @@ export class TurbzGame {
 		this.contract = this.contract.filter((m) => m.alive);
 	}
 	restoreContract(map) {
-		this.mobs = this.mobs.filter((m) => !m.bounty && !m.bountySpirit);
+		this.mobs = this.mobs.filter((m) => !m.bounty && !m.bountySpirit && !m.hunter);
 		for (const m of this.contract ?? []) if (m.alive && m.map === map) this.mobs.push(m);
 	}
 	tickContract(dt) {
-		const lead = this.liveBounty();
-		if (!lead || !this.save) return;
-		if (!lead.enraged && lead.huntIn > 0) {
-			lead.huntIn -= dt;
-			if (lead.huntIn <= 0) {
-				lead.huntIn = 0;
-				this.enrageBounty(lead);
+		if (!this.save) return;
+		for (const lead of this.liveBounties()) {
+			if (!lead.enraged && lead.huntIn > 0) {
+				lead.huntIn -= dt;
+				if (lead.huntIn <= 0) {
+					lead.huntIn = 0;
+					this.enrageBounty(lead);
+				}
+			} else if (lead.enraged && lead.map !== this.save.map) this.bringBounty(lead);
+		}
+		// Hunters follow you through doors and rifts after a short delay.
+		const away = this.liveHunters().filter((m) => m.map !== this.save.map);
+		if (away.length) {
+			this.hunterFollow = (this.hunterFollow ?? 4) - dt;
+			if (this.hunterFollow <= 0) {
+				this.hunterFollow = 4;
+				this.bringHunters(away);
 			}
-		} else if (lead.enraged && lead.map !== this.save.map) this.bringBounty(lead);
+		}
+	}
+	bringHunters(list) {
+		const save = this.save;
+		if (!save || !this.world) return;
+		const ang = Math.random() * Math.PI * 2;
+		const at = nearestOpen(this.world, save.x + Math.cos(ang) * 8 * 32, save.y + Math.sin(ang) * 8 * 32);
+		list.forEach((m, i) => {
+			const p = nearestOpen(this.world, at.x + ((i % 3) - 1) * 28, at.y + Math.floor(i / 3) * 26);
+			m.x = m.homeX = p.x;
+			m.y = m.homeY = p.y;
+			m.map = save.map;
+			m.aggro = true;
+			m.seen = true;
+		});
+		this.restoreContract(save.map);
+		this.say("The hunters followed you.");
 	}
 	enrageBounty(lead) {
 		const bump = (m) => {
 			if (!m || m.enraged) return;
 			m.enraged = true;
-			m.power = 2;
-			m.baseMax = m.baseMax ?? m.max;
-			m.max = Math.floor(m.baseMax * 2);
-			m.hp = Math.min(m.max, Math.floor(m.hp * 2));
-			m.speed = Math.floor((m.speed ?? 12) * 1.35);
 			m.seen = true;
 			m.aggro = true;
 			m.huntIn = 0;
@@ -4571,25 +5214,9 @@ export class TurbzGame {
 		}
 		return nearestOpen(world, save.x + 32 * 10, save.y);
 	}
-	superiorPiece(slot, level, rng, raceId, type) {
-		const worn = this.piece(slot);
-		const order = ["worn", "common", "fine", "rare", "epic", "legendary"];
-		let q = worn ? Math.max(0, order.indexOf(worn.quality)) : 2;
-		let gearLevel = Math.max(level, (worn?.level ?? 1) + 2);
-		if (q < 5) q += 1;
-		else gearLevel += 3;
-		const target = worn ? gearScore(worn) : 0;
-		let piece = rollGear(rng, { level: gearLevel, slot, luck: 48, raceBias: raceId, floor: order[Math.min(5, q)], typeBias: type });
-		for (let n = 0; n < 8 && gearScore(piece) <= target; n++) {
-			if (q < 5) q += 1;
-			else gearLevel += 3;
-			piece = rollGear(rng, { level: gearLevel, slot, luck: 48, raceBias: raceId, floor: order[Math.min(5, q)], typeBias: type });
-		}
-		return piece;
-	}
-	spawnBountySpirits(mob, level, bonus) {
+	spawnBountySpirits(mob, level, tier) {
 		const save = this.save;
-		const n = bonus >= 35 ? 4 : bonus >= 20 ? 3 : 2;
+		const n = Math.min(4, 2 + Math.floor(tier / 6));
 		const spirits = [];
 		for (let i = 0; i < n; i++) {
 			const pool = MONSTERS.filter((d) => d.type === "spirit" || d.type === mob.type);
@@ -4611,15 +5238,14 @@ export class TurbzGame {
 			pet.master = mob.id;
 			pet.map = mob.map;
 			pet.level = spiritLevel;
-			pet.rarity = Math.min(4, 2 + Math.floor(bonus / 16));
+			pet.rarity = Math.min(4, 2 + Math.floor(tier / 5));
 			pet.aggro = false;
 			pet.seen = false;
-			pet.power = 1;
 			pet.enraged = false;
-			pet.baseMax = pet.max;
 			pet.homeX = at.x;
 			pet.homeY = at.y;
 			if (pet.look) pet.look.aggression = "hunt";
+			this.rekitMob(pet);
 			spirits.push(pet);
 		}
 		return spirits;
@@ -4731,12 +5357,12 @@ export class TurbzGame {
 		save.bag.leather -= 10;
 		save.bag.mushroom -= 10;
 		const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-			level: Math.max(1, save.accountLevel),
+			level: save.level,
 			luck: 12 + save.accountLevel * 2,
 			raceBias: save.race
 		});
 		this.receiveGear(piece);
-		this.say(`Stitched ${piece.name} at account ${save.accountLevel}.`);
+		this.say(`Stitched ${piece.name} at level ${piece.level}.`);
 		this.gainSkill("alchemy", 22);
 		this.persist();
 		this.syncHud(true);
@@ -4772,18 +5398,18 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	toggle(panel) {
-		if (snap.mode !== "play" || this.dead) return;
+		if (snap.mode !== "play" || this.dead || snap.panel === "loot") return;
 		publish({ panel: snap.panel === panel ? null : panel });
 		this.syncHud(true);
 	}
 	escape() {
-		if (this.dead) return;
+		if (this.dead || snap.panel === "loot") return;
 		if (this.buildMode && !snap.panel) { this.toggleBuild(false); return; }
 		if (snap.panel) publish({ panel: null });
 		else if (snap.mode === "play") publish({ panel: "pause" });
 	}
 	closePanel() {
-		if (this.dead) return;
+		if (this.dead || snap.panel === "loot") return;
 		publish({ panel: null });
 	}
 	toTitle() {
@@ -4952,8 +5578,22 @@ export class TurbzGame {
 			if (fresh) { save.bag.trail_ration = (save.bag.trail_ration ?? 0) + 2; }
 		}
 		if (save.map.startsWith("rift-") && !save.dungeons.portals.some(p => p.id === save.map)) { save.map = "world"; Object.assign(save, hearthXY()); }
-		if (save.map.startsWith("custom-") && !savedMaps().some((m) => `custom-${m.id}` === save.map)) { save.map = "world"; Object.assign(save, hearthXY()); }
+		if (save.map.startsWith("custom-") && !findMapFile(save.map.slice(7))) { save.map = "world"; Object.assign(save, hearthXY()); }
+		// The Green Cave is Hardcore only.
+		if (save.map === `custom-${GREEN_CAVE_ID}` && this.rules !== "hardcore") { save.map = "world"; Object.assign(save, hearthXY()); }
 		for (const g of save.gear) migrateEquipment(g);
+		save.locked = Array.isArray(save.locked) ? save.locked.filter((id) => save.gear.some((g) => g.uid === id)) : [];
+		if (save.hunt) {
+			const h = save.hunt;
+			h.tier = Math.max(0, Math.floor(h.tier || 0));
+			h.kills = Math.max(0, Math.floor(h.kills || 0));
+			h.stars = Math.max(0, Math.min(BOUNTY_STARS_NEEDED - 1, Math.floor(h.stars || 0)));
+			h.wanted = Math.max(0, Math.floor(h.wanted || 0));
+			h.waveIn = Math.max(0, Number(h.waveIn) || 0);
+			h.squads = Math.max(0, Math.floor(h.squads || 0));
+		}
+		if (save.pendingLoot && !Array.isArray(save.pendingLoot.gear)) save.pendingLoot = null;
+		if (save.pendingLoot) for (const g of save.pendingLoot.gear) migrateEquipment(g);
 		this.foldAccount(save);
 		this.syncArsenal(save);
 	}
@@ -4976,15 +5616,16 @@ export class TurbzGame {
 		return pool[Math.floor(Math.random() * pool.length)] ?? TAVERNS[0];
 	}
 	openBounty(tavern) {
+		this.ensureHunt();
 		publish({ panel: "bounty" });
-		this.say(`${tavern.name}. The board has a hunter's name.`);
+		this.say(`${tavern.name}. ${BOUNTY_BOARD_SIZE} names on the board.`);
 		this.syncHud(true);
 	}
 	playerArmor() {
 		return ["head", "chest", "legs", "feet", "relic"].reduce((sum, slot) => { const g = this.piece(slot); return sum + (g ? equipmentStats(g).armor : 0); }, 0);
 	}
 	mobArmor(mob) {
-		if (mob.bounty && mob.lootGear?.length) return mob.lootGear.reduce((sum, g) => sum + equipmentStats(g).armor, 0);
+		if (mob.bounty || mob.hunter) return 10 + mob.level * 3;
 		if (mob.animal && mob.species !== "boar") return 2;
 		if (mob.witch) return 10 + mob.level * 3;
 		return 4 + mob.level * 2 + (mob.boss ? 24 : 0);
@@ -5071,6 +5712,13 @@ export class TurbzGame {
 		if (id === "none") return;
 		if (this.save && this.profile().immune.includes(id)) {
 			this.float(this.save.x, this.save.y - 52, "IMMUNE", "#9ad8c8");
+			return;
+		}
+		if (id === "burn") {
+			// Burning is a fixed 15 seconds. A fresh flame does not stack or restart one already burning.
+			if (this.status.some((s) => s.id === "burn" && s.t > 0)) return;
+			this.status.push({ id: "burn", t: BURN_SECONDS + .05, tick: 1 });
+			if (this.save) this.float(this.save.x, this.save.y - 56, "BURNING", "#ffb15e");
 			return;
 		}
 		this.status.push({
@@ -5313,7 +5961,8 @@ export class TurbzGame {
 				mob.hp = 0;
 				this.say(`${mob.name} falls.`);
 				const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-					level: mob.level,
+					level: save?.level ?? 1,
+					bonus: mob.boss ? SOURCE_BONUS.boss : 0,
 					raceBias: save?.race,
 					luck: 10,
 					floor: mob.boss ? "rare" : null
@@ -5746,12 +6395,7 @@ export class TurbzGame {
 		const tr = t ? buffLines(t.stats, t.immune ?? []) : { buffs: [], debuffs: [] };
 		const pct = (v) => `${v > 0 ? "+" : ""}${v}%`;
 		const stats = Object.entries(STAT_LABEL).map(([id, l]) => ({ id, name: l.name, about: l.about, mod: prof.stats[id] ?? 0, cls: c.stats[id] ?? 0, trait: t?.stats?.[id] ?? 0, value: id === "crit" ? `${prof.stats.crit > 0 ? "+" : ""}${prof.stats.crit}` : pct(prof.stats[id] ?? 0) }));
-		const GOOD = new Set(["swift", "shell"]);
-		const NAMES = { swift: "Swift (+45% speed)", shell: "Shell (-30% damage)", burn: "Burning", soak: "Soaked (slowed)", root: "Rooted", sleep: "Asleep", gloom: "Gloom (-20% damage)", silence: "Silenced", spark: "Sparked", expose: "Exposed", leech: "Drained" };
-		const effects = this.status.filter((st) => st.t > 0).map((st) => ({ id: st.id, label: NAMES[st.id] ?? st.id, t: Math.ceil(st.t), good: GOOD.has(st.id) }));
-		if (this.buff.t > 0) effects.push({ id: "edge", label: `Battle edge (+${this.buff.crit} crit)`, t: Math.ceil(this.buff.t), good: true });
-		if (this.wardT > 0) effects.push({ id: "ward", label: "Ward (no harm)", t: Math.ceil(this.wardT), good: true });
-		if (this.shield > 0) effects.push({ id: "shield", label: `Shield ${Math.ceil(this.shield)}`, t: 0, good: true });
+		const effects = this.hudEffects();
 		const weapon = this.piece("weapon");
 		const set = this.setInfo();
 		const ranks = save.abilityRanks ?? {};
@@ -5782,6 +6426,37 @@ export class TurbzGame {
 			account: { level: save.accountLevel, score: save.accountScore ?? 0, perks: save.perkPoints },
 		};
 	}
+	/** Status effects for the HUD (also used by the character sheet). */
+	hudEffects() {
+		const GOOD = new Set(["swift", "shell"]);
+		const NAMES = { swift: "Swift (+45% speed)", shell: "Shell (-30% damage)", burn: "Burning", soak: "Soaked (slowed)", root: "Rooted", sleep: "Asleep", gloom: "Gloom (-20% damage)", silence: "Silenced", spark: "Sparked", expose: "Exposed", leech: "Drained" };
+		const effects = this.status.filter((st) => st.t > 0).map((st) => ({ id: st.id, label: NAMES[st.id] ?? st.id, t: Math.ceil(st.t), good: GOOD.has(st.id) }));
+		if (this.buff?.t > 0) effects.push({ id: "edge", label: `Battle edge (+${this.buff.crit} crit)`, t: Math.ceil(this.buff.t), good: true });
+		if (this.wardT > 0) effects.push({ id: "ward", label: "Ward (no harm)", t: Math.ceil(this.wardT), good: true });
+		if (this.shield > 0) effects.push({ id: "shield", label: `Shield ${Math.ceil(this.shield)}`, t: 0, good: true });
+		return effects;
+	}
+	/** The verse catalog only changes when ranks change, so it keeps one identity between updates. */
+	cachedAbilities() {
+		const ranks = this.save?.abilityRanks ?? {};
+		const key = JSON.stringify(ranks);
+		if (this.abilityKey !== key || !this.abilityCache) {
+			this.abilityKey = key;
+			this.abilityCache = MOVES.map((m) => ({ ...m, rank: ranks[m.id] ?? 0 }));
+		}
+		return this.abilityCache;
+	}
+	/** Gear is mutated in place by the engine; hand the UI a new array only when something actually changed. */
+	cachedGear() {
+		const save = this.save;
+		let sig = `${save.gear.length}|`;
+		for (const g of save.gear) sig += `${g.uid}:${g.level}:${g.enchants.length}:${g.enchants.reduce((n, e) => n + e.power, 0)};`;
+		if (this.gearSig !== sig || !this.gearCache) {
+			this.gearSig = sig;
+			this.gearCache = save.gear.slice();
+		}
+		return this.gearCache;
+	}
 	hudAt = 0;
 	syncHud(force) {
 		const now = performance.now();
@@ -5789,24 +6464,40 @@ export class TurbzGame {
 		this.hudAt = now;
 		const save = this.save;
 		if (!save) return;
+		// Fast fields refresh every 120 ms. Slow fields (bag, perks, spirits, boards…) only on a real
+		// change (force) or once a second. The character sheet is only built while it is on screen.
+		const slow = !!force || now - (this.slowAt ?? 0) > 1000 || snap.mode !== "play";
+		if (slow) this.slowAt = now;
+		const sheetOpen = snap.panel === "sheet" || isPinned("panel-sheet");
 		const set = this.setInfo();
 		const q = QUESTS.find((d) => !save.quests[d.id]?.done) ?? QUESTS[QUESTS.length - 1];
 		const region = this.world && save.map === "world" ? BIOME_LABEL[biomeNameAt(this.world, save.x, save.y)] : save.map === "crypt" ? "Tiny Crypt" : save.map.startsWith("rift-") ? `Dungeon ${save.map.slice(5)}` : save.map.startsWith("custom-") ? this.customFile?.name ?? "Custom map" : "Ash Kiln";
 		const npc = NPCS.find((n) => n.id === this.talkId);
 		publish({
 			mode: "play",
-			name: save.name,
-			classId: save.classId,
-			sheet: this.buildSheet(),
+			name: !slow ? snap.name : save.name,
+			classId: !slow ? snap.classId : save.classId,
+			sheet: sheetOpen && (slow || now - (this.sheetAt ?? 0) > 400) ? (this.sheetAt = now, this.buildSheet()) : snap.sheet,
+			effects: this.hudEffects(),
+			target: (() => {
+				const mob = this.fightTarget();
+				if (!mob) return null;
+				return {
+					name: mob.name, level: mob.level, type: mob.type, hp: Math.max(0, Math.ceil(mob.hp)), max: Math.max(1, Math.ceil(mob.max)),
+					enchants: (mob.enchants ?? []).map((id) => MOB_ENCHANTS[id]?.name ?? id), boss: !!mob.boss, bounty: !!mob.bounty, hunter: !!mob.hunter, tier: mob.tier ?? 0,
+					hint: bodyRead(mob.type).kind === "magic" ? "Magic hits harder" : "Physical hits harder",
+				};
+			})(),
+			className: CLASS_BY_ID[save.classId]?.name ?? "",
 			clock: this.clockInfo(),
 			build: this.buildInfo(),
-			lobby: this.lobbyInfo(),
-			race: save.race,
+			lobby: !slow ? snap.lobby : this.lobbyInfo(),
+			race: !slow ? snap.race : save.race,
 			level: save.level,
 			dungeonCountdown: Math.ceil(DUNGEON_INTERVAL - (save.dungeons?.elapsed ?? 0)),
-			dungeonPortals: save.dungeons?.portals ?? [],
-			skillPoints: save.skillPoints ?? 0,
-			abilities: MOVES.map(m => ({ ...m, rank: save.abilityRanks?.[m.id] ?? 0 })),
+			dungeonPortals: !slow ? snap.dungeonPortals : (save.dungeons?.portals ?? []).map((p) => ({ ...p })),
+			skillPoints: !slow ? snap.skillPoints : save.skillPoints ?? 0,
+			abilities: this.cachedAbilities(),
 			xp: save.xp,
 			xpNeed: xpNeed(save.level),
 			hp: Math.max(0, Math.ceil(save.hp)),
@@ -5815,9 +6506,9 @@ export class TurbzGame {
 			kyo: save.kyo,
 			region,
 			map: save.map,
-			log: this.log,
-			questName: q.name,
-			questAbout: q.about,
+			log: this.log.slice(),
+			questName: !slow ? snap.questName : q.name,
+			questAbout: !slow ? snap.questAbout : q.about,
 			bar: save.bar.filter((id) => MOVE_BY_ID[id]).map((id) => {
 				const m = MOVE_BY_ID[id];
 				const form = attackForm(m);
@@ -5834,12 +6525,12 @@ export class TurbzGame {
 					tag: `${reactOf(m)} · ${formTag(m)}${defenseFail(m, 0) ? ` · ${defenseFail(m, 0)}% slip` : ""}`
 				};
 			}),
-			gear: save.gear,
-			equipped: Object.values(save.equipped).filter((x) => !!x),
-			setLabel: set.name ? `${set.name} ${set.count}/5` : "No set",
-			setBonus: set.on ? set.bonus : "Wear all 5 pieces of one set.",
-			setCount: set.count,
-			totals: Object.entries([
+			gear: this.cachedGear(),
+			equipped: !slow ? snap.equipped : Object.values(save.equipped).filter((x) => !!x),
+			setLabel: !slow ? snap.setLabel : set.name ? `${set.name} ${set.count}/5` : "No set",
+			setBonus: !slow ? snap.setBonus : set.on ? set.bonus : "Wear all 5 pieces of one set.",
+			setCount: !slow ? snap.setCount : set.count,
+			totals: !slow ? snap.totals : Object.entries([
 				"head",
 				"chest",
 				"legs",
@@ -5854,7 +6545,7 @@ export class TurbzGame {
 				name: ENCHANT_BY_ID[id]?.name ?? id,
 				power
 			})),
-			skills: SKILLS.map((sk) => ({
+			skills: !slow ? snap.skills : SKILLS.map((sk) => ({
 				id: sk.id,
 				name: sk.name,
 				level: save.skills[sk.id].level,
@@ -5862,14 +6553,14 @@ export class TurbzGame {
 				need: skillNeed(save.skills[sk.id].level),
 				line: skillLine(sk.id, save.skills[sk.id].level)
 			})),
-			bag: ITEMS.filter((it) => (save.bag[it.id] ?? 0) > 0).map((it) => ({
+			bag: !slow ? snap.bag : ITEMS.filter((it) => (save.bag[it.id] ?? 0) > 0).map((it) => ({
 				id: it.id,
 				name: it.name,
 				count: save.bag[it.id] ?? 0,
 				about: it.about, useProblem: this.itemProblem(it)
 			})),
-			mapQuests: this.mapQuestLog(),
-			talk: this.mapTalkSnap() ?? (npc ? {
+			mapQuests: !slow ? snap.mapQuests : this.mapQuestLog(),
+			talk: !slow ? snap.talk : this.mapTalkSnap() ?? (npc ? {
 				id: npc.id,
 				name: npc.name,
 				role: npc.role,
@@ -5878,8 +6569,8 @@ export class TurbzGame {
 				shrine: npc.shrine ?? null
 			} : null),
 			shrine: this.shrine ? `${TYPES[this.shrine.type].name} shrine · round ${this.shrine.round}/3` : "",
-			companion: this.activeSpirits().filter((s) => s.hp > 0).map((s) => `${s.name} lv${s.level}`).join(", ") || "No spirits out",
-			spirits: (save.spirits ?? []).map((s) => ({
+			companion: !slow ? snap.companion : this.activeSpirits().filter((s) => s.hp > 0).map((s) => `${s.name} lv${s.level}`).join(", ") || "No spirits out",
+			spirits: !slow ? snap.spirits : (save.spirits ?? []).map((s) => ({
 				uid: s.uid,
 				name: s.name,
 				type: s.type,
@@ -5901,15 +6592,15 @@ export class TurbzGame {
 					};
 				})
 			})),
-			spiritSlots: this.spiritCap(),
+			spiritSlots: !slow ? snap.spiritSlots : this.spiritCap(),
 			spiritCap: 20,
 			jarLeft: Math.ceil(save.jarLeft ?? 0),
-			accountScore: save.accountScore ?? 0,
+			accountScore: !slow ? snap.accountScore : save.accountScore ?? 0,
 			turn: this.duel ? (this.duel.phase === "yours" ? "Your verse" : `${this.duel.lead?.name ?? "They"} readies`) : this.turnQ[0] ? (this.turnQ[0].side === "you" ? "Your turn" : this.turnQ[0].side === "spirit" ? "Spirit" : "Enemy") : "",
-			survival: this.rules === "hardcore" ? { ...save.survival } : null,
+			survival: this.rules === "hardcore" ? { ...save.survival, campfires: save.survival.campfires.slice(), logs: save.survival.logs.slice() } : null,
 			nearTree: !!this.nodeNear("tree", 64),
 			nearCamp: this.nearCamp(), nearWater: waterWithinReach(this.world, save.x, save.y), sleeping: !!this.sleeping,
-			rules: this.rules === "hardcore" ? "hardcore" : "hunt",
+			rules: !slow ? snap.rules : this.rules === "hardcore" ? "hardcore" : "hunt",
 			duel: this.duel ? {
 				phase: this.duel.phase === "yours" ? "yours" : "answer",
 				attacker: this.duel.lead?.name ?? "",
@@ -5917,16 +6608,16 @@ export class TurbzGame {
 				about: MOVE_BY_ID[this.duel.moveId]?.about ?? "",
 				beat: this.duel.beat ?? ""
 			} : null,
-			box: save.box.map((p) => `${MONSTER_BY_ID[p.species]?.name ?? "Spirit"} lv ${p.level}`),
-			known: save.known.map((id) => ({
+			box: !slow ? snap.box : save.box.map((p) => `${MONSTER_BY_ID[p.species]?.name ?? "Spirit"} lv ${p.level}`),
+			known: !slow ? snap.known : save.known.map((id) => ({
 				id,
 				name: MOVE_BY_ID[id]?.name ?? id,
 				type: MOVE_BY_ID[id]?.type ?? "normal"
 			})),
-			stash: save.stash.map((e) => `${ENCHANT_BY_ID[e.id]?.name ?? e.id} ${e.power}`),
+			stash: !slow ? snap.stash : save.stash.map((e) => `${ENCHANT_BY_ID[e.id]?.name ?? e.id} ${e.power}`),
 			selected: this.selected,
-			chat: this.chat,
-			trade: this.trade ? {
+			chat: this.chat.slice(),
+			trade: !slow ? snap.trade : this.trade ? {
 				open: true,
 				peer: this.remotes.get(this.trade.peer)?.name ?? "Hunter",
 				mine: this.trade.mine.map((id) => save.gear.find((g) => g.uid === id)?.name ?? id).join(", ") || "—",
@@ -5934,13 +6625,13 @@ export class TurbzGame {
 				me: this.trade.me,
 				them: this.trade.them
 			} : null,
-			stock: this.shopStock.map((g) => ({
+			stock: !slow ? snap.stock : this.shopStock.map((g) => ({
 				uid: g.uid,
 				name: g.name,
 				price: this.price(g.price),
 				type: TYPES[g.type].name
 			})),
-			wares: [
+			wares: !slow ? snap.wares : [
 				"potion",
 				"big_potion",
 				"ghost_jar",
@@ -5966,14 +6657,14 @@ export class TurbzGame {
 			menu: this.menu,
 			mapX: save.x,
 			mapY: save.y,
-			party: (save.party ?? []).map((id) => NPCS.find((n) => n.id === id)?.name ?? id),
+			party: !slow ? snap.party : (save.party ?? []).map((id) => NPCS.find((n) => n.id === id)?.name ?? id),
 			autoplay: this.autoplay,
 			grind: this.autoplay ? this.grind : "",
-			accountLevel: save.accountLevel,
-			accountXp: save.accountXp,
-			accountNeed: accountNeed(save.accountLevel),
-			perkPoints: save.perkPoints,
-			perks: ENCHANTS.filter((def) => def.perk).map((def) => ({
+			accountLevel: !slow ? snap.accountLevel : save.accountLevel,
+			accountXp: !slow ? snap.accountXp : save.accountXp,
+			accountNeed: !slow ? snap.accountNeed : accountNeed(save.accountLevel),
+			perkPoints: !slow ? snap.perkPoints : save.perkPoints,
+			perks: !slow ? snap.perks : ENCHANTS.filter((def) => def.perk).map((def) => ({
 				id: def.id,
 				name: def.name,
 				power: save.perks[def.id] ?? 0,
@@ -6004,8 +6695,47 @@ export class TurbzGame {
 				}
 				return `${dir} · ${tiles} tiles${where}`;
 			})(),
+			bounties: this.liveBounties().map((mark) => {
+				const cls = mark.classId ? CLASS_BY_ID[mark.classId]?.name : "";
+				const left = Math.max(0, Math.ceil(mark.huntIn));
+				const clock = mark.enraged || mark.huntIn <= 0 ? "hunting you" : `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+				const where = mark.map && mark.map !== save.map ? "elsewhere" : `${this.compass(mark.x - save.x, mark.y - save.y)} ${Math.max(1, Math.round(Math.hypot(mark.x - save.x, mark.y - save.y) / 32))} tiles`;
+				return `★${mark.tier ?? 1} ${mark.name}${cls ? ` the ${cls}` : ""} · Lv ${mark.level} · ${clock} · ${where}`;
+			}),
+			bountyBoard: !slow ? snap.bountyBoard : (save.hunt?.board ?? []).map((p) => {
+				const live = this.liveBounties().find((m) => m.postingId === p.id);
+				return {
+					id: p.id,
+					name: p.name,
+					className: CLASS_BY_ID[p.classId]?.name ?? "Hunter",
+					tier: p.tier,
+					level: live?.level ?? save.level + p.levelBonus,
+					kyo: live?.lootKyo ?? bountyKyo(save.level, p.tier),
+					active: !!live,
+					status: !live ? "Posted" : live.enraged || live.huntIn <= 0 ? "Hunting you" : `Hunting · ${Math.floor(Math.ceil(live.huntIn) / 60)}:${String(Math.ceil(live.huntIn) % 60).padStart(2, "0")} left`,
+				};
+			}),
+			hunt: {
+				tier: save.hunt?.tier ?? 0,
+				kills: save.hunt?.kills ?? 0,
+				stars: save.hunt?.stars ?? 0,
+				need: BOUNTY_STARS_NEEDED,
+				wanted: save.hunt?.wanted ?? 0,
+				waveIn: Math.ceil(save.hunt?.waveIn ?? 0),
+				hunters: this.liveHunters().length,
+				clearCost: clearNameCost(save.level, Math.max(1, save.hunt?.wanted ?? 1)),
+				starsOn: (save.hunt?.kills ?? 0) >= 1,
+			},
+			loot: !slow ? snap.loot : save.pendingLoot ? {
+				title: save.pendingLoot.title,
+				kyo: save.pendingLoot.kyo,
+				items: save.pendingLoot.items.map((it) => ({ name: ITEM_BY_ID[it.id]?.name ?? it.id, count: it.count })),
+				gear: save.pendingLoot.gear,
+			} : null,
+			locked: !slow ? snap.locked : save.locked ?? [],
+			sellMult: !slow ? snap.sellMult : this.sellMult(),
 			unstuck: this.unstuckT > 0 ? Math.ceil(this.unstuckT) : 0,
-			unlocked: SETS.filter((s) => this.isUnlocked(s.id)).map((s) => ({
+			unlocked: !slow ? snap.unlocked : SETS.filter((s) => this.isUnlocked(s.id)).map((s) => ({
 				id: s.id,
 				name: s.name,
 				race: s.race,
@@ -6016,15 +6746,22 @@ export class TurbzGame {
 	draw() {
 		const { w, h, dpr } = this.cssSize();
 		const ctx = this.ctx;
+		// Menus draw a quiet backdrop once instead of repainting every frame.
+		if (!this.world || !this.save || snap.mode !== "play") {
+			const key = `${w}x${h}x${dpr}`;
+			if (this.menuDrawn === key) return;
+			this.menuDrawn = key;
+			ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+			ctx.fillStyle = "#140e0c";
+			ctx.fillRect(0, 0, w, h);
+			ctx.fillStyle = "#1b1310";
+			for (let y = 0; y < h; y += 32) for (let x = (y / 32) % 2 ? 0 : 32; x < w; x += 64) ctx.fillRect(x, y, 32, 32);
+			return;
+		}
+		this.menuDrawn = "";
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.fillStyle = "#140e0c";
 		ctx.fillRect(0, 0, w, h);
-		if (!this.world || !this.save || snap.mode !== "play") {
-			ctx.fillStyle = "#f0e2c8";
-			ctx.font = "12px 'Press Start 2P', monospace";
-			ctx.fillText("TURBZ", 24, 48);
-			return;
-		}
 		const sx = (Math.random() - .5) * this.shake;
 		const sy = (Math.random() - .5) * this.shake;
 		ctx.translate(w / 2 + sx, h / 2 + sy);
@@ -6169,7 +6906,11 @@ export class TurbzGame {
 				ctx.fillRect(m.x - barW / 2, by, barW * pct, 6);
 				drawShadowName(ctx, `${Math.max(0, Math.ceil(m.hp))} ${TYPES[m.type].name}`, m.x, by - 2, "#fff6e8");
 			}
-			if (m.boss || m.witch || m.bounty || near) drawShadowName(ctx, m.bounty ? `${m.name} · ${CLASS_BY_ID[m.classId]?.name ?? "Hunter"} ${m.level}` : `${m.name} ${m.level}`, m.x, by - 18, m.bounty ? "#ff4d6a" : m.witch ? "#ff4d6a" : m.boss ? "#c4473a" : TYPES[m.type].color);
+			if (m.boss || m.witch || m.bounty || near) {
+				const label = m.bounty ? `★${m.tier ?? 1} ${m.name} · ${CLASS_BY_ID[m.classId]?.name ?? "Hunter"} ${m.level}` : m.hunter ? `HUNTER ${m.name} · ${CLASS_BY_ID[m.classId]?.name ?? "Hunter"} ${m.level}` : `${m.name} ${m.level}`;
+				drawShadowName(ctx, label, m.x, by - 18, m.bounty || m.hunter ? "#ff4d6a" : m.witch ? "#ff4d6a" : m.boss ? "#c4473a" : TYPES[m.type].color);
+				if (near && m.enchants?.length) drawShadowName(ctx, m.enchants.map((id) => MOB_ENCHANTS[id]?.name ?? id).join(" · "), m.x, by - 32, "#c9a6e8");
+			}
 		}
 		if (save.map === "world") for (const tavern of TAVERNS) {
 			const x = tavern.boardTx * 32 + 16;
@@ -6787,9 +7528,11 @@ export class TurbzGame {
 					`${TYPES[mob.type].name} · ${Math.ceil(mob.hp)} / ${Math.ceil(mob.max)}`,
 					read.line,
 					best ? `Best you carry: ${best.name} (${moveTactic(best)}, ${kind}).` : "No verse packed yet.",
+					`Lv ${mob.level} · moves: ${(mob.kit ?? [mob.move]).map((id) => MOVE_BY_ID[id]?.name ?? id).join(", ")}`,
+					...(mob.enchants ?? []).map((id) => `${MOB_ENCHANTS[id]?.name ?? id}: ${MOB_ENCHANTS[id]?.about ?? ""}`),
 					...(mob.bounty ? [
 						mob.enraged ? "The hunt has turned. They are twice as strong." : `${Math.ceil(mob.huntIn)}s before they hunt you.`,
-						`Wears ${mob.lootGear?.length ?? 0} pieces better than yours. Purse ${mob.lootKyo} kyo.`
+						`Tier ${mob.tier ?? 1} bounty. Carries ${mob.lootGear?.length ?? 0} pieces (you pick one), a full bag, and ${mob.lootKyo} kyo.`
 					] : [])
 				],
 				actions: []
@@ -7110,17 +7853,8 @@ export class TurbzGame {
 	}
 	incomingOf(mob) {
 		const move = MOVE_BY_ID[mob.move] ?? MOVES[0];
-		const form = attackForm(move);
-		const pure = form === "spell";
-		const tm = pure ? 1 : typeChart(move.type, this.armorType());
-		let dmg = (4 + mob.level * 1.25 + move.power * (form === "spell" ? .16 : .08)) * (pure ? 1 : tm === 0 ? .2 : tm) * (mob.boss ? 1.35 : 1);
-		if (form === "melee") dmg *= 1.3;
-		else if (form === "ranged") dmg = mitigate(dmg, this.playerArmor());
-		if (mob.party) dmg *= .58;
-		if (mob.summoner) dmg *= .82;
-		if (mob.dungeonBoss) dmg *= .6;
-		dmg *= 1 - Math.min(.45, this.chan("ward") / 160 + (this.buff?.ward ?? 0));
-		return Math.max(1, dmg);
+		const dmg = this.foeHitRaw(mob, move, Math.hypot((this.save?.x ?? 0) - mob.x, (this.save?.y ?? 0) - mob.y));
+		return Math.max(1, dmg * (1 - Math.min(.45, this.chan("ward") / 160 + (this.buff?.ward ?? 0))));
 	}
 	resolveExchange(pMove) {
 		const save = this.save;

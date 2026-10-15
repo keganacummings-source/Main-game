@@ -1,7 +1,7 @@
 /**
  * Day / night cycle (Hardcore only).
  *
- * One full cycle is 60 active minutes: 30 minutes of day followed by 30 minutes of night.
+ * One full cycle is 25 active minutes: 10 minutes of day followed by 15 minutes of night.
  * "Active" matches the rest of the game (dungeon rifts, hardcore survival): paused, dead,
  * title-screen and hidden-tab time does not advance the clock.
  *
@@ -12,8 +12,8 @@
  * Sleeping at night fast-forwards the clock to dawn (see SLEEP_SKIP_RATE).
  * Standard mode has no day/night cycle at all. It stays the easy mode.
  */
-export const DAY_SECONDS = 30 * 60;
-export const NIGHT_SECONDS = 30 * 60;
+export const DAY_SECONDS = 10 * 60;
+export const NIGHT_SECONDS = 15 * 60;
 export const CYCLE_SECONDS = DAY_SECONDS + NIGHT_SECONDS;
 
 export const NIGHT = {
@@ -27,7 +27,7 @@ export const NIGHT = {
 export const NIGHT_IN_STANDARD_MODE = false;
 
 export type DayNightState = {
-  /** Seconds into the current 60 minute cycle. 0 = dawn, DAY_SECONDS = dusk. */
+  /** Seconds into the current 25 minute cycle. 0 = dawn, DAY_SECONDS = dusk. */
   t: number;
   /** Counts finished nights so the UI can say "Night 3". */
   nights: number;
@@ -70,8 +70,8 @@ export function advanceDayNight(s: DayNightState, dt: number): "dusk" | "dawn" |
   return flipped;
 }
 
-/** Clock speed while sleeping at night: a whole night passes in about 15 real seconds. */
-export const SLEEP_SKIP_RATE = 120;
+/** Clock speed while sleeping at night: a whole 15 minute night passes in about 14 real seconds. */
+export const SLEEP_SKIP_RATE = 64;
 
 export function skipRate(s: DayNightState, sleeping: boolean): number {
   return sleeping && isNight(s) ? SLEEP_SKIP_RATE : 1;

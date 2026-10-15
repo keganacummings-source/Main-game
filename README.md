@@ -45,7 +45,7 @@ scale with your level and a random difficulty tier. Logic is in `src/game/quest-
 
 ## Hardcore: day, night and building
 
-- Day and night are 30 minutes each (Hardcore only; Standard has no night). At night foes have 2x health and deal 2x damage, and give 3x XP. Sleeping at night skips to dawn.
+- Day is 10 minutes and night is 15 minutes (Hardcore only; Standard has no night). At night foes have 2x health and deal 2x damage, and give 3x XP. Sleeping at night skips to dawn.
 - Press F to build. A Log (Timber) places one solid log tile. Click a placed log to take it back.
 - A campfire makes a 15x15 tile safe zone. Foes cannot enter or attack inside it. Use "Hold followers" in the Survival panel to send spirits and companions to wait there.
 
@@ -55,4 +55,47 @@ Nine verses can be equipped at once (keys 1-9). Unlock more in Unlock & Upgrade 
 
 ## Map Builder (Designer Mode)
 
+Designer Mode has two tools: the Map Builder and the Enemy Designer (below).
+
 Build whole maps up to 512x512 with the supplied tile pack: terrain (paint, rectangle, fill, overlay layers, collision), portals, start tile, enemies, bosses, spawn zones, resource nodes, NPCs, bounty boards, arenas, shrines, hearths and doors, plus an opening story and a quest editor (talk, bring, defeat, travel and gather steps, chained quests, kyo/XP/item rewards and NPC dialogue). "Check map" finds broken quests before you share. Save, then enter the map from the in-game Map panel; export/import JSON to share.
+
+## Balance patch (V6.1)
+
+All numbers live in `src/game/balance.ts` (tested in `scripts/balance.test.mjs`).
+
+- **Foes track you, live.** Every foe re-reads your power four times a second and resizes: never below your level, health measured in *your* average hits, damage measured as a share of *your* health. A foe that spawned at level 3 is still a fight at level 300. Foes read a smoothed copy of your power that climbs in a minute or two (faster in Hardcore) and falls slowly, so an upgrade feels great for a moment, then the world catches up.
+- **Hardcore gets the biggest buff.** More health, harder hits, higher levels, and it keeps growing with your level, nights survived and bounty tier (up to 2.5x).
+- **Every foe is its own.** Each rolls a stat line from its element and species, 0-8 enchantments (Vampiric, Thorned, Warded, Frenzied, Swift, Brutal, Regenerating, Evasive, Armored, Spellward, Giant) and a 1-4 move kit it picks from in a fight. Right-click a foe to read it.
+- **Gear starts at your level.** Every drop (mobs, bosses, bounties, hunters, shrines, market, crafting) is rolled at your current level; quality, the source and luck push it up a bounded amount. Nothing compounds off what you already wear. Long bounty ladders are the road to level-1000 gear.
+- **Bounties.** Three marks are posted at once; each kill posts a stronger one. On a kill the game pauses: their kyo and full bag are yours, and you pick one of their six gear pieces. After your first bounty, kills can earn Bounty Stars; at 10 a price is put on you and squads of 5 hunters stronger than you keep coming (Hardcore: every 60 s, Standard: every 90 s) until you clear your name at a board.
+- **Burning** lasts 15 seconds and takes 5% of max health each second. It no longer refreshes itself. Cleanse Salt puts it out.
+- **Potions** heal a share of max health so they stay useful late (Potion 15%, Big Potion 37%).
+- **Bag (B)** rebuilt: worn slots, slot filters, sort, compare arrows, lock, and **Sell all unequipped** (locked and worn gear is kept). The **Black Market (T)** opens on a Sell tab for gear and bag items.
+- **Crypt and Kiln** use real wall and floor tile art and are drawn live, so walls are never invisible.
+- Rifts above level 50 are no longer deleted on load.
+
+## The Green Cave (Hardcore, level 30+)
+
+A built-in designer map (`src/game/maps/greencave.json`, loaded by `src/game/builtin-maps.ts`). It is not listed under Designer Maps. In Hardcore at level 30+, the Black Market sometimes stocks a **Green Mushroom** (about 40% of refreshes). Eat it from the Bag and you are sent to a fresh instance of the cave: the map, foes, nodes and its quest are rebuilt every time. Foes are never below the zone levels set in the map (35-50) and still scale up with you. Leave through the "Wake up" door at the arrival point (added automatically when the map has no exit) or Menu → Return to the overworld. To update the cave, export it again from the Map Builder and replace the JSON file.
+
+## UI remake (V6.2)
+
+Every screen except the Character Sheet was rebuilt on one shared kit (`src/components/ui-kit.tsx`) in the Bag's style.
+
+- **HUD:** vitals top-left, a target frame top-centre while you fight (level, HP, enchantments, whose turn), a foldable tracker top-right (day/night, survival, bounties, Bounty Stars, map quest, lobby), and one bottom dock with the verse bar and every menu (keys shown on each button). Chat (party, global, friends) is one foldable window.
+- **Windows:** Skills & Perks, Verses (loadout slots + searchable library), Quests, Map, Spirits, Crafting, Survival & Camp, Lobby, Menu, NPC talk, right-click menu and the death screen all use the same cards, tabs, meters and chips. Rebuilt windows use new layout keys so old cramped sizes do not carry over.
+- **Menus:** login, hub, title, character creation, leaderboards, options and Designer Mode share one screen layout.
+- **Phones:** the HUD restacks for narrow screens; the menu row scrolls sideways.
+- **Performance:** the engine refreshes fast HUD fields every 120 ms and everything else only on a real change or once a second; the Character Sheet is only built while it is open; unchanged data keeps its identity, and each window subscribes only to the fields it shows (`src/components/use-snap.ts`), so the page no longer re-renders as a whole several times a second.
+
+## Enemy Designer
+
+Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `src/game/enemy-design.ts`).
+
+- Make a **new enemy** (it spawns in the biomes you tick, how often you choose, and can be placed in Map Builder spawn zones) or **replace a built-in enemy** everywhere it appears.
+- Sprite: pick any cell of the creature sheet or draw 16×16 pixels (palette, mirror, undo), size 1-3×.
+- Identity: name, element, behaviour (hunts you / only if provoked / flees like a beast), boss, description.
+- Combat: health, damage, turn speed, crit, dodge, physical and spell resist, levels above you, fixed enchantments plus random extras, and 1-4 moves. A live readout shows how many of your hits it takes and how hard it hits in Standard and Hardcore.
+- Loot: kyo and gear-drop multiplier.
+- Designs save on this device and are live in your games. **Export all** and put the file at `src/game/enemies/custom-enemies.json` to ship them to every player.
+- The old Weapon Designer was removed (its designs were never used by the game).
