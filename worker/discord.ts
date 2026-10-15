@@ -66,6 +66,7 @@ export async function handleInteraction(request: Request, env: Env, store: Chann
     const warn = env.DISCORD_BOT_TOKEN ? "" : "\n(The bot token is not set up on the game server yet, so posts start once it is.)";
     return reply(`🪦 TURBZ deaths will be posted here. Every witch who falls shows up with a GIF, her level and her effects.${warn}`);
   }
+  if (msg.type === 2 && msg.data?.name === "tm") return reply("TURBZ global chat is closed right now; live play happens in lobbies inside the game.", true);
   return reply("Unknown command.", true);
 }
 

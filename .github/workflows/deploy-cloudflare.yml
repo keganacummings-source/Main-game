@@ -47,9 +47,4 @@ jobs:
 
       - name: Register the /turbzhere slash command
         if: ${{ env.DISCORD_BOT_TOKEN != '' }}
-        run: |
-          APP_ID=$(grep -E '^DISCORD_APP_ID' wrangler.toml | sed -E 's/.*"(.*)".*/\1/')
-          curl -sS --fail-with-body -X PUT "https://discord.com/api/v10/applications/${APP_ID}/commands" \
-            -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" -H "Content-Type: application/json" \
-            -d '[{"name":"turbzhere","description":"Post TURBZ deaths (with a GIF of the fallen witch) in this channel.","default_member_permissions":"32","dm_permission":false}]'
-
+        run: node scripts/discord/register.mjs
