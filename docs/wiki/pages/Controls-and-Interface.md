@@ -17,7 +17,7 @@
 | **C** | Character sheet |
 | **K** | Skills and account perks |
 | **Q** | Quests (story, contract board, map quests) |
-| **M** | World map: drag, zoom, hover, click to pin. See [World and Regions](World-and-Regions#the-map-m) |
+| **M** | World map: drag, zoom, hover, click to pin; in Hardcore, click a ringed town to fast travel. See [World and Regions](World-and-Regions#the-map-m) |
 | **G** | Spirits |
 | **X** | Crafting |
 | **L** | Lobby (multiplayer) |

@@ -198,3 +198,12 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - Layer toggles: areas, people, places, foes, resources.
   - Quest goals pulse gold, and edge arrows point to anything off-screen.
 
+## Hardcore respawn & fast travel
+
+- **Hardcore wakes you at the world's starting point.** A new witch no longer starts in a random tavern: she wakes at the hearth in Hearthmere's capital. TurboHunt still wakes you at a random tavern.
+- **Fast travel from the map (M), Hardcore only.** Towns you have walked into (plus the starting capital) get a white ring. Click one, then **Travel** to jump there. **Pin instead** drops a pin as before.
+  - Overworld only, and not while in a fight or a duel.
+  - Visited towns are kept when a witch dies.
+  - Free, no cooldown.
+- Every town you stand in is now remembered, even when a smaller landmark area sits inside it.
+- Code: `rebirth()`, `fastTravelTowns()`, `fastTravelTo()` in `src/game/engine.ts`; the click prompt is in `MapPanel` (`src/components/game-panels.tsx`).

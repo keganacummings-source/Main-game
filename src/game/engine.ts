@@ -3564,11 +3564,20 @@ export class TurbzGame {
 			save.gear = [weapon];
 			save.equipped = { weapon: weapon.uid };
 		}
-		const tavern = this.pickTavern();
-		save.lastTavern = tavern.id;
+		// TurboHunt wakes you at a random tavern. Hardcore always starts over at the world's starting point
+		// and you fast travel back to towns you have already seen (see fastTravelTo).
+		const hardcoreWake = this.rules === "hardcore";
+		const tavern = hardcoreWake ? null : this.pickTavern();
 		save.map = "world";
-		save.x = tavern.boardTx * 32 + 16;
-		save.y = (tavern.boardTy + 1) * 32 + 8;
+		if (tavern) {
+			save.lastTavern = tavern.id;
+			save.x = tavern.boardTx * 32 + 16;
+			save.y = (tavern.boardTy + 1) * 32 + 8;
+		} else {
+			const home = hearthXY();
+			save.x = home.x;
+			save.y = home.y;
+		}
 		this.secondUsed = false;
 		this.status = [];
 		this.shield = 0;
@@ -3588,7 +3597,8 @@ export class TurbzGame {
 			death: []
 		});
 		const dressed = wear ? SET_BY_ID[wear].name : "the default robes";
-		this.say(`${save.name} wakes at ${tavern.name} in ${dressed}. Skills stayed with the account. The board is by the door.`);
+		if (tavern) this.say(`${save.name} wakes at ${tavern.name} in ${dressed}. Skills stayed with the account. The board is by the door.`);
+		else this.say(`${save.name} wakes at the world's starting point in ${dressed}. Skills stayed with the account. Open the map (M) and click a town you have visited to fast travel.`);
 		this.persist();
 		this.syncHud(true);
 	}
@@ -4393,6 +4403,7 @@ export class TurbzGame {
 		this.regionTick = (this.regionTick ?? 0) - dt;
 		if (this.regionTick > 0) return;
 		this.regionTick = .5;
+		this.noteTownsVisited(file, Math.floor(save.x / 32), Math.floor(save.y / 32));
 		const r = regionAt(file, Math.floor(save.x / 32), Math.floor(save.y / 32));
 		const key = r ? `${file.id}:${r.id}` : "";
 		if (key === this.regionKey) return;
@@ -4408,6 +4419,64 @@ export class TurbzGame {
 			if (r.kind !== "landmark" || r.tw > 1) this.gainSkill("adventuring", r.kind === "region" ? 20 : 10);
 		}
 		this.syncHud(true);
+	}
+	/** Remembers every town the hunter stands in (the smallest-region rule above can hide a town behind a landmark inside it). */
+	noteTownsVisited(file, tx, ty) {
+		const save = this.save;
+		if (!save) return;
+		for (const r of file.regions ?? []) {
+			if (r.kind !== "city" || tx < r.tx || ty < r.ty || tx >= r.tx + r.tw || ty >= r.ty + r.th) continue;
+			save.mapRegionsSeen = save.mapRegionsSeen ?? [];
+			const key = `${file.id}:${r.id}`;
+			if (!save.mapRegionsSeen.includes(key)) save.mapRegionsSeen.push(key);
+		}
+	}
+	/**
+	 * Hardcore fast travel: the towns this save has walked into, plus the capital you wake in.
+	 * Only on the overworld, and only in Hardcore (TurboHunt wakes you at taverns instead).
+	 */
+	fastTravelTowns() {
+		const save = this.save;
+		const file = this.customFile;
+		if (!save || !file || this.rules !== "hardcore" || save.map !== "world") return [];
+		const seen = new Set(save.mapRegionsSeen ?? []);
+		const start = file.spawn;
+		return (file.regions ?? []).filter((r) => r.kind === "city" && (
+			seen.has(`${file.id}:${r.id}`) ||
+			(!!start && start.tx >= r.tx && start.ty >= r.ty && start.tx < r.tx + r.tw && start.ty < r.ty + r.th)
+		));
+	}
+	/** The fast-travel town under a map position (tile coords), if any. Smallest town wins when they overlap. */
+	fastTravelTownAt(tx, ty) {
+		let best = null;
+		for (const r of this.fastTravelTowns()) {
+			if (tx < r.tx || ty < r.ty || tx >= r.tx + r.tw || ty >= r.ty + r.th) continue;
+			if (!best || r.tw * r.th < best.tw * best.th) best = r;
+		}
+		return best;
+	}
+	/** Jump to a town you have already visited. Not while dead, in a fight, or in a duel. */
+	fastTravelTo(regionId) {
+		const save = this.save;
+		if (!save || !this.world || this.dead) return false;
+		const town = this.fastTravelTowns().find((r) => r.id === regionId);
+		if (!town) return false;
+		if (this.duel) { this.say("Finish the duel first."); return false; }
+		if (this.combat > 0 || this.inFight()) { this.say("You cannot slip away with enemies on you."); return false; }
+		const to = nearestOpen(this.world, (town.tx + town.tw / 2) * 32, (town.ty + town.th / 2) * 32);
+		save.x = to.x;
+		save.y = to.y;
+		this.cam.x = save.x;
+		this.cam.y = save.y;
+		this.dest = null;
+		this.path = [];
+		this.incoming = [];
+		this.sleeping = false;
+		this.say(`You fast travel to ${town.name}.`);
+		this.tone(330, .2, "triangle");
+		this.syncHud(true);
+		this.persist();
+		return true;
 	}
 	/** E near a designer-placed bounty board, arena, shrine, hearth, door or NPC. Returns true when handled. */
 	interactMapPlace() {
@@ -7796,6 +7865,7 @@ export class TurbzGame {
 		}
 		for (const m of this.mobs) if (m.alive && m.boss) { const d = Math.hypot(m.x / TILE - tx, m.y / TILE - ty); if (d < bd) { bd = d; best = { name: `${m.name} · Lv ${m.level}`, kind: "boss" }; } }
 		if (best) lines.unshift(best.name);
+		if (this.fastTravelTownAt(Math.floor(tx), Math.floor(ty))) lines.push("Click to fast travel");
 		const t = this.world?.tiles[Math.floor(ty) * (this.world?.w ?? 0) + Math.floor(tx)];
 		if (!lines.length && t) lines.push(t.floor === 2 ? "Open water" : t.block ? "Impassable" : "Wilds");
 		return lines;
@@ -7884,6 +7954,7 @@ export class TurbzGame {
 		// Areas: continents, towns, groves, landmarks.
 		if (file && L.areas) {
 			const regions = [...(file.regions ?? [])].sort((a, b) => (a.kind === "region" ? 0 : a.kind === "city" ? 1 : 2) - (b.kind === "region" ? 0 : b.kind === "city" ? 1 : 2));
+			const travelIds = new Set(this.fastTravelTowns().map((r) => r.id));
 			for (const r of regions) {
 				const x = X(r.tx), y = Y(r.ty), w = r.tw * k, h = r.th * k;
 				if (x > W || y > H || x + w < 0 || y + h < 0) continue;
@@ -7896,6 +7967,7 @@ export class TurbzGame {
 					const sz = Math.max(4, Math.min(w, 14));
 					if (k >= 3) { ctx.strokeStyle = "rgba(230,193,90,.85)"; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h); ctx.lineWidth = 1; }
 					else { ctx.fillStyle = "#e6c15a"; ctx.strokeStyle = "#140e0c"; ctx.fillRect(cx - sz / 2, cy - sz / 2, sz, sz); ctx.strokeRect(cx - sz / 2, cy - sz / 2, sz, sz); }
+					if (travelIds.has(r.id)) { ctx.strokeStyle = "#fff6e8"; ctx.lineWidth = 2; if (k >= 3) ctx.strokeRect(x - 3, y - 3, w + 6, h + 6); else { ctx.beginPath(); ctx.arc(cx, cy, sz / 2 + 5, 0, Math.PI * 2); ctx.stroke(); } ctx.lineWidth = 1; }
 					text(r.name, cx, k >= 3 ? y - 3 : cy - sz / 2 - 3, "#ffe7a6", k >= 3 ? 16 : 14);
 				} else if (k >= 2) {
 					const col = r.kind === "resource" ? "#8fd06a" : r.kind === "dungeon" ? "#ff7a5a" : r.kind === "water" ? "#7ec8ea" : "#c9a6e8";

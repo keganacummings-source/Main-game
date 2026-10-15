@@ -286,9 +286,11 @@ const PLACE_KIND_LABEL: Record<string, string> = { region: "Land", city: "Town",
  * (an arrow in the world points to it). Layers and a place finder sit beside it.
  */
 export const MapPanel = memo(function MapPanel({ game }: GameProp) {
-  const s = useSnapPick(["map", "region", "dungeonCountdown", "dungeonPortals"] as const);
+  const s = useSnapPick(["map", "region", "dungeonCountdown", "dungeonPortals", "rules"] as const);
   const ref = useRef<HTMLCanvasElement>(null);
   const view = useRef<MapView | null>(null);
+  // Hardcore: clicking a town you have visited offers to fast travel there.
+  const [travel, setTravel] = useState<{ id: string; name: string; tx: number; ty: number } | null>(null);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(follow);
   followRef.current = follow;
@@ -382,7 +384,7 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game]);
   // A new map (entering a dungeon, a designer map) resets the view.
-  useEffect(() => { view.current = null; setFollow(true); }, [s.map]);
+  useEffect(() => { view.current = null; setFollow(true); setTravel(null); }, [s.map]);
   useEffect(() => { try { localStorage.setItem("turbz-map-layers", JSON.stringify(layers)); } catch { /* per-viewer convenience only */ } }, [layers]);
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -421,7 +423,11 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
     if (pointers.current.size === 0) drag.current = null;
     if (d && !d.moved && !d.pinch) {
       const p = toTile(e.clientX, e.clientY);
-      if (p && game) game.setMapPin(p.tx - 0.5, p.ty - 0.5);
+      if (p && game) {
+        const town = game.fastTravelTownAt(Math.floor(p.tx), Math.floor(p.ty));
+        if (town) setTravel({ id: town.id, name: town.name, tx: p.tx, ty: p.ty });
+        else { setTravel(null); game.setMapPin(p.tx - 0.5, p.ty - 0.5); }
+      }
     }
   };
   const onWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
@@ -470,7 +476,17 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
               {hover.lines.map((l, i) => <div key={i} className={i === 0 ? "text-kyo" : "text-dim"}>{l}</div>)}
             </div>
           )}
-          <p className="world-map-hint text-dim">Drag to pan · wheel or pinch to zoom · click to pin</p>
+          {travel && (
+            <div className="world-map-tip" style={{ left: 12, top: 12, pointerEvents: "auto" }} data-testid="map-travel-prompt">
+              <div className="text-kyo">Fast travel to {travel.name}?</div>
+              <div className="ui-row-gap" style={{ marginTop: 4 }}>
+                <button type="button" className="px-btn ui-btn-sm px-btn-kyo" data-testid="map-travel-go" onClick={() => { if (game?.fastTravelTo(travel.id)) game.toggle("map"); setTravel(null); }}>Travel</button>
+                <button type="button" className="px-btn ui-btn-sm" onClick={() => { game?.setMapPin(travel.tx - 0.5, travel.ty - 0.5); setTravel(null); }}>Pin instead</button>
+                <button type="button" className="px-btn ui-btn-sm" aria-label="Cancel" onClick={() => setTravel(null)}>×</button>
+              </div>
+            </div>
+          )}
+          <p className="world-map-hint text-dim">Drag to pan · wheel or pinch to zoom · click to pin{s.rules === "hardcore" ? " · click a visited town to fast travel" : ""}</p>
         </div>
         <aside className="world-map-side">
           <input className="px-input" placeholder="Find a town, place, person…" aria-label="Find on the map" value={find} onChange={(e) => setFind(e.target.value)} data-testid="map-find" />
@@ -495,6 +511,7 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
             <div className="world-map-key">
               <span><i style={{ background: "#fff6e8" }} />You</span>
               <span><i style={{ background: "#e6c15a" }} />Town · board</span>
+              {s.rules === "hardcore" && <span><i style={{ background: "#fff6e8" }} />Ringed town · fast travel</span>}
               <span><i style={{ background: "#ffe08a" }} />! quest · ? hand in · ring = goal</span>
               <span><i style={{ background: "#ff4a3a" }} />Boss · bounty</span>
               <span><i style={{ background: "#b4a6ff" }} />Door · rift</span>

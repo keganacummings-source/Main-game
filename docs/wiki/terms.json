@@ -95,5 +95,6 @@
   {"term": "Veilreach", "def": "A 500×500 world of seven continents, ferries and a main story. The overworld in both TurboHunt and Hardcore.", "page": "World-and-Regions", "anchor": "Veilreach", "aliases": ["Sundered Crown", "Crownfall Isle", "Hearthmere"]},
   {"term": "Ferry", "def": "A portal at the end of a pier that sails you to another port on the same map.", "page": "World-and-Regions", "anchor": "Veilreach", "aliases": ["ferries", "pier", "port"]},
   {"term": "Area", "def": "A named rectangle on a designer map (continent, town, grove…). It is announced when you walk in and gives Adventuring XP the first time.", "page": "Designer-Mode", "anchor": "Areas", "aliases": ["areas", "named area", "map region"]},
-  {"term": "World generator", "def": "Map Builder tool that builds a whole world (continents, towns, roads, camps, quests) from a seed.", "page": "Designer-Mode", "anchor": "Worlds", "aliases": ["Generate a world", "seed"]}
+  {"term": "World generator", "def": "Map Builder tool that builds a whole world (continents, towns, roads, camps, quests) from a seed.", "page": "Designer-Mode", "anchor": "Worlds", "aliases": ["Generate a world", "seed"]},
+  {"term": "Fast travel", "def": "Hardcore only: click a ringed town you have already visited on the map (M) to jump there. A new Hardcore witch wakes at the world's starting point and uses this to get back out.", "page": "World-and-Regions", "anchor": "Fast travel (Hardcore)", "aliases": ["fast travelling", "travel to town", "ringed town"]}
 ]

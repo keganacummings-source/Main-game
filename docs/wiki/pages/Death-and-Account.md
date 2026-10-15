@@ -36,7 +36,7 @@ On the rebirth screen you choose a name, class, trait and **spawn gear**:
 
 The new witch:
 
-- starts at **level 1** in a random tavern;
+- starts at **level 1** in a random tavern (in Hardcore, at the **world's starting point** instead, see [Fast travel](Hardcore-Survival#fast-travel));
 - keeps **85%** of the old kyo;
 - gets a fresh bag (2 potions, plus 2 trail rations in Hardcore);
 - gets a **fresh bounty board**, with no stars and no price on her head;

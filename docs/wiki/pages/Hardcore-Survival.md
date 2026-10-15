@@ -75,6 +75,14 @@ It multiplies enemy health and damage by its square root, and adds levels. See [
 - Spawns are never below your level − 1, and get extra levels as you level up (1 per 6 levels) and go deeper into rifts.
 - No evil witches.
 
+## Fast travel
+
+A new Hardcore witch always wakes at the **world's starting point**, not in a random tavern. To get back out to the towns you have already discovered, open the **Map** (**M**) and click a **ringed town** (the capital you start in, plus every town you have walked into). Confirm **Travel** and you arrive in that town. Full steps are under [Fast travel](World-and-Regions#fast-travel-hardcore) on the map page.
+
+- Only towns you have **visited** on this save are offered. Visited towns are kept when a witch dies.
+- Works on the overworld only, and not while you are in a fight or a duel.
+- Click **Pin instead** to drop a map pin in a town rather than travel.
+
 ## The Green Cave
 
 At **level 30+**, the Black Market sometimes (40% of refreshes) sells a **Green Mushroom** for 300 + 15 × your level kyo. Eat it to wake in a **fresh copy** of the Green Cave: its own map, foes, nodes and quest, all reset each time. Find the door marked **Wake up** to return to where you were.
