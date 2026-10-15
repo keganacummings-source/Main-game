@@ -223,7 +223,7 @@ function Hunt() {
         {playing && screen !== "circle" && screen !== "boards" && screen !== "options" && <Play game={g()} username={username} />}
         {screen === "designer" && !playing && <DesignerMode onBack={() => setScreen("hub")} />}
         {screen === "circle" && <ArenaScreen seed={arenaSeed} onClose={() => setScreen("hub")} onCloud={onArenaCloud} />}
-        {screen === "boards" && !playing && <Boards onBack={() => setScreen("hub")} />}
+        {screen === "boards" && !playing && <Boards username={username} onBack={() => setScreen("hub")} />}
         {screen === "options" && !playing && <Options username={username} onBack={() => setScreen("hub")} />}
       </div>
     </main>

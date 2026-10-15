@@ -45,7 +45,7 @@ export class GravesStore {
     sql.exec(`DELETE FROM graves WHERE mode = 'arena'`);
   }
 
-  list(mode: GraveMode, limit = 40): GraveRow[] {
+  list(mode: GraveMode, limit = 100): GraveRow[] {
     if (mode === "arena") return [];
     const rows = this.sql
       .exec(

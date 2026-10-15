@@ -6,7 +6,7 @@ import type { TypeId } from "@/game/content";
 import type { RaceId } from "@/game/content";
 import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
 import type { ActorDraw } from "@/game/sprites";
-import { Screen, Tabs, Tile } from "./ui-kit";
+import { Chips, Screen, Tabs, Tile } from "./ui-kit";
 
 const Q_NUM: Record<string, number> = {
   worn: 1,
@@ -286,7 +286,7 @@ export function Hub(props: {
         <Tile primary title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
         <Tile title="TurboCircle" about="Battle simulator: plant teams, watch them fight." onClick={props.onCircle} />
-        <Tile title="Leaderboards" about="The grave ledger of fallen witches." onClick={props.onBoards} />
+        <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
         <Tile title="Designer Mode" about="Map Builder and Enemy Designer." onClick={props.onDesigner} />
         <Tile title="Options" about="Account and friends." onClick={props.onOptions} />
       </div>
@@ -311,94 +311,251 @@ const BOARDS: { id: GraveMode; label: string }[] = [
   { id: "hardcore", label: "Hardcore" },
 ];
 
-export function Boards({ onBack }: { onBack: () => void }) {
+type BoardSort = "score" | "level" | "account" | "recent";
+
+const BOARD_SORTS: { id: BoardSort; label: string }[] = [
+  { id: "score", label: "Score" },
+  { id: "level", label: "Level" },
+  { id: "account", label: "Account" },
+  { id: "recent", label: "Newest" },
+];
+
+function commas(n: number): string {
+  return Math.round(n).toLocaleString("en-US");
+}
+
+function fellOn(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso || "unknown day";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${months[m - 1]} ${d}, ${y}`;
+}
+
+function ago(then: number, now: number): string {
+  const s = Math.max(0, Math.round((now - then) / 1000));
+  if (s < 5) return "just now";
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.floor(m / 60)}h ago`;
+}
+
+export function Boards({ onBack, username }: { onBack: () => void; username?: string }) {
   const [mode, setMode] = useState<GraveMode>("hunt");
   const [rows, setRows] = useState<GraveRow[]>([]);
-  const [pick, setPick] = useState<GraveRow | null>(null);
+  const [pickId, setPickId] = useState<number | null>(null);
   const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<BoardSort>("score");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [tick, setTick] = useState(0);
+  const modeSeen = useRef(mode);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 5000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let stop = false;
-    setErr("");
-    void listGraves(mode)
-      .then((list) => {
-        if (stop) return;
-        setRows(list);
-        setPick(list[0] ?? null);
-      })
-      .catch((e) => {
-        if (!stop) setErr(e instanceof Error ? e.message : "The board is dark.");
-      });
+    const switched = modeSeen.current !== mode;
+    modeSeen.current = mode;
+    if (switched) {
+      setRows([]);
+      setPickId(null);
+      setQ("");
+      setLoading(true);
+    }
+    const load = (quiet: boolean) => {
+      if (!quiet) setLoading(true);
+      setRefreshing(true);
+      setErr("");
+      void listGraves(mode)
+        .then((list) => {
+          if (stop) return;
+          setRows(list);
+          setPickId((cur) => (cur != null && list.some((row) => row.id === cur) ? cur : (list[0]?.id ?? null)));
+          setUpdatedAt(Date.now());
+        })
+        .catch((e) => {
+          if (!stop) setErr(e instanceof Error ? e.message : "The board is dark.");
+        })
+        .finally(() => {
+          if (stop) return;
+          setLoading(false);
+          setRefreshing(false);
+        });
+    };
+    void load(!switched);
+    const id = window.setInterval(() => load(true), 20000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") load(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       stop = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
-  }, [mode]);
+  }, [mode, tick]);
+
+  const ranks = new Map([...rows].sort((a, b) => b.score - a.score || a.id - b.id).map((row, i) => [row.id, i + 1]));
+  const needle = q.trim().toLowerCase();
+  const shown = rows.filter((row) => {
+    if (!needle) return true;
+    return row.name.toLowerCase().includes(needle) || row.username.toLowerCase().includes(needle) || row.race.toLowerCase().includes(needle);
+  });
+  shown.sort((a, b) => {
+    if (sort === "level") return b.level - a.level || b.score - a.score || a.id - b.id;
+    if (sort === "account") return b.accountScore - a.accountScore || b.score - a.score || a.id - b.id;
+    if (sort === "recent") return b.id - a.id;
+    return b.score - a.score || a.id - b.id;
+  });
+  const pick = shown.find((row) => row.id === pickId) ?? shown[0] ?? null;
+  const you = (username ?? "").trim().toLowerCase();
+  const status =
+    loading && rows.length === 0
+      ? "Opening the ledger…"
+      : err && rows.length === 0
+        ? "Could not load the board."
+        : `${shown.length === rows.length ? `${rows.length} fallen` : `${shown.length} of ${rows.length}`}${updatedAt ? ` · updated ${ago(updatedAt, now)}` : ""}`;
 
   return (
-    <Screen kicker="GRAVE LEDGER" title="Only the dead are counted" wide>
-        <p className="text-dim">A global score of fallen witches. Open a name to see the body, kit, enchants and the account that wore them.</p>
-        <Tabs value={mode} onChange={setMode} tabs={BOARDS.map((b) => ({ id: b.id, label: b.label }))} />
-        {err && <p className="mt-2 text-blood">{err}</p>}
-        <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-          <div className="grave-list">
-            {rows.length === 0 && <p className="text-dim">No corpses on this board yet. Die gloriously.</p>}
-            {rows.map((row, i) => (
-              <button key={row.id} type="button" className={`grave-row ${pick?.id === row.id ? "grave-row-on" : ""}`} onClick={() => setPick(row)}>
-                <span className="font-display text-xs text-kyo">#{i + 1}</span>
-                <span className="block text-bone">
-                  {row.name} · {row.score}
+    <Screen kicker="LEADERBOARDS" title="Fallen witches" wide roomy>
+      <p className="text-dim">Top 100 lives, ranked by the score of that death. Account is the keeper's running total. The list reloads on its own.</p>
+      <div className="board-bar">
+        <Tabs value={mode} onChange={setMode} tabs={BOARDS.map((b) => ({ id: b.id, label: b.label }))} label="Mode" />
+        <span className="board-spacer" />
+        <button className="px-btn" type="button" disabled={refreshing} onClick={() => setTick((n) => n + 1)}>
+          {refreshing ? "Refreshing…" : "Refresh"}
+        </button>
+      </div>
+      <div className="board-bar">
+        <input
+          className="px-input board-search"
+          value={q}
+          onChange={(e) => setQ(e.target.value.slice(0, 40))}
+          placeholder="Find a witch, race, or keeper"
+          aria-label="Search the leaderboard"
+        />
+        <Chips value={sort} onChange={setSort} options={BOARD_SORTS} label="Sort" />
+      </div>
+      <p className="board-meta">{status}</p>
+      {err && <p className="text-blood">{err}</p>}
+      <div className="board-layout">
+        <div className="board-scroll" role="table" aria-label={`${mode} leaderboard`}>
+          <div className="board-head" role="row">
+            <span role="columnheader">#</span>
+            <span role="columnheader">Witch</span>
+            <span className="board-col-race" role="columnheader">Race</span>
+            <span className="board-lv" role="columnheader">Lv</span>
+            <span className="board-score" role="columnheader">Score</span>
+            <span className="board-col-keep board-score" role="columnheader">Account</span>
+          </div>
+          {!loading && !err && rows.length === 0 && <p className="board-empty">No one has fallen in this mode yet.</p>}
+          {!loading && rows.length > 0 && shown.length === 0 && <p className="board-empty">No witch matches that.</p>}
+          {shown.map((row) => {
+            const rank = ranks.get(row.id) ?? 0;
+            const mine = you.length > 0 && row.username.toLowerCase() === you;
+            const on = pick?.id === row.id;
+            return (
+              <button
+                key={row.id}
+                type="button"
+                role="row"
+                aria-pressed={on}
+                className={`board-row ${on ? "board-row-on" : ""} ${mine ? "board-row-you" : ""}`}
+                onClick={() => setPickId(row.id)}
+              >
+                <span className={`board-rank ${rank > 0 && rank <= 3 ? `board-rank-${rank}` : ""}`} role="cell">
+                  {rank}
                 </span>
-                <span className="block text-dim">
-                  {row.username} · lv {row.level} {row.race}
+                <span className="board-who" role="cell">
+                  <span className="board-name">
+                    <span className="board-name-text">{row.name}</span>
+                    {mine && <span className="board-you">you</span>}
+                  </span>
+                  <span className="board-user">{row.username}</span>
+                </span>
+                <span className="board-col-race" role="cell">
+                  {row.race}
+                </span>
+                <span className="board-lv" role="cell">
+                  {row.level}
+                </span>
+                <span className="board-score" role="cell">
+                  {commas(row.score)}
+                </span>
+                <span className="board-col-keep board-score" role="cell">
+                  {commas(row.accountScore)}
                 </span>
               </button>
-            ))}
-          </div>
-          {pick && (
-            <div className="border-2 border-bone p-3">
-              <div className="flex flex-wrap items-start gap-3">
-                <GravePortrait row={pick} />
-                <div className="min-w-0 flex-1">
-                  <p className="font-display text-xs text-kyo">{pick.name}</p>
-                  <p>
-                    {pick.race} · level {pick.level} · score {pick.score}
-                  </p>
-                  <p className="text-dim">Account {pick.username}</p>
-                  <p className="text-dim">Keeper score {pick.accountScore}</p>
-                  <p className="mt-2">{pick.note}</p>
-                </div>
-              </div>
-              <p className="mt-3 font-display text-xs">Skills</p>
-              {pick.skills.length === 0 && <p className="text-dim">No skill record.</p>}
-              {pick.skills.map((sk) => (
-                <p key={sk.name}>
-                  {sk.name} <span className="text-kyo">{sk.level}</span>
-                </p>
-              ))}
-              <p className="mt-3 font-display text-xs">Worn</p>
-              {pick.gear.length === 0 && <p className="text-dim">Buried in nothing.</p>}
-              {pick.gear.map((g) => (
-                <div key={`${g.slot}-${g.name}`} className="mt-2 border-t border-bone/40 pt-2">
-                  <p>
-                    {g.slot} · {g.name}
-                  </p>
-                  <p className="text-dim">
-                    lv {g.level} · {g.quality} · {g.type}
-                  </p>
-                  <p className="text-dim">{g.enchants.length ? g.enchants.map((e) => `${e.name} ${e.power}`).join(" · ") : "No enchants"}</p>
-                  {g.moves.length > 0 && <p>{g.moves.join(" · ")}</p>}
-                </div>
-              ))}
-              <p className="mt-2 text-dim">{pick.createdAt}</p>
-            </div>
-          )}
+            );
+          })}
         </div>
-        <div className="screen-actions">
-          <button className="px-btn" type="button" onClick={onBack}>
-            Back to the veil
-          </button>
-        </div>
+        {pick && <GraveCard row={pick} rank={ranks.get(pick.id) ?? 0} />}
+      </div>
+      <div className="screen-actions">
+        <button className="px-btn" type="button" onClick={onBack}>
+          Back to the veil
+        </button>
+      </div>
     </Screen>
+  );
+}
+
+function GraveCard({ row, rank }: { row: GraveRow; rank: number }) {
+  const trained = row.skills.filter((sk) => sk.level > 1).sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+  return (
+    <aside className="board-detail" aria-label={`${row.name} details`}>
+      <div className="board-detail-top">
+        <GravePortrait row={row} />
+        <div className="min-w-0">
+          <p className="board-detail-rank">#{rank}</p>
+          <h2>{row.name}</h2>
+          <p>
+            {row.race} · level {row.level}
+          </p>
+          <p className="board-score-big">{commas(row.score)}</p>
+          <p className="text-dim">life score</p>
+          <p className="text-dim">Keeper {row.username}</p>
+          <p className="text-dim">Account {commas(row.accountScore)}</p>
+          <p className="text-dim">Fell {fellOn(row.createdAt)}</p>
+          {row.note && <p className="board-note">{row.note}</p>}
+        </div>
+      </div>
+      <h3>Trained skills</h3>
+      {trained.length === 0 && <p className="text-dim">Nothing trained past 1.</p>}
+      {trained.length > 0 && (
+        <ul className="board-skills">
+          {trained.map((sk) => (
+            <li key={sk.name}>
+              <span>{sk.name}</span>
+              <b>{sk.level}</b>
+            </li>
+          ))}
+        </ul>
+      )}
+      <h3>Worn</h3>
+      {row.gear.length === 0 && <p className="text-dim">Buried in nothing.</p>}
+      <div className="board-gear">
+        {row.gear.map((g) => (
+          <article key={`${g.slot}-${g.name}`}>
+            <p>
+              <span className="board-slot">{g.slot}</span> {g.name}
+            </p>
+            <p className="text-dim">
+              lv {g.level} · {g.quality} · {g.type}
+            </p>
+            <p className="text-dim">{(g.enchants ?? []).length ? g.enchants.map((e) => `${e.name} ${e.power}`).join(" · ") : "No enchants"}</p>
+            {(g.moves ?? []).length > 0 && <p className="board-moves">{g.moves.join(" · ")}</p>}
+          </article>
+        ))}
+      </div>
+    </aside>
   );
 }
 

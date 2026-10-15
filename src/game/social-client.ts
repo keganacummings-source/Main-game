@@ -28,7 +28,7 @@ export async function postGrave(body: GraveBody): Promise<void> {
 }
 
 export async function listGraves(mode: GraveMode): Promise<GraveRow[]> {
-  const res = await fetch(`/api/graves?mode=${encodeURIComponent(mode)}`);
+  const res = await fetch(`/api/graves?mode=${encodeURIComponent(mode)}`, { cache: "no-store" });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(err.error || "The board is dark.");

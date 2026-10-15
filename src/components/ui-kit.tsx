@@ -110,10 +110,10 @@ export function Field({ label, children, hint }: { label: ReactNode; children: R
 }
 
 /** Full-screen menu layout used by every out-of-game screen. */
-export function Screen({ kicker, title, children, wide, aside }: { kicker: string; title: ReactNode; children: ReactNode; wide?: boolean; aside?: ReactNode }) {
+export function Screen({ kicker, title, children, wide, roomy, aside }: { kicker: string; title: ReactNode; children: ReactNode; wide?: boolean; roomy?: boolean; aside?: ReactNode }) {
   return (
     <div className="screen">
-      <div className={`screen-frame ${wide ? "screen-frame-wide" : ""}`}>
+      <div className={`screen-frame ${wide ? "screen-frame-wide" : ""} ${roomy ? "screen-frame-roomy" : ""}`}>
         <div className="screen-brand" aria-hidden="true">
           <span className="screen-logo">TURBZ</span>
           <span className="screen-sub">V6</span>
