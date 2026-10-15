@@ -207,3 +207,15 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - Free, no cooldown.
 - Every town you stand in is now remembered, even when a smaller landmark area sits inside it.
 - Code: `rebirth()`, `fastTravelTowns()`, `fastTravelTo()` in `src/game/engine.ts`; the click prompt is in `MapPanel` (`src/components/game-panels.tsx`).
+
+## Skill update: Wayfinding, Survival and Cooking
+
+Three new account-wide skills (15 in total), built on the map and Hardcore camp mechanics. They keep through death like the others.
+
+- **Wayfinding:** +0.075% movement speed per level (about +30% at level 400), in both modes. Trained by walking (1 XP per 10 tiles), and by a first visit to a town (+30) or continent (+20). Fast travel, ferries and portals give nothing, so it cannot be farmed by hopping.
+- **Survival (Hardcore):** hunger, thirst and rest drain 0.2% slower per level, capped at 50%. Trained by eating or drinking (+3), collecting water (+3), building a campfire (+12), waking rested (+15) and living through a night (+40).
+- **Cooking (Hardcore):** 0.15% chance per level (cap 50%) that a campfire recipe makes a second portion. Cook meat (+8), cook fish (+10) and purify water (+6) train it.
+- Explorer classes (Adventuring aptitude 1.3 or more) also learn Wayfinding faster.
+- Old saves get the new skills at level 1. Nothing is lost or moved.
+- Fixed: walking into a town no longer risks being recorded as visited before its first-visit XP is paid.
+- Code: `SKILLS` and `skillLine()` in `content.ts`, `advanceSurvival(…, drain)` and the recipe `skill` fields in `survival.ts`, hooks in `engine.ts`. Tests are in `scripts/survival-night.test.mjs`.

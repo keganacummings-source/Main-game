@@ -1337,6 +1337,7 @@ export class TurbzGame {
 			this.say(`Night falls. Foes are ${NIGHT.strength}x as strong, but give ${NIGHT.xp}x experience.`);
 			this.tone(110, .3, "sine");
 		} else if (flip === "dawn") {
+			if (this.rules === "hardcore") this.gainSkill("survival", 40);
 			if (sleptNight) {
 				this.sleeping = false;
 				if (save.survival) save.survival.rest = 100;
@@ -1517,9 +1518,9 @@ export class TurbzGame {
 	tickSurvival(dt) {
 		const s = this.save.survival, before = s.elapsed;
 		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
-		const damage = advanceSurvival(s, dt, this.sleeping);
+		const damage = advanceSurvival(s, dt, this.sleeping, 1 - Math.min(.5, this.skillN("survival") * 0.002));
 		if (damage > 0) { this.save.hp -= damage; if (this.save.hp <= 0) this.die(); }
-		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.say("Rested. Your wounds still need a healing spell."); }
+		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
 	survivalAction(action) {
@@ -1531,6 +1532,7 @@ export class TurbzGame {
 			if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 			save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
 			save.survival.campfires = save.survival.campfires.slice(-100);
+			this.gainSkill("survival", 12);
 			this.say("Campfire built. Each cook or boil uses another log.");
 		} else if (action === "water") {
 			if (this.channel) return;
@@ -1559,6 +1561,11 @@ export class TurbzGame {
 				return this.say(`Missing: ${missing.join(", ")}.`);
 			}
 			if (made.skill) this.gainSkill(made.skill.id, made.skill.xp);
+			const extra = made.skill?.id === "cooking" ? Math.min(50, this.skillN("cooking") * 0.15) : 0;
+			if (extra > 0 && Math.random() * 100 < extra) {
+				for (const [id, n] of Object.entries(made.outputs)) save.bag[id] = (save.bag[id] ?? 0) + n;
+				this.say("A second portion comes off the fire.");
+			}
 			this.say(`Crafted ${Object.entries(made.outputs).map(([id, n]) => `${ITEM_BY_ID[id]?.name ?? id} x${n}`).join(", ")}.`);
 			this.boardEvent("craft");
 		}
@@ -1619,6 +1626,15 @@ export class TurbzGame {
 
 			}
 		}
+		// Wayfinding: 1 XP per 10 tiles actually walked. Jumps (fast travel, ferries, portals) are too big to count.
+		if (this.lastWalk && this.lastWalk.map === save.map) {
+			const moved = Math.hypot(save.x - this.lastWalk.x, save.y - this.lastWalk.y);
+			if (moved > 0 && moved < 160) {
+				this.walkAcc = (this.walkAcc ?? 0) + moved;
+				if (this.walkAcc >= 320) { const n = Math.floor(this.walkAcc / 320); this.walkAcc -= n * 320; this.gainSkill("wayfinding", n); }
+			}
+		}
+		this.lastWalk = { map: save.map, x: save.x, y: save.y };
 		this.cam.x += (save.x - this.cam.x) * Math.min(1, dt * 8);
 		this.cam.y += (save.y - this.cam.y) * Math.min(1, dt * 8);
 		for (const id of Object.keys(this.cds)) this.cds[id] = Math.max(0, (this.cds[id] ?? 0) - dt);
@@ -4219,7 +4235,7 @@ export class TurbzGame {
 		this.channel = null;
 		if (!ch) return;
 		if (ch.kind === "water") {
-			if (this.rules === "hardcore" && waterWithinReach(this.world, this.save.x, this.save.y)) { this.giveItem("raw_water", 1); this.say("Collected raw water. Purify it on a campfire."); this.persist(); }
+			if (this.rules === "hardcore" && waterWithinReach(this.world, this.save.x, this.save.y)) { this.giveItem("raw_water", 1); this.gainSkill("survival", 3); this.say("Collected raw water. Purify it on a campfire."); this.persist(); }
 			return;
 		}
 		if (ch.map && (ch.map !== this.save.map || Math.hypot(ch.x - this.save.x, ch.y - this.save.y) > 64)) { this.say(ch.kind === "fishing" ? "You reel the line in." : "Gathering stopped: too far away."); return; }
@@ -4417,6 +4433,7 @@ export class TurbzGame {
 			save.mapRegionsSeen.push(key);
 			if (save.mapRegionsSeen.length > 3000) save.mapRegionsSeen.splice(0, save.mapRegionsSeen.length - 3000);
 			if (r.kind !== "landmark" || r.tw > 1) this.gainSkill("adventuring", r.kind === "region" ? 20 : 10);
+			if (r.kind === "region" || r.kind === "city") this.gainSkill("wayfinding", r.kind === "region" ? 20 : 30);
 		}
 		this.syncHud(true);
 	}
@@ -4424,8 +4441,10 @@ export class TurbzGame {
 	noteTownsVisited(file, tx, ty) {
 		const save = this.save;
 		if (!save) return;
+		// When the town is the smallest area under you, tickMapRegion records it (and pays the first-visit XP).
+		const top = regionAt(file, tx, ty);
 		for (const r of file.regions ?? []) {
-			if (r.kind !== "city" || tx < r.tx || ty < r.ty || tx >= r.tx + r.tw || ty >= r.ty + r.th) continue;
+			if (r.kind !== "city" || top?.id === r.id || tx < r.tx || ty < r.ty || tx >= r.tx + r.tw || ty >= r.ty + r.th) continue;
 			save.mapRegionsSeen = save.mapRegionsSeen ?? [];
 			const key = `${file.id}:${r.id}`;
 			if (!save.mapRegionsSeen.includes(key)) save.mapRegionsSeen.push(key);
@@ -4845,6 +4864,7 @@ export class TurbzGame {
 				save.bag[id]--;
 				if (id === "drinking_water") save.survival.thirst = Math.min(100, save.survival.thirst + 50);
 				else save.survival.hunger = Math.min(100, save.survival.hunger + FOOD[id]);
+				this.gainSkill("survival", 3);
 				this.say(`Used ${def.name}.`); this.persist(); this.syncHud(true); return;
 			}
 
@@ -6103,7 +6123,7 @@ export class TurbzGame {
 	}
 	speedMult() {
 		const swift = this.status.some((s) => s.id === "swift") ? 1.45 : 1;
-		return Math.max(.5, 1 + this.mod("speed") / 100) * swift * (1 + Math.min(.45, this.chan("swift_step") / 100));
+		return Math.max(.5, 1 + this.mod("speed") / 100) * swift * (1 + Math.min(.45, this.chan("swift_step") / 100)) * (1 + this.skillN("wayfinding") * 0.00075);
 	}
 	addStatus(id, t) {
 		if (id === "none") return;
@@ -6705,6 +6725,7 @@ export class TurbzGame {
 			const l = [{ label: "Base", value: "118", src: "base" }];
 			if (prof.stats.speed) l.push({ label: "Class / trait Agility", value: `×${(1 + prof.stats.speed / 100).toFixed(2)}`, src: "class" });
 			l.push(...enchParts("swift_step", (n) => `×${(1 + n / 100).toFixed(2)}`));
+			if (this.skillN("wayfinding")) l.push({ label: `Wayfinding skill ${this.skillN("wayfinding") + 1}`, value: `×${(1 + this.skillN("wayfinding") * 0.00075).toFixed(2)}`, src: "skill" });
 			if (this.status.some((s) => s.id === "swift")) l.push({ label: "Swift (timed)", value: "×1.45", src: "buff" });
 			num("speed", "Move speed", String(Math.round(118 * this.speedMult())), l, "Soak slows you by 38% and Hardcore exhaustion by 30%.");
 		}

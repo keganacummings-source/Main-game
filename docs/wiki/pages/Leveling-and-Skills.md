@@ -5,7 +5,7 @@ TURBZ has three kinds of progress:
 | | Belongs to | Kept when your witch dies? |
 | --- | --- | --- |
 | **Character level** (1–400) | This witch | No, a new witch starts at 1 |
-| **Skills** (12 of them, 1–400) | Your account | Yes |
+| **Skills** (15 of them, 1–400) | Your account | Yes |
 | **Account level** (1–40) and **perks** | Your account | Yes |
 
 ## Character level
@@ -37,6 +37,8 @@ Your **loadout** holds up to **9** equipped verses, and only those are used. Reo
 
 Skills are **account-wide** and stay through every death and both modes. Each gives a small bonus per level with no cap until level 400. Train them by doing the thing. Your class's **aptitude** speeds up or slows down each one, and **Hardcore gives 2.4× skill experience**.
 
+**Wayfinding**, **Survival** and **Cooking** are the exploration and camp skills. Wayfinding works in both modes. Survival and Cooking only pay off in Hardcore, because only Hardcore has hunger, thirst, rest and campfire recipes. You can still train them there and keep them if you go back to TurboHunt, the same way Adventuring's healing only works in TurboHunt.
+
 <!-- gen:skills -->
 
 ### Skill experience curve
@@ -56,7 +58,9 @@ Every point of character experience you earn also goes to your **account**. Each
 ## Under the hood
 
 - **Max health** = (78 + 12 × level + Spark of Life + Vitality) × (1 + Vitality class stat %), never below 20.
-- **Movement speed** = 118 px/s × class Agility (never below ×0.5) × 1.45 while Swift × (1 + Swift Step %, at most +45%). Soak ×0.62. Hardcore exhaustion (rest under 15) ×0.7.
+- **Movement speed** = 118 px/s × class Agility (never below ×0.5) × 1.45 while Swift × (1 + Swift Step %, at most +45%) × (1 + 0.075% × Wayfinding levels above 1). Soak ×0.62. Hardcore exhaustion (rest under 15) ×0.7.
+- **Survival** multiplies how fast hunger, thirst and rest drain by (1 − 0.2% × Survival levels above 1), never below ×0.5. Empty bars still hurt as much; they just take longer to empty.
+- **Cooking** gives a campfire recipe a (0.15% × Cooking levels above 1) chance, at most 50%, to make a second portion for free.
 - **Out-of-combat healing** (TurboHunt) = (1.2 + 0.15 × Adventuring level) per second × (1 + class Recovery %).
 - The **Afterglow** enchantment heals 0.4 health per point whenever a foe falls (TurboHunt).
 - At level 400 experience stops; skills keep going.

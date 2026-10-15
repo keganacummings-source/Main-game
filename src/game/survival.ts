@@ -14,13 +14,15 @@ export function normalizeSurvival(raw?: Partial<SurvivalState>): SurvivalState {
     logs: sanitizeLogs(raw?.logs), hold: sanitizeHold(raw?.hold) };
 }
 // Full reserves last 30 / 20 / 40 minutes of active play. Empty reserves cause injury.
-export function advanceSurvival(s: SurvivalState, dt: number, sleeping = false): number {
+// `drain` scales how fast the bars empty: 1 is normal, 0.5 is half speed (the Survival skill, at most 0.5).
+export function advanceSurvival(s: SurvivalState, dt: number, sleeping = false, drain = 1): number {
   if (!Number.isFinite(dt) || dt <= 0) return 0;
+  const k = Number.isFinite(drain) ? Math.max(0.5, Math.min(1, drain)) : 1;
   const emptyTime = (value: number, rate: number) => Math.max(0, dt - value / rate);
-  const damage = emptyTime(s.hunger, 100 / 1800) * .4 + emptyTime(s.thirst, 100 / 1200) * .8 + (sleeping ? 0 : emptyTime(s.rest, 100 / 2400) * .2);
-  s.hunger = Math.max(0, s.hunger - dt * 100 / 1800);
-  s.thirst = Math.max(0, s.thirst - dt * 100 / 1200);
-  s.rest = sleeping ? Math.min(100, s.rest + dt * 8) : Math.max(0, s.rest - dt * 100 / 2400);
+  const damage = emptyTime(s.hunger, k * 100 / 1800) * .4 + emptyTime(s.thirst, k * 100 / 1200) * .8 + (sleeping ? 0 : emptyTime(s.rest, k * 100 / 2400) * .2);
+  s.hunger = Math.max(0, s.hunger - dt * k * 100 / 1800);
+  s.thirst = Math.max(0, s.thirst - dt * k * 100 / 1200);
+  s.rest = sleeping ? Math.min(100, s.rest + dt * 8) : Math.max(0, s.rest - dt * k * 100 / 2400);
   s.elapsed += dt;
   return damage;
 }
@@ -47,9 +49,9 @@ export type CampRecipe = {
 };
 
 export const CAMP_RECIPE_LIST: CampRecipe[] = [
-  { id: "cook", name: "Cook Meat", about: "Cook raw meat over the fire.", costs: { meat: 1, timber: 1 }, outputs: { cooked_meat: 1 } },
-  { id: "fish", name: "Cook Fish", about: "Cook a raw fish over the fire.", costs: { fish: 1, timber: 1 }, outputs: { fish_meal: 1 } },
-  { id: "purify", name: "Purify Water", about: "Boil raw water until it is safe to drink.", costs: { raw_water: 1, timber: 1 }, outputs: { drinking_water: 1 } },
+  { id: "cook", name: "Cook Meat", about: "Cook raw meat over the fire.", costs: { meat: 1, timber: 1 }, outputs: { cooked_meat: 1 }, skill: { id: "cooking", xp: 8 } },
+  { id: "fish", name: "Cook Fish", about: "Cook a raw fish over the fire.", costs: { fish: 1, timber: 1 }, outputs: { fish_meal: 1 }, skill: { id: "cooking", xp: 10 } },
+  { id: "purify", name: "Purify Water", about: "Boil raw water until it is safe to drink.", costs: { raw_water: 1, timber: 1 }, outputs: { drinking_water: 1 }, skill: { id: "cooking", xp: 6 } },
 ];
 
 export const CAMP_RECIPES: Record<string, CampRecipe> = Object.fromEntries(CAMP_RECIPE_LIST.map((r) => [r.id, r]));

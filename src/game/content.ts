@@ -1002,6 +1002,9 @@ export const SKILLS = [
   { id: "adventuring", name: "Adventuring" },
   { id: "physical", name: "Physical" },
   { id: "magic", name: "Magic" },
+  { id: "wayfinding", name: "Wayfinding" },
+  { id: "survival", name: "Survival" },
+  { id: "cooking", name: "Cooking" },
 ] as const;
 
 export type SkillId = (typeof SKILLS)[number]["id"];
@@ -1047,6 +1050,12 @@ export function skillLine(id: SkillId, level: number): string {
       return `+${(n * 2).toFixed(0)}% damage with physical weapons. 2% per level, no cap.`;
     case "magic":
       return `+${(n * 2.5).toFixed(0)}% spell damage, and spell cooldowns are ${Math.min(45, n * 0.113).toFixed(1)}% shorter. Damage is 2.5% per level. Cooldown reduction is 0.113% per level and stops at 45%.`;
+    case "wayfinding":
+      return `+${(n * 0.075).toFixed(1)}% movement speed. 0.075% per level, about +30% at level 400.`;
+    case "survival":
+      return `${Math.min(50, n * 0.2).toFixed(1)}% slower hunger, thirst and rest drain (Hardcore). 0.2% per level, cap 50%.`;
+    case "cooking":
+      return `${Math.min(50, n * 0.15).toFixed(1)}% chance a campfire recipe makes a second portion (Hardcore). 0.15% per level, cap 50%.`;
     default:
       return "";
   }

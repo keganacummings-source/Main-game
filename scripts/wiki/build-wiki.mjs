@@ -182,6 +182,9 @@ const SKILL_TRAIN = {
   catching: "A spirit staying after a fight (+16)", trading: "Buying (+4), selling gear (+8), selling materials (+10)", fishing: "Landing a fish (+16), cooking a fish meal (+18)",
   social: "Finishing story quests (+12) and contracts (+8)", shroom: "Picking mushroom patches (+16)", alchemy: "Brewing (+18), stitching gear (+22)",
   adventuring: "New regions (+10), shrines (+6/+30), quests (+24), contracts (12–45), dodging hits (+1)", physical: "Casting melee/ranged verses (+2), hunting animals (+4)", magic: "Casting spells and channels (+3)",
+  wayfinding: "Walking (+1 per 10 tiles), first visit to a town (+30) or continent (+20). Fast travel gives none",
+  survival: "Hardcore: eating or drinking (+3), collecting water (+3), building a campfire (+12), waking rested (+15), living through a night (+40)",
+  cooking: "Hardcore: campfire recipes (cook meat +8, cook fish +10, purify water +6)",
 };
 GEN["skill-need"] = () => table(["Skill level", "XP to next level"], [1, 2, 5, 10, 20, 30, 50, 100, 200, 300, 399].map((l) => [l, C.skillNeed(l).toLocaleString("en-US")]));
 GEN["xp-need"] = () => table(["Character level", "XP to next level"], [1, 2, 3, 5, 10, 15, 20, 30, 50, 75, 100, 150, 200, 300, 399].map((l) => [l, C.xpNeed(l).toLocaleString("en-US")]));

@@ -22,6 +22,8 @@ Open **Survival** (**H**). All three start full (100).
 | **Thirst** | 20 min | −0.8 health per second |
 | **Rest** | 40 min | −0.2 health per second; under 15 rest you move 30% slower |
 
+The **Survival** skill slows all three bars (up to half speed). See [Leveling and Skills](Leveling-and-Skills#skills).
+
 ### Food and water
 
 <!-- gen:food -->
@@ -35,7 +37,7 @@ Open **Survival** (**H**). All three start full (100).
 **Build a campfire** from the Survival panel with **3 logs**. You can't build one within 80 px of another.
 
 - **Safe zone:** nothing can enter the **15 × 15 tiles** around a campfire. Foes inside are pushed out, and their attacks on you there do nothing (**SAFE**).
-- **Cooking:** each recipe uses 1 log. See [Gathering and Crafting](Gathering-and-Crafting#campfire-recipes-hardcore).
+- **Cooking:** each recipe uses 1 log and trains the **Cooking** skill, which can give a free second portion. See [Gathering and Crafting](Gathering-and-Crafting#campfire-recipes-hardcore).
 - **Sleeping:** sleep beside a campfire with no foes near. Sleeping restores rest, and at night it **skips to dawn** (a whole night in about 14 seconds). Food and water still drain. Being hit wakes you.
 - **Followers:** send your spirits and companions to **wait at a campfire**. Nothing can reach them there.
 

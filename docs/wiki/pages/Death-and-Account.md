@@ -48,7 +48,7 @@ In Hardcore, survival bars, the clock and map quests reset too.
 
 | Kept through death | Lost with the witch |
 | --- | --- |
-| All 12 skills | Character level and experience |
+| All 15 skills | Character level and experience |
 | Account level, account XP and perk points | Verse ranks (back to your class's starting verses) |
 | Perks | Gear and bag |
 | Account Score | 15% of kyo |
