@@ -10,12 +10,26 @@ export type GraveBody = {
   skills: { name: string; level: number }[];
   gear: unknown[];
   note: string;
+  /** Added with the leaderboard remake (season 2). Older rows simply lack them. */
+  className?: string;
+  cause?: string;
+  place?: string;
+  effects?: string[];
+  ghosts?: unknown[];
+  /** Exactly how she looked, so the board can draw her in her real gear and FX. */
+  look?: unknown;
 };
+
+/** Bump to wipe the board once on the next deploy. Season 2: the leaderboard remake. */
+export const BOARD_SEASON = 2;
+export type DiscordChannel = { guildId: string; channelId: string };
 
 export type GraveRow = GraveBody & {
   id: number;
   username: string;
   createdAt: string;
+  /** Milliseconds since epoch. */
+  at?: number;
 };
 
 export interface SqlLike {
@@ -43,6 +57,27 @@ export class GravesStore {
     `);
     sql.exec(`CREATE INDEX IF NOT EXISTS idx_graves_mode_score ON graves(mode, score DESC, id ASC)`);
     sql.exec(`DELETE FROM graves WHERE mode = 'arena'`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)`);
+    sql.exec(`CREATE TABLE IF NOT EXISTS discord_channels (guild_id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, set_by TEXT NOT NULL, at INTEGER NOT NULL)`);
+    // A new season wipes every grave once.
+    const season = Number(sql.exec(`SELECT v FROM meta WHERE k = 'season'`).toArray()[0]?.v ?? 0);
+    if (season < BOARD_SEASON) {
+      sql.exec(`DELETE FROM graves`);
+      sql.exec(`INSERT OR REPLACE INTO meta (k, v) VALUES ('season', ?)`, String(BOARD_SEASON));
+    }
+  }
+
+  /** /turbzhere: one death channel per Discord server. */
+  setChannel(guildId: string, channelId: string, by: string, now: number): void {
+    this.sql.exec(`INSERT OR REPLACE INTO discord_channels (guild_id, channel_id, set_by, at) VALUES (?, ?, ?, ?)`, guildId, channelId, by, now);
+  }
+
+  channels(): DiscordChannel[] {
+    return this.sql.exec(`SELECT guild_id, channel_id FROM discord_channels`).toArray().map((r) => ({ guildId: String(r.guild_id), channelId: String(r.channel_id) }));
+  }
+
+  dropChannel(channelId: string): void {
+    this.sql.exec(`DELETE FROM discord_channels WHERE channel_id = ?`, channelId);
   }
 
   list(mode: GraveMode, limit = 100): GraveRow[] {
@@ -74,7 +109,14 @@ export class GravesStore {
         skills: Array.isArray(body.skills) ? body.skills : [],
         gear: Array.isArray(body.gear) ? body.gear : [],
         note: String(body.note ?? ""),
+        className: typeof body.className === "string" ? body.className : "",
+        cause: typeof body.cause === "string" ? body.cause : "",
+        place: typeof body.place === "string" ? body.place : "",
+        effects: Array.isArray(body.effects) ? body.effects : [],
+        ghosts: Array.isArray(body.ghosts) ? body.ghosts : [],
+        look: body.look ?? null,
         createdAt: new Date(Number(row.created_at)).toISOString().slice(0, 10),
+        at: Number(row.created_at),
       };
     });
   }

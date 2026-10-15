@@ -1,0 +1,81 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { decodeGif, deathEmbed, handleInteraction, verifyDiscord } from "./discord.ts";
+
+const hex = (b: ArrayBuffer | Uint8Array) => Buffer.from(b instanceof Uint8Array ? b : new Uint8Array(b)).toString("hex");
+
+async function keys() {
+  const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const pub = hex(await crypto.subtle.exportKey("raw", pair.publicKey));
+  const sign = async (ts: string, body: string) => hex(await crypto.subtle.sign("Ed25519", pair.privateKey, new TextEncoder().encode(ts + body)));
+  return { pub, sign };
+}
+
+test("Discord signatures are checked with Ed25519", async () => {
+  const { pub, sign } = await keys();
+  const body = JSON.stringify({ type: 1 });
+  const sig = await sign("123", body);
+  assert.equal(await verifyDiscord(pub, sig, "123", body), true);
+  assert.equal(await verifyDiscord(pub, sig, "124", body), false, "wrong timestamp");
+  assert.equal(await verifyDiscord(pub, sig, "123", body + " "), false, "tampered body");
+  assert.equal(await verifyDiscord("zz", sig, "123", body), false, "bad key");
+});
+
+test("PING is answered, /turbzhere stores the channel, unsigned requests are refused", async () => {
+  const { pub, sign } = await keys();
+  const env = { DISCORD_PUBLIC_KEY: pub } as any;
+  const saved: string[][] = [];
+  const store = { setChannel: (g: string, c: string, by: string) => { saved.push([g, c, by]); } };
+  const req = async (payload: unknown, good = true) => {
+    const body = JSON.stringify(payload);
+    const sig = good ? await sign("99", body) : "00".repeat(64);
+    return new Request("https://x/api/discord/interactions", { method: "POST", body, headers: { "x-signature-ed25519": sig, "x-signature-timestamp": "99" } });
+  };
+  const ping = await handleInteraction(await req({ type: 1 }), env, store);
+  assert.deepEqual(await ping.json(), { type: 1 });
+  const bad = await handleInteraction(await req({ type: 1 }, false), env, store);
+  assert.equal(bad.status, 401);
+  const cmd = await handleInteraction(await req({ type: 2, data: { name: "turbzhere" }, guild_id: "g1", channel_id: "c1", member: { user: { username: "kegan" } } }), env, store);
+  const out = (await cmd.json()) as any;
+  assert.equal(out.type, 4);
+  assert.deepEqual(saved, [["g1", "c1", "kegan"]]);
+});
+
+test("death embeds carry level, class, cause and effects; GIF uploads are checked", () => {
+  const e = deathEmbed({ mode: "hardcore", name: "Vell", username: "kegan", className: "Bulwark", race: "Vesper", level: 42, score: 1234, cause: "Killed by Sera Coil", place: "Hearthmere", effects: ["Demon Wings"], ghosts: [{ name: "Onibi", level: 40, shiny: true }], topSkills: [{ name: "Mining", level: 9 }], gear: [{ slot: "chest", name: "Robe", quality: "Legendary" }] }, true) as any;
+  assert.match(e.title, /Vell/);
+  assert.ok(e.fields.some((f: any) => f.name === "Level" && f.value === "42"));
+  assert.ok(e.fields.some((f: any) => f.name === "Effects" && /Demon Wings/.test(f.value)));
+  assert.equal(e.image.url, "attachment://death.gif");
+  assert.equal(decodeGif(Buffer.from("GIF89a-not-really-but-header-ok").toString("base64"))?.[0], 0x47);
+  assert.equal(decodeGif(Buffer.from("PNG nope nope nope nope").toString("base64")), null);
+});
+
+test("the new season wipes every old grave once, and death channels are kept per server", async () => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const { GravesStore } = await import("./graves-store.ts");
+  const db = new DatabaseSync(":memory:");
+  const sql = {
+    exec(q: string, ...b: unknown[]) {
+      const stmt = db.prepare(q);
+      if (/^\s*select/i.test(q)) { const rows = stmt.all(...(b as any[])); return { toArray: () => rows as any[] }; }
+      stmt.run(...(b as any[]));
+      return { toArray: () => [] };
+    },
+  };
+  // An old board (season 1, no meta table) with graves on it.
+  db.exec(`CREATE TABLE graves (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL, mode TEXT NOT NULL, score INTEGER NOT NULL, name TEXT NOT NULL, race TEXT NOT NULL, level INTEGER NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL)`);
+  db.exec(`INSERT INTO graves (username, mode, score, name, race, level, payload, created_at) VALUES ('a','hunt',5,'Old','Vesper',3,'{}',1)`);
+  const s1 = new GravesStore(sql);
+  assert.equal(s1.list("hunt").length, 0, "wiped");
+  s1.post("kegan", { mode: "hunt", score: 9, name: "New", race: "Vesper", level: 4, accountScore: 0, skills: [], gear: [], note: "", cause: "Killed by a boar" }, 10_000);
+  const s2 = new GravesStore(sql);
+  const rows = s2.list("hunt");
+  assert.equal(rows.length, 1, "only wiped once");
+  assert.equal(rows[0]!.cause, "Killed by a boar");
+  s2.setChannel("g1", "c1", "kegan", 1);
+  s2.setChannel("g1", "c2", "kegan", 2);
+  assert.deepEqual(s2.channels(), [{ guildId: "g1", channelId: "c2" }], "one channel per server, latest wins");
+  s2.dropChannel("c2");
+  assert.deepEqual(s2.channels(), []);
+});

@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
-    "test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs && node --experimental-strip-types --test worker/signaling-core.test.ts worker/account-store.test.ts && npm run wiki:check",
+    "test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs && node --experimental-strip-types --test worker/signaling-core.test.ts worker/account-store.test.ts worker/discord.test.ts && npm run wiki:check",
     "deploy": "npm run build && wrangler deploy",
     "dev:worker": "npm run build && wrangler dev",
     "cf:types": "wrangler types",

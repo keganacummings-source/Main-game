@@ -5,6 +5,8 @@ import type { ChatLine, FriendRow, GraveMode, GraveRow } from "@/game/social-typ
 import type { TypeId } from "@/game/content";
 import type { RaceId } from "@/game/content";
 import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
+import { drawMonster } from "@/game/sprites";
+import { drawGhostFx } from "@/game/ghost-fx";
 import type { ActorDraw } from "@/game/sprites";
 import { Chips, Screen, Tabs, Tile } from "./ui-kit";
 
@@ -48,7 +50,7 @@ function seedFrom(s: string): number {
   return Math.abs(h) || 1;
 }
 
-/** Canvas portrait of a fallen witch — body + animated gear FX (not a real GIF file). */
+/** A live portrait of a fallen witch: her real gear, gear FX and set aura, with her ghosts circling. */
 function GravePortrait({ row }: { row: GraveRow }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -57,29 +59,32 @@ function GravePortrait({ row }: { row: GraveRow }) {
     let raf = 0;
     const canvas = ref.current;
     if (!canvas) return;
-
-    const W = 120;
-    const H = 140;
+    const W = 160;
+    const H = 170;
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const pieces: ActorDraw["pieces"] = row.gear.map((g, i) => ({
-      slot: g.slot,
-      style: (seedFrom(g.name + g.slot) % 6) + 1,
-      type: typeId(g.type),
-      fxSeed: seedFrom(g.name + String(i) + row.id),
-      quality: Q_NUM[g.quality.toLowerCase()] ?? Math.max(1, Math.min(6, parseInt(g.quality, 10) || 2)),
-    }));
-
+    ctx.imageSmoothingEnabled = false;
+    const look = row.look;
+    // Graves from before the remake carry no look; rebuild an approximation from their gear list.
+    const pieces: ActorDraw["pieces"] = look?.pieces?.length
+      ? look.pieces.map((p) => ({ ...p, type: typeId(p.type) }))
+      : row.gear.map((g, i) => ({
+          slot: g.slot,
+          style: (seedFrom(g.name + g.slot) % 6) + 1,
+          type: typeId(g.type),
+          fxSeed: seedFrom(g.name + String(i) + row.id),
+          quality: Math.max(0, (Q_NUM[g.quality.toLowerCase()] ?? 2) - 1),
+        }));
     const actor: ActorDraw = {
       x: W / 2,
-      y: H - 18,
-      race: raceId(row.race),
-      female: seedFrom(row.name) % 2 === 0,
-      hair: seedFrom(row.username) % 5,
-      skin: seedFrom(row.name + row.race) % 5,
+      y: H - 30,
+      race: raceId(look?.race ?? row.race),
+      female: look ? look.female : seedFrom(row.name) % 2 === 0,
+      hair: look?.hair ?? seedFrom(row.username) % 5,
+      skin: look?.skin ?? seedFrom(row.name + row.race) % 5,
+      tall: look?.tall,
       facing: 1,
       direction: "down",
       moving: true,
@@ -87,13 +92,14 @@ function GravePortrait({ row }: { row: GraveRow }) {
       attack: 0,
       hurt: 0,
       pieces,
-      setFx: null,
-      setOn: false,
-      scale: 3.2,
-      classId: undefined,
+      setFx: (look?.setFx as ActorDraw["setFx"]) ?? null,
+      setOn: !!look?.setOn,
+      setVariant: look?.setVariant ?? 0,
+      scale: 1.9,
+      classId: look?.classId,
       time: 0,
     };
-
+    const ghosts = (row.ghosts ?? []).slice(0, 3);
     const t0 = performance.now();
 
     void initActorSprites()
@@ -104,34 +110,35 @@ function GravePortrait({ row }: { row: GraveRow }) {
           const t = (now - t0) / 1000;
           actor.walk = (t * 2.2) % 4;
           actor.time = t;
-          actor.moving = true;
-
           ctx.fillStyle = "#0c0a10";
           ctx.fillRect(0, 0, W, H);
-          // soft ground plate
           ctx.fillStyle = "#1a1520";
-          ctx.fillRect(W * 0.15, H - 22, W * 0.7, 10);
-
-          const drew = tryDrawActorSprite(ctx, actor);
-          if (!drew) {
-            // procedural fallback silhouette while sheets load
+          ctx.beginPath();
+          ctx.ellipse(W / 2, H - 28, 52, 12, 0, 0, Math.PI * 2);
+          ctx.fill();
+          const spots = [[-54, -8], [54, -8], [0, -78]];
+          const orbit = ghosts.map((g, i) => ({
+            g,
+            x: W / 2 + spots[i]![0]! + Math.sin(t * 1.3 + i) * 4,
+            y: H - 30 + spots[i]![1]! + Math.sin(t * 2.1 + i * 2) * 4,
+            depth: i === 2 ? -1 : 1,
+          }));
+          const ghost = (o: (typeof orbit)[number]) => {
+            const fx = { x: o.x, y: o.y, type: typeId(o.g.type), rarity: o.g.rarity, level: o.g.level, speed: 10 + o.g.level, max: 20 + o.g.level * 10, shiny: o.g.shiny, seed: `${row.id}-${o.g.name}` };
+            drawGhostFx(ctx, fx, t, "back");
+            drawMonster(ctx, { x: o.x, y: o.y, template: 0, type: typeId(o.g.type), facing: o.x < W / 2 ? 1 : -1, walk: t * 3, hurt: 0, boss: false, rarity: o.g.rarity, ghost: true, shiny: o.g.shiny, time: t });
+            drawGhostFx(ctx, fx, t, "front");
+          };
+          for (const o of orbit) if (o.depth < 0) ghost(o);
+          if (!tryDrawActorSprite(ctx, actor)) {
             ctx.fillStyle = "#6a5a70";
-            ctx.fillRect(W / 2 - 10, H - 70, 20, 48);
-            ctx.fillStyle = "#c4a890";
-            ctx.fillRect(W / 2 - 8, H - 86, 16, 16);
+            ctx.fillRect(W / 2 - 10, H - 80, 20, 48);
           }
-
-          // score ribbon
-          ctx.fillStyle = "#e8a020";
-          ctx.font = "10px monospace";
-          ctx.textAlign = "center";
-          ctx.fillText(`score ${row.score}`, W / 2, 14);
-
+          for (const o of orbit) if (o.depth >= 0) ghost(o);
           raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
       });
-
     return () => {
       stop = true;
       cancelAnimationFrame(raf);
@@ -141,14 +148,15 @@ function GravePortrait({ row }: { row: GraveRow }) {
   return (
     <canvas
       ref={ref}
-      width={120}
-      height={140}
-      className="grave-portrait border-2 border-bone bg-ink"
-      style={{ imageRendering: "pixelated", width: 120, height: 140 }}
-      aria-label={`${row.name} fallen portrait`}
+      width={160}
+      height={170}
+      className="grave-portrait"
+      style={{ imageRendering: "pixelated", width: 160, height: 170 }}
+      aria-label={`${row.name}, as she fell`}
     />
   );
 }
+
 
 export function ChatDock({ username, playing, bare }: { username: string; playing: boolean; bare?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -314,10 +322,10 @@ const BOARDS: { id: GraveMode; label: string }[] = [
 type BoardSort = "score" | "level" | "account" | "recent";
 
 const BOARD_SORTS: { id: BoardSort; label: string }[] = [
-  { id: "score", label: "Score" },
-  { id: "level", label: "Level" },
-  { id: "account", label: "Account" },
+  { id: "score", label: "Best score" },
+  { id: "level", label: "Highest level" },
   { id: "recent", label: "Newest" },
+  { id: "account", label: "Account" },
 ];
 
 function commas(n: number): string {
@@ -340,6 +348,25 @@ function ago(then: number, now: number): string {
   return `${Math.floor(m / 60)}h ago`;
 }
 
+function agoDay(at: number | undefined, iso: string, now: number): string {
+  if (!at) return fellOn(iso);
+  const m = Math.floor(Math.max(0, now - at) / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return d < 14 ? `${d}d ago` : fellOn(iso);
+}
+
+/** "Killed by Sera Coil (tier 3 bounty, level 44) with Ember Lash." → "Sera Coil". */
+function shortCause(cause: string | undefined): string {
+  if (!cause) return "—";
+  const m = cause.match(/(?:Killed by|Caught in) (.+?)(?: \(|'s Death Mark|\.|$)/);
+  if (m) return cause.startsWith("Caught") ? `${m[1]}'s Death Mark` : m[1]!;
+  return cause.replace(/\.$/, "");
+}
+
 export function Boards({ onBack, username }: { onBack: () => void; username?: string }) {
   const [mode, setMode] = useState<GraveMode>("hunt");
   const [rows, setRows] = useState<GraveRow[]>([]);
@@ -347,15 +374,17 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<BoardSort>("score");
+  const [mine, setMine] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [tick, setTick] = useState(0);
   const modeSeen = useRef(mode);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 5000);
+    const id = window.setInterval(() => setNow(Date.now()), 15000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -366,7 +395,6 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
     if (switched) {
       setRows([]);
       setPickId(null);
-      setQ("");
       setLoading(true);
     }
     const load = (quiet: boolean) => {
@@ -402,11 +430,13 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
     };
   }, [mode, tick]);
 
+  const you = (username ?? "").trim().toLowerCase();
   const ranks = new Map([...rows].sort((a, b) => b.score - a.score || a.id - b.id).map((row, i) => [row.id, i + 1]));
   const needle = q.trim().toLowerCase();
   const shown = rows.filter((row) => {
+    if (mine && row.username.toLowerCase() !== you) return false;
     if (!needle) return true;
-    return row.name.toLowerCase().includes(needle) || row.username.toLowerCase().includes(needle) || row.race.toLowerCase().includes(needle);
+    return [row.name, row.username, row.race, row.className ?? "", row.cause ?? "", row.place ?? "", ...(row.effects ?? [])].some((v) => v.toLowerCase().includes(needle));
   });
   shown.sort((a, b) => {
     if (sort === "level") return b.level - a.level || b.score - a.score || a.id - b.id;
@@ -415,7 +445,7 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
     return b.score - a.score || a.id - b.id;
   });
   const pick = shown.find((row) => row.id === pickId) ?? shown[0] ?? null;
-  const you = (username ?? "").trim().toLowerCase();
+  const myBest = rows.filter((r) => you && r.username.toLowerCase() === you).sort((a, b) => b.score - a.score)[0] ?? null;
   const status =
     loading && rows.length === 0
       ? "Opening the ledger…"
@@ -423,12 +453,25 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
         ? "Could not load the board."
         : `${shown.length === rows.length ? `${rows.length} fallen` : `${shown.length} of ${rows.length}`}${updatedAt ? ` · updated ${ago(updatedAt, now)}` : ""}`;
 
+  const step = (dir: number) => {
+    if (!shown.length) return;
+    const i = Math.max(0, shown.findIndex((r) => r.id === pick?.id));
+    const next = shown[Math.max(0, Math.min(shown.length - 1, i + dir))]!;
+    setPickId(next.id);
+    listRef.current?.querySelector<HTMLElement>(`[data-row="${next.id}"]`)?.scrollIntoView({ block: "nearest" });
+  };
+
   return (
     <Screen kicker="LEADERBOARDS" title="Fallen witches" wide roomy>
-      <p className="text-dim">Top 100 lives, ranked by the score of that death. Account is the keeper's running total. The list reloads on its own.</p>
+      <p className="text-dim">The best 100 lives in each mode, ranked by the score of that death. Click a witch (or use ↑ ↓) to see her as she fell: gear, effects, ghosts, skills and what killed her.</p>
       <div className="board-bar">
         <Tabs value={mode} onChange={setMode} tabs={BOARDS.map((b) => ({ id: b.id, label: b.label }))} label="Mode" />
         <span className="board-spacer" />
+        {myBest && (
+          <button className="px-btn" type="button" onClick={() => { setMine(false); setQ(""); setPickId(myBest.id); window.setTimeout(() => listRef.current?.querySelector<HTMLElement>(`[data-row="${myBest.id}"]`)?.scrollIntoView({ block: "center" }), 0); }}>
+            My best · #{ranks.get(myBest.id)}
+          </button>
+        )}
         <button className="px-btn" type="button" disabled={refreshing} onClick={() => setTick((n) => n + 1)}>
           {refreshing ? "Refreshing…" : "Refresh"}
         </button>
@@ -438,50 +481,71 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
           className="px-input board-search"
           value={q}
           onChange={(e) => setQ(e.target.value.slice(0, 40))}
-          placeholder="Find a witch, race, or keeper"
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
+            if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+          }}
+          placeholder="Search name, player, class, killer, place or effect"
           aria-label="Search the leaderboard"
         />
         <Chips value={sort} onChange={setSort} options={BOARD_SORTS} label="Sort" />
+        {you && (
+          <label className="chip chip-check">
+            <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} /> Only mine
+          </label>
+        )}
       </div>
       <p className="board-meta">{status}</p>
       {err && <p className="text-blood">{err}</p>}
       <div className="board-layout">
-        <div className="board-scroll" role="table" aria-label={`${mode} leaderboard`}>
+        <div
+          className="board-scroll"
+          role="table"
+          aria-label={`${mode} leaderboard`}
+          ref={listRef}
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
+            if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+          }}
+        >
           <div className="board-head" role="row">
             <span role="columnheader">#</span>
             <span role="columnheader">Witch</span>
-            <span className="board-col-race" role="columnheader">Race</span>
+            <span className="board-col-race" role="columnheader">Killed by</span>
             <span className="board-lv" role="columnheader">Lv</span>
             <span className="board-score" role="columnheader">Score</span>
-            <span className="board-col-keep board-score" role="columnheader">Account</span>
+            <span className="board-col-keep board-score" role="columnheader">When</span>
           </div>
-          {!loading && !err && rows.length === 0 && <p className="board-empty">No one has fallen in this mode yet.</p>}
+          {!loading && !err && rows.length === 0 && <p className="board-empty">A new season: the board was wiped clean. No one has fallen in this mode yet.</p>}
           {!loading && rows.length > 0 && shown.length === 0 && <p className="board-empty">No witch matches that.</p>}
           {shown.map((row) => {
             const rank = ranks.get(row.id) ?? 0;
-            const mine = you.length > 0 && row.username.toLowerCase() === you;
+            const isMine = you.length > 0 && row.username.toLowerCase() === you;
             const on = pick?.id === row.id;
             return (
               <button
                 key={row.id}
+                data-row={row.id}
                 type="button"
                 role="row"
                 aria-pressed={on}
-                className={`board-row ${on ? "board-row-on" : ""} ${mine ? "board-row-you" : ""}`}
+                className={`board-row ${on ? "board-row-on" : ""} ${isMine ? "board-row-you" : ""}`}
                 onClick={() => setPickId(row.id)}
               >
                 <span className={`board-rank ${rank > 0 && rank <= 3 ? `board-rank-${rank}` : ""}`} role="cell">
-                  {rank}
+                  {rank <= 3 ? ["🥇", "🥈", "🥉"][rank - 1] : rank}
                 </span>
                 <span className="board-who" role="cell">
                   <span className="board-name">
                     <span className="board-name-text">{row.name}</span>
-                    {mine && <span className="board-you">you</span>}
+                    {isMine && <span className="board-you">you</span>}
+                    {(row.ghosts ?? []).some((g) => g.shiny) && <span className="shiny-name" title="Had a shiny ghost">✦</span>}
                   </span>
-                  <span className="board-user">{row.username}</span>
+                  <span className="board-user">{row.className ? `${row.className} · ` : ""}{row.username}</span>
                 </span>
-                <span className="board-col-race" role="cell">
-                  {row.race}
+                <span className="board-col-race board-cause" role="cell" title={row.cause}>
+                  {shortCause(row.cause)}
                 </span>
                 <span className="board-lv" role="cell">
                   {row.level}
@@ -489,14 +553,14 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
                 <span className="board-score" role="cell">
                   {commas(row.score)}
                 </span>
-                <span className="board-col-keep board-score" role="cell">
-                  {commas(row.accountScore)}
+                <span className="board-col-keep board-when" role="cell">
+                  {agoDay(row.at, row.createdAt, now)}
                 </span>
               </button>
             );
           })}
         </div>
-        {pick && <GraveCard row={pick} rank={ranks.get(pick.id) ?? 0} />}
+        {pick && <GraveCard row={pick} rank={ranks.get(pick.id) ?? 0} now={now} />}
       </div>
       <div className="screen-actions">
         <button className="px-btn" type="button" onClick={onBack}>
@@ -507,31 +571,67 @@ export function Boards({ onBack, username }: { onBack: () => void; username?: st
   );
 }
 
-function GraveCard({ row, rank }: { row: GraveRow; rank: number }) {
+function GraveCard({ row, rank, now }: { row: GraveRow; rank: number; now: number }) {
+  const [allSkills, setAllSkills] = useState(false);
   const trained = row.skills.filter((sk) => sk.level > 1).sort((a, b) => b.level - a.level || a.name.localeCompare(b.name));
+  const skills = allSkills ? trained : trained.slice(0, 8);
   return (
     <aside className="board-detail" aria-label={`${row.name} details`}>
       <div className="board-detail-top">
         <GravePortrait row={row} />
         <div className="min-w-0">
-          <p className="board-detail-rank">#{rank}</p>
+          <p className="board-detail-rank">#{rank} · {row.mode === "hardcore" ? "Hardcore" : "Hunt"}</p>
           <h2>{row.name}</h2>
-          <p>
-            {row.race} · level {row.level}
-          </p>
+          <p>{row.className ? `${row.className} · ` : ""}{row.race} · level {row.level}</p>
           <p className="board-score-big">{commas(row.score)}</p>
-          <p className="text-dim">life score</p>
-          <p className="text-dim">Keeper {row.username}</p>
-          <p className="text-dim">Account {commas(row.accountScore)}</p>
-          <p className="text-dim">Fell {fellOn(row.createdAt)}</p>
-          {row.note && <p className="board-note">{row.note}</p>}
+          <p className="text-dim">life score · account {commas(row.accountScore)}</p>
+          <p className="text-dim">Played by {row.username}</p>
         </div>
       </div>
-      <h3>Trained skills</h3>
+      <h3>HOW SHE FELL</h3>
+      <p className="board-cause-full">{row.cause || row.note || "Unknown."}</p>
+      <p className="text-dim">{row.place ? `${row.place} · ` : ""}{agoDay(row.at, row.createdAt, now)}</p>
+      {(row.effects ?? []).length > 0 && (
+        <>
+          <h3>EFFECTS</h3>
+          <div className="board-chips">
+            {row.effects!.map((e) => <span key={e} className={`board-chip ${e.startsWith("Shiny") ? "shiny-name" : ""}`}>{e}</span>)}
+          </div>
+        </>
+      )}
+      {(row.ghosts ?? []).length > 0 && (
+        <>
+          <h3>GHOSTS</h3>
+          <ul className="board-skills">
+            {row.ghosts!.map((g, i) => (
+              <li key={`${g.name}-${i}`}>
+                <span className={g.shiny ? "shiny-name" : `type-${typeId(g.type)}`}>{g.shiny ? "✦ " : ""}{g.name}</span>
+                <b>{g.level}</b>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <h3>WORN</h3>
+      {row.gear.length === 0 && <p className="text-dim">Buried in nothing.</p>}
+      <div className="board-gear">
+        {row.gear.map((g) => (
+          <article key={`${g.slot}-${g.name}`} className={`q-${g.quality.toLowerCase()}`}>
+            <p>
+              <span className="board-slot">{g.slot}</span> {g.name}
+            </p>
+            <p className="text-dim">
+              lv {g.level} · {g.quality} · {g.type}{g.fx ? ` · ${g.fx}` : ""}
+            </p>
+            {(g.enchants ?? []).length > 0 && <p className="text-dim">{g.enchants.map((e) => `${e.name} ${e.power}`).join(" · ")}</p>}
+          </article>
+        ))}
+      </div>
+      <h3>SKILLS</h3>
       {trained.length === 0 && <p className="text-dim">Nothing trained past 1.</p>}
       {trained.length > 0 && (
         <ul className="board-skills">
-          {trained.map((sk) => (
+          {skills.map((sk) => (
             <li key={sk.name}>
               <span>{sk.name}</span>
               <b>{sk.level}</b>
@@ -539,22 +639,11 @@ function GraveCard({ row, rank }: { row: GraveRow; rank: number }) {
           ))}
         </ul>
       )}
-      <h3>Worn</h3>
-      {row.gear.length === 0 && <p className="text-dim">Buried in nothing.</p>}
-      <div className="board-gear">
-        {row.gear.map((g) => (
-          <article key={`${g.slot}-${g.name}`}>
-            <p>
-              <span className="board-slot">{g.slot}</span> {g.name}
-            </p>
-            <p className="text-dim">
-              lv {g.level} · {g.quality} · {g.type}
-            </p>
-            <p className="text-dim">{(g.enchants ?? []).length ? g.enchants.map((e) => `${e.name} ${e.power}`).join(" · ") : "No enchants"}</p>
-            {(g.moves ?? []).length > 0 && <p className="board-moves">{g.moves.join(" · ")}</p>}
-          </article>
-        ))}
-      </div>
+      {trained.length > 8 && (
+        <button type="button" className="px-btn ui-btn-sm" onClick={() => setAllSkills((v) => !v)}>
+          {allSkills ? "Fewer skills" : `All ${trained.length} skills`}
+        </button>
+      )}
     </aside>
   );
 }

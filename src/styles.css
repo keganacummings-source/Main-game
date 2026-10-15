@@ -1176,3 +1176,15 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .shiny-name { color: #ff7ae0 !important; animation: shiny-hue 3s linear infinite; }
 .shiny-tag { display: inline-block; padding: 0 4px; margin-left: 4px; font-size: 14px; color: #140e0c; background: linear-gradient(90deg, #ff5f6d, #ffc371, #6dd5ed, #c56cf0); animation: shiny-hue 3s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .shiny-name, .shiny-tag { animation: none; } }
+
+/* Leaderboard remake */
+.board-cause { color: #d4896a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 18px; }
+.board-when { text-align: right; color: var(--color-dim); font-size: 17px; }
+.board-cause-full { color: #f0d0c0; }
+.board-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.board-chip { padding: 1px 6px; border: 1px solid rgba(240, 226, 200, 0.3); font-size: 17px; }
+.grave-portrait { flex: none; border: 2px solid var(--color-bone); background: #0c0a10; }
+.board-gear article.q-legendary { border-top-color: #ffa53a; }
+.board-gear article.q-epic { border-top-color: #b46aff; }
+.board-gear article.q-rare { border-top-color: #4aa8ff; }
+.board-scroll:focus-visible { outline: 2px solid var(--color-kyo); outline-offset: 2px; }

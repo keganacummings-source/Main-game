@@ -59,5 +59,11 @@ new_sqlite_classes = ["UserAccount"]
 tag = "v3"
 new_sqlite_classes = ["GravesBoard"]
 
+# Discord bot (the TURBZ death feed). These two are public; the bot token is a secret that the
+# deploy workflow uploads from the DISCORD_BOT_TOKEN repository secret.
+[vars]
+DISCORD_APP_ID = "1558859258467188807"
+DISCORD_PUBLIC_KEY = "6c2eefcd167a2e8c80ff85f453ea63d0257597a36a00f34a08cd5557e26561bc"
+
 [observability]
 enabled = true

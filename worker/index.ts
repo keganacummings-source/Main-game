@@ -21,6 +21,7 @@ import {
 } from "./validate.ts";
 import { MAX_SAVE_BYTES } from "./account-store.ts";
 import { isJoinError } from "./signaling-core.ts";
+import { decodeGif, handleInteraction, postDeath, type DeathPost } from "./discord.ts";
 
 export { SignalingRoom } from "./room.ts";
 export { UserAccount } from "./account.ts";
@@ -202,7 +203,10 @@ function gravesStub(env: Env) {
   return env.GRAVES.get(env.GRAVES.idFromName("global"));
 }
 
-async function handleGraves(request: Request, env: Env, url: URL): Promise<Response> {
+const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+const strList = (v: unknown, n: number, max: number) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, n).map((x) => (x as string).slice(0, max)) : []);
+
+async function handleGraves(request: Request, env: Env, url: URL, ctx?: ExecutionContext): Promise<Response> {
   try {
     const stub = gravesStub(env);
 
@@ -219,7 +223,8 @@ async function handleGraves(request: Request, env: Env, url: URL): Promise<Respo
       if (crossOrigin(request, url)) return json({ error: "forbidden" }, 403);
       const me = await currentUser(request, env);
       if (!me) return json({ error: "sign in required" }, 401);
-      const raw = await readJson(request, 60_000);
+      // Room for the death GIF that goes to Discord (it is not stored on the board).
+      const raw = await readJson(request, 3_000_000);
       if (raw instanceof Response) return raw;
       if (!raw || typeof raw !== "object") return json({ error: "bad grave" }, 400);
       const body = raw as Record<string, unknown>;
@@ -229,7 +234,7 @@ async function handleGraves(request: Request, env: Env, url: URL): Promise<Respo
       const name = String(body.name ?? "").slice(0, 24).trim();
       if (!name) return json({ error: "nameless grave" }, 400);
       const score = Math.max(0, Math.min(1_000_000_000, Math.floor(Number(body.score) || 0)));
-      const level = Math.max(1, Math.min(400, Math.floor(Number(body.level) || 1)));
+      const level = Math.max(1, Math.min(1_000_000, Math.floor(Number(body.level) || 1)));
       const race = String(body.race ?? "Unknown").slice(0, 24);
       const grave = {
         mode,
@@ -238,11 +243,32 @@ async function handleGraves(request: Request, env: Env, url: URL): Promise<Respo
         race,
         level,
         accountScore: Math.max(0, Math.floor(Number(body.accountScore) || 0)),
-        skills: Array.isArray(body.skills) ? body.skills.slice(0, 16) : [],
+        skills: Array.isArray(body.skills) ? body.skills.slice(0, 40) : [],
         gear: Array.isArray(body.gear) ? body.gear.slice(0, 8) : [],
         note: String(body.note ?? "").slice(0, 180),
+        className: str(body.className, 32),
+        cause: str(body.cause, 160),
+        place: str(body.place, 80),
+        effects: strList(body.effects, 16, 60),
+        ghosts: Array.isArray(body.ghosts) ? body.ghosts.slice(0, 6).map((g: any) => ({ name: str(g?.name, 32), type: str(g?.type, 16), level: Math.max(1, Math.floor(Number(g?.level) || 1)), rarity: Math.max(0, Math.min(4, Math.floor(Number(g?.rarity) || 0))), shiny: !!g?.shiny })) : [],
+        look: body.look && typeof body.look === "object" && JSON.stringify(body.look).length < 4000 ? body.look : null,
       };
-      await stub.post(me.displayName || me.id, grave);
+      const who = me.displayName || me.id;
+      await stub.post(who, grave);
+      // Tell Discord, after answering the game.
+      const gif = decodeGif(body.gif);
+      const post: DeathPost = {
+        mode, name, username: who, className: grave.className, race, level, score, cause: grave.cause, place: grave.place, effects: grave.effects,
+        ghosts: grave.ghosts.map((g) => ({ name: g.name, level: g.level, shiny: g.shiny })),
+        topSkills: (grave.skills as { name?: unknown; level?: unknown }[]).map((s) => ({ name: str(s?.name, 32), level: Math.floor(Number(s?.level) || 1) })).filter((s) => s.level > 1).sort((a, b) => b.level - a.level).slice(0, 5),
+        gear: (grave.gear as { slot?: unknown; name?: unknown; quality?: unknown }[]).map((g) => ({ slot: str(g?.slot, 12), name: str(g?.name, 60), quality: str(g?.quality, 16) })),
+      };
+      const send = (async () => {
+        const channels = await stub.channels();
+        await postDeath(env, channels, post, gif, (id) => stub.dropChannel(id));
+      })().catch((e) => console.error("[discord]", e));
+      if (ctx) ctx.waitUntil(send);
+      else await send;
       return json({ ok: true });
     }
 
@@ -255,12 +281,16 @@ async function handleGraves(request: Request, env: Env, url: URL): Promise<Respo
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/api/discord/interactions") {
+      const stub = gravesStub(env);
+      return handleInteraction(request, env, { setChannel: (g, c, by) => stub.setChannel(g, c, by) });
+    }
     if (url.pathname === "/api/rtc") return handleRtc(request, env, url);
     if (url.pathname.startsWith("/api/account/")) return handleAccount(request, env, url);
     if (url.pathname === "/api/save") return handleSave(request, env, url);
-    if (url.pathname === "/api/graves") return handleGraves(request, env, url);
+    if (url.pathname === "/api/graves") return handleGraves(request, env, url, ctx);
     if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
     // Normally unreachable (assets are served before the worker runs), but keeps
     // `wrangler dev` and any future run_worker_first change working.

@@ -86,7 +86,8 @@ import type { GraveBody } from "./social-types";
 import { readAccountMeta, writeAccountMeta } from "./account-save";
 import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
-import { geneSeedOf } from "./fx-gene";
+import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
+import { captureDeathGif } from "./death-gif";
 import { gearImbue } from "./gear-fx";
 import { drawGhostFx, ghostImbue } from "./ghost-fx";
 import { CHEST_BOTTOM, chestCanvas } from "./chest-sprite";
@@ -954,6 +955,7 @@ export class TurbzGame {
 		this.direction = "down";
 		this.duel = null; this.sleeping = false;
 		this.refundNote = 0;
+		this.lastHit = null;
 		this.normalize(save);
 		this.save = save;
 		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
@@ -1668,7 +1670,11 @@ export class TurbzGame {
 		const s = this.save.survival, before = s.elapsed;
 		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
 		const damage = advanceSurvival(s, dt, this.sleeping, rateMult(this.skillN("survival") * 0.4));
-		if (damage > 0) { this.save.hp -= damage; if (this.save.hp <= 0) this.die(); }
+		if (damage > 0) {
+			this.lastHit = { by: s.hunger <= 0 ? "hunger" : s.thirst <= 0 ? "thirst" : "exhaustion", survival: true, t: this.clock };
+			this.save.hp -= damage;
+			if (this.save.hp <= 0) this.die();
+		}
 		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
@@ -3884,6 +3890,7 @@ export class TurbzGame {
 	}
 	mobHitsPlayer(m, move, dist = 99, mult = 1) {
 		const save = this.save;
+		this.lastHit = { by: m.name, level: m.level, move: move?.name ?? "", kind: m.bounty ? `tier ${m.tier ?? 1} bounty` : m.hunter ? "hunter" : m.witch ? "witch" : m.boss ? "world boss" : m.enemyGhost ? "witch's ghost" : m.animal ? "beast" : "", mark: mult > 1, t: this.clock };
 		if (this.playerSafeCamp()) {
 			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
 			return;
@@ -4006,6 +4013,7 @@ export class TurbzGame {
 		const save = this.save;
 		const burn = this.status.find((s) => s.id === "burn");
 		if (!save || !burn || this.dead) return;
+		if (this.lastHit && !this.lastHit.survival) this.lastHit.burning = true;
 		burn.tick = (burn.tick ?? 1) - dt;
 		while (burn.tick <= 0 && !this.dead) {
 			burn.tick += 1;
@@ -9341,12 +9349,38 @@ export class TurbzGame {
 			scale: 1.7
 		});
 	}
+	/** Plain words for what killed this witch. */
+	causeOfDeath() {
+		const h = this.lastHit;
+		if (!h) return "Fell to unknown causes.";
+		if (h.survival) return h.by === "hunger" ? "Starved in the wilds." : h.by === "thirst" ? "Died of thirst." : "Collapsed from exhaustion.";
+		const who = `${h.by}${h.kind ? ` (${h.kind}, level ${h.level})` : ` (level ${h.level})`}`;
+		if (h.mark) return `Caught in ${who}'s Death Mark.`;
+		return `Killed by ${who}${h.move ? ` with ${h.move}` : ""}${h.burning ? ", burning" : ""}.`;
+	}
+	/** How she looked: enough for the leaderboard to draw her and for the Discord GIF. */
+	graveLook(save) {
+		const race = RACES.find((r) => r.id === save.race);
+		const set = this.setInfo();
+		const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
+		const pieces = ["weapon", "head", "chest", "legs", "feet", "relic"].map((slot) => this.piece(slot)).filter(Boolean)
+			.map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) }));
+		return {
+			race: save.race, classId: save.classId, female: save.female !== false, hair: race?.hair ?? 0,
+			skin: Math.max(0, RACES.findIndex((r) => r.id === save.race)), tall: race?.tall ?? 1, pieces,
+			setFx: set.fx ?? null, setOn: !!set.on, setVariant: set.variant ?? 0, scale: 1, direction: "down",
+		};
+	}
 	emitGrave(save, score) {
 		if (!this.graveFn || !score) return;
 		const gear = [];
+		const effects = [];
+		const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
 		for (const slot of ["weapon", "head", "chest", "legs", "feet", "relic"]) {
 			const g = this.piece(slot);
 			if (!g) continue;
+			const label = fxTraitLabel(fxTrait(geneSeedOf(g), g.slot, Math.max(0, qualities.indexOf(g.quality))));
+			if (label) effects.push(`${label} (${TYPES[g.type]?.name ?? g.type})`);
 			gear.push({
 				slot,
 				name: g.name,
@@ -9354,9 +9388,16 @@ export class TurbzGame {
 				quality: qualityName(g.quality),
 				type: TYPES[g.type]?.name ?? g.type,
 				enchants: (g.enchants ?? []).map((e) => ({ name: ENCHANT_BY_ID[e.id]?.name ?? e.id, power: e.power })),
-				moves: (g.moves ?? []).map((id) => MOVE_BY_ID[id]?.name ?? id)
+				moves: (g.moves ?? []).map((id) => MOVE_BY_ID[id]?.name ?? id),
+				fx: label
 			});
 		}
+		const set = this.setInfo();
+		if (set.on && set.name) effects.push(`${set.name} set aura`);
+		const out = this.activeSpirits();
+		const ghosts = (save.spirits ?? []).map((sp) => ({ name: sp.name, type: sp.type, level: sp.level, rarity: sp.rarity, shiny: !!sp.shiny }));
+		if (ghosts.some((g) => g.shiny)) effects.push("Shiny ghost");
+		const look = this.graveLook(save);
 		const body: GraveBody = {
 			mode: this.rules === "hardcore" ? "hardcore" : "hunt",
 			score,
@@ -9366,9 +9407,22 @@ export class TurbzGame {
 			accountScore: save.accountScore ?? 0,
 			skills: SKILLS.map((sk) => ({ name: sk.name, level: save.skills[sk.id]?.level ?? 1 })),
 			gear,
-			note: this.rules === "hardcore" ? "Died grinding the hardcore wilds." : "Died on the hunt."
+			note: this.rules === "hardcore" ? "Died grinding the hardcore wilds." : "Died on the hunt.",
+			className: CLASS_BY_ID[save.classId]?.name ?? "",
+			cause: this.causeOfDeath(),
+			place: snap.region || "",
+			effects,
+			ghosts,
+			look
 		};
-		try { this.graveFn(body); } catch { /* the board can wait */ }
+		const fn = this.graveFn;
+		const deathGhosts = out.map((sp) => ({ type: sp.type, rarity: sp.rarity, level: sp.level, speed: sp.speed, max: sp.max, shiny: !!sp.shiny, uid: sp.uid, template: sp.template, look: sp.look ?? null }));
+		// The GIF for Discord is drawn a moment later so dying never stutters.
+		setTimeout(() => {
+			let gif = null;
+			try { gif = captureDeathGif(look, deathGhosts); } catch { gif = null; }
+			try { fn(gif ? { ...body, gif } : body); } catch { /* the board can wait */ }
+		}, 50);
 	}
 	tickParties(dt) {
 		const save = this.save;
