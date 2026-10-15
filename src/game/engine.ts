@@ -3877,7 +3877,8 @@ export class TurbzGame {
 		const reach = attackForm(move) === "melee" || m.animal ? 62 : attackRange(move) + 24;
 		if (d > reach) { m.atkCd = 0.15; return; }
 		// Do not attack through walls — require clear line of sight.
-		if (this.world && wallBetween(this.world, m.x, m.y, save.x, save.y)) { m.atkCd = 0.2; return; }
+		const save = this.save;
+		if (this.world && save && wallBetween(this.world, m.x, m.y, save.x, save.y)) { m.atkCd = 0.2; return; }
 		this.mobAttack(m, move);
 		m.atkCd = this.mobAttackGap(m, move);
 	}
