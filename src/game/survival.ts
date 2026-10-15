@@ -17,14 +17,14 @@ export function normalizeSurvival(raw?: Partial<SurvivalState>): SurvivalState {
 }
 // Full reserves last 30 / 20 / 40 minutes of active play. Empty reserves cause injury.
 // `drain` scales how fast the bars empty: 1 is normal. The Survival skill bends this toward 0.18 and never to 0.
-export function advanceSurvival(s: SurvivalState, dt: number, sleeping = false, drain = 1): number {
+export function advanceSurvival(s: SurvivalState, dt: number, sleeping = false, drain = 1, restRate = 1): number {
   if (!Number.isFinite(dt) || dt <= 0) return 0;
   const k = Number.isFinite(drain) && drain > 0 ? Math.min(1, drain) : 1;
   const emptyTime = (value: number, rate: number) => Math.max(0, dt - value / rate);
   const damage = emptyTime(s.hunger, k * 100 / 1800) * .4 + emptyTime(s.thirst, k * 100 / 1200) * .8 + (sleeping ? 0 : emptyTime(s.rest, k * 100 / 2400) * .2);
   s.hunger = Math.max(0, s.hunger - dt * k * 100 / 1800);
   s.thirst = Math.max(0, s.thirst - dt * k * 100 / 1200);
-  s.rest = sleeping ? Math.min(100, s.rest + dt * 8) : Math.max(0, s.rest - dt * k * 100 / 2400);
+  s.rest = sleeping ? Math.min(100, s.rest + dt * 8 * Math.max(0.1, restRate)) : Math.max(0, s.rest - dt * k * 100 / 2400);
   s.elapsed += dt;
   return damage;
 }

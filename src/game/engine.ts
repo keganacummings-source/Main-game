@@ -249,6 +249,8 @@ export type Snap = {
   turn: string;
   survival: SurvivalState | null;
   nearCamp: boolean;
+  /** A bed you can climb into (Hardcore). */
+  nearBed: boolean;
   nearWater: boolean;
   nearTree: boolean;
   sleeping: boolean;
@@ -361,6 +363,9 @@ const GHOST_CD_MULT = 1.5;
 /** Hardcore loot chests: how long they last and how close you must be to open one. */
 const CHEST_SECONDS = 300;
 const CHEST_REACH = 56;
+/** Beds: how close you must be to climb in, and how much faster rest comes in one. */
+const BED_REACH = 44;
+const BED_REST = 1.5;
 const HC_KEY = "turbz-hardcore-v1";
 const emptySnap = (): Snap => ({
 	mode: "title",
@@ -447,7 +452,7 @@ const emptySnap = (): Snap => ({
 	grind: "",
 	accountScore: 0,
 	turn: "",
-	survival: null, nearCamp: false, nearWater: false, nearTree: false, sleeping: false,
+	survival: null, nearCamp: false, nearBed: false, nearWater: false, nearTree: false, sleeping: false,
 	rules: "hunt",
 	duel: null,
 	classId: "",
@@ -1666,16 +1671,66 @@ export class TurbzGame {
 		const save = this.save;
 		return !!save?.survival?.campfires.some(c => c.map === save.map && Math.hypot(c.x - save.x, c.y - save.y) <= 80);
 	}
+	/** The bed you stand on or beside (Hardcore), or null. */
+	bedNear(reach = BED_REACH) {
+		const save = this.save;
+		let best = null, bd = reach;
+		for (const b of save?.survival?.beds ?? []) {
+			if (b.map !== save.map) continue;
+			const d = Math.hypot(b.tx * 32 + 16 - save.x, b.ty * 32 + 16 - save.y);
+			if (d <= bd) { bd = d; best = b; }
+		}
+		return best;
+	}
+	/** Sleep in a bed, or by a campfire. */
+	canSleepHere() {
+		const bed = this.sleepBed && (this.save?.survival?.beds ?? []).includes(this.sleepBed) ? this.sleepBed : null;
+		return !!bed || !!this.bedNear() || this.nearCamp();
+	}
+	/** Lie down: in a bed when one is close (you climb in), otherwise by the fire. */
+	goToSleep(bed = null) {
+		const save = this.save;
+		if (!save || this.rules !== "hardcore" || this.dead || this.sleeping) return;
+		bed = bed ?? this.bedNear();
+		if (!bed && !this.nearCamp()) return this.say("Build a bed or a campfire to sleep.");
+		if (this.inFight() || this.combat > 0) return this.say("Clear nearby enemies before sleeping.");
+		this.dest = null; this.path = []; this.pathI = 0; this.pendingBed = null;
+		this.sleeping = true; this.autoplay = false; this.channel = null; this.closePanel();
+		this.sleepBed = bed ?? null;
+		this.zT = 0;
+		if (bed) {
+			save.x = bed.tx * 32 + 16;
+			save.y = bed.ty * 32 + 20;
+			this.say(this.isNightNow() ? "You climb into your bed. You will wake at dawn, rested half again as fast. Food and water still drain." : "You climb into your bed. Rest comes half again as fast. Food and water still drain.");
+		} else this.say(this.isNightNow() ? "Sleeping by the fire. You will wake at dawn. Food and water still drain." : "Sleeping by the fire. Food and water still drain.");
+		this.syncHud(true);
+	}
+	wakeUp() {
+		this.sleeping = false;
+		this.sleepBed = null;
+		this.syncHud(true);
+	}
 	tickSurvival(dt) {
 		const s = this.save.survival, before = s.elapsed;
-		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
-		const damage = advanceSurvival(s, dt, this.sleeping, rateMult(this.skillN("survival") * 0.4));
+		if (this.sleeping && (!this.canSleepHere() || this.combat > 0 || this.inFight())) this.wakeUp();
+		if (!this.sleeping) this.sleepBed = null;
+		if (this.sleeping) {
+			this.zT = (this.zT ?? 0) - dt;
+			if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40, "z", "#c8beff"); }
+		}
+		// Pending walk to a clicked bed: climb in on arrival.
+		if (!this.sleeping && this.pendingBed) {
+			const b = this.pendingBed;
+			if (b.map !== this.save.map || !s.beds.includes(b)) this.pendingBed = null;
+			else if (Math.hypot(b.tx * 32 + 16 - this.save.x, b.ty * 32 + 16 - this.save.y) <= BED_REACH) this.goToSleep(b);
+		}
+		const damage = advanceSurvival(s, dt, this.sleeping, rateMult(this.skillN("survival") * 0.4), this.sleepBed ? BED_REST : 1);
 		if (damage > 0) {
 			this.lastHit = { by: s.hunger <= 0 ? "hunger" : s.thirst <= 0 ? "thirst" : "exhaustion", survival: true, t: this.clock };
 			this.save.hp -= damage;
 			if (this.save.hp <= 0) this.die();
 		}
-		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
+		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.wakeUp(); this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
 	survivalAction(action) {
@@ -1699,12 +1754,8 @@ export class TurbzGame {
 			if (!tree) return this.say("Stand beside a tree resource to chop logs.");
 			this.startNode(tree.id, "tree");
 		} else if (action === "sleep") {
-			if (this.sleeping) this.sleeping = false;
-			else {
-				if (!this.nearCamp()) return this.say("Build a campfire before sleeping.");
-				if (this.inFight() || this.combat > 0) return this.say("Clear nearby enemies before sleeping.");
-				this.dest = null; this.sleeping = true; this.autoplay = false; this.channel = null; this.closePanel(); this.say(this.isNightNow() ? "Sleeping by the fire. You will wake at dawn. Food and water still drain." : "Sleeping by the fire. Food and water still drain.");
-			}
+			if (this.sleeping) this.wakeUp();
+			else this.goToSleep();
 		} else {
 			// Anything else is a campfire recipe from CAMP_RECIPE_LIST (src/game/survival.ts).
 			const recipe = CAMP_RECIPES[action];
@@ -2371,6 +2422,12 @@ export class TurbzGame {
 	}
 	pointAt(x, y) {
 		if (snap.mode !== "play" || this.dead || !this.save) return;
+		if (this.rules === "hardcore") for (const b of this.save.survival?.beds ?? []) {
+			if (b.map !== this.save.map || Math.floor(x / 32) !== b.tx || Math.floor(y / 32) !== b.ty) continue;
+			if (Math.hypot(b.tx * 32 + 16 - this.save.x, b.ty * 32 + 16 - this.save.y) <= BED_REACH) this.goToSleep(b);
+			else { this.pendingBed = b; this.dest = { x: b.tx * 32 + 16, y: b.ty * 32 + 28, mob: null }; this.say("Heading to bed."); }
+			return;
+		}
 		for (const c of this.save.chests ?? []) {
 			if (c.map !== this.save.map || Math.abs(c.x - x) > 16 || y < c.y - 24 || y > c.y + 6) continue;
 			if (Math.hypot(c.x - this.save.x, c.y - this.save.y) <= CHEST_REACH) this.openChest(c.id);
@@ -4853,6 +4910,7 @@ export class TurbzGame {
 		{
 			const chest = this.nearestChest();
 			if (chest) { this.openChest(chest.id); return; }
+			if (this.rules === "hardcore" && this.bedNear()) { if (this.sleeping) this.wakeUp(); else this.goToSleep(); return; }
 		}
 		if (this.customFile && this.interactMapPlace()) return;
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
@@ -7852,7 +7910,7 @@ export class TurbzGame {
 			turn: this.duel ? (this.duel.phase === "yours" ? "Your verse" : `${this.duel.lead?.name ?? "They"} readies`) : this.turnQ[0] ? (this.turnQ[0].side === "you" ? "Your turn" : this.turnQ[0].side === "spirit" ? "Spirit" : "Enemy") : "",
 			survival: this.rules === "hardcore" ? { ...save.survival, campfires: save.survival.campfires.slice(), logs: save.survival.logs.slice() } : null,
 			nearTree: !!this.nodeNear("tree", 64),
-			nearCamp: this.nearCamp(), nearWater: waterWithinReach(this.world, save.x, save.y), sleeping: !!this.sleeping,
+			nearCamp: this.nearCamp(), nearBed: this.rules === "hardcore" && !!this.bedNear(), nearWater: waterWithinReach(this.world, save.x, save.y), sleeping: !!this.sleeping,
 			rules: !slow ? snap.rules : this.rules === "hardcore" ? "hardcore" : "hunt",
 			duel: this.duel ? {
 				phase: this.duel.phase === "yours" ? "yours" : "answer",
@@ -8321,6 +8379,14 @@ export class TurbzGame {
 			time: this.clock,
 			scale: 1
 		});
+		if (this.sleeping && this.sleepBed) {
+			// Tucked in: the bed's blanket covers you while you sleep in it.
+			const bx = this.sleepBed.tx * 32, by = this.sleepBed.ty * 32;
+			ctx.fillStyle = "#8e3a3a"; ctx.fillRect(bx + 4, by + 14, 24, 14);
+			ctx.fillStyle = "#a94848"; ctx.fillRect(bx + 4, by + 14, 24, 3);
+			ctx.fillStyle = "#6e2c2c"; for (let i = 0; i < 3; i++) ctx.fillRect(bx + 8 + i * 7, by + 20, 3, 1);
+			ctx.fillStyle = "#5a3820"; ctx.fillRect(bx + 3, by + 26, 26, 3);
+		}
 		const barOn = this.combat > 0 || this.wardT > 0;
 		drawShadowName(ctx, save.name, save.x, save.y - (barOn ? 54 : 44), "#fff6e8");
 		if (this.unstuckT > 0 && this.mouseWorld) {

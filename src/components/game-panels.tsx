@@ -667,7 +667,7 @@ export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
-  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "sleeping", "build"] as const);
+  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build"] as const);
   if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   const count = (id: string) => bag[id] ?? 0;
@@ -689,7 +689,7 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
       <div className="gear-actions">
         <button type="button" className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${s.bag.find((it) => it.id === food)?.name}` : "Not hungry / no food"}</button>
         <button type="button" className="px-btn" disabled={!count("drinking_water") || s.survival.thirst >= 100} onClick={() => game?.useBag("drinking_water")}>Drink · {count("drinking_water")}</button>
-        <button type="button" className="px-btn" disabled={!s.nearCamp} onClick={() => game?.survivalAction("sleep")}>{s.sleeping ? "Wake up" : night ? "Sleep to dawn" : "Sleep"}</button>
+        <button type="button" className="px-btn" disabled={!s.sleeping && !s.nearCamp && !s.nearBed} title="Sleep by a campfire, or in a bed you built (rest comes half again as fast)" onClick={() => game?.survivalAction("sleep")}>{s.sleeping ? "Wake up" : s.nearBed ? (night ? "Sleep in bed to dawn" : "Sleep in bed") : night ? "Sleep to dawn" : "Sleep"}</button>
       </div>
       <p className="text-dim">Injuries persist until a healing spell is used. Meals, sleep, potions and hearths do not heal in Hardcore.</p>
       <Section title="GATHER" right={<span className="text-dim">Logs {count("timber")} · Meat {count("meat")} · Fish {count("fish")} · Raw water {count("raw_water")}</span>}>

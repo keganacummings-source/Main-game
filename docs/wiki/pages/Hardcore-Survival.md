@@ -38,7 +38,7 @@ The **Survival** skill slows all three bars. The old knee is half speed. Past th
 
 - **Safe zone:** nothing can enter the **15 × 15 tiles** around a campfire. Foes inside are pushed out, and their attacks on you there do nothing (**SAFE**).
 - **Cooking:** each recipe uses 1 log and trains the **Cooking** skill, which can give a free second portion. See [Gathering and Crafting](Gathering-and-Crafting#campfire-recipes-hardcore).
-- **Sleeping:** sleep beside a campfire with no foes near. Sleeping restores rest, and at night it **skips to dawn** (a whole night in about 14 seconds). Food and water still drain. Being hit wakes you.
+- **Sleeping:** sleep beside a campfire, or in a **bed** you built (walk up and press **E**, click the bed, or use Survival & Camp), with no foes near. In a bed you are tucked in and rest comes **half again as fast**. Sleeping restores rest, and at night it **skips to dawn** (a whole night in about 14 seconds). Food and water still drain. Being hit wakes you.
 - **Followers:** send your spirits and companions to **wait at a campfire**. Nothing can reach them there.
 
 Up to 100 campfires are remembered.
