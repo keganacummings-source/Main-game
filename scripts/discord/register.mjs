@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 /**
- * Registers the TURBZ slash command(s) for the Discord bot, without touching any other command
- * the bot already has, and removes server-level copies of commands that also exist globally
- * (those copies are why a command can show up twice in Discord's / menu).
+ * Sets the Discord bot's slash commands to exactly the TURBZ ones (/turbzhere). Every other global
+ * command is removed, and every server-level command (old copies, /tm…) is cleared.
  *
  *   DISCORD_BOT_TOKEN=... node scripts/discord/register.mjs
  *
@@ -48,25 +47,19 @@ try {
   if (!global.ok) { warn(`Could not list commands (HTTP ${global.status}: ${global.text.slice(0, 200)}).`); process.exit(0); }
   console.log(`Global commands before: ${global.json.map((c) => "/" + c.name).join(", ") || "none"}`);
 
-  // Create or update only our commands (POST with an existing name updates it in place).
-  for (const cmd of COMMANDS) {
-    const r = await call("POST", `/applications/${app}/commands`, cmd);
-    if (r.ok) console.log(`Registered /${cmd.name}.`);
-    else warn(`Could not register /${cmd.name} (HTTP ${r.status}: ${r.text.slice(0, 300)}).`);
-  }
+  // The bot keeps only the TURBZ commands: overwrite the global list with exactly these.
+  const put = await call("PUT", `/applications/${app}/commands`, COMMANDS);
+  if (put.ok) console.log(`Global commands set to: ${COMMANDS.map((c) => "/" + c.name).join(", ")}.`);
+  else warn(`Could not set the commands (HTTP ${put.status}: ${put.text.slice(0, 300)}).`);
 
-  // Server-level copies of global commands show up twice in the / menu: remove those copies.
-  const names = new Set([...global.json.map((c) => c.name), ...COMMANDS.map((c) => c.name)]);
+  // Server-level commands (old copies, /tm, etc.) are all removed.
   const guilds = await call("GET", "/users/@me/guilds");
   if (guilds.ok) {
     for (const g of guilds.json) {
       const list = await call("GET", `/applications/${app}/guilds/${g.id}/commands`);
-      if (!list.ok) continue;
-      for (const c of list.json) {
-        if (!names.has(c.name)) continue;
-        const d = await call("DELETE", `/applications/${app}/guilds/${g.id}/commands/${c.id}`);
-        console.log(d.ok ? `Removed duplicate /${c.name} from server "${g.name}".` : `Could not remove duplicate /${c.name} in "${g.name}" (HTTP ${d.status}).`);
-      }
+      if (!list.ok || !list.json.length) continue;
+      const clear = await call("PUT", `/applications/${app}/guilds/${g.id}/commands`, []);
+      console.log(clear.ok ? `Removed ${list.json.length} server command(s) from "${g.name}": ${list.json.map((c) => "/" + c.name).join(", ")}.` : `Could not clear server commands in "${g.name}" (HTTP ${clear.status}).`);
     }
   }
   const after = await call("GET", `/applications/${app}/commands`);
