@@ -82,12 +82,36 @@ const hash = (s: string) => {
 const ease = (u: number) => 1 - (1 - Math.min(1, Math.max(0, u))) ** 3;
 
 type Shape = "comet" | "drop" | "boulder" | "gust" | "spark" | "shard" | "orb" | "lance" | "wisp" | "blob" | "star" | "coin";
-type Kind = "slash" | "thrust" | "proj" | "beam" | "impact" | "ward" | "heal" | "surge" | "trail" | "roll" | "blink" | "slam" | "rune" | "evade" | "flash";
+type Kind = "slash" | "thrust" | "proj" | "beam" | "impact" | "ward" | "heal" | "surge" | "trail" | "roll" | "blink" | "slam" | "rune" | "evade" | "flash" | "sigCast" | "sigHit" | "status" | "orbiter";
 type Fx = {
   kind: Kind; x0: number; y0: number; x1: number; y1: number; t: number; dur: number; pal: Pal; type: TypeId; seed: number;
   shape?: Shape; big?: number; dir?: number; tilt?: number; impact?: Fx; quality?: number; burst?: boolean;
   /** Live aim point. Flying FX re-read it every tick so a shot chases a moving target (or its miss spot). */
   follow?: () => [number, number] | null; fox?: number; foy?: number;
+  /** Signature layer: which flourish, its accent palette, and the status it shows. */
+  variant?: number; accent?: Pal; effect?: string;
+};
+
+/** Second colours each element borrows for its signature flourishes. */
+const SIG_ACCENT: Record<TypeId, TypeId[]> = {
+  normal: ["light", "earth"], fire: ["light", "ghoul", "electric"], water: ["ice", "air", "spirit"], earth: ["fire", "normal", "ghoul"],
+  air: ["light", "water", "spirit"], electric: ["light", "void", "air"], ice: ["water", "light", "void"], void: ["spirit", "ghoul", "electric"],
+  light: ["fire", "spirit", "electric"], spirit: ["void", "light", "water"], ghoul: ["void", "fire", "earth"],
+};
+/** Fixed colours for status overlays so every effect reads the same everywhere. */
+const STATUS_PAL: Record<string, Pal> = {
+  burn: ["#5a1408", "#c0381a", "#f08a24", "#ffe08a"],
+  root: ["#1c3a14", "#3f8a2a", "#7ad06a", "#d8ffb8"],
+  sleep: ["#2a2050", "#6a5ad8", "#b8a8ff", "#f0eaff"],
+  silence: ["#2a2420", "#7a7068", "#c8c0b0", "#ffffff"],
+  soak: ["#0c2850", "#2a64b0", "#5ab0e8", "#d8f4ff"],
+  gloom: ["#140c1c", "#3a2a48", "#6a5478", "#a898b8"],
+  expose: ["#4a0c10", "#c4283a", "#ff5a6a", "#ffd0d6"],
+  spark: ["#3a3008", "#c8a018", "#f8e048", "#ffffd0"],
+  leech: ["#3a0810", "#a01830", "#e0465a", "#ffb8c0"],
+  drain: ["#3a0810", "#a01830", "#e0465a", "#ffb8c0"],
+  cleanse: ["#4a4430", "#c8c0a0", "#fff8d8", "#ffffff"],
+  shell: ["#2a3a48", "#5a7a98", "#a8c8e8", "#ffffff"],
 };
 
 /** Gap between the shots of one volley. The engine staggers a volley's damage by the same amount. */
@@ -134,6 +158,55 @@ export class CombatFx {
    * always agree with what the player sees.
    */
   cast(move: Move, form: string, tactic: string, x0: number, y0: number, x1: number, y1: number, opts: CastOpts = {}): number {
+    const start = this.list.length;
+    const delay = this.castBase(move, form, tactic, x0, y0, x1, y1, opts);
+    this.signature(move, tactic, x0, y0, x1, y1, delay, opts, start);
+    return delay;
+  }
+
+  /**
+   * Signature layer, added on top of the base recipe without changing it: every verse gets its own
+   * cast flourish, impact flourish and accent colour from its id, a status overlay that shows what it
+   * does (sleep Zs, roots, silence rune…), and some projectiles gain a companion that spirals round them.
+   */
+  private signature(move: Move, tactic: string, x0: number, y0: number, x1: number, y1: number, delay: number, opts: CastOpts, start: number) {
+    const type = move.type;
+    const pal = PAL[type] ?? PAL.normal;
+    const s1 = hash(`${move.id}#sig`);
+    const s2 = hash(`sig2:${move.id}`);
+    const accents = SIG_ACCENT[type] ?? SIG_ACCENT.normal;
+    const accent = PAL[accents[Math.floor(s2 * accents.length) % accents.length]!] ?? pal;
+    const big = 0.75 + Math.min(1.1, move.power / 60);
+    const base = { x0, y0, x1, y1, pal, type, seed: s1, big, tilt: 0.5, accent };
+    const self = tactic === "ward" || tactic === "heal" || tactic === "surge" || tactic === "dash" || tactic === "roll" || move.effect === "mend";
+    this.list.push({ ...base, kind: "sigCast", t: 0, dur: self ? 0.7 : 0.34, variant: Math.floor(s1 * 6), x1: self ? x0 : x1, y1: self ? y0 : y1 });
+    if (self) {
+      if (move.effect === "shell" || move.effect === "cleanse") this.list.push({ ...base, kind: "status", t: -0.05, dur: 0.9, effect: move.effect, x0, y0: y0 + 6, x1: x0, y1: y0 });
+      return;
+    }
+    if (opts.miss) return;
+    const hitAt = Math.max(0, delay);
+    const chase = opts.follow ? { follow: opts.follow, fox: 0, foy: 0 } : {};
+    this.list.push({ ...base, ...chase, kind: "sigHit", t: -hitAt, dur: 0.5, variant: Math.floor(s2 * 7), x0: x1, y0: y1, x1: x0, y1: y0 });
+    const eff = move.effect;
+    if (eff && eff !== "none" && STATUS_PAL[eff]) this.list.push({ ...base, ...chase, kind: "status", t: -hitAt - 0.04, dur: eff === "leech" || eff === "drain" ? 0.7 : 1.05, effect: eff, x0: x1, y0: y1, x1: x0, y1: y0 });
+    // Per-verse size and trail accent on its projectiles, so same-element shots read differently.
+    for (const f of this.list.slice(start)) {
+      if (f.kind !== "proj") continue;
+      f.big = (f.big ?? 1) * (0.85 + s2 * 0.4);
+      if (s1 < 0.75) f.accent = accent;
+    }
+    // Companion orbiters on some projectiles: helix twin, trailing satellite or a spinning ring.
+    if (s1 > 0.42) {
+      const mode = Math.floor(s2 * 3);
+      for (const f of this.list.slice(start)) {
+        if (f.kind !== "proj") continue;
+        this.list.push({ ...f, kind: "orbiter", impact: undefined, variant: mode, accent, seed: s1 });
+      }
+    }
+  }
+
+  private castBase(move: Move, form: string, tactic: string, x0: number, y0: number, x1: number, y1: number, opts: CastOpts = {}): number {
     const type = move.type;
     const pal = PAL[type] ?? PAL.normal;
     const seed = hash(move.id);
@@ -226,7 +299,11 @@ export class CombatFx {
     const done: Fx[] = [];
     for (const f of this.list) {
       f.t += dt;
-      if (f.follow && f.t < f.dur) {
+      if (f.follow && (f.kind === "sigHit" || f.kind === "status")) {
+        // Signature layers sit on the target: track it until the hit lands.
+        const p = f.t <= 0.05 ? f.follow() : null;
+        if (p) { f.x0 = p[0]; f.y0 = p[1]; }
+      } else if (f.follow && f.t < f.dur) {
         const p = f.follow();
         if (p) {
           f.x1 = p[0] + (f.fox ?? 0);
@@ -235,11 +312,15 @@ export class CombatFx {
         }
       }
       if (f.t >= f.dur) done.push(f);
+      else if (f.t > 0 && f.kind === "orbiter") {
+        const [x, y] = this.orbitPos(f, f.t / f.dur);
+        if (Math.floor(f.t * 40) % 2 === 0) this.mote(x, y, (f.accent ?? f.pal)[2], f.type, 10, 0.25, "px");
+      }
       else if (f.t > 0 && f.kind === "proj") {
         const [x, y] = this.pos(f, f.t / f.dur);
         const back = Math.atan2(f.y0 - f.y1, f.x0 - f.x1);
         const k = TRAIL[f.type];
-        for (let i = 0; i < 2; i++) this.mote(x, y, f.pal[1 + ((i + Math.floor(f.t * 30)) % 3)], f.type, k === "spark" ? 30 : 22, k === "flake" ? 0.6 : 0.35, k, Math.cos(back) * 40, Math.sin(back) * 40);
+        for (let i = 0; i < 2; i++) this.mote(x, y, f.accent && i === 1 && Math.floor(f.t * 30) % 2 ? f.accent[2] : f.pal[1 + ((i + Math.floor(f.t * 30)) % 3)], f.type, k === "spark" ? 30 : 22, k === "flake" ? 0.6 : 0.35, k, Math.cos(back) * 40, Math.sin(back) * 40);
       }
     }
     for (const f of done) {
@@ -436,6 +517,16 @@ export class CombatFx {
         if (f.t < 0.03) this.kick = Math.max(this.kick, 2);
         return;
       }
+      case "sigCast": return this.sigCast(ctx, f, u, clock);
+      case "sigHit": return this.sigHit(ctx, f, u, clock);
+      case "status": return this.statusFx(ctx, f, u, clock);
+      case "orbiter": {
+        const [x, y] = this.orbitPos(f, u);
+        const a = f.accent ?? f.pal;
+        px(ctx, x, y, a[3], 2);
+        px(ctx, x - P, y, a[2]); px(ctx, x + 2 * P, y, a[2]); px(ctx, x, y - P, a[1]); px(ctx, x, y + 2 * P, a[1]);
+        return;
+      }
       case "evade": {
         const r = 6 + ease(u) * 22;
         ctx.globalAlpha = 1 - u;
@@ -444,6 +535,212 @@ export class CombatFx {
         ring(ctx, f.x0, f.y0 + 14, r, u < 0.5 ? h : l, 0.9, 2, clock * 5);
         if (f.t < 0.03) for (let i = 0; i < 10; i++) this.mote(f.x0, f.y0 + 14, i % 2 ? h : l, "spirit", 120, 0.35, "spark");
         return;
+      }
+    }
+  }
+
+  private orbitPos(f: Fx, u: number): [number, number] {
+    const [x, y] = this.pos(f, u);
+    const dx = f.x1 - f.x0, dy = f.y1 - f.y0, len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    const mode = f.variant ?? 0;
+    if (mode === 0) { const o = Math.sin(u * Math.PI * 6 + f.seed * 9) * 9; return [x + nx * o, y + ny * o]; }
+    if (mode === 1) { const back = Math.max(0, u - 0.12); const [bx, by] = this.pos(f, back); const o = Math.sin(u * 20) * 4; return [bx + nx * o, by + ny * o - 6]; }
+    const a = u * Math.PI * 8 + f.seed * 6;
+    return [x + Math.cos(a) * 8, y + Math.sin(a) * 5];
+  }
+
+  /** Cast flourish at the caster (or around them for self verses). */
+  private sigCast(ctx: C, f: Fx, u: number, clock: number) {
+    const a = f.accent ?? f.pal;
+    const [, m, l, h] = f.pal;
+    const x = f.x0, y = f.y0;
+    const big = f.big ?? 1;
+    const ang = Math.atan2(f.y1 - f.y0, f.x1 - f.x0);
+    const fade = u > 0.7 && Math.floor(clock * 30) % 2 === 0;
+    if (fade) return;
+    switch (f.variant) {
+      case 0: ring(ctx, x, y + 10, 4 + ease(u) * 16 * big, u < 0.5 ? a[3] : a[2], 0.4, 2, clock * 4); break;
+      case 1: star(ctx, x, y, (6 + 6 * big) * (1 - u * 0.6), a, 4, u * 3 + Math.PI / 4); break;
+      case 2:
+        for (let k = 0; k < 4; k++) {
+          const t = clock * 3 + (k * Math.PI) / 2;
+          const r = 10 + 4 * big;
+          px(ctx, x + Math.cos(t) * r, y + Math.sin(t) * r * 0.5 + 6, k % 2 ? a[3] : l, 2);
+        }
+        ring(ctx, x, y + 6, 10 + 4 * big, a[1], 0.5, 3, -clock * 2);
+        break;
+      case 3:
+        for (let k = 0; k < 6; k++) {
+          const t = (k / 6) * Math.PI * 2 + f.seed * 4;
+          const r0 = 4 + u * 10, r1 = r0 + 6 * big * (1 - u);
+          line(ctx, x + Math.cos(t) * r0, y + Math.sin(t) * r0, x + Math.cos(t) * r1, y + Math.sin(t) * r1, k % 2 ? a[2] : h);
+        }
+        break;
+      case 4:
+        for (let k = 0; k < 2; k++) {
+          const d = 6 + k * 7 + u * 12;
+          const cx = x + Math.cos(ang) * d, cy = y + Math.sin(ang) * d;
+          const nx = -Math.sin(ang), ny = Math.cos(ang);
+          line(ctx, cx - Math.cos(ang) * 4 + nx * 5, cy - Math.sin(ang) * 4 + ny * 5, cx, cy, k ? a[2] : h);
+          line(ctx, cx - Math.cos(ang) * 4 - nx * 5, cy - Math.sin(ang) * 4 - ny * 5, cx, cy, k ? a[2] : h);
+        }
+        break;
+      default:
+        for (let k = 0; k < 8; k++) {
+          const t = clock * 6 + (k / 8) * Math.PI * 2;
+          const r = (1 - u) * 18 * big;
+          px(ctx, x + Math.cos(t) * r, y + Math.sin(t) * r * 0.6, k % 2 ? a[2] : m);
+        }
+    }
+  }
+
+  /** Impact flourish on top of the element's impact: a pillar, shockwave, shards, cross, sigil, implosion or spike crown. */
+  private sigHit(ctx: C, f: Fx, u: number, clock: number) {
+    const a = f.accent ?? f.pal;
+    const [d, , l, h] = f.pal;
+    const x = f.x0, y = f.y0;
+    const big = f.big ?? 1;
+    const born = f.t < 0.025;
+    switch (f.variant) {
+      case 0: {
+        const hgt = 40 * big * (u < 0.3 ? u / 0.3 : 1 - (u - 0.3) / 0.7);
+        for (let j = 0; j < hgt; j += P) { px(ctx, x - P, y + 8 - j, j > hgt * 0.7 ? a[3] : a[2]); px(ctx, x + P, y + 8 - j, l); }
+        break;
+      }
+      case 1:
+        ring(ctx, x, y + 8, 6 + ease(u) * 26 * big, u < 0.4 ? a[3] : a[1], 0.35, 3, 0);
+        if (u > 0.15) ring(ctx, x, y + 8, 4 + ease(u - 0.15) * 18 * big, l, 0.35, 2, 0);
+        break;
+      case 2:
+        if (born) for (let i = 0; i < 8 + big * 4; i++) this.mote(x, y, i % 2 ? a[3] : a[2], f.type, 150 * big, 0.45, "spark");
+        break;
+      case 3:
+        if (u < 0.6) {
+          const r = 10 * big * (0.6 + u);
+          line(ctx, x - r, y - r, x + r, y + r, u < 0.3 ? h : a[2]);
+          line(ctx, x - r, y + r, x + r, y - r, u < 0.3 ? h : a[2]);
+        }
+        break;
+      case 4: {
+        const sides = 6, r = 16 * big;
+        for (let k = 0; k < sides; k++) {
+          const t0 = clock + (k / sides) * Math.PI * 2, t1 = clock + ((k + 1) / sides) * Math.PI * 2;
+          if (u > 0.6 && k % 2) continue;
+          line(ctx, x + Math.cos(t0) * r, y + 8 + Math.sin(t0) * r * 0.35, x + Math.cos(t1) * r, y + 8 + Math.sin(t1) * r * 0.35, k % 2 ? a[2] : l);
+        }
+        break;
+      }
+      case 5:
+        for (let k = 0; k < 10; k++) {
+          const t = (k / 10) * Math.PI * 2 + f.seed * 5;
+          const r = (1 - ease(u)) * 28 * big;
+          px(ctx, x + Math.cos(t) * r, y + Math.sin(t) * r * 0.7, k % 2 ? a[3] : l);
+        }
+        break;
+      default:
+        for (let k = 0; k < 5; k++) {
+          const sx = x + (k - 2) * 6 * big;
+          const hgt = (k === 2 ? 18 : 10 + (k % 2) * 4) * big * (u < 0.25 ? u / 0.25 : 1 - (u - 0.25) / 0.75);
+          for (let j = 0; j < hgt; j += P) px(ctx, sx, y + 10 - j, j > hgt - 2 * P ? a[3] : j > hgt / 2 ? a[2] : d);
+        }
+    }
+  }
+
+  /** Shows what the verse does to its target: sleep Zs, roots, silence rune, burn, soak, gloom, exposed reticle, sparks, drain. */
+  private statusFx(ctx: C, f: Fx, u: number, clock: number) {
+    const eff = f.effect ?? "";
+    const p = STATUS_PAL[eff];
+    if (!p) return;
+    const [d, m, l, h] = p;
+    const x = f.x0, y = f.y0;
+    const born = f.t < 0.025;
+    const blink = u > 0.75 && Math.floor(clock * 24) % 2 === 0;
+    if (blink) return;
+    switch (eff) {
+      case "sleep":
+        for (let k = 0; k < 3; k++) {
+          const v = (u * 1.2 + k * 0.28) % 1;
+          const zx = x + 8 + k * 5 + Math.sin(clock * 3 + k) * 2, zy = y - 14 - v * 26;
+          const c = v < 0.5 ? h : l;
+          for (let i = 0; i < 3; i++) { px(ctx, zx + i * P, zy, c); px(ctx, zx + i * P, zy + 4 * P, c); }
+          px(ctx, zx + 2 * P, zy + P, c); px(ctx, zx + P, zy + 2 * P, c); px(ctx, zx, zy + 3 * P, c);
+        }
+        ring(ctx, x, y - 2, 12, m, 0.5, 3, clock * 2);
+        break;
+      case "root":
+        for (let k = 0; k < 5; k++) {
+          const sx = x - 12 + k * 6;
+          const hgt = 18 * Math.min(1, u * 4) * (0.6 + (k % 3) * 0.2);
+          for (let j = 0; j < hgt; j += P) px(ctx, sx + Math.sin(j * 0.3 + k) * 3, y + 12 - j, j > hgt - 2 * P ? l : j % (3 * P) === 0 ? m : d);
+        }
+        if (born) for (let i = 0; i < 6; i++) this.mote(x, y + 10, i % 2 ? l : m, "earth", 70, 0.4, "px", 0, -40);
+        break;
+      case "silence": {
+        const r = 11;
+        ring(ctx, x, y - 22, r, l, 1, 0, 0);
+        line(ctx, x - r * 0.7, y - 22 + r * 0.7, x + r * 0.7, y - 22 - r * 0.7, h);
+        ring(ctx, x, y - 22, r - 4, m, 1, 2, clock * 3);
+        break;
+      }
+      case "burn":
+        for (let k = 0; k < 6; k++) {
+          const t = clock * 4 + (k / 6) * Math.PI * 2;
+          const fx = x + Math.cos(t) * 12, fy = y + 6 + Math.sin(t) * 4;
+          const hgt = (4 + ((k * 7 + Math.floor(clock * 20)) % 3) * 2) * (1 - u * 0.5);
+          for (let j = 0; j < hgt; j += P) px(ctx, fx, fy - j, j > hgt - 2 * P ? h : j > P ? l : m);
+        }
+        break;
+      case "soak":
+        ring(ctx, x, y + 10, 6 + ease(u) * 16, u < 0.5 ? h : l, 0.35, 2);
+        if (born) for (let i = 0; i < 8; i++) this.mote(x, y - 10, i % 2 ? l : h, "water", 60, 0.5, "drop", 0, 20);
+        break;
+      case "gloom":
+        for (let k = 0; k < 6; k++) {
+          const v = (u + k / 6) % 1;
+          const gx = x + Math.sin(k * 2.3 + clock) * 12, gy = y + 4 - v * 22;
+          disc(ctx, gx, gy, 3 + (1 - v) * 3, v < 0.5 ? m : d);
+        }
+        break;
+      case "expose": {
+        const r = 22 - ease(u) * 10;
+        for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) {
+          const cx = x + sx * r, cy = y - 6 + sy * r * 0.8;
+          line(ctx, cx, cy, cx - sx * 6, cy, u < 0.5 ? h : l);
+          line(ctx, cx, cy, cx, cy - sy * 6, u < 0.5 ? h : l);
+        }
+        px(ctx, x, y - 6, m, 2);
+        break;
+      }
+      case "spark":
+        if (Math.floor(clock * 20) % 3 !== 0) for (let k = 0; k < 2; k++) {
+          const t = clock * 7 + k * Math.PI;
+          zig(ctx, x + Math.cos(t) * 14, y - 4 + Math.sin(t) * 10, x - Math.cos(t) * 10, y - 10 - Math.sin(t) * 8, k ? l : h, 3, 5);
+        }
+        break;
+      case "leech":
+      case "drain":
+        // Red motes stream from the target back to the caster.
+        for (let k = 0; k < 6; k++) {
+          const v = Math.min(1, Math.max(0, u * 1.4 - k * 0.08));
+          if (v <= 0 || v >= 1) continue;
+          const bx = x + (f.x1 - x) * ease(v), by = y + (f.y1 - y) * ease(v) - Math.sin(v * Math.PI) * 16;
+          px(ctx, bx, by, k % 2 ? l : h, 2);
+        }
+        break;
+      case "cleanse":
+        for (let k = 0; k < 8; k++) {
+          const v = (u + k / 8) % 1;
+          star(ctx, x + Math.sin(k * 2.1) * 14, y - v * 30, 3 + (1 - v) * 2, p, 4, clock * 2);
+        }
+        break;
+      case "shell": {
+        const r = 18 + Math.sin(u * Math.PI) * 3;
+        for (let k = 0; k < 6; k++) {
+          const t0 = (k / 6) * Math.PI * 2 + Math.PI / 6, t1 = ((k + 1) / 6) * Math.PI * 2 + Math.PI / 6;
+          line(ctx, x + Math.cos(t0) * r, y - 14 + Math.sin(t0) * r, x + Math.cos(t1) * r, y - 14 + Math.sin(t1) * r, k % 2 ? l : h);
+        }
+        break;
       }
     }
   }

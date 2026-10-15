@@ -140,3 +140,32 @@ test("gear FX genes give pieces of one element many distinct looks", async () =>
   assert.equal(fx.geneSeedOf({ uid: "gabc1" }), fx.geneSeedOf({ uid: "gabc1" }));
   assert.notEqual(fx.geneSeedOf({ uid: "gabc1" }), fx.geneSeedOf({ uid: "gabc2" }));
 });
+
+test("control effects never stack, stay short and leave immunity behind", async () => {
+  const st = await import(moduleUrl("../src/game/status-rules.ts"));
+  const list = [];
+  assert.equal(st.applyStatus(list, "sleep", 9), "applied");
+  assert.equal(st.applyStatus(list, "sleep", 9), "ignored");
+  assert.equal(list.filter((s) => s.id === "sleep").length, 1);
+  assert.ok(list[0].t <= st.HARD_CC.sleep.cap);
+  let next = st.tickStatuses(list, 3);
+  assert.ok(!st.hasStatus(next, "sleep") && st.isImmune(next, "sleep"));
+  assert.equal(st.applyStatus(next, "sleep", 2), "resisted");
+  next = st.tickStatuses(next, st.HARD_CC.sleep.immune + 0.1);
+  assert.equal(st.applyStatus(next, "sleep", 2), "applied");
+  // Soft effects refresh instead of stacking.
+  const soft = [];
+  st.applyStatus(soft, "soak", 2);
+  st.applyStatus(soft, "soak", 3);
+  assert.equal(soft.length, 1);
+  assert.equal(soft[0].t, 3);
+  // Breaking an effect early (blink, wake, cleanse) also grants immunity.
+  const root = [];
+  st.applyStatus(root, "root", 2);
+  st.endStatus(root, "root");
+  assert.equal(st.applyStatus(root, "root", 2), "resisted");
+  // Tough foes get half the duration.
+  const boss = [];
+  st.applyStatus(boss, "root", 2, { tough: true });
+  assert.equal(boss[0].t, 1);
+});

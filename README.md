@@ -117,3 +117,25 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - a segmented health bar with a lag trail that shows each hit.
   - Far plates fade, and crowded ordinary foes collapse to a slim bar so the important plates stay readable. The hovered foe and your target also show exact HP.
 - **Mouse-over card** follows the cursor. It shows the foe's level, element, HP bar, what hits it harder, every trait with what it does, its moves and bounty details. Other things (NPCs, nodes, water) get a short card too. The top target panel was restyled to match.
+
+## Status immunity & move signatures update
+
+- **No more control chains.** Effects never stack: a second copy refreshes the first.
+  - Sleep, root and silence are capped short (2.5 s / 2.5 s / 3 s) and cannot be extended while active.
+  - When they end (run out, broken or cleansed), the target is **immune** to that effect for a while: 7 s sleep, 5 s root, 6 s silence. The HUD shows "Sleep immune" and similar, and attempts float "RESIST".
+  - Bosses, bounties, witches and hunters shake control off twice as fast.
+- **Counters.**
+  - Any hit wakes a sleeper.
+  - Mashing keys shakes off sleep and roots faster.
+  - Blink still breaks roots.
+  - Blinks, dashes and mends work while silenced.
+  - Cleanse (verse or Cleanse Salt) clears everything and grants immunity.
+- **Bug fixes.**
+  - Enemy hits used to apply their effect twice.
+  - Your own sleep verses were removed the instant they landed.
+  - Silence did nothing to enemies; now silenced foes cannot cast spells.
+- **Move signatures.** Every verse keeps its existing animation and gains its own layer on top:
+  - a cast flourish and an impact flourish (pillar, shockwave, shards, cross, sigil, implosion, spike crown);
+  - an accent colour, plus a per-verse projectile size and trail tint;
+  - on some projectiles, a companion that spirals around the shot;
+  - a status overlay showing what it does: sleep Zs, rising roots, silence rune, flame ring, splash, gloom smoke, exposed reticle, sparks, drain motes streaming back to the caster.

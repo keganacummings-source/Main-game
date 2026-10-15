@@ -91,6 +91,8 @@ import { geneSeedOf } from "./fx-gene";
 /** Each set gets its own aura variant (tint, spin, size, crest) so the 10 aura kinds look like 100. */
 const SET_VARIANT: Record<string, number> = Object.fromEntries(SETS.map((s, i) => [s.id, i * 7 + s.style + 1]));
 const SET_PIECES = ["head", "chest", "legs", "feet", "relic"];
+/** Helpful effects a Cleanse keeps. */
+const GOOD_STATUS = new Set(["swift", "shell"]);
 const MAX_EQUIPPED = 9;
 /** Burning lasts this long and takes this share of max health each second. */
 const BURN_SECONDS = 15;
@@ -104,6 +106,7 @@ import { tileImage } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
+import { applyStatus, cleanseStatuses, endStatus, HARD_CC, hasStatus, IMMUNE_PREFIX, struggle, tickStatuses } from "./status-rules";
 import {
 	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, rerollBoard, rerollCost, TIER_XP,
 	type BoardEventDetail, type BoardKind,
@@ -629,6 +632,14 @@ export class TurbzGame {
 		const down = (e) => {
 			if (this.typing() || snap.mode !== "play" || this.dead || e.ctrlKey || e.metaKey || e.altKey || snap.panel === "loot") return;
 			this.keys.add(e.code);
+			if (!e.repeat && this.save) {
+				// Mash to wake / pull free.
+				const held = this.status.find((s) => (s.id === "sleep" || s.id === "root") && s.t > 0);
+				if (held && struggle(this.status, held.id === "sleep" ? 0.3 : 0.18)) {
+					this.struggleN = (this.struggleN ?? 0) + 1;
+					if (this.struggleN % 3 === 0) this.float(this.save.x, this.save.y - 58, "STRUGGLE", "#e7d9ff");
+				}
+			}
 			if (/^(Key[WASD]|Arrow(Up|Down|Left|Right))$/.test(e.code)) this.dest = null;
 			if ([
 				"ArrowUp",
@@ -1536,8 +1547,7 @@ export class TurbzGame {
 		this.cam.x += (save.x - this.cam.x) * Math.min(1, dt * 8);
 		this.cam.y += (save.y - this.cam.y) * Math.min(1, dt * 8);
 		for (const id of Object.keys(this.cds)) this.cds[id] = Math.max(0, (this.cds[id] ?? 0) - dt);
-		this.status.forEach((s) => s.t -= dt);
-		this.status = this.status.filter((s) => s.t > 0);
+		this.status = tickStatuses(this.status, dt);
 		if (this.buff.t > 0) this.buff.t -= dt;
 		if ((save.jarLeft ?? 0) > 0) {
 			save.jarLeft = Math.max(0, save.jarLeft - dt);
@@ -2338,7 +2348,8 @@ export class TurbzGame {
 		}
 		if (tactic === "blink") {
 			const wasRooted = this.status.some((s) => (s.id === "root" || s.id === "soak") && s.t > 0);
-			this.status = this.status.filter((s) => s.id !== "root" && s.id !== "soak");
+			endStatus(this.status, "root");
+			this.status = this.status.filter((s) => s.id !== "soak");
 			if (wasRooted) this.float(save.x, save.y - 58, "BREAK FREE", "#6ecf6a");
 			if (!target) {
 				const dir = this.direction ?? "down";
@@ -2548,7 +2559,6 @@ export class TurbzGame {
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
 		if (!fromPet && this.chan("leech_edge") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.chan("leech_edge") / 100);
 		if (move.effect === "leech" && (this.rules !== "hardcore" || attackForm(move) === "spell")) save.hp = Math.min(this.maxHp(), save.hp + dmg * .35);
-		mob.status = mob.status.filter((s) => s.id !== "sleep");
 	}
 	damageMob(mob, dmg, crit) {
 		const amount = Math.floor(dmg);
@@ -2575,6 +2585,8 @@ export class TurbzGame {
 		if (mob.enchants?.includes("warded")) amount = Math.max(1, Math.floor(amount * .85));
 		mob.hp -= amount;
 		mob.hurt = 1;
+		// Any hit wakes a sleeper (and leaves it immune to sleep for a while).
+		if (hasStatus(mob.status, "sleep") && endStatus(mob.status, "sleep", this.toughFoe(mob))) this.float(mob.x, mob.y - 46, "WAKE", "#fff1a8");
 		this.float(mob.x, mob.y - 30, `${amount}${crit ? "!" : ""}`, crit ? "#fff1a8" : "#f0e2c8");
 		if (crit) this.shake = Math.max(this.shake, 5);
 		this.combat = 3;
@@ -3003,8 +3015,7 @@ export class TurbzGame {
 				m.thornT = Math.max(0, (m.thornT ?? 0) - dt);
 				if (m.enchants?.includes("regenerating") && m.hp < m.max) m.hp = Math.min(m.max, m.hp + m.max * .004 * dt);
 			}
-			m.status.forEach((s) => s.t -= dt);
-			m.status = m.status.filter((s) => s.t > 0);
+			m.status = tickStatuses(m.status, dt, this.toughFoe(m));
 			if (!m.alive) {
 				if (this.save.map.startsWith("rift-") || m.id.startsWith("shrine") || m.witch || m.bounty || m.bountySpirit || m.hunter) continue;
 				m.respawn -= dt;
@@ -3182,7 +3193,8 @@ export class TurbzGame {
 		}
 		const evaded = (this.evadeT ?? 0) > 0 || this.wardT > 0;
 		const hpBefore = save.hp;
-		this.hurtSelf(dmg, move.effect);
+		// The hit's effect is applied once, after the damage (so a sleeping hit cannot wake and re-sleep).
+		this.hurtSelf(dmg, null);
 		if (!evaded) this.applyEffect(move, null, false);
 		if (save.hp < hpBefore && m.alive && m.enchants?.includes("vampiric")) {
 			m.hp = Math.min(m.max, m.hp + m.max * .015);
@@ -3249,6 +3261,7 @@ export class TurbzGame {
 		}
 		if (dmg <= 0) return;
 		this.sleeping = false;
+		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60, "AWAKE", "#fff1a8");
 		save.hp -= dmg;
 		if (this.rules === "hardcore") this.persist();
 		this.hurt = 1;
@@ -3662,7 +3675,7 @@ export class TurbzGame {
 		this.playMoveFx(move, at.x, at.y - 12, save.x, save.y - 16);
 		const tactic = moveTactic(move);
 		if (move.effect === "cleanse") {
-			this.status = [];
+			this.status = cleanseStatuses(this.status, GOOD_STATUS);
 			this.float(save.x, save.y - 48, "CLEAN", "#fff1a8");
 		} else if (move.effect === "mend" || tactic === "heal") {
 			const n = Math.max(6, Math.floor((move.power || 12) * 0.7 + spirit.level * 1.2));
@@ -3748,7 +3761,9 @@ export class TurbzGame {
 		const kit = (m.kit ?? []).map((id) => MOVE_BY_ID[id]).filter(Boolean);
 		if (!kit.length) return MOVE_BY_ID[m.move] ?? MOVES[0];
 		const d = save ? Math.hypot(save.x - m.x, save.y - m.y) : 0;
-		const ready = kit.filter((mv) => (m.kcd?.[mv.id] ?? 0) <= 0);
+		// Silenced foes cannot cast: spells are off the table until it wears off.
+		const silenced = hasStatus(m.status ?? [], "silence");
+		const ready = kit.filter((mv) => (m.kcd?.[mv.id] ?? 0) <= 0 && !(silenced && attackForm(mv) === "spell"));
 		const reach = ready.filter((mv) => (attackForm(mv) === "melee" || m.animal ? 62 : attackRange(mv) + 24) >= d);
 		const pool = reach.length ? reach : ready.length ? ready : kit;
 		// Strong moves are favoured but not certain.
@@ -3961,18 +3976,9 @@ export class TurbzGame {
 			if (Math.hypot(m.x - save.x, m.y - save.y) > 120) continue;
 			const bonus = fx === "solarnova" || fx === "bloodmoon" ? 28 : 18;
 			if (this.role !== "guest") this.applyMobDamage(m, bonus + save.level * 2, true);
-			if (fx === "briarburst" || fx === "tidalsurge") m.status.push({
-				id: fx === "tidalsurge" ? "soak" : "root",
-				t: 2.5
-			});
-			if (fx === "whitestorm" || fx === "gravepulse") m.status.push({
-				id: "sleep",
-				t: 1.6
-			});
-			if (fx === "voidring" || fx === "stormcrown") m.status.push({
-				id: "silence",
-				t: 2
-			});
+			if (fx === "briarburst" || fx === "tidalsurge") this.applyMobStatus(m, fx === "tidalsurge" ? "soak" : "root", 2.5);
+			if (fx === "whitestorm" || fx === "gravepulse") this.applyMobStatus(m, "sleep", 1.6);
+			if (fx === "voidring" || fx === "stormcrown") this.applyMobStatus(m, "silence", 2);
 		}
 		if (this.rules !== "hardcore" && (fx === "lanternwake" || fx === "featherfall" || fx === "gravepulse")) save.hp = Math.min(this.maxHp(), save.hp + 20);
 	}
@@ -4568,8 +4574,8 @@ export class TurbzGame {
 		}
 		if (id === "cleanse_salt") {
 			save.bag[id] -= 1;
-			this.status = [];
-			this.say("Cleansed."); this.persist(); this.syncHud(true);
+			this.status = cleanseStatuses(this.status, GOOD_STATUS);
+			this.say("Cleansed. Sleep, roots and silence cannot take hold for a few seconds."); this.persist(); this.syncHud(true);
 			return;
 		}
 		if (this.rules === "hardcore") {
@@ -5799,7 +5805,7 @@ export class TurbzGame {
 			id: move.effect === "drain" ? "leech" : move.effect,
 			t: 3.2 + move.priority * .3
 		};
-		if (onMob && mob) mob.status.push(st);
+		if (onMob && mob) this.applyMobStatus(mob, st.id, st.t);
 		else this.addStatus(st.id, st.t);
 	}
 	profile() {
@@ -5831,10 +5837,28 @@ export class TurbzGame {
 			if (this.save) this.float(this.save.x, this.save.y - 56, "BURNING", "#ffb15e");
 			return;
 		}
-		this.status.push({
-			id,
-			t
-		});
+		const r = applyStatus(this.status, id, t);
+		if (!this.save) return;
+		if (r === "resisted") this.float(this.save.x, this.save.y - 52, "RESIST", "#9ad8c8");
+		else if (r === "applied" && HARD_CC[id]) {
+			this.float(this.save.x, this.save.y - 56, id === "sleep" ? "ASLEEP" : id === "root" ? "ROOTED" : "SILENCED", "#c9a6e8");
+			if (!this.ccTipShown) {
+				this.ccTipShown = true;
+				this.say(id === "sleep" ? "Asleep! Any hit wakes you, and mashing keys shakes it off faster. You are immune to it for a while after." : id === "root" ? "Rooted! Blink to break free, or mash keys. You are immune to it for a while after." : "Silenced! Blinks, dashes and mends still work. Cleanse Salt clears it.");
+			}
+		}
+	}
+	/** Bosses, bounties, witches and hunters shake hard control off twice as fast. */
+	toughFoe(m) {
+		return !!(m && (m.boss || m.bounty || m.witch || m.hunter || m.dungeonBoss));
+	}
+	/** Every status on a foe goes through here: no stacking, short hard control, immunity after. */
+	applyMobStatus(m, id, t) {
+		if (!m?.alive) return "ignored";
+		const r = applyStatus(m.status, id, t, { tough: this.toughFoe(m) });
+		if (r === "resisted") this.float(m.x, m.y - 44, "RESIST", "#9ad8c8");
+		else if (r === "applied" && HARD_CC[id]) this.float(m.x, m.y - 46, id === "sleep" ? "SLEEP" : id === "root" ? "ROOT" : "SILENCE", "#c9a6e8");
+		return r;
 	}
 
 	peekRuleSave() {
@@ -6540,7 +6564,9 @@ export class TurbzGame {
 	hudEffects() {
 		const GOOD = new Set(["swift", "shell"]);
 		const NAMES = { swift: "Swift (+45% speed)", shell: "Shell (-30% damage)", burn: "Burning", soak: "Soaked (slowed)", root: "Rooted", sleep: "Asleep", gloom: "Gloom (-20% damage)", silence: "Silenced", spark: "Sparked", expose: "Exposed", leech: "Drained" };
-		const effects = this.status.filter((st) => st.t > 0).map((st) => ({ id: st.id, label: NAMES[st.id] ?? st.id, t: Math.ceil(st.t), good: GOOD.has(st.id) }));
+		const effects = this.status.filter((st) => st.t > 0).map((st) => st.id.startsWith(IMMUNE_PREFIX)
+			? { id: st.id, label: `${HARD_CC[st.id.slice(IMMUNE_PREFIX.length)]?.name ?? "Effect"} immune`, t: Math.ceil(st.t), good: true }
+			: { id: st.id, label: NAMES[st.id] ?? st.id, t: Math.ceil(st.t), good: GOOD.has(st.id) });
 		if (this.buff?.t > 0) effects.push({ id: "edge", label: `Battle edge (+${this.buff.crit} crit)`, t: Math.ceil(this.buff.t), good: true });
 		if (this.wardT > 0) effects.push({ id: "ward", label: "Ward (no harm)", t: Math.ceil(this.wardT), good: true });
 		if (this.shield > 0) effects.push({ id: "shield", label: `Shield ${Math.ceil(this.shield)}`, t: 0, good: true });
