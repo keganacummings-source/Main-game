@@ -166,3 +166,20 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - **Storage.** Maps are now kept in IndexedDB, so 500×500 maps save. Older maps are moved over automatically.
   - Ferry portals that point to the same map count as a path in "Check map".
 
+
+## Combat pace, free movement & smoother worlds
+
+- **Proximity spawning.** Foes from a map's spawn points are only created when you come near: about a screen away, and never less than 900 px. They are packed away again when you are far off and they are not fighting. Time away still counts toward respawns. Bosses, witches, bounties and hunters are always live. Veilreach runs about 20 live foes instead of 530.
+- **Foes hit harder.** Base damage per hit (share of your max health) is up about 40%:
+  - normal 6% → 8.5%;
+  - boss 7.5% → 10.5%;
+  - witch 6.5% → 9%;
+  - bounty 5% → 7%;
+  - hunter 3% → 4.2%;
+  - animal 3.5% → 5%;
+  - minion 2.5% → 3.5%.
+  
+  Rarity, bounty-tier and wanted caps rise to match.
+- **Foes attack at the verse's own rate.** A foe's time between attacks is now the same base cooldown a hunter gets for that verse. Each move in its kit goes on that cooldown. Swift and enraged foes are 15% faster.
+- **Free movement verses.** Blink, lunge and dash go where you steer (movement keys or stick). With nothing held, they follow your click-to-move path or the way you face. They no longer snap onto a foe. Blink travels 96 px and can hop a wall, then hits the nearest foe within 72 px of where you land. Lunge travels 104 px, then strikes whatever is within 64 px. Auto-battle still aims them toward its target.
+- **Verses menu.** Tapping an equipped verse opens **Upgrade**, **Move**, **Unequip** and **Cancel**. Move, then tap another key slot: if that slot holds a verse, the two swap. You can also drag slots to reorder them.

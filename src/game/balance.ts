@@ -42,13 +42,13 @@ export type Row = { hits: number; frac: number; lv: number; spd: number };
 
 /** Standard mode. Hardcore multiplies these (see HARDCORE). */
 export const BASE: Record<EnemyKind, Row> = {
-  animal: { hits: 2, frac: 0.035, lv: 0, spd: -2 },
-  normal: { hits: 3, frac: 0.06, lv: 0, spd: -1 },
-  minion: { hits: 2, frac: 0.025, lv: 1, spd: 0 },
-  boss: { hits: 10, frac: 0.075, lv: 4, spd: 3 },
-  witch: { hits: 9, frac: 0.065, lv: 3, spd: 2 },
-  bounty: { hits: 8, frac: 0.05, lv: 3, spd: 4 },
-  hunter: { hits: 3, frac: 0.03, lv: 3, spd: 3 },
+  animal: { hits: 2, frac: 0.05, lv: 0, spd: -2 },
+  normal: { hits: 3, frac: 0.085, lv: 0, spd: -1 },
+  minion: { hits: 2, frac: 0.035, lv: 1, spd: 0 },
+  boss: { hits: 10, frac: 0.105, lv: 4, spd: 3 },
+  witch: { hits: 9, frac: 0.09, lv: 3, spd: 2 },
+  bounty: { hits: 8, frac: 0.07, lv: 3, spd: 4 },
+  hunter: { hits: 3, frac: 0.042, lv: 3, spd: 3 },
 };
 
 /** Hardcore gets the biggest buff: more health, harder hits, higher levels, and it keeps growing. */
@@ -77,19 +77,19 @@ export function enemyTargets(o: TargetOpts): EnemyTargets {
   let spd = row.spd;
   if (o.kind === "normal" || o.kind === "minion") {
     hits += rarity * (o.kind === "minion" ? 0.25 : 0.75);
-    frac += rarity * (o.kind === "minion" ? 0.003 : 0.01);
+    frac += rarity * (o.kind === "minion" ? 0.004 : 0.014);
     lv += rarity;
     spd += rarity;
   }
   if (o.kind === "bounty") {
     hits = Math.min(30, hits + Math.max(0, tier - 1) * 0.5);
-    frac = Math.min(0.1, frac + Math.max(0, tier - 1) * 0.0015);
+    frac = Math.min(0.14, frac + Math.max(0, tier - 1) * 0.002);
     lv += tier;
     spd += Math.min(6, Math.floor(tier / 3));
   }
   if (o.kind === "hunter") {
     hits += (wanted - 1) * 0.5;
-    frac = Math.min(0.06, frac + (wanted - 1) * 0.003);
+    frac = Math.min(0.085, frac + (wanted - 1) * 0.004);
     lv += wanted - 1;
     spd += Math.min(4, wanted - 1);
   }

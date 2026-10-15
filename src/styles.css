@@ -896,6 +896,9 @@ select.px-input { cursor: pointer; }
 button.verse-slot:hover { border-color: var(--color-blood); }
 .verse-slot-empty { border-style: dashed; border-color: var(--ui-line); box-shadow: none; color: var(--color-dim); }
 .verse-slot-empty::before { display: none; }
+.verse-slot.verse-slot-picked { border-color: var(--color-kyo); box-shadow: 3px 3px 0 var(--color-kyo); }
+.verse-slot-target { outline: 2px dashed var(--color-kyo); outline-offset: -5px; cursor: pointer; }
+.verse-actions { display: grid; gap: 6px; margin-top: 8px; padding: 8px; border: 2px solid var(--color-kyo); background: #0d0908; }
 .verse-pick { gap: 4px; }
 .verse-locked { opacity: 0.8; border-style: dashed; }
 .verse-stats { font-size: 16px; }

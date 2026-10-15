@@ -20,12 +20,14 @@ Every enemy attack has a wind-up (see [Combat Overview](Combat-Overview)).
 
 ## Defensive verses
 
+Movement verses are **free**: they go where you steer, not onto a foe. Hold a direction while you cast. With no direction held they follow your click-to-move path or the way you face. Auto-battle aims them toward its target.
+
 | Verse type | What you get | Slip chance |
 | --- | --- | --- |
 | **Dash** | Burst ~96 px (more with speed) where you are moving. 0.42 s evade window. Wipes incoming melee hits that are not right on top of you. Clips the nearest foe for 0.6×. Can't be used while rooted. | 14% |
 | **Roll** | Roll 48–88 px. 0.45 s evade window. Wipes incoming melee. Damage taken during the roll is cut by how far you got. | 14% |
-| **Blink** | Teleport behind the target and hit for 0.55×. Breaks **root** and **soak**. 0.45 s evade window. Wipes incoming melee. With no target, blink 84 px forward. | 24% |
-| **Lunge** | Dash in, hit for 0.72×, dash back. 0.42 s evade window. | 24% |
+| **Blink** | Teleport 96 px the way you steer (movement keys or stick), or the way you face. It can hop over a wall. It hits the nearest foe within 72 px of where you land for 0.55×. Breaks **root** and **soak**. 0.45 s evade window. Wipes incoming melee. | 24% (only with a foe in range) |
+| **Lunge** | Lunge 104 px the way you steer or face (stops at walls), hit the nearest foe within 64 px for 0.72×, then spring back. 0.42 s evade window. | 24% |
 | **Ward** | 3 s where no hit hurts you (**WARD**), plus a shield of (12 + power) × rank bonus. | — |
 | **Shell** effect | Shield of 20 + power and a 1.2 s ward. | — |
 | **Heal** | Restore (18 + 0.45 × power) × rank bonus. | — |
@@ -36,8 +38,8 @@ Rolls, dashes, blinks and lunges can **slip**:
 
 - A slipped **roll** is a **TRIP**: you barely move and take **24% more** damage.
 - A slipped **dash** is a **SLIP**: you move 18 px with no evade.
-- A slipped **blink** is a **SNAG**: no teleport, and the hit lands at 0.24×.
-- A slipped **lunge** is a **SNAG**: the hit lands at 0.22×.
+- A slipped **blink** is a **SNAG**: you only travel 36 px, with no evade, and the hit lands at 0.24×.
+- A slipped **lunge** is a **SNAG**: you only travel 40 px, and the hit lands at 0.22×.
 
 The chance rises with **fatigue**: chaining defensive verses stacks it, at +14% slip chance per point, up to 82% total.
 

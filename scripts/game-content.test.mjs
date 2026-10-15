@@ -113,7 +113,7 @@ const enemies = await import(
 );
 const tilesStub = `data:text/javascript;base64,${Buffer.from("export const findAtlasTile=()=>null;").toString("base64")}`;
 const maps = await import(
-  moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": tilesStub })
+  moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": tilesStub, "./idb-store": moduleUrl("../src/game/idb-store.ts") })
 );
 
 test("skill migration grants historical level points once and preserves purchases", () => {

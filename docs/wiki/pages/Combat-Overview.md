@@ -62,22 +62,9 @@ Every foe has its own **kit** of 1–4 verses and attacks like a player would:
 - **Melee** attacks miss if you are more than 62 px away when they land.
 - **28%** of attacks go at one of your spirits instead of you.
 
-Time between a foe's attacks:
+Time between a foe's attacks is the **same base cooldown a hunter gets for that verse** (see [Cooldowns](Damage-and-Formulas#cooldowns)): max(0.28, 0.55 + power ÷ 90 − 0.08 × priority), then ×1.7 for heavy and channel verses, ×1.35 for other spells and ×0.8 for melee. A quick power-40 bite comes about every 0.8 s; a power-90 spell about every 2 s.
 
-| Form | Base gap |
-| --- | --- |
-| Melee | 1.1 s |
-| Ranged | 1.4 s |
-| Spell | 1.8 s |
-
-That gap is multiplied by:
-
-- 0.8 + power ÷ 200;
-- ÷ the foe's speed;
-- ×0.8 for Swift, ×0.85 for bosses and witches, ×0.8 when enraged, ×0.85 in Hardcore;
-- a random ±15%.
-
-It is never shorter than 0.45 s. A foe that just noticed you waits 0.3–0.8 s before its first strike.
+Each verse in a foe's kit also goes on that cooldown after use, so a foe with several moves rotates through them. **Swift** and **enraged** foes attack 15% faster each, and there is a random ±5%. A foe that just noticed you waits 0.3–0.8 s before its first strike.
 
 ## Leaving a fight
 

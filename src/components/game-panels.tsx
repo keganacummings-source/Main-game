@@ -87,6 +87,10 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
   const [sort, setSort] = useState<"type" | "name" | "power" | "rank">("type");
   const [show, setShow] = useState<"all" | "owned" | "locked">("all");
   const equipped = useMemo(() => new Set(s.bar.map((m) => m.id)), [s.bar]);
+  const [picked, setPicked] = useState<number | null>(null);
+  const [moving, setMoving] = useState<number | null>(null);
+  const pickedMove = picked !== null ? s.bar[picked] : undefined;
+  const pickedInfo = pickedMove ? s.abilities.find((a) => a.id === pickedMove.id) : undefined;
   const unlocked = useMemo(() => s.abilities.filter((m) => m.rank > 0), [s.abilities]);
   const catalog = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -100,21 +104,46 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
       <Tabs value={tab} onChange={setTab} tabs={[{ id: "loadout", label: `Loadout · ${s.bar.length}/${MAX_BAR}` }, { id: "library", label: `Library · ${s.skillPoints} pts` }]} />
       {tab === "loadout" && (
         <>
-          <Section title="EQUIPPED · TAP TO REMOVE">
+          <Section title={moving !== null ? "MOVE · TAP THE SLOT (KEY) TO PUT IT ON" : "EQUIPPED · TAP A VERSE FOR OPTIONS · DRAG TO REORDER"}>
             <div className="verse-slots">
               {Array.from({ length: MAX_BAR }, (_, i) => {
                 const m = s.bar[i];
+                const drop = {
+                  onDragOver: (e: React.DragEvent) => e.preventDefault(),
+                  onDrop: (e: React.DragEvent) => { e.preventDefault(); const from = Number(e.dataTransfer.getData("text/verse-slot")); if (Number.isInteger(from)) { game?.moveBar(from, i); setPicked(null); setMoving(null); } },
+                };
+                const click = () => {
+                  if (moving !== null) { game?.moveBar(moving, i); setMoving(null); setPicked(null); return; }
+                  if (m) setPicked(picked === i ? null : i);
+                };
                 return m ? (
-                  <button key={i} type="button" className={`verse-slot hot-${m.type}`} onClick={() => game?.setBar(i, "")} title="Unequip">
+                  <button key={i} type="button" data-testid={`verse-slot-${i}`} draggable onDragStart={(e) => e.dataTransfer.setData("text/verse-slot", String(i))} {...drop}
+                    className={`verse-slot hot-${m.type} ${picked === i ? "verse-slot-picked" : ""} ${moving !== null && moving !== i ? "verse-slot-target" : ""}`} onClick={click} title={moving !== null ? "Put it here" : "Options"}>
                     <span className="key-badge">{i + 1}</span>
                     <span className={`verse-slot-name ${typeClass(m.type)}`}>{m.name}</span>
                     <span className="hot-tag">{m.tag.split(" · ")[0]}</span>
                   </button>
                 ) : (
-                  <div key={i} className="verse-slot verse-slot-empty"><span className="key-badge">{i + 1}</span><span className="text-dim">Empty</span></div>
+                  <div key={i} {...drop} role={moving !== null ? "button" : undefined} tabIndex={moving !== null ? 0 : undefined} onClick={moving !== null ? click : undefined}
+                    className={`verse-slot verse-slot-empty ${moving !== null ? "verse-slot-target" : ""}`}><span className="key-badge">{i + 1}</span><span className="text-dim">Empty</span></div>
                 );
               })}
             </div>
+            {pickedMove && picked !== null && (
+              <div className="verse-actions" data-testid="verse-actions">
+                <span className="ui-row"><span className={typeClass(pickedMove.type)}>Key {picked + 1} · {pickedMove.name}</span>{pickedInfo && <Pips value={pickedInfo.rank} max={5} />}</span>
+                {pickedInfo && <span className="text-dim verse-stats">Pow {pickedInfo.power} · Acc {pickedInfo.accuracy}% · Rng {pickedInfo.range}{pickedInfo.effect !== "none" ? ` · ${pickedInfo.effect}` : ""}</span>}
+                <div className="ui-row-gap">
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="verse-upgrade-btn" disabled={!pickedInfo || s.skillPoints < 1 || pickedInfo.rank >= 5} onClick={() => game?.spendAbility(pickedMove.id)}>
+                    {pickedInfo && pickedInfo.rank >= 5 ? "Max rank" : `Upgrade · 1 pt (${s.skillPoints})`}
+                  </button>
+                  <button type="button" className="px-btn ui-btn-sm" data-testid="verse-move-btn" onClick={() => setMoving(picked)}>Move</button>
+                  <button type="button" className="px-btn ui-btn-sm" data-testid="verse-unequip-btn" onClick={() => { game?.setBar(picked, ""); setPicked(null); }}>Unequip</button>
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => { setPicked(null); setMoving(null); }}>Cancel</button>
+                </div>
+                {moving !== null && <span className="text-dim">Now tap the key slot to move it to. A slot that already has a verse swaps with it.</span>}
+              </div>
+            )}
           </Section>
           <Section title={`UNLOCKED · ${unlocked.length} · TAP TO EQUIP`}>
             {unlocked.length ? (

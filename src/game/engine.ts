@@ -486,6 +486,17 @@ function blankQuests() {
 	};
 	return q;
 }
+/** A verse's base cooldown before anyone's personal bonuses. Hunters and foes share it. */
+export function baseMoveCooldown(move) {
+	const tactic = moveTactic(move);
+	const form = attackForm(move);
+	let cd = Math.max(.28, .55 + move.power / 90 - move.priority * .08);
+	if (tactic === "heavy" || tactic === "channel") cd *= 1.7;
+	else if (form === "spell") cd *= 1.35;
+	else if (form === "melee") cd *= .8;
+	return cd;
+}
+
 export class TurbzGame {
 	canvas!: HTMLCanvasElement;
 	ctx!: CanvasRenderingContext2D;
@@ -510,6 +521,7 @@ export class TurbzGame {
 		this.stick = { x: 0, y: 0 };
 		this.cam = { x: 400, y: 400 };
 		this.mobs = [];
+		this.dormant = [];
 		this.cds = {};
 		this.status = [];
 		this.parts = [];
@@ -905,6 +917,7 @@ export class TurbzGame {
 		try { installEnemyDesigns(); } catch { /* a broken design must not stop the game */ }
 		this.overworld = buildWorld(save.seed, this.rules === "hardcore");
 		this.mobs = [];
+		this.dormant = [];
 		this.contract = [];
 		this.powerRef = null;
 		this.powerT = 0;
@@ -977,8 +990,13 @@ export class TurbzGame {
 		if (!map.startsWith("custom-")) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
-		if (freshMobs || this.mobs.length === 0 || map !== "world") {
-			this.mobs = this.world.spawns.filter((s) => s.kind === "mob").map((s) => this.makeMob(s));
+		if (freshMobs || (this.mobs.length === 0 && !this.dormant?.length) || map !== "world") {
+			// Only bosses are built up front. Every other foe waits as a spawn point and is created
+			// when the hunter comes near (see tickDormancy), so big maps load fast and run smoothly.
+			const specs = this.world.spawns.filter((s) => s.kind === "mob");
+			this.mobs = specs.filter((s) => s.boss || s.dungeonBoss).map((s) => this.makeMob(s));
+			this.dormant = specs.filter((s) => !s.boss && !s.dungeonBoss).map((s) => ({ spec: s, x: s.x, y: s.y, at: this.clock }));
+			this.dormancyT = 0;
 			if (map === "world" && witch) this.mobs.push(witch);
 		}
 		this.restoreContract(map);
@@ -2263,7 +2281,7 @@ export class TurbzGame {
 			if (prefer && prefer.alive && distTo(prefer) <= reach + pad) target = prefer;
 			else target = this.nearestMob(save.x, save.y, reach + pad + 0.5);
 		}
-		if (!selfCast && !target && tactic !== "blink") return false;
+		if (!selfCast && !target && tactic !== "blink" && tactic !== "lunge") return false;
 		const rootedNow = this.status.some((s) => s.id === "root" && s.t > 0);
 		if (tactic === "dash" && rootedNow) {
 			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
@@ -2306,14 +2324,8 @@ export class TurbzGame {
 			const failPct = defenseFail(move, this.defFatigue ?? 0);
 			const failed = Math.random() * 100 < failPct;
 			this.defFatigue = (this.defFatigue ?? 0) + (failed ? 1 : 0.5);
-			let dx = (this.held("KeyD") || this.held("ArrowRight") ? 1 : 0) - (this.held("KeyA") || this.held("ArrowLeft") ? 1 : 0) + this.stick.x;
-			let dy = (this.held("KeyS") || this.held("ArrowDown") ? 1 : 0) - (this.held("KeyW") || this.held("ArrowUp") ? 1 : 0) + this.stick.y;
-			if (Math.hypot(dx, dy) < .2) {
-				const dir = this.direction ?? "down";
-				dx = dir === "left" ? -1 : dir === "right" ? 1 : 0;
-				dy = dir === "up" ? -1 : dir === "down" ? 1 : 0;
-			}
-			const l = Math.hypot(dx, dy) || 1;
+			const fd = this.freeDir(null);
+			const dx = fd.x, dy = fd.y, l = 1;
 			const dist = failed ? 18 : 96 * Math.max(.8, this.speedMult());
 			const x0 = save.x, y0 = save.y;
 			for (let i = 0; i < 8; i++) this.tryMove(dx / l * dist / 8, dy / l * dist / 8);
@@ -2349,59 +2361,49 @@ export class TurbzGame {
 			return true;
 		}
 		if (tactic === "blink") {
+			// Free movement: a blink goes where you steer (or the way you face), never onto a foe.
 			const wasRooted = this.status.some((s) => (s.id === "root" || s.id === "soak") && s.t > 0);
 			endStatus(this.status, "root");
 			this.status = this.status.filter((s) => s.id !== "soak");
 			if (wasRooted) this.float(save.x, save.y - 58, "BREAK FREE", "#6ecf6a");
-			if (!target) {
-				const dir = this.direction ?? "down";
-				const bx = dir === "left" ? -1 : dir === "right" ? 1 : 0, by = dir === "up" ? -1 : dir === "down" ? 1 : 0;
-				const x0 = save.x, y0 = save.y;
-				for (let d = 84; d >= 12; d -= 12) if (!blocked(this.world, save.x + bx * d, save.y + by * d)) { save.x += bx * d; save.y += by * d; break; }
-				this.dest = null;
-				this.evadeT = .45;
-				this.incoming = (this.incoming ?? []).filter((h) => h.form !== "melee");
-				this.float(save.x, save.y - 46, "BLINK", "#b4a6ff");
-				this.playMoveFx(move, x0, y0 - 20, save.x, save.y - 20);
-				return true;
+			const failPct = target ? defenseFail(move, this.defFatigue ?? 0) : 0;
+			const snag = Math.random() * 100 < failPct;
+			this.defFatigue = Math.max(0, (this.defFatigue ?? 0) + (snag ? 1 : -0.2));
+			const dir = this.freeDir(prefer ? target : null);
+			const x0 = save.x, y0 = save.y;
+			const to = this.freeTravel(dir, snag ? 36 : 96, true);
+			save.x = to.x; save.y = to.y;
+			this.dest = null;
+			if (!snag) { this.evadeT = .45; this.incoming = (this.incoming ?? []).filter((h) => h.form !== "melee"); }
+			if (dir.x) this.facing = dir.x > 0 ? 1 : -1;
+			this.float(save.x, save.y - 46, snag ? "SNAG" : "BLINK", snag ? "#c4473a" : "#b4a6ff");
+			this.playMoveFx(move, x0, y0 - 20, save.x, save.y - 20);
+			if (move.power > 0) {
+				const hit = this.nearestMob(save.x, save.y, 72);
+				if (hit) {
+					const blinkMiss = Math.random() * 100 > move.accuracy;
+					const d = this.playMoveFx(move, save.x, save.y - 20, hit.x, hit.y - 12, { miss: blinkMiss });
+					this.later(d, () => { if (hit.alive) this.resolveHit(move, hit, false, snag ? 0.24 : 0.55, { missed: blinkMiss }); });
+				}
 			}
-			const failPct = defenseFail(move, this.defFatigue ?? 0);
-			if (Math.random() * 100 < failPct) {
-				this.defFatigue = (this.defFatigue ?? 0) + 1;
-				this.float(save.x, save.y - 46, "SNAG", "#c4473a");
-				const d = this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12);
-				if (move.power > 0) this.later(d, () => { if (target.alive) this.resolveHit(move, target, false, 0.24); });
-				return true;
-			}
-			this.defFatigue = Math.max(0, (this.defFatigue ?? 0) - 0.2);
-			this.evadeT = .45;
-			this.incoming = (this.incoming ?? []).filter((h) => h.form !== "melee");
-			const behind = target.x >= save.x ? 1 : -1;
-			const nx = target.x + behind * 30;
-			const ny = target.y + 4;
-			if (!blocked(this.world, nx, ny)) {
-				save.x = nx;
-				save.y = ny;
-			}
-			this.facing = behind > 0 ? -1 : 1;
-			this.float(save.x, save.y - 46, "BLINK", "#b4a6ff");
-			const blinkMiss = Math.random() * 100 > move.accuracy;
-			const d = this.playMoveFx(move, save.x, save.y - 20, target.x, target.y - 12, { miss: blinkMiss });
-			if (move.power > 0) this.later(d, () => { if (target.alive) this.resolveHit(move, target, false, 0.55, { missed: blinkMiss }); });
 			return true;
 		}
-		if (tactic === "lunge" && target) {
+		if (tactic === "lunge") {
+			// Free movement: lunge a set distance where you steer and strike whatever is there.
 			const failPct = defenseFail(move, this.defFatigue ?? 0);
 			const failed = Math.random() * 100 < failPct;
 			this.defFatigue = (this.defFatigue ?? 0) + (failed ? 1 : 0.45);
+			const dir = this.freeDir(prefer ? target : null);
+			if (dir.x) this.facing = dir.x > 0 ? 1 : -1;
+			const to = this.freeTravel(dir, failed ? 40 : 104, false);
 			this.lunge = {
 				t: 0,
 				dur: .42,
 				ox: save.x,
 				oy: save.y,
-				tx: target.x - this.facing * 18,
-				ty: target.y,
-				mob: target.id,
+				tx: to.x,
+				ty: to.y,
+				mob: null,
 				hit: false,
 				failed,
 				power: move.power,
@@ -2444,10 +2446,10 @@ export class TurbzGame {
 		this.attackT = 1;
 		if (!lung.hit && u >= .4) {
 			lung.hit = true;
-			const mob = this.mobs.find((m) => m.id === lung.mob && m.alive);
+			const mob = this.nearestMob(save.x, save.y, 64);
 			const move = MOVE_BY_ID[lung.moveId] ?? MOVES.find((m) => moveTactic(m) === "lunge") ?? MOVES[0];
 			const lungeMiss = Math.random() * 100 > move.accuracy;
-			const d = this.playMoveFx(move, save.x, save.y - 16, lung.tx, lung.ty, { miss: lungeMiss });
+			const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss });
 			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, lung.failed ? 0.22 : 0.72, { missed: lungeMiss }); });
 		}
 		if (u >= 1) this.lunge = null;
@@ -2515,13 +2517,41 @@ export class TurbzGame {
 		return move.crit + this.chan("crit_edge") + (this.buff.t > 0 ? this.buff.crit : 0) + this.mod("crit");
 	}
 	/** Seconds before this verse can be cast again. castMove and the sheet both use this. */
+	/**
+	 * Direction for movement verses: the keys or stick you hold, else the way you face. Automatic
+	 * casts (auto-battle) with nothing held head toward their foe, but still travel a set distance.
+	 */
+	freeDir(autoToward) {
+		const save = this.save;
+		let dx = (this.held("KeyD") || this.held("ArrowRight") ? 1 : 0) - (this.held("KeyA") || this.held("ArrowLeft") ? 1 : 0) + (this.stick?.x ?? 0);
+		let dy = (this.held("KeyS") || this.held("ArrowDown") ? 1 : 0) - (this.held("KeyW") || this.held("ArrowUp") ? 1 : 0) + (this.stick?.y ?? 0);
+		if (Math.hypot(dx, dy) < .2 && this.dest && Math.hypot(this.dest.x - save.x, this.dest.y - save.y) > 8) { dx = this.dest.x - save.x; dy = this.dest.y - save.y; }
+		if (Math.hypot(dx, dy) < .2 && autoToward?.alive) { dx = autoToward.x - save.x; dy = autoToward.y - save.y; }
+		if (Math.hypot(dx, dy) < .2) {
+			const dir = this.direction ?? (this.facing < 0 ? "left" : "right");
+			dx = dir === "left" ? -1 : dir === "right" ? 1 : 0;
+			dy = dir === "up" ? -1 : dir === "down" ? 1 : 0;
+		}
+		const l = Math.hypot(dx, dy) || 1;
+		return { x: dx / l, y: dy / l };
+	}
+	/** The farthest open spot up to `dist` px along `dir`. A blink may hop over walls; others stop at them. */
+	freeTravel(dir, dist, hop) {
+		const save = this.save;
+		let best = { x: save.x, y: save.y };
+		for (let d = 8; d <= dist; d += 8) {
+			const x = save.x + dir.x * d, y = save.y + dir.y * d;
+			if (blocked(this.world, x, y)) { if (hop) continue; break; }
+			best = { x, y };
+		}
+		if (hop) { const far = { x: save.x + dir.x * dist, y: save.y + dir.y * dist }; if (!blocked(this.world, far.x, far.y)) best = far; }
+		return best;
+	}
 	moveCooldown(move) {
 		const tactic = moveTactic(move);
 		const form = attackForm(move);
-		let cd = Math.max(.28, (.55 + move.power / 90 - move.priority * .08) * (1 - Math.min(.4, this.chan("swift") / 100)));
-		if (tactic === "heavy" || tactic === "channel") cd *= 1.7;
-		else if (form === "spell") cd *= 1.35 * (1 - Math.min(.45, this.skillN("magic") * 0.00113)) * (1 - Math.min(.35, this.chan("focus") / 100));
-		else if (form === "melee") cd *= .8;
+		let cd = baseMoveCooldown(move) * (1 - Math.min(.4, this.chan("swift") / 100));
+		if (form === "spell" && tactic !== "heavy" && tactic !== "channel") cd *= (1 - Math.min(.45, this.skillN("magic") * 0.00113)) * (1 - Math.min(.35, this.chan("focus") / 100));
 		if (tactic === "roll") cd = Math.max(cd, 2.6);
 		if (tactic === "ward") cd = Math.max(cd, 5.5);
 		if (tactic === "heal") cd = Math.max(cd, 3.2);
@@ -2999,10 +3029,47 @@ export class TurbzGame {
 		if (mob && save && mob.level > save.level) m *= 1 + this.chan("giant_bane") / 100;
 		return m;
 	}
+	/**
+	 * Proximity spawning. Foes from the map's spawn points only exist while the hunter is near:
+	 * they are created on approach and packed away again when the hunter is far and they are not
+	 * fighting. Time spent packed away still counts toward respawns.
+	 */
+	tickDormancy(dt) {
+		const save = this.save;
+		if (!save || !this.world) return;
+		if (!this.dormant) this.dormant = [];
+		this.dormancyT = (this.dormancyT ?? 0) - dt;
+		if (this.dormancyT > 0) return;
+		this.dormancyT = .4;
+		const z = Math.max(.5, this.zoom ?? 1);
+		const css = this.cssSize?.() ?? { w: 1366, h: 860 };
+		const view = Math.hypot(css.w, css.h) / 2 / z;
+		const on = Math.max(900, view + 260), off = on + 520;
+		const px = save.x, py = save.y;
+		const keep = [];
+		for (const d of this.dormant) {
+			if (Math.abs(d.x - px) > on || Math.abs(d.y - py) > on || Math.hypot(d.x - px, d.y - py) > on) { keep.push(d); continue; }
+			let m = d.mob;
+			if (!m) { m = this.makeMob(d.spec); m.fromSpawn = true; }
+			else if (!m.alive) m.respawn = (m.respawn ?? 0) - (this.clock - d.at);
+			this.mobs.push(m);
+		}
+		this.dormant = keep;
+		const live = [];
+		for (const m of this.mobs) {
+			const idle = m.fromSpawn && !m.boss && !m.master && (!m.alive || (!m.aggro && m.hurt <= 0 && !m.status?.length));
+			if (idle && Math.hypot(m.x - px, m.y - py) > off && Math.hypot((m.homeX ?? m.x) - px, (m.homeY ?? m.y) - py) > off) {
+				if (m.alive) { m.hp = m.max; m.x = m.homeX ?? m.x; m.y = m.homeY ?? m.y; }
+				this.dormant.push({ mob: m, x: m.homeX ?? m.x, y: m.homeY ?? m.y, at: this.clock });
+			} else live.push(m);
+		}
+		this.mobs = live;
+	}
 	tickMobs(dt) {
 		const save = this.save;
 		this.refreshPower(dt);
 		this.tickWanted(dt);
+		this.tickDormancy(dt);
 		for (const m of this.mobs) {
 			m.hurt = Math.max(0, m.hurt - dt * 3);
 			m.walk += dt * 4;
@@ -3720,21 +3787,20 @@ export class TurbzGame {
 		this.mobAttack(m, move);
 		m.atkCd = this.mobAttackGap(m, move);
 	}
-	/** Seconds between a foe's attacks: by form and power, its speed, Swift, and Hardcore. */
+	/**
+	 * Seconds between a foe's attacks: the move's own cooldown, the same base a hunter gets for
+	 * that verse (before the hunter's personal haste and skill bonuses). Swift and rage speed it up.
+	 */
 	mobAttackGap(m, move) {
-		const form = attackForm(move);
-		let gap = (form === "melee" ? 1.1 : form === "ranged" ? 1.4 : 1.8) * (0.8 + Math.max(0, move.power) / 200);
-		gap /= Math.max(0.5, m.stats?.speed ?? 1);
-		if (m.enchants?.includes("swift")) gap *= 0.8;
-		if (m.boss || m.witch) gap *= 0.85;
-		if (m.enraged) gap *= 0.8;
-		if (this.rules === "hardcore") gap *= 0.85;
-		return Math.max(0.45, gap * (0.85 + Math.random() * 0.3));
+		let gap = baseMoveCooldown(move);
+		if (m.enchants?.includes("swift")) gap *= 0.85;
+		if (m.enraged) gap *= 0.85;
+		return Math.max(0.28, gap * (0.95 + Math.random() * 0.1));
 	}
 	mobAttack(m, move) {
 		const save = this.save!;
 		m.kcd = m.kcd ?? {};
-		m.kcd[move.id] = 1.2 + move.power / 60;
+		m.kcd[move.id] = baseMoveCooldown(move);
 		m.move = move.id;
 		m.swing += 1;
 		const spirits = this.activeSpirits().filter((s) => s.hp > 0);
@@ -4854,6 +4920,24 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
+	/** Move the verse in slot `from` to slot `to` (keys 1-9). If `to` holds a verse, the two swap. */
+	moveBar(from, to) {
+		const save = this.save;
+		if (!save) return;
+		this.syncArsenal(save);
+		const list = [...save.loadout];
+		if (from < 0 || from >= list.length || from === to) return;
+		if (to >= list.length) {
+			const [id] = list.splice(from, 1);
+			list.push(id);
+		} else {
+			[list[from], list[to]] = [list[to], list[from]];
+		}
+		save.loadout = list;
+		this.syncArsenal(save);
+		this.persist();
+		this.syncHud(true);
+	}
 	select(uid) {
 		this.selected = uid;
 		this.syncHud(true);
@@ -5573,6 +5657,7 @@ export class TurbzGame {
 		this.role = "solo";
 		this.save = null;
 		this.mobs = [];
+		this.dormant = [];
 		this.contract = [];
 		this.unstuckT = 0;
 		publish({
@@ -6027,6 +6112,7 @@ export class TurbzGame {
 		this.duel = null;
 		this.save = null;
 		this.mobs = [];
+		this.dormant = [];
 		this.contract = [];
 		this.unstuckT = 0;
 		this.dead = false;
