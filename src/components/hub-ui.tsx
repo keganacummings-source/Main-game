@@ -281,6 +281,7 @@ export function Hub(props: {
   username: string;
   onHunt: () => void;
   onCircle: () => void;
+  onLms: () => void;
   onHard: () => void;
   onBoards: () => void;
   onOptions: () => void;
@@ -293,7 +294,8 @@ export function Hub(props: {
       <div className="tile-grid">
         <Tile primary title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
-        <Tile title="TurboCircle" about="Battle simulator: plant teams, watch them fight." onClick={props.onCircle} />
+        <Tile title="Last Man Standing" about="You and 99 rival witches from level 1. Always night, only ghosts. Be the last one alive." onClick={props.onLms} badge="NEW" />
+        <Tile title="TurboCircle" about="Battle simulator: Classic 6v6, or War up to 100 vs 100." onClick={props.onCircle} />
         <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
         <Tile title="Designer Mode" about="Map Builder and Enemy Designer." onClick={props.onDesigner} />
         <Tile title="Options" about="Account and friends." onClick={props.onOptions} />

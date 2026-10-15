@@ -202,6 +202,8 @@ export type Snap = {
   ghostBox: { placed: boolean; near: boolean; max: number };
   /** The loot chest you have open (Hardcore). */
   chest: ChestView | null;
+  /** Last Man Standing scoreboard, or null outside a match. */
+  lms: { alive: number; total: number; kills: number; age: string; feed: string[]; over: boolean; won: boolean; place: number; hunting: number; nearest: string } | null;
   jarLeft: number;
   known: { id: string; name: string; type: TypeId }[];
   stash: string[];
@@ -415,6 +417,7 @@ const emptySnap = (): Snap => ({
 	ghostStore: [],
 	ghostBox: { placed: false, near: false, max: 300 },
 	chest: null,
+	lms: null,
 	jarLeft: 0,
 	known: [],
 	stash: [],
@@ -1104,11 +1107,17 @@ export class TurbzGame {
 		this.syncSolids(map);
 	}
 	makeMob(s) {
-		const species = s.species ?? "onibi";
+		let species = s.species ?? "onibi";
+		// Last Man Standing: only ghosts walk. Beasts are swapped for a ghost of the same element.
+		if (this.lms && ANIMAL_BY_ID[species] && !s.rivalBody) {
+			const pool = MONSTERS.filter((d) => !d.animal);
+			species = pool[Math.floor(Math.random() * pool.length)]?.id ?? "wisp";
+			s = { ...s, species, animal: false, type: undefined, template: undefined, name: undefined };
+		}
 		const def = MONSTER_BY_ID[species] ?? ANIMAL_BY_ID[species] ?? MONSTER_BY_ID.onibi;
 		const animal = !!(s.animal || def.animal);
 		const spiritKind = def.type === "spirit" || def.template === 16 || def.template === 23;
-		const ghost = !animal && (spiritKind || Math.random() < 0.55);
+		const ghost = !animal && (spiritKind || this.lms || Math.random() < 0.55);
 		const hunter = Math.max(1, this.save?.level ?? s.level ?? 1);
 		const hc = this.rules === "hardcore" ? this.threat().lv : 0;
 		const near = this.rules === "hardcore" ? Math.max(hunter - 1, levelNearHunter(hunter, Math.random())) + hc : levelNearHunter(hunter, Math.random());
@@ -1257,6 +1266,7 @@ export class TurbzGame {
 	scaleMob(m, fresh = false) {
 		const save = this.save;
 		if (!save || !m) return;
+		if (m.rival) return this.scaleRival(m, fresh);
 		if (!this.powerRef) this.refreshPower(0);
 		const kind = this.enemyKind(m);
 		const hc = this.rules === "hardcore";
@@ -1300,7 +1310,7 @@ export class TurbzGame {
 			if (this.unstuckT > 0 || this.liveBounty()) this.syncHud(false);
 			return;
 		}
-		if (this.role !== "guest") this.tickDungeons(dt);
+		if (this.role !== "guest" && !this.lms) this.tickDungeons(dt);
 		this.tickPlayer(dt);
 		if (this.dead) return;
 		this.tickDayNight(dt);
@@ -1376,6 +1386,7 @@ export class TurbzGame {
 	tickDayNight(dt) {
 		const save = this.save;
 		if (!save || !this.nightOn()) return;
+		if (this.lms) { this.tickLms(dt); return; }
 		save.dayNight = save.dayNight ?? freshDayNight();
 		const s = save.dayNight;
 		const before = s.t;
@@ -1730,7 +1741,7 @@ export class TurbzGame {
 			this.save.hp -= damage;
 			if (this.save.hp <= 0) this.die();
 		}
-		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.wakeUp(); this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
+		if (this.sleeping && s.rest >= 100 && (!this.isNightNow() || this.lms)) { this.wakeUp(); this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
 	}
 	survivalAction(action) {
@@ -1895,6 +1906,20 @@ export class TurbzGame {
 	tickAutoplay(dt) {
 		const save = this.save;
 		if (this.dead || !this.world) return;
+		if (this.autoCare(dt)) return;
+		// Casters keep their distance: step back from a foe that closes to melee range.
+		{
+			const foe = this.fightTarget();
+			if (foe && !this.channel && Math.hypot(foe.x - save.x, foe.y - save.y) < 44) {
+				const kit = this.arsenal(save).filter((m) => this.isOffense(m));
+				const ranged = kit.filter((m) => attackForm(m) !== "melee").length;
+				if (ranged > kit.length - ranged && !foe.animal) {
+					const ang = Math.atan2(save.y - foe.y, save.x - foe.x);
+					this.stepToward(save.x + Math.cos(ang) * 60, save.y + Math.sin(ang) * 60, dt);
+					return;
+				}
+			}
+		}
 		// Autogrind rotates skills. Fishing never runs out of fish, so without a time limit it
 		// kept recasting forever and the other skills never got a turn.
 		// Only reset the timer when genuinely switching to a different skill — not when the
@@ -2143,13 +2168,84 @@ export class TurbzGame {
 			}
 			return this.walkTo(foe.x, foe.y);
 		}
-		const foe = this.nearestMob(save.x, save.y, 2600);
+		const foe = this.autoFoe(2600);
 		if (!foe) return false;
 		if (Math.hypot(foe.x - save.x, foe.y - save.y) < 70) {
 			this.path = [];
 			return true;
 		}
 		return this.walkTo(foe.x, foe.y);
+	}
+	/**
+	 * The foe autoplay goes after: close, worth the trip, and one it can beat. It skips bosses,
+	 * bounties, witches and hunters far above it, prefers an element its verses beat, and leaves
+	 * fleeing beasts alone unless it is training Hunting.
+	 */
+	autoFoe(range) {
+		const save = this.save;
+		const offense = this.arsenal(save).filter((m) => this.isOffense(m));
+		let best = null, bs = Infinity;
+		for (const m of this.mobs) {
+			if (!m.alive) continue;
+			const d = Math.hypot(m.x - save.x, m.y - save.y);
+			if (d > range) continue;
+			const gap = (m.level ?? 1) - save.level;
+			const big = m.boss || m.bounty || m.hunter || (m.witch && !m.party);
+			if (big && (gap > 2 || save.hp < this.maxHp() * 0.8)) continue;
+			if (gap > 8) continue;
+			if (m.animal && this.grind !== "hunting" && this.grind !== "skinning") continue;
+			const edge = offense.reduce((n, mv) => Math.max(n, typeChart(mv.type, m.type)), 1);
+			const score = d * (edge > 1 ? 0.7 : edge < 1 ? 1.3 : 1) + Math.max(0, gap) * 60 + (m.rarity ?? 0) * 25;
+			if (score < bs) { bs = score; best = m; }
+		}
+		return best ?? this.nearestMob(save.x, save.y, Math.min(range, 400));
+	}
+	/**
+	 * Autoplay looks after itself before it grinds: drinks a potion when hurt, backs off and rests
+	 * (TurboHunt heals out of combat) until it is healthy again, spends skill points on its equipped
+	 * verses, and sells its gathered materials when the pack fills up.
+	 */
+	autoCare(dt) {
+		const save = this.save;
+		const hp = save.hp / Math.max(1, this.maxHp());
+		this.autoCareT = (this.autoCareT ?? 0) - dt;
+		this.potionCd = Math.max(0, (this.potionCd ?? 0) - dt);
+		if (hp < 0.45 && this.potionCd <= 0 && this.inFight()) {
+			const id = (save.bag.big_potion ?? 0) > 0 && hp < 0.3 ? "big_potion" : (save.bag.potion ?? 0) > 0 ? "potion" : (save.bag.big_potion ?? 0) > 0 ? "big_potion" : null;
+			if (id && !this.itemProblem(ITEM_BY_ID[id])) { this.useBag(id); this.potionCd = 6; }
+		}
+		if (this.rules !== "hardcore") {
+			if (hp < 0.4) this.autoRest = true;
+			if (this.autoRest) {
+				if (hp >= 0.85) { this.autoRest = false; this.say("Rested. Back to it."); }
+				else {
+					const threat = this.nearestMob(save.x, save.y, 220);
+					if (threat) {
+						const ang = Math.atan2(save.y - threat.y, save.x - threat.x);
+						this.stepToward(save.x + Math.cos(ang) * 90, save.y + Math.sin(ang) * 90, dt);
+					} else { this.path = []; this.dest = null; }
+					this.grind = "resting";
+					return true;
+				}
+			}
+		}
+		if (this.autoCareT > 0) return false;
+		this.autoCareT = 6;
+		// Spend skill points on the equipped verses, lowest rank first (strongest attacks break ties).
+		let guard = 20;
+		while ((save.skillPoints ?? 0) > 0 && guard-- > 0) {
+			const kit = this.arsenal(save);
+			if (!kit.length) break;
+			const pickMove = kit.slice().sort((a, b) => (save.abilityRanks[a.id] ?? 1) - (save.abilityRanks[b.id] ?? 1) || b.power - a.power)[0];
+			if (!pickMove || !spendAbilityPoint(save, pickMove.id)) break;
+			this.say(`Autoplay ranked up ${pickMove.name} to ${save.abilityRanks[pickMove.id]}.`);
+		}
+		// Sell gathered materials when the pack is heavy (TurboHunt only; Hardcore keeps its supplies).
+		if (this.rules !== "hardcore") {
+			const mats = ["meat", "leather", "mushroom", "ore", "timber", "fish"].reduce((n, k) => n + (save.bag[k] ?? 0), 0);
+			if (mats >= 40) this.sellMats();
+		}
+		return false;
 	}
 	nearestNode(node) {
 		const save = this.save;
@@ -2928,6 +3024,7 @@ export class TurbzGame {
 			this.float(mob.x, mob.y - 36, "MISS", "#e8dcc4");
 			return;
 		}
+		if (mob.rival && this.rivalDodge(mob)) return;
 		const pure = form === "spell";
 		const tm = pure ? 1 : typeChart(move.type, mob.type);
 		if (!pure && tm === 0) {
@@ -2990,6 +3087,7 @@ export class TurbzGame {
 	killMob(mob) {
 		const save = this.save;
 		if (!save || !mob?.alive || this.dead) return;
+		if (mob.rival) this.lmsEliminate(mob, "you");
 		mob.alive = false;
 		mob.hp = 0;
 		this.mapQuestEvent({ t: "kill", species: mob.species });
@@ -3800,6 +3898,7 @@ export class TurbzGame {
 				this.killMob(m);
 				continue;
 			}
+			if (m.rival) { this.tickRival(m, dt); continue; }
 			if (m.status.some((s) => s.id === "sleep")) continue;
 			const dx = save.x - m.x;
 			const dy = save.y - m.y;
@@ -3835,6 +3934,7 @@ export class TurbzGame {
 					if (!this.wantsFight(m, d) && !m.status.some((st) => st.id === "root")) { this.orbitMaster(m, lead, dt); continue; }
 				}
 			}
+			if (m.foeRival && this.lms && this.mobVsRival(m, dt, d)) continue;
 			const aggro = this.wantsFight(m, d);
 			if (aggro) {
 				this.combat = 2;
@@ -3982,6 +4082,7 @@ export class TurbzGame {
 	}
 	/** One clean hit from this foe before the hunter's ward, shell, guard and dodges. */
 	foeHitRaw(m, move, dist = 99) {
+		if (m.rival) return this.rivalHitRaw(m, move);
 		const form = dist < 46 && (attackForm(move) === "melee" || m.animal) ? "melee" : attackForm(move);
 		const ref = this.powerRef ?? this.measurePlayer();
 		if (!(m.frac > 0)) this.scaleMob(m);
@@ -4103,6 +4204,7 @@ export class TurbzGame {
 	}
 	die() {
 		const save = this.save;
+		if (this.lms) { this.lmsDefeat?.(); return; }
 		if (this.rules !== "hardcore" && (this.shrine || save.map !== "world")) {
 			this.knockOut();
 			return;
@@ -5059,7 +5161,7 @@ export class TurbzGame {
 	openMapStory() {
 		const file = this.customFile;
 		const save = this.save;
-		if (!file || !save || !file.intro) return;
+		if (!file || !save || !file.intro || this.lms) return;
 		save.mapSeen = save.mapSeen ?? [];
 		if (save.mapSeen.includes(file.id)) return;
 		save.mapSeen.push(file.id);
@@ -6638,6 +6740,7 @@ export class TurbzGame {
 	}
 	toTitle() {
 		this.persist();
+		this.endLms?.();
 		this.room?.close();
 		this.room = null;
 		this.role = "solo";
@@ -7100,6 +7203,8 @@ export class TurbzGame {
 	}
 	persist() {
 		if (!this.save) return;
+		// Last Man Standing is a match, not a save: nothing is written, so your Hardcore witch is untouched.
+		if (this.lms) return;
 		for (const g of this.save.gear) this.noteFound(g);
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
 		const localJson = JSON.stringify(this.save);
@@ -7905,6 +8010,7 @@ export class TurbzGame {
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny })),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
 			chest: this.chestView(),
+			lms: this.lmsView?.() ?? null,
 			jarLeft: Math.ceil(save.jarLeft ?? 0),
 			accountScore: !slow ? snap.accountScore : save.accountScore ?? 0,
 			turn: this.duel ? (this.duel.phase === "yours" ? "Your verse" : `${this.duel.lead?.name ?? "They"} readies`) : this.turnQ[0] ? (this.turnQ[0].side === "you" ? "Your turn" : this.turnQ[0].side === "spirit" ? "Spirit" : "Enemy") : "",

@@ -129,7 +129,7 @@ export type ArenaCard = {
   marked: boolean;
 };
 
-export type CircleMode = "classic" | "hunger";
+export type CircleMode = "classic" | "war";
 export type CamMode = "team" | "free";
 export type TeamZone = { tx: number; ty: number; tw: number; th: number };
 export type ArenaTeamSnap = {
@@ -153,6 +153,8 @@ export type ArenaSnap = {
   maps: { id: string; name: string }[];
   teamCount: number;
   perTeam: number;
+  /** War: soldiers per army (10–100). */
+  warSize: number;
   placing: boolean;
   placeFor: number;
   focus: number;
@@ -209,6 +211,9 @@ type Fighter = {
   lastX: number;
   lastY: number;
   path: { x: number; y: number }[];
+  /** War: which squad of ten, and the place in it. */
+  squad: number;
+  rank: number;
   hair: number;
   skin: number;
   tall: number;
@@ -466,6 +471,40 @@ function buildMap(rng: Rng): { grid: Uint8Array; w: number; h: number } {
   return { grid, w, h };
 }
 
+/** War: a wide battlefield with groves for cover, a muddy ford and a few traps. */
+function buildWarMap(rng: Rng): { grid: Uint8Array; w: number; h: number } {
+  const w = 160;
+  const h = 96;
+  const grid = new Uint8Array(w * h);
+  const at = (x: number, y: number) => y * w + x;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[at(x, y)] = 1;
+  // Groves and rocks, kept out of the two deployment strips.
+  for (let i = 0; i < 70; i++) {
+    const cx = 22 + irand(rng, w - 44);
+    const cy = 3 + irand(rng, h - 6);
+    const r = 1 + irand(rng, 3);
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (x < 22 || x > w - 23 || y < 2 || y > h - 3) continue;
+      if (dx * dx + dy * dy <= r * r && rng() < 0.8) grid[at(x, y)] = 1;
+    }
+  }
+  // A muddy ford across the middle.
+  const mid = (w >> 1) + irand(rng, 9) - 4;
+  for (let y = 1; y < h - 1; y++) {
+    const wob = Math.round(Math.sin(y * 0.18) * 3);
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = mid + wob + dx;
+      if (grid[at(x, y)] !== 1) grid[at(x, y)] = 3;
+    }
+  }
+  for (let i = 0; i < 26; i++) {
+    const x = 24 + irand(rng, w - 48), y = 2 + irand(rng, h - 4);
+    if (grid[at(x, y)] === 0) grid[at(x, y)] = 2;
+  }
+  return { grid, w, h };
+}
+
 function reachable(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1: number, y1: number): boolean {
   const q = [y0 * w + x0];
   const seen = new Uint8Array(w * h);
@@ -635,12 +674,17 @@ export class WitchArena {
   phase: ArenaSnap["phase"] = "setup";
   note = "Pick a map, plant the packs, and let them fight.";
   speed = 1;
-  mode: CircleMode = "hunger";
+  mode: CircleMode = "classic";
+  warSize = 40;
+  /** War: army centres, refreshed each step. */
+  private centres: { x: number; y: number; n: number }[] = [];
+  /** Path searches left this step (War keeps big armies fast). */
+  private pathBudget = 99;
   camMode: CamMode = "team";
   mapId = "default";
   mapName = "Default circle";
-  teamCount = 4;
-  perTeam = 3;
+  teamCount = 2;
+  perTeam = 6;
   zones: (TeamZone | null)[] = [];
   placing = false;
   placeFor = 0;
@@ -680,13 +724,14 @@ export class WitchArena {
     phase: "setup",
     note: "",
     speed: 1,
-    mode: "hunger",
+    mode: "classic",
     cam: "team",
     mapId: "default",
     mapName: "Default circle",
     maps: [],
-    teamCount: 4,
-    perTeam: 3,
+    teamCount: 2,
+    perTeam: 6,
+    warSize: 40,
     placing: false,
     placeFor: 0,
     focus: 0,
@@ -717,7 +762,7 @@ export class WitchArena {
     this.lastT = performance.now();
     this.resize();
     this.loadMap("default");
-    this.note = "Pick a map, or keep the default circle. Then choose the packs.";
+    this.note = "Classic: six against six. War: two armies of up to a hundred each.";
     this.bind();
     this.publish();
     const loop = (t: number) => {
@@ -768,6 +813,7 @@ export class WitchArena {
   }
 
   setTeamCount(n: number): void {
+    if (this.mode === "war" || this.mode === "classic") n = 2;
     this.teamCount = Math.max(2, Math.min(SQUADS.length, Math.round(n) || 2));
     this.zones = Array.from({ length: this.teamCount }, (_, i) => this.zones[i] ?? null);
     if (this.placeFor >= this.teamCount) this.placeFor = 0;
@@ -776,15 +822,33 @@ export class WitchArena {
   }
 
   setPerTeam(n: number): void {
-    this.perTeam = Math.max(1, Math.min(6, Math.round(n) || 1));
+    if (this.mode === "war") return this.setWarSize(n);
+    this.perTeam = 6;
+    this.publish();
+  }
+
+  /** War: soldiers per army, 10 to 100. */
+  setWarSize(n: number): void {
+    this.warSize = Math.max(10, Math.min(100, Math.round(n) || 10));
+    if (this.mode === "war") this.perTeam = this.warSize;
     this.publish();
   }
 
   setMode(mode: CircleMode): void {
     this.mode = mode;
-    this.note = mode === "hunger"
-      ? "Hunger Games. Packs roam, drill, or hunt. You can follow a team or fly the camera."
-      : "Classic. Packs stay together and hunt until one is left.";
+    this.teamCount = 2;
+    this.zones = [null, null];
+    if (mode === "war") {
+      this.perTeam = this.warSize;
+      if (this.mapId === "default") this.loadMap("battlefield");
+      this.note = "War. Two armies in squads of ten march in formation, then break into a brawl. Set the army size (up to 100 a side).";
+    } else {
+      this.perTeam = 6;
+      if (this.mapId === "battlefield") this.loadMap("default");
+      this.note = "Classic. Six against six; the last team standing wins.";
+    }
+    this.phase = "setup";
+    this.fighters = [];
     this.publish();
   }
 
@@ -837,6 +901,16 @@ export class WitchArena {
 
   autoZones(): void {
     if (!this.world) this.loadMap(this.mapId);
+    if (this.mode === "war") {
+      // Two deployment strips on opposite flanks.
+      const depth = Math.max(4, Math.min(12, Math.floor(this.gw / 12)));
+      const th = Math.max(6, this.gh - 8);
+      this.zones[0] = { tx: 2, ty: 4, tw: depth, th };
+      this.zones[1] = { tx: this.gw - 2 - depth, ty: 4, tw: depth, th };
+      this.note = "Armies deploy on opposite flanks. Move them, or start.";
+      this.publish();
+      return;
+    }
     const n = this.teamCount;
     for (let i = 0; i < n; i++) {
       const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
@@ -861,19 +935,23 @@ export class WitchArena {
     this.squads = [];
     for (let t = 0; t < this.teamCount; t++) {
       const zone = this.zones[t]!;
-      const spots = this.spotsIn(zone, this.perTeam);
+      const spots = this.mode === "war" ? this.ranksIn(zone, this.perTeam, t === 0 ? 1 : -1) : this.spotsIn(zone, this.perTeam);
       this.squads.push({
-        intent: this.mode === "classic" ? "hunt" : "train",
+        intent: "hunt",
         until: 3 + Math.random() * 4,
         gx: (zone.tx + zone.tw / 2) * TILE,
         gy: (zone.ty + zone.th / 2) * TILE,
         told: false,
       });
       for (let i = 0; i < this.perTeam; i++) {
-        const level = this.mode === "hunger" ? 6 + irand(rng, 8) : 10 + irand(rng, 14);
+        const level = this.mode === "war" ? 8 + irand(rng, 9) : 10 + irand(rng, 14);
         const w = rollWitch(rng, level);
+        // War: soldiers only (no summoned spirits), so a hundred a side stays a hundred a side.
+        if (this.mode === "war") { w.role = "witch"; w.spirits = []; }
         const spot = spots[i % spots.length]!;
         this.spawnWitch(w, t, spot.tx, spot.ty, rng);
+        const body = this.fighters[this.fighters.length - 1 - (w.role === "summoner" ? w.spirits.length : 0)];
+        if (body) { body.squad = Math.floor(i / 10); body.rank = i % 10; }
       }
     }
     this.phase = "fight";
@@ -884,9 +962,9 @@ export class WitchArena {
     this.camX = this.wantX;
     this.camY = this.wantY;
     this.zoom = this.wantZ;
-    this.note = this.mode === "hunger"
-      ? "Packs will drill or hunt. Follow a team, or fly free."
-      : "Last pack standing.";
+    this.note = this.mode === "war"
+      ? `War: ${this.perTeam} against ${this.perTeam}. Squads march in formation, then the lines break.`
+      : "Six against six. Last team standing.";
     this.publish();
     this.resize();
   }
@@ -1007,7 +1085,7 @@ export class WitchArena {
     const ty = Math.floor(w.y / TILE);
     if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return;
     const i = Math.max(0, Math.min(this.teamCount - 1, this.placeFor));
-    this.zones[i] = this.clampZone(tx, ty);
+    this.zones[i] = this.mode === "war" ? this.warZone(tx, ty) : this.clampZone(tx, ty);
     const next = this.zones.findIndex((z, idx) => idx !== i && !z);
     this.placeFor = next >= 0 ? next : (i + 1) % this.teamCount;
     this.note = `${SQUADS[i]!.name} is planted. ${this.zones.every(Boolean) ? "All pads are set." : `Next: ${SQUADS[this.placeFor]!.name}.`}`;
@@ -1021,6 +1099,12 @@ export class WitchArena {
     return { tx: x, ty: y, tw: span, th: span };
   }
 
+  private warZone(tx: number, ty: number): TeamZone {
+    const tw = Math.max(4, Math.min(12, Math.floor(this.gw / 12)));
+    const th = Math.max(6, Math.min(this.gh - 4, Math.ceil(this.warSize / tw) + 6));
+    return { tx: Math.max(1, Math.min(this.gw - tw - 1, tx - (tw >> 1))), ty: Math.max(1, Math.min(this.gh - th - 1, ty - (th >> 1))), tw, th };
+  }
+
   private ensureZones(): void {
     let missing = false;
     for (let i = 0; i < this.teamCount; i++) if (!this.zones[i]) missing = true;
@@ -1028,11 +1112,12 @@ export class WitchArena {
   }
 
   private loadMap(id: string): void {
-    const file = id === "default" ? null : savedMaps().find((m) => m.id === id) ?? null;
+    const file = id === "default" || id === "battlefield" ? null : savedMaps().find((m) => m.id === id) ?? null;
     const useDefault = !file;
-    this.mapId = useDefault ? "default" : file.id;
+    const war = id === "battlefield";
+    this.mapId = useDefault ? (war ? "battlefield" : "default") : file.id;
     if (useDefault) {
-      const built = buildMap(mulberry32(0xc1ec1e));
+      const built = war ? buildWarMap(mulberry32((Date.now() & 0xffff) ^ 0xba771e)) : buildMap(mulberry32(0xc1ec1e));
       this.grid = built.grid;
       this.gw = built.w;
       this.gh = built.h;
@@ -1043,7 +1128,7 @@ export class WitchArena {
         return { floor: 0, biome: 2, block: 0, decor: 0 };
       });
       this.world = { w: built.w, h: built.h, tiles, spawns: [], cache: null };
-      this.mapName = "Default circle";
+      this.mapName = war ? "Battlefield" : "Default circle";
     } else {
       const world = mapToWorld(file);
       this.world = world;
@@ -1079,6 +1164,26 @@ export class WitchArena {
     this.camY = Math.max(0, Math.min(mh, this.camY));
   }
 
+  /** War: soldiers in ranks of ten, front rank facing the enemy. */
+  private ranksIn(zone: TeamZone, n: number, facing: number): { tx: number; ty: number }[] {
+    const out: { tx: number; ty: number }[] = [];
+    const cols = Math.max(1, Math.ceil(n / Math.max(1, zone.th - 1)));
+    const front = facing > 0 ? zone.tx + zone.tw - 1 : zone.tx;
+    for (let i = 0; i < n; i++) {
+      const col = Math.floor(i / Math.max(1, zone.th - 1)) % Math.max(cols, zone.tw);
+      const row = i % Math.max(1, zone.th - 1);
+      let tx = front - col * facing;
+      let ty = zone.ty + row;
+      if ((this.grid[ty * this.gw + tx] ?? 1) === 1) {
+        const near = this.spotsIn({ tx: tx - 1, ty: ty - 1, tw: 3, th: 3 }, 1)[0]!;
+        tx = near.tx;
+        ty = near.ty;
+      }
+      out.push({ tx, ty });
+    }
+    return out;
+  }
+
   private spotsIn(zone: TeamZone, n: number): { tx: number; ty: number }[] {
     const open: { tx: number; ty: number }[] = [];
     for (let y = zone.ty; y < zone.ty + zone.th; y++) {
@@ -1109,13 +1214,13 @@ export class WitchArena {
   }
 
   private publish(): void {
-    const maps = [{ id: "default", name: "Default circle" }, ...savedMaps().map((m) => ({ id: m.id, name: m.name }))];
+    const maps = [{ id: "default", name: "Default circle" }, { id: "battlefield", name: "Battlefield (large)" }, ...savedMaps().map((m) => ({ id: m.id, name: m.name }))];
     const fighting = this.phase === "fight" || this.phase === "result";
     const teams: ArenaTeamSnap[] = Array.from({ length: this.teamCount }, (_, id) => {
       const pack = this.fighters.filter((f) => f.side === id && f.role !== "spirit");
       const alive = pack.filter((f) => f.alive);
       const level = alive.length ? Math.round(alive.reduce((s, f) => s + f.level, 0) / alive.length) : 0;
-      const intent = fighting ? (this.squads[id]?.intent === "train" ? "Drilling" : "Hunting") : this.zones[id] ? "Placed" : "No pad";
+      const intent = fighting ? (this.mode === "war" ? (this.centres[id] && this.centres[1 - id] && Math.hypot(this.centres[id]!.x - this.centres[1 - id]!.x, this.centres[id]!.y - this.centres[1 - id]!.y) < 360 ? "Clashing" : "Marching") : "Hunting") : this.zones[id] ? "Placed" : "No pad";
       return {
         id,
         name: SQUADS[id]!.name,
@@ -1139,6 +1244,7 @@ export class WitchArena {
       maps,
       teamCount: this.teamCount,
       perTeam: this.perTeam,
+      warSize: this.warSize,
       placing: this.placing,
       placeFor: this.placeFor,
       focus: this.focus,
@@ -1281,13 +1387,23 @@ export class WitchArena {
       skin: w.skin,
       tall: 1,
       xp: 0,
+      squad: 0,
+      rank: 0,
     };
   }
 
   private step(dt: number): void {
     this.age += dt;
     this.clock += dt;
-    this.drill(dt);
+    this.pathBudget = this.mode === "war" ? 10 : 99;
+    this.centres = Array.from({ length: this.teamCount }, () => ({ x: 0, y: 0, n: 0 }));
+    for (const f of this.fighters) {
+      if (!f.alive || f.role === "spirit") continue;
+      const c = this.centres[f.side];
+      if (!c) continue;
+      c.x += f.x; c.y += f.y; c.n += 1;
+    }
+    for (const c of this.centres) if (c.n) { c.x /= c.n; c.y /= c.n; }
     for (const f of this.fighters) {
       if (!f.alive) continue;
       f.hurt = Math.max(0, f.hurt - dt * 3);
@@ -1327,7 +1443,7 @@ export class WitchArena {
   }
 
   private drill(dt: number): void {
-    if (this.mode !== "hunger") return;
+    return;
     for (let s = 0; s < this.squads.length; s++) {
       const squad = this.squads[s]!;
       if (squad.intent !== "train") continue;
@@ -1370,6 +1486,10 @@ export class WitchArena {
       }
       return;
     }
+    if (this.mode === "war") {
+      this.thinkWar(f, allies, pool);
+      return;
+    }
     const witches = allies.filter((o) => o.role !== "spirit");
     const leader = witches[0];
     if (!leader) return;
@@ -1387,7 +1507,7 @@ export class WitchArena {
       this.seek(f, squad.gx, squad.gy);
       return;
     }
-    if (this.mode === "classic" || squad.intent === "hunt") {
+    if (squad.intent === "hunt") {
       const target = this.pickTarget(f, pool);
       const move = this.bestMove(f, target, false);
       const reach = attackRange(move);
@@ -1405,26 +1525,57 @@ export class WitchArena {
     this.seek(f, squad.gx, squad.gy);
   }
 
-  private retarget(leader: Fighter, squad: Squad, foes: Fighter[]): void {
-    const near = foes.length ? nearest(foes, leader.x, leader.y) : null;
-    const nd = near ? Math.hypot(near.x - leader.x, near.y - leader.y) : 1e9;
-    if (this.mode === "classic") {
-      squad.intent = "hunt";
-      squad.until = this.age + 2.2;
+  /**
+   * War brain. Out of contact, each squad of ten marches on the enemy army in formation behind its
+   * captain (ranks of five, front rank toward the foe). In contact (a foe within 260 px) every
+   * soldier engages: casters hold range, melee close in, and targets spread so no one is mobbed
+   * by forty while the rest stand idle.
+   */
+  private thinkWar(f: Fighter, allies: Fighter[], foes: Fighter[]): void {
+    if (!foes.length) return;
+    const near = nearest(foes, f.x, f.y);
+    const nd = Math.hypot(near.x - f.x, near.y - f.y);
+    if (nd < 260 || f.hp / f.max < 0.999) {
+      // Spread out: prefer the near foe with the fewest of us already on it.
+      let best = near, bestS = 1e9;
+      for (const o of foes) {
+        const d = Math.hypot(o.x - f.x, o.y - f.y);
+        if (d > nd + 140) continue;
+        const crowd = allies.filter((a) => a.path.length && Math.hypot(a.x - o.x, a.y - o.y) < 70).length;
+        const s = d + crowd * 45 + (o.hp / o.max) * 60;
+        if (s < bestS) { bestS = s; best = o; }
+      }
+      const move = this.bestMove(f, best, false);
+      const reach = attackRange(move);
+      const form = attackForm(move);
+      const d = Math.hypot(best.x - f.x, best.y - f.y);
+      if (form !== "melee" && d <= reach * 0.85 && d > reach * 0.4 && this.sees(f.x, f.y, best.x, best.y)) { f.path = []; return; }
+      const ang = Math.atan2(f.y - best.y, f.x - best.x);
+      const hold = form === "melee" ? 24 : Math.min(reach * 0.7, 120);
+      this.seek(f, best.x + Math.cos(ang) * hold, best.y + Math.sin(ang) * hold);
       return;
     }
-    const hurt = leader.hp / leader.max < 0.4;
-    if (hurt) squad.intent = "train";
-    else if (nd < 220) squad.intent = Math.random() < 0.74 ? "hunt" : "train";
-    else squad.intent = Math.random() < 0.42 ? "hunt" : "train";
-    squad.until = this.age + 7 + Math.random() * 8;
-    squad.told = false;
-    if (squad.intent === "train" || !near) {
-      const spot = this.roamSpot(leader);
-      squad.gx = spot.x;
-      squad.gy = spot.y;
+    const enemy = this.centres[1 - f.side] ?? { x: near.x, y: near.y, n: 1 };
+    const squad = allies.filter((a) => a.role !== "spirit" && a.squad === f.squad).sort((a, b) => a.rank - b.rank);
+    const captain = squad[0] ?? f;
+    const dir = enemy.x >= captain.x ? 1 : -1;
+    if (captain === f) {
+      // The captain marches toward the enemy army, drifting toward its centre line.
+      const tx = f.x + dir * 120;
+      const ty = f.y + Math.max(-60, Math.min(60, (enemy.y - f.y) * 0.25));
+      this.seek(f, tx, ty);
+      return;
     }
-    this.float(leader.x, leader.y - 42, squad.intent === "train" ? "drill" : "hunt", this.color(leader.side));
+    const slot = Math.max(1, squad.indexOf(f));
+    const row = slot % 5;
+    const col = Math.floor(slot / 5);
+    this.seek(f, captain.x - dir * (col + 1) * 26, captain.y + (row - 2) * 24);
+  }
+
+  private retarget(_leader: Fighter, squad: Squad, _foes: Fighter[]): void {
+    // Classic packs always hunt (the old drill/roam mode is gone).
+    squad.intent = "hunt";
+    squad.until = this.age + 2.2;
   }
 
   private roamSpot(f: Fighter): { x: number; y: number } {
@@ -1525,6 +1676,12 @@ export class WitchArena {
       f.path = [{ x, y }];
       return;
     }
+    if (this.pathBudget <= 0) {
+      // Out of path searches this step: head straight there; the next think will path properly.
+      f.path = [{ x, y }];
+      return;
+    }
+    this.pathBudget -= 1;
     f.path = route(this.grid, this.gw, this.gh, sx, sy, gx, gy, fear);
   }
 
@@ -1721,7 +1878,7 @@ export class WitchArena {
   private maybeEnd(): void {
     const living = new Set<number>();
     for (const f of this.fighters) if (f.alive && f.role !== "spirit") living.add(f.side);
-    const cap = this.mode === "classic" ? 480 : 360;
+    const cap = this.mode === "war" ? 900 : 480;
     if (living.size > 1 && this.age < cap) return;
     if (living.size === 0) {
       this.finish("No one left standing.");
@@ -1770,7 +1927,7 @@ export class WitchArena {
     const fit = Math.min(this.viewW, this.viewH) / (span + 240);
     this.wantX = (minX + maxX) / 2;
     this.wantY = (minY + maxY) / 2 - 8;
-    this.wantZ = Math.max(0.85, Math.min(1.5, fit));
+    this.wantZ = Math.max(this.mode === "war" ? 0.3 : 0.85, Math.min(1.5, fit));
     const k = Math.min(1, 0.12);
     this.camX += (this.wantX - this.camX) * k;
     this.camY += (this.wantY - this.camY) * k;
@@ -1863,7 +2020,7 @@ export class WitchArena {
       ctx.fillRect(f.x - bar / 2 - 1, by - 1, bar + 2, 6);
       ctx.fillStyle = this.color(f.side);
       ctx.fillRect(f.x - bar / 2, by, bar * Math.max(0, f.hp / f.max), 4);
-      if (f.role !== "spirit") drawShadowName(ctx, `${f.name} ${f.level}`, f.x, by - 12, this.color(f.side));
+      if (f.role !== "spirit" && (this.mode !== "war" || this.zoom > 0.9)) drawShadowName(ctx, `${f.name} ${f.level}`, f.x, by - 12, this.color(f.side));
     }
     for (const b of this.beams) {
       const a = Math.max(0, Math.min(1, b.life * 3));

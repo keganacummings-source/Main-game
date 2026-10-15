@@ -15,6 +15,7 @@ import { ArenaScreen } from "@/components/arena-ui";
 import { Boards, ChatDock, DuelBanner, Hub, Options } from "@/components/hub-ui";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
+import { installLms } from "@/game/lms";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, LootPicker } from "@/components/inventory-ui";
 import { ContextMenu, CraftPanel, GameChat, LobbyPanel, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel } from "@/components/game-panels";
 import { useSnapPick, type Snap } from "@/components/use-snap";
@@ -89,7 +90,7 @@ function veilName(user: { id: string; displayName?: string | null; primaryEmail?
   return `w${tail}`.slice(0, 16);
 }
 
-type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer";
+type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms";
 
 function Hunt() {
   const acct = useStaticAccount();
@@ -118,6 +119,7 @@ function Hunt() {
     if (!canvas) return;
     const game = new TurbzGame(canvas);
     installBlackMarket(game);
+    installLms(game);
     gameRef.current = game;
     game.attachCloud((json) => {
       try {
@@ -177,6 +179,7 @@ function Hunt() {
             username={username}
             onHunt={() => { g()?.swapRules("hunt"); setScreen("hunt"); }}
             onCircle={() => setScreen("circle")}
+            onLms={() => setScreen("lms")}
             onHard={() => { g()?.swapRules("hardcore"); setScreen("hard"); }}
             onBoards={() => setScreen("boards")}
             onOptions={() => setScreen("options")}
@@ -219,6 +222,23 @@ function Hunt() {
               setCreate(false);
             }}
           />
+        )}
+        {screen === "lms" && !playing && (
+          <Screen kicker="LAST MAN STANDING" title="One hundred witches. One survivor." wide>
+            <div className="ui-stack" data-testid="lms-screen">
+              <p className="text-dim">You and 99 rival witches wake at level 1, spread evenly across Veilreach. The towns are empty and the quests are gone; it is always night and only ghosts walk. Hunger, thirst, rest, camps and chests work like Hardcore, and anyone can swim between continents. Rivals level up, gather, cook, brew, learn heals and wards, and once they wear a full set of gear they hunt everyone else, you included. The last witch alive wins. This match is not saved and does not touch your Hardcore witch.</p>
+              <Field label="Name">
+                <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
+              </Field>
+              <ClassPicker pick={pick} setPick={setPick} game={g()} />
+              <div className="screen-actions">
+                <button className="px-btn" onClick={() => setScreen("hub")}>Back</button>
+                <button className="px-btn px-btn-kyo" data-testid="lms-go" onClick={() => (g() as unknown as { startLms?: (...a: unknown[]) => void } | null)?.startLms?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true)}>
+                  Enter as {CLASSES.find((c) => c.id === pick.classId)?.name}
+                </button>
+              </div>
+            </div>
+          </Screen>
         )}
         {playing && screen !== "circle" && screen !== "boards" && screen !== "options" && <Play game={g()} username={username} />}
         {screen === "designer" && !playing && <DesignerMode onBack={() => setScreen("hub")} />}
@@ -415,6 +435,35 @@ const Overlays = memo(function Overlays({ game }: GameProp) {
       <ContextMenu game={game} />
       {panel === "rebirth" && <RebirthOverlay game={game} />}
       {panel === "loot" && <LootWin game={game} />}
+      <LmsHud game={game} />
+    </>
+  );
+});
+
+/** Last Man Standing: who is left, your kills, the kill feed, and the end of the match. */
+const LmsHud = memo(function LmsHud({ game }: GameProp) {
+  const { lms } = useSnapPick(["lms"] as const);
+  if (!lms) return null;
+  return (
+    <>
+      <div className="lms-hud px-panel" data-testid="lms-hud">
+        <p className="font-display text-xs text-blood">LAST MAN STANDING</p>
+        <p><span className="text-kyo">{lms.alive}</span>/{lms.total} alive · kills <span className="text-kyo">{lms.kills}</span> · {lms.age}{lms.hunting ? ` · ${lms.hunting} hunting` : ""}</p>
+        {lms.nearest && <p className="text-dim">Nearest: {lms.nearest}</p>}
+        {lms.feed.map((f, i) => <p key={i} className="lms-feed">{f}</p>)}
+      </div>
+      {lms.over && (
+        <div className="loot-overlay" role="dialog" aria-label="Match over">
+          <div className="px-panel loot-panel" data-testid="lms-over">
+            <p className={`font-display text-sm ${lms.won ? "text-kyo" : "text-blood"}`}>{lms.won ? "VICTORY" : "YOU FELL"}</p>
+            <h2 className="font-display mt-2 text-sm">{lms.won ? "Last witch standing" : `Place #${lms.place} of ${lms.total}`}</h2>
+            <p className="mt-2">Kills {lms.kills} · survived {lms.age}</p>
+            <div className="screen-actions">
+              <button className="px-btn px-btn-kyo" onClick={() => game?.toTitle()}>Leave the match</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 });

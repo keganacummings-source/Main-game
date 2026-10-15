@@ -80,8 +80,30 @@ export function isBuiltinMap(id: string): boolean {
   return builtinMaps().some((m) => m.id === id);
 }
 
+/** Last Man Standing plays on Veilreach with every NPC, quest, story, door and ferry taken out. */
+export const LMS_MAP_ID = "lms";
+let lmsCache: MapFile | null = null;
+export function lmsWorldFile(): MapFile | null {
+  if (lmsCache) return lmsCache;
+  const base = baseWorldFile();
+  if (!base) return null;
+  lmsCache = {
+    ...base,
+    id: LMS_MAP_ID,
+    name: "Veilreach · Last Man Standing",
+    npcs: [],
+    quests: [],
+    intro: "",
+    tiles: base.tiles.map((t) => (t.portal ? { ...t, portal: undefined } : t)),
+    // Only resource nodes stay: no boards, shrines, hearths, shops or dungeon doors.
+    interactables: (base.interactables ?? []).filter((it) => it.kind === "node"),
+  };
+  return lmsCache;
+}
+
 /** A designer map saved on this device (wins, so your own edits of a world are what you play), a playable world, or a hidden built-in map. */
 export function findMapFile(id: string): MapFile | undefined {
   if (id === "veilreach") return baseWorldFile() ?? undefined;
+  if (id === LMS_MAP_ID) return lmsWorldFile() ?? undefined;
   return savedMaps().find((m) => m.id === id) ?? playable.get(id) ?? builtinMaps().find((m) => m.id === id);
 }

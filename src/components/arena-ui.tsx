@@ -54,53 +54,44 @@ export function ArenaScreen(props: {
               <select value={snap.mapId} onChange={(e) => arena()?.setMap(e.target.value)}>
                 {snap.maps.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id === "default" ? "Default" : m.name}
+                    {m.name}
                   </option>
                 ))}
               </select>
             </label>
-            <div className="mt-3 flex flex-wrap gap-3">
-              <label className="arena-field">
-                Teams
-                <input
-                  type="number"
-                  min={2}
-                  max={8}
-                  value={snap.teamCount}
-                  onChange={(e) => arena()?.setTeamCount(Number(e.target.value))}
-                />
-              </label>
-              <label className="arena-field">
-                Witches each
-                <input
-                  type="number"
-                  min={1}
-                  max={6}
-                  value={snap.perTeam}
-                  onChange={(e) => arena()?.setPerTeam(Number(e.target.value))}
-                />
-              </label>
-            </div>
             <div className="arena-modes mt-3">
-              <button
-                className={`px-btn ${snap.mode === "hunger" ? "arena-mode-on" : ""}`}
-                type="button"
-                onClick={() => arena()?.setMode("hunger")}
-              >
-                Hunger Games
-              </button>
               <button
                 className={`px-btn ${snap.mode === "classic" ? "arena-mode-on" : ""}`}
                 type="button"
                 onClick={() => arena()?.setMode("classic")}
               >
-                Classic
+                Classic · 6v6
+              </button>
+              <button
+                className={`px-btn ${snap.mode === "war" ? "arena-mode-on" : ""}`}
+                type="button"
+                onClick={() => arena()?.setMode("war")}
+              >
+                War
               </button>
             </div>
+            {snap.mode === "war" && (
+              <label className="arena-field mt-3">
+                Army size: {snap.warSize} vs {snap.warSize}
+                <input
+                  type="range"
+                  min={10}
+                  max={100}
+                  step={5}
+                  value={snap.warSize}
+                  onChange={(e) => arena()?.setWarSize(Number(e.target.value))}
+                />
+              </label>
+            )}
             <p className="mt-2 text-dim">
-              {snap.mode === "hunger"
-                ? "Packs stay together. They roam to drill their level, or break off to hunt another pack. Follow a team, or fly the camera."
-                : "Packs stay together and hunt until one pack is left."}
+              {snap.mode === "war"
+                ? "Two armies deploy on opposite flanks in squads of ten. They march in formation, then the lines break into one big brawl. Best on the Battlefield map."
+                : "Six witches against six. Each pack sticks together and hunts the other until one is left."}
             </p>
             <div className="mt-3 grid gap-2">
               <button className="px-btn px-btn-kyo" type="button" onClick={() => arena()?.armPlace()}>
@@ -163,7 +154,7 @@ export function ArenaScreen(props: {
           <div className="px-panel px-3 py-2">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-display text-xs text-kyo">
-                {snap.mode === "hunger" ? "Hunger Games" : "Classic"} · {snap.clock}
+                {snap.mode === "war" ? `War · ${snap.warSize}v${snap.warSize}` : "Classic · 6v6"} · {snap.clock}
               </span>
               <span className="text-dim">{snap.mapName}</span>
               <button className="px-btn" type="button" onClick={() => arena()?.setSpeed(snap.speed >= 4 ? 1 : snap.speed === 2 ? 4 : 2)}>
