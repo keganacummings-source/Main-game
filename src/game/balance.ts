@@ -38,10 +38,10 @@ export type EnemyTargets = {
   speedOffset: number;
 };
 
-type Row = { hits: number; frac: number; lv: number; spd: number };
+export type Row = { hits: number; frac: number; lv: number; spd: number };
 
 /** Standard mode. Hardcore multiplies these (see HARDCORE). */
-const BASE: Record<EnemyKind, Row> = {
+export const BASE: Record<EnemyKind, Row> = {
   animal: { hits: 2, frac: 0.035, lv: 0, spd: -2 },
   normal: { hits: 3, frac: 0.06, lv: 0, spd: -1 },
   minion: { hits: 2, frac: 0.025, lv: 1, spd: 0 },
@@ -166,10 +166,10 @@ export const MOB_ENCHANTS: Record<MobEnchantId, { name: string; about: string }>
 };
 export const MOB_ENCHANT_IDS = Object.keys(MOB_ENCHANTS) as MobEnchantId[];
 
-type Archetype = Partial<EnemyStats> & { bias?: MobEnchantId[]; forms?: ("melee" | "ranged" | "spell")[] };
+export type Archetype = Partial<EnemyStats> & { bias?: MobEnchantId[]; forms?: ("melee" | "ranged" | "spell")[] };
 
 /** Every element fights differently. */
-const TYPE_ARCHETYPE: Record<TypeId, Archetype> = {
+export const TYPE_ARCHETYPE: Record<TypeId, Archetype> = {
   normal: { forms: ["melee", "ranged"] },
   fire: { hp: 0.9, dmg: 1.18, crit: 0.06, bias: ["brutal", "frenzied"], forms: ["spell", "ranged"] },
   water: { hp: 1.12, dmg: 0.95, bias: ["regenerating", "spellward"], forms: ["ranged", "spell"] },
@@ -184,7 +184,7 @@ const TYPE_ARCHETYPE: Record<TypeId, Archetype> = {
 };
 
 /** Per-species twists layered on the element. */
-const SPECIES_ARCHETYPE: Record<string, Archetype> = {
+export const SPECIES_ARCHETYPE: Record<string, Archetype> = {
   onibi: { dmg: 1.1, bias: ["brutal"] },
   nobi: { hp: 0.8, speed: 1.25, bias: ["swift"] },
   hinotama: { dmg: 1.2, hp: 0.85 },

@@ -70,7 +70,7 @@ export type BoardEventDetail = { species?: string; type?: string; boss?: boolean
 
 // ── Generation ──────────────────────────────────────────────────────────────
 
-const KIND_WEIGHT: [BoardKind, number][] = [
+export const KIND_WEIGHT: [BoardKind, number][] = [
   ["kills", 14],
   ["kill_type", 16],
   ["kill_species", 18],
@@ -84,7 +84,7 @@ const KIND_WEIGHT: [BoardKind, number][] = [
 ];
 
 /** Count at level 1, normal tier. */
-const BASE_NEED: Record<BoardKind, number> = {
+export const BASE_NEED: Record<BoardKind, number> = {
   kills: 4,
   kill_type: 3,
   kill_species: 3,
@@ -98,7 +98,7 @@ const BASE_NEED: Record<BoardKind, number> = {
 };
 
 /** Kyo per unit at level 1. Bosses and catches are rare, so they pay a lot per unit. */
-const UNIT_KYO: Record<BoardKind, number> = {
+export const UNIT_KYO: Record<BoardKind, number> = {
   kills: 9,
   kill_type: 11,
   kill_species: 12,
@@ -111,14 +111,14 @@ const UNIT_KYO: Record<BoardKind, number> = {
   craft: 14,
 };
 
-const TIER_WEIGHT: [Tier, number][] = [
+export const TIER_WEIGHT: [Tier, number][] = [
   ["easy", 35],
   ["normal", 40],
   ["hard", 20],
   ["elite", 5],
 ];
-const TIER_NEED: Record<Tier, number> = { easy: 0.6, normal: 1, hard: 1.6, elite: 2.5 };
-const TIER_PAY: Record<Tier, number> = { easy: 0.9, normal: 1, hard: 1.25, elite: 1.6 };
+export const TIER_NEED: Record<Tier, number> = { easy: 0.6, normal: 1, hard: 1.6, elite: 2.5 };
+export const TIER_PAY: Record<Tier, number> = { easy: 0.9, normal: 1, hard: 1.25, elite: 1.6 };
 /** Skill XP for finishing, by tier. */
 export const TIER_XP: Record<Tier, number> = { easy: 12, normal: 18, hard: 28, elite: 45 };
 

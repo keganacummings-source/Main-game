@@ -1,0 +1,80 @@
+# Hardcore Survival
+
+**Hardcore** is TURBZ with teeth: one life, survival needs, nights, and enemies that keep growing. Everything here applies to Hardcore only. For the full rule comparison see [Game Modes](Game-Modes).
+
+## In short
+
+- **One life.** Any death ends the witch (your account progress stays).
+- **Healing only from verses.** No regeneration, potions don't heal, level-ups don't heal.
+- **You attack yourself.** Your witch doesn't auto-fight unless you turn on **Grind nodes** (Autogrind).
+- **Hunger, thirst and rest** drain over time. Empty bars hurt.
+- **Night** lasts 15 minutes and doubles enemy health and damage (and triples experience).
+- **Campfires** are safe zones. Build them, cook at them, sleep at them.
+- Enemies hit harder, have more health and traits, and **keep growing** with your level and every night you survive.
+
+## Survival bars
+
+Open **Survival** (**H**). All three start full (100).
+
+| Bar | Empties in | When empty |
+| --- | --- | --- |
+| **Hunger** | 30 min | −0.4 health per second |
+| **Thirst** | 20 min | −0.8 health per second |
+| **Rest** | 40 min | −0.2 health per second; under 15 rest you move 30% slower |
+
+### Food and water
+
+<!-- gen:food -->
+
+- Raw meat and fish must be **cooked** at a campfire first.
+- Water: stand beside water and **collect raw water** (2 s), then **purify** it at a campfire.
+- The **Eat** action picks the smallest meal that fills you up.
+
+## Campfires
+
+**Build a campfire** from the Survival panel with **3 logs**. You can't build one within 80 px of another.
+
+- **Safe zone:** nothing can enter the **15 × 15 tiles** around a campfire. Foes inside are pushed out, and their attacks on you there do nothing (**SAFE**).
+- **Cooking:** each recipe uses 1 log. See [Gathering and Crafting](Gathering-and-Crafting#campfire-recipes-hardcore).
+- **Sleeping:** sleep beside a campfire with no foes near. Sleeping restores rest, and at night it **skips to dawn** (a whole night in about 14 seconds). Food and water still drain. Being hit wakes you.
+- **Followers:** send your spirits and companions to **wait at a campfire**. Nothing can reach them there.
+
+Up to 100 campfires are remembered.
+
+## Building
+
+Press **F** for **build mode**:
+
+- Click a tile to place a **log wall** (1 log each, within 112 px of you).
+- Click a placed log to pick it back up (you get the log back).
+- Walls block movement for you and foes.
+
+Up to 800 logs can be placed.
+
+## Day and night
+
+- A day lasts **10 minutes**, a night **15 minutes**. The tracker shows the time left and the screen darkens at dusk.
+- At **night**, foes have **2× health** and deal **2× damage**, but give **3× experience**.
+- Nights survived raise the difficulty for the rest of the run (see Growth below).
+
+## Growth
+
+Hardcore enemies grow stronger as the run goes on:
+
+**Growth = 1 + 0.25% × your level + 4% × nights survived + 2% × bounty tier**, at most ×2.5.
+
+It multiplies enemy health and damage by its square root, and adds levels. See [Enemies](Enemies#growth).
+
+## Other Hardcore rules
+
+- Experience ×0.72; **skill experience ×2.4**.
+- Foes are 2 levels higher, with 20% more health, 35% harder hits and +1 trait.
+- They attack 15% more often, and wind up faster at high levels.
+- Foes catch up to new gear in about **3 minutes** instead of 5.
+- Bounty hunter waves every **60 s** instead of 90.
+- Spawns are never below your level − 1, and get extra levels as you level up (1 per 6 levels) and go deeper into rifts.
+- No evil witches.
+
+## The Green Cave
+
+At **level 30+**, the Black Market sometimes (40% of refreshes) sells a **Green Mushroom** for 300 + 15 × your level kyo. Eat it to wake in a **fresh copy** of the Green Cave: its own map, foes, nodes and quest, all reset each time. Find the door marked **Wake up** to return to where you were.
