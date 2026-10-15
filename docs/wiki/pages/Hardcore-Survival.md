@@ -22,7 +22,7 @@ Open **Survival** (**H**). All three start full (100).
 | **Thirst** | 20 min | −0.8 health per second |
 | **Rest** | 40 min | −0.2 health per second; under 15 rest you move 30% slower |
 
-The **Survival** skill slows all three bars (up to half speed). See [Leveling and Skills](Leveling-and-Skills#skills).
+The **Survival** skill slows all three bars. The old knee is half speed. Past that it still slows them, bending toward 82% slower, and the bars never stop draining. See [Leveling and Skills](Leveling-and-Skills#skills).
 
 ### Food and water
 

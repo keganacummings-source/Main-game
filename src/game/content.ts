@@ -1,3 +1,5 @@
+import { bend } from "./overmax";
+
 export type TypeId =
   | "normal"
   | "fire"
@@ -620,7 +622,7 @@ export const ENCHANTS: EnchantDef[] = [
   { id: "regen", name: "Afterglow", max: 20, unit: "flat", tag: "armor", gear: (n) => `Restore ${ (n * 0.4).toFixed(1) } health when a foe falls (Afterglow ${n} × 0.4).`, perk: { step: 1, max: 16, each: "+0.4 health whenever a foe falls" } },
   { id: "boss_bane", name: "Boss Bane", max: 28, unit: "%", tag: "weapon", gear: (n) => `+${n}% damage to bosses.`, perk: { step: 1, max: 20, each: "+1% damage to bosses" } },
   { id: "shroom_sense", name: "Shroom Sense", max: 30, unit: "%", gear: (n) => n >= 20 ? `Shroom Sense ${n}. At 20 or more, mushroom nodes drop one extra reagent.` : `Shroom Sense ${n}. At 20 or more, mushroom nodes drop one extra reagent. This piece is not there yet.`, perk: { step: 1, max: 24, each: "1 Shroom Sense. At 20 total, mushroom nodes drop one extra reagent" } },
-  { id: "echo_guard", name: "Echo Guard", max: 12, unit: "%", tag: "armor", gear: (n) => `${n}% chance to ignore an entire hit. All Echo Guard together cannot rise above 40%.`, perk: { step: 1, max: 10, each: "+1% chance to ignore an entire hit (the chance cannot rise above 40%)" } },
+  { id: "echo_guard", name: "Echo Guard", max: 12, unit: "%", tag: "armor", gear: (n) => `${n}% chance to ignore an entire hit. Past 40% combined, extra Echo Guard still helps but bends and never reaches 75%.`, perk: { step: 1, max: 10, each: "+1% chance to ignore an entire hit (past 40% it still climbs, but never reaches 75%)" } },
   { id: "spark_life", name: "Spark of Life", max: 40, unit: "flat", tag: "armor", gear: (n) => `+${n} maximum health.`, perk: { step: 2, max: 40, each: "+2 maximum health" } },
   { id: "type_edge", name: "Typed Edge", max: 16, unit: "%", tag: "weapon", gear: (n) => `+${n}% damage when the attack type matches a worn piece (Typed Edge is added as a fraction: ${n} ÷ 100).`, perk: { step: 1, max: 12, each: "+1% damage when your attack type matches a piece you are wearing" } },
   { id: "whetstone", name: "Whetstone", max: 220, unit: "flat", tag: "weapon", gear: (n) => `+${n} weapon damage, before level and skill multipliers.` },
@@ -631,15 +633,15 @@ export const ENCHANTS: EnchantDef[] = [
   { id: "execute", name: "Execute", max: 20, unit: "%", tag: "weapon", gear: (n) => `+${n}% damage to foes under 35% health.` },
   { id: "giant_bane", name: "Giant Bane", max: 20, unit: "%", tag: "weapon", gear: (n) => `+${n}% damage to foes above your level.` },
   { id: "last_stand", name: "Last Stand", max: 18, unit: "%", tag: "armor", gear: (n) => `+${n}% damage while you are under 40% health.` },
-  { id: "crit_force", name: "Crit Force", max: 18, unit: "%", tag: "weapon", gear: (n) => `Critical hits deal +${n}% extra damage. All Crit Force together cannot add more than 80%.` },
+  { id: "crit_force", name: "Crit Force", max: 18, unit: "%", tag: "weapon", gear: (n) => `Critical hits deal +${n}% extra damage. Past +80% combined, extra Crit Force still helps but bends and never reaches +97%.` },
   { id: "leech_edge", name: "Leech", max: 8, unit: "%", tag: "weapon", gear: (n) => `Heal for ${n}% of the damage you deal.` },
   { id: "armor_crack", name: "Armor Crack", max: 80, unit: "flat", tag: "weapon", gear: (n) => `Ranged hits ignore ${n} armor.` },
   { id: "plating", name: "Plating", max: 160, unit: "flat", tag: "armor", gear: (n) => `+${n} armor.` },
   { id: "vitality", name: "Vitality", max: 280, unit: "flat", tag: "armor", gear: (n) => `+${n} maximum health.` },
-  { id: "thorns", name: "Thorns", max: 10, unit: "%", tag: "armor", gear: (n) => `Return ${n}% of damage taken to the nearest foe. All Thorns together cannot return more than 35%.` },
+  { id: "thorns", name: "Thorns", max: 10, unit: "%", tag: "armor", gear: (n) => `Return ${n}% of damage taken to the nearest foe. Past 35% combined, extra Thorns still help but bend and never reach 60%.` },
   { id: "potion_sip", name: "Deep Sip", max: 16, unit: "%", tag: "relic", gear: (n) => `Potions restore ${n}% more health.` },
-  { id: "swift_step", name: "Swift Step", max: 12, unit: "%", gear: (n) => `+${n}% movement speed. All Swift Step together cannot rise above 45%.` },
-  { id: "focus", name: "Focus", max: 12, unit: "%", tag: "relic", gear: (n) => `Spell cooldowns are ${n}% shorter. All Focus together cannot shorten spells by more than 35%.` },
+  { id: "swift_step", name: "Swift Step", max: 12, unit: "%", gear: (n) => `+${n}% movement speed. Past +45% combined, extra Swift Step still helps but bends and never reaches +85%.` },
+  { id: "focus", name: "Focus", max: 12, unit: "%", tag: "relic", gear: (n) => `Spell cooldowns are ${n}% shorter. Past 35% combined, extra Focus still helps but bends and never reaches 70%.` },
   { id: "fortune", name: "Fortune", max: 24, unit: "%", tag: "relic", gear: (n) => `+${(n / 2).toFixed(1)}% gear drop chance, stacking with Loot Find (Fortune ${n} ÷ 200).` },
 ];
 
@@ -654,10 +656,15 @@ export function enchantText(roll: { id: string; power: number }): string {
 export function perkText(def: EnchantDef, power: number): string {
   const perk = def.perk;
   if (!perk) return def.gear(power);
-  const now = Math.max(0, Math.min(perk.max, Math.floor(power)));
-  const next = Math.min(perk.max, now + perk.step);
-  const cap = now >= perk.max ? ` Maxed at ${perk.max}.` : ` Next point raises it by ${perk.step}, to ${next}/${perk.max}.`;
-  return `Each point adds ${perk.each}. You have ${now}/${perk.max}.${cap} Kept on the account through death, a new witch, and Hardcore. Stacks with ${def.name} on gear.`;
+  const now = Math.max(0, Math.floor(power));
+  const over = now > perk.max;
+  const next = now + perk.step;
+  const cap = over
+    ? ` Overmax ${now} (the old max was ${perk.max}). Extra points still stack. Chance and reduction bonuses bend before they can break a fight.`
+    : now >= perk.max
+      ? ` At the old max of ${perk.max}. Another point overmaxes it and still stacks.`
+      : ` Next point raises it by ${perk.step}, to ${next}. The old max was ${perk.max}; past that, points still stack.`;
+  return `Each point adds ${perk.each}. You have ${now}.${cap} Kept on the account through death, a new witch, and Hardcore. Stacks with ${def.name} on gear.`;
 }
 
 export const QUALITIES: { id: QualityId; name: string; mult: number }[] = [
@@ -1010,52 +1017,55 @@ export const SKILLS = [
 export type SkillId = (typeof SKILLS)[number]["id"];
 
 export function skillNeed(level: number): number {
-  const lv = Math.max(1, Math.min(MAX_SKILL_LEVEL, level));
+  const lv = Math.max(1, Math.floor(level) || 1);
   const early = 40 * Math.pow(1.12, Math.min(lv - 1, 30));
   const tail = 1 + Math.max(0, lv - 30) * 0.035;
-  return Math.max(20, Math.floor(early * tail));
+  const need = Math.floor(early * tail);
+  return Number.isFinite(need) ? Math.max(20, need) : Number.MAX_SAFE_INTEGER;
 }
 
 export function xpNeed(level: number): number {
-  const lv = Math.max(1, Math.min(MAX_CHARACTER_LEVEL, level));
+  const lv = Math.max(1, Math.floor(level) || 1);
   const early = 30 * Math.pow(1.17, Math.min(lv - 1, 20));
   const tail = 1 + Math.max(0, lv - 20) * 0.055;
-  return Math.max(20, Math.floor(early * tail));
+  const need = Math.floor(early * tail);
+  return Number.isFinite(need) ? Math.max(20, need) : Number.MAX_SAFE_INTEGER;
 }
 
 export function skillLine(id: SkillId, level: number): string {
-  const lv = Math.max(1, Math.min(MAX_SKILL_LEVEL, Math.floor(level || 1)));
+  const lv = Math.max(1, Math.floor(level) || 1);
   const n = lv - 1;
+  const shown = (raw: number, knee: number, ceiling: number) => bend(raw, knee, ceiling).toFixed(1);
   switch (id) {
     case "mining":
     case "woodcutting":
-      return `+${(n * 0.3).toFixed(1)}% materials from each node. 0.3% per level, no cap, up to level 400.`;
+      return `+${(n * 0.3).toFixed(1)}% materials from each node. 0.3% per level, no cap.`;
     case "hunting":
       return `+${(n * 0.2).toFixed(1)}% damage against wild foes. 0.2% per level, no cap.`;
     case "catching":
-      return `+${(n * 0.12).toFixed(1)}% chance a fallen foe stays as a spirit. 0.12% per level.`;
+      return `+${(n * 0.12).toFixed(1)}% chance a fallen foe stays as a spirit. 0.12% per level. Past 92% the chance still climbs, but it never reaches 99%.`;
     case "trading":
-      return `Sell prices +${(n * 0.2).toFixed(1)}%. Shops charge ${Math.max(50, 100 - n * 0.125).toFixed(1)}% of the list price. 0.2% sell and 0.125% off per level. Shops never go below 50%.`;
+      return `Sell prices +${(n * 0.2).toFixed(1)}%. Shops charge ${(100 - bend(n * 0.125, 50, 85)).toFixed(1)}% of the list price from this skill. 0.2% sell and 0.125% off per level. Past 50% off, the discount still grows but the price never hits zero.`;
     case "fishing":
-      return `Bites come ${Math.min(70, n * 0.175).toFixed(1)}% sooner. 0.175% per level, cap 70%.`;
+      return `Bites come ${shown(n * 0.175, 70, 92)}% sooner. 0.175% per level. Past 70% the bonus still climbs, but it never reaches 92%.`;
     case "social":
       return `Quest kyo +${(n * 0.15).toFixed(1)}%. 0.15% per level.`;
     case "shroom":
-      return `${Math.min(80, n * 0.2).toFixed(1)}% chance a patch drops one extra reagent. 0.2% per level, cap 80%.`;
+      return `${shown(n * 0.2, 80, 95)}% chance a patch drops one extra reagent. 0.2% per level. Past 80% the chance still climbs, but it never reaches 95%.`;
     case "alchemy":
-      return `${Math.min(50, n * 0.125).toFixed(1)}% chance to brew a second dose. 0.125% per level, cap 50%.`;
+      return `${shown(n * 0.125, 50, 85)}% chance to brew a second dose. 0.125% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
     case "adventuring":
-      return `Out of combat, restore ${(1.2 + lv * 0.15).toFixed(1)} health per second. The formula is 1.2 + level × 0.15.`;
+      return `Out of combat, restore ${(1.2 + lv * 0.15).toFixed(1)} health per second. The formula is 1.2 + level × 0.15. No cap.`;
     case "physical":
       return `+${(n * 2).toFixed(0)}% damage with physical weapons. 2% per level, no cap.`;
     case "magic":
-      return `+${(n * 2.5).toFixed(0)}% spell damage, and spell cooldowns are ${Math.min(45, n * 0.113).toFixed(1)}% shorter. Damage is 2.5% per level. Cooldown reduction is 0.113% per level and stops at 45%.`;
+      return `+${(n * 2.5).toFixed(0)}% spell damage, and spell cooldowns are ${shown(n * 0.113, 45, 75)}% shorter. Damage is 2.5% per level, no cap. Cooldown reduction is 0.113% per level; past 45% it still climbs but never reaches 75%.`;
     case "wayfinding":
-      return `+${(n * 0.075).toFixed(1)}% movement speed. 0.075% per level, about +30% at level 400.`;
+      return `+${(n * 0.075).toFixed(1)}% movement speed. 0.075% per level, no cap.`;
     case "survival":
-      return `${Math.min(50, n * 0.2).toFixed(1)}% slower hunger, thirst and rest drain (Hardcore). 0.2% per level, cap 50%.`;
+      return `${shown(n * 0.2, 50, 82)}% slower hunger, thirst and rest drain (Hardcore). 0.2% per level. Past 50% it still slows you, but the bars never stop draining.`;
     case "cooking":
-      return `${Math.min(50, n * 0.15).toFixed(1)}% chance a campfire recipe makes a second portion (Hardcore). 0.15% per level, cap 50%.`;
+      return `${shown(n * 0.15, 50, 85)}% chance a campfire recipe makes a second portion (Hardcore). 0.15% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
     default:
       return "";
   }
@@ -1278,7 +1288,12 @@ export function npcOffers(n: NpcDef): ("Trade" | "Quest" | "Companionship")[] {
 }
 
 export function accountNeed(level: number): number {
-  return Math.floor(140 * Math.pow(1.32, Math.max(0, level - 1)));
+  const lv = Math.max(1, Math.floor(level) || 1);
+  // Levels 1–40 stay on the old curve. Past that the cost grows in a straight line so it cannot explode.
+  const early = 140 * Math.pow(1.32, Math.min(lv - 1, 39));
+  const tail = 1 + Math.max(0, lv - 40) * 0.06;
+  const need = Math.floor(early * tail);
+  return Number.isFinite(need) ? Math.max(1, need) : Number.MAX_SAFE_INTEGER;
 }
 
 export function learnPool(level: number, race: RaceId): string[] {

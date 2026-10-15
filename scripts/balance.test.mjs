@@ -14,9 +14,12 @@ function moduleUrl(path, imports = {}) {
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 }
 const classesUrl = moduleUrl("../src/game/classes.ts");
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl });
+const overmaxUrl = moduleUrl("../src/game/overmax.ts");
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl });
 const content = await import(contentUrl);
-const bal = await import(moduleUrl("../src/game/balance.ts", { "./content": contentUrl }));
+const bal = await import(moduleUrl("../src/game/balance.ts", { "./content": contentUrl, "./overmax": overmaxUrl }));
+const respawn = await import(moduleUrl("../src/game/respawn.ts"));
+const overmax = await import(overmaxUrl);
 const dn = await import(moduleUrl("../src/game/daynight.ts"));
 
 test("gear drops start at the hunter's level and never compound", () => {
@@ -73,7 +76,9 @@ test("every foe rolls its own kit with sane caps", () => {
     const m = content.MONSTERS[i % content.MONSTERS.length];
     const kit = bal.rollEnemyKit(content.mulberry32(i + 3), { species: m.id, type: m.type, kind: i % 7 === 0 ? "boss" : "normal", rarity: i % 4, playerLevel: 50, hardcore: i % 2 === 0 });
     assert.ok(kit.moves.length >= 1 && kit.moves.every((id) => content.MOVE_BY_ID[id]), m.id);
-    assert.ok(kit.stats.dodge <= 0.35 && kit.stats.crit <= 0.45 && kit.stats.physRes <= 0.55 && kit.stats.spellRes <= 0.55);
+    assert.ok(Number.isFinite(kit.stats.dodge) && kit.stats.dodge >= 0 && kit.stats.crit >= 0);
+    assert.ok(overmax.bend(kit.stats.dodge, 0.35, 0.8) < 0.8, "dodge bends under 80%");
+    assert.ok(overmax.bend(kit.stats.physRes, 0.55, 0.88) < 0.88 && overmax.bend(kit.stats.spellRes, 0.55, 0.88) < 0.88);
     assert.ok(kit.enchants.every((id) => bal.MOB_ENCHANTS[id]) && new Set(kit.enchants).size === kit.enchants.length);
     kits.add(kit.moves.join("|") + kit.enchants.join("|"));
   }
@@ -120,7 +125,30 @@ test("an Enemy Designer kit uses the design's stats, enchantments and moves", ()
   assert.deepEqual(kit.moves, ["thorn"]);
   assert.ok(kit.enchants.includes("thorned") && kit.enchants.length === 3);
   assert.ok(kit.stats.hp >= 1.9 && kit.stats.dodge >= 0.2 && kit.stats.physRes >= 0.3);
-  assert.ok(kit.stats.dodge <= 0.35 && kit.stats.physRes <= 0.55);
+  assert.ok(overmax.bend(kit.stats.dodge, 0.35, 0.8) < 0.8 && overmax.bend(kit.stats.physRes, 0.55, 0.88) < 0.88);
+});
+
+test("overmax bends past the old knee and never reaches the ceiling", () => {
+  assert.equal(overmax.bend(0.2, 0.35, 0.8), 0.2);
+  assert.equal(overmax.bend(0.35, 0.35, 0.8), 0.35);
+  const over = overmax.bend(2, 0.35, 0.8);
+  assert.ok(over > 0.35 && over < 0.8);
+  assert.ok(overmax.bend(1e9, 0.35, 0.8) < 0.8);
+  assert.ok(overmax.bendDown(-5, 0.2, 0.05) > 0.05 && overmax.bendDown(-5, 0.2, 0.05) < 0.2);
+  assert.equal(overmax.bendDown(3, 0.2, 0.05), 3);
+  assert.equal(overmax.bendChance(4), 1);
+  assert.equal(overmax.bend(NaN, 0.35, 0.8), 0);
+});
+
+test("hardcore overworld foes return in two minutes; specials do not", () => {
+  assert.equal(respawn.HC_OVERWORLD_RESPAWN, 120);
+  assert.equal(respawn.respawnSeconds({ hardcore: true, map: "world", zoneRespawn: 45, boss: true }), 120);
+  assert.equal(respawn.respawnSeconds({ hardcore: true, map: "world", boss: false }), 120);
+  assert.equal(respawn.respawnSeconds({ hardcore: true, map: "rift-1", boss: false }), null);
+  assert.equal(respawn.respawnSeconds({ hardcore: true, map: "world", special: true }), null);
+  assert.equal(respawn.respawnSeconds({ hardcore: false, map: "world", zoneRespawn: 45, boss: false }), 45);
+  assert.equal(respawn.respawnSeconds({ hardcore: false, map: "world", boss: true }), 70);
+  assert.equal(respawn.respawnSeconds({ hardcore: false, map: "crypt", boss: false }), 22);
 });
 
 test("gear FX genes give pieces of one element many distinct looks", async () => {

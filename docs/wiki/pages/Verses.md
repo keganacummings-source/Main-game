@@ -5,7 +5,7 @@
 ## In short
 
 - You start with your class's verses. Each level gives **3 skill points**: open **Verses** (**V**) to unlock more or rank up the ones you have.
-- **Ranks** go from 1 to 5. Each rank adds **+15%** to damage, heals and shields (rank 5 = ×1.6).
+- **Ranks** start at 1. Ranks 1–5 each add **+15%** to damage, heals and shields (rank 5 = ×1.6). Ranks past 5 keep stacking at **+8%** each. There is no rank cap you will hit in play.
 - Equip up to **9** verses. Only equipped verses are used, by you and by auto-battle.
 - Every verse has an **element**, a **tactic** (how it plays) and a **form** (melee, ranged or spell).
 

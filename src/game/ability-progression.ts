@@ -1,6 +1,9 @@
 import { CLASS_BY_ID, MOVE_BY_ID, type ClassId } from "./content";
 export const POINTS_PER_LEVEL = 3;
-export const MAX_ABILITY_RANK = 5;
+/** Ranks past this still upgrade. It is only the old full-strength knee, not a stop. */
+export const RANK_KNEE = 5;
+/** Stored ranks cannot run away into infinity and break a save. Gameplay does not stop at the knee. */
+export const RANK_STORE_CAP = 9999;
 export type AbilityProgress = {
   skillPoints?: number;
   abilityRanks?: Record<string, number>;
@@ -18,7 +21,7 @@ export function normalizeAbilities(save: AbilityProgress): void {
     );
     save.abilityRanks = Object.fromEntries(learned.map((id) => [id, 1]));
     save.skillPoints =
-      Math.max(0, Math.min(49, Math.floor(save.level || 1) - 1)) * POINTS_PER_LEVEL;
+      Math.max(0, Math.floor(save.level || 1) - 1) * POINTS_PER_LEVEL;
     save.progressionVersion = 1;
   }
   save.skillPoints = Number.isFinite(save.skillPoints)
@@ -30,7 +33,7 @@ export function normalizeAbilities(save: AbilityProgress): void {
         Object.hasOwn(MOVE_BY_ID, id) &&
         Number.isInteger(rank) &&
         rank >= 1 &&
-        rank <= MAX_ABILITY_RANK,
+        rank <= RANK_STORE_CAP,
     ),
   );
 }
@@ -43,11 +46,16 @@ export function spendAbilityPoint(save: AbilityProgress, id: string): boolean {
   )
     return false;
   const rank = save.abilityRanks[id] ?? 0;
-  if (rank >= MAX_ABILITY_RANK) return false;
+  if (rank >= RANK_STORE_CAP) return false;
   save.abilityRanks[id] = rank + 1;
   save.skillPoints = save.skillPoints! - 1;
   return true;
 }
 export function abilityMultiplier(save: AbilityProgress, id: string): number {
-  return 1 + Math.max(0, Math.min(MAX_ABILITY_RANK, save.abilityRanks?.[id] ?? 1) - 1) * 0.15;
+  const rank = Math.max(1, Math.min(RANK_STORE_CAP, Math.floor(save.abilityRanks?.[id] ?? 1)));
+  const steps = rank - 1;
+  // Ranks 1–5: +15% each (rank 5 = ×1.6), same as before.
+  // Overmax ranks keep stacking at +8% each so a deep rank still matters without a hard stop.
+  if (steps <= RANK_KNEE - 1) return 1 + steps * 0.15;
+  return 1 + (RANK_KNEE - 1) * 0.15 + (steps - (RANK_KNEE - 1)) * 0.08;
 }

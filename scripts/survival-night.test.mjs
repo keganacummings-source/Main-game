@@ -16,7 +16,8 @@ const buildingUrl = moduleUrl("../src/game/building.ts");
 const surv = await import(moduleUrl("../src/game/survival.ts", { "./building": buildingUrl }));
 const fx = await import(moduleUrl("../src/game/combat-fx.ts"));
 const classesUrl = moduleUrl("../src/game/classes.ts");
-const content = await import(moduleUrl("../src/game/content.ts", { "./classes": classesUrl }));
+const overmaxUrl = moduleUrl("../src/game/overmax.ts");
+const content = await import(moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl }));
 
 test("day is 10 minutes, night is 15 minutes, and standard mode never has night", () => {
   assert.equal(dn.DAY_SECONDS, 600);
@@ -169,7 +170,7 @@ test("non-attack verses land instantly", () => {
 
 test("world collision includes placed logs", async () => {
   const world = await import(moduleUrl("../src/game/world.ts", {
-    "./content": moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts") }),
+    "./content": moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts"), "./overmax": moduleUrl("../src/game/overmax.ts") }),
     "./tile-atlas": moduleUrl("../src/game/tile-atlas.ts"),
   }));
   const w = fakeWorld();
@@ -184,14 +185,14 @@ test("wayfinding, survival and cooking are skills with effect text, and the cook
     assert.match(content.skillLine(id, 1), /^\+?0\.0%/, `${id} gives no bonus at level 1`);
     assert.notEqual(content.skillLine(id, 100), content.skillLine(id, 1), `${id} grows with level`);
   }
-  assert.match(content.skillLine("survival", 400), /^50\.0% slower/, "survival caps at 50%");
-  assert.match(content.skillLine("cooking", 400), /^50\.0% chance/, "cooking caps at 50%");
+  assert.match(content.skillLine("survival", 400), /^65\.4% slower/, "survival bends past 50%");
+  assert.match(content.skillLine("cooking", 400), /^57\.7% chance/, "cooking bends past 50%");
   assert.match(content.skillLine("wayfinding", 400), /^\+29\.9% movement speed/);
   for (const id of ["cook", "fish", "purify"]) assert.equal(surv.CAMP_RECIPES[id].skill?.id, "cooking", `${id} trains cooking`);
   for (const c of content.CLASSES) for (const id of Object.keys(c.aptitudes ?? {})) assert.ok(content.SKILLS.some((k) => k.id === id), `${c.id}: unknown aptitude ${id}`);
 });
 
-test("the survival drain multiplier slows every bar, never below half speed, and defaults to normal", () => {
+test("the survival drain multiplier slows every bar, never stops them, and defaults to normal", () => {
   const normal = surv.normalizeSurvival(), slow = surv.normalizeSurvival(), floor = surv.normalizeSurvival(), dflt = surv.normalizeSurvival();
   surv.advanceSurvival(normal, 600);
   surv.advanceSurvival(dflt, 600, false, 1);
@@ -200,7 +201,7 @@ test("the survival drain multiplier slows every bar, never below half speed, and
   for (const id of ["hunger", "thirst", "rest"]) {
     assert.ok(Math.abs(normal[id] - dflt[id]) < 1e-8, `${id}: drain 1 is normal`);
     assert.ok(Math.abs((100 - slow[id]) * 2 - (100 - normal[id])) < 1e-8, `${id} drains at half speed`);
-    assert.ok(Math.abs(floor[id] - slow[id]) < 1e-8, `${id} never drains slower than half speed`);
+    assert.ok(Math.abs((100 - floor[id]) * 10 - (100 - slow[id])) < 1e-6, `${id} can go past half speed but not to a stop`);
   }
   const a = surv.normalizeSurvival({ hunger: 0, thirst: 0, rest: 0 }), b = surv.normalizeSurvival({ hunger: 0, thirst: 0, rest: 0 });
   assert.ok(Math.abs(surv.advanceSurvival(a, 10) - surv.advanceSurvival(b, 10, false, 0.5)) < 1e-8, "empty bars hurt the same");

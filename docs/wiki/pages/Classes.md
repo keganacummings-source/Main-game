@@ -15,13 +15,13 @@ Your class decides your **element**, your **stats**, a **passive**, any **immuni
 
 Class and trait stats add together. They feed into the formulas on [Damage and Formulas](Damage-and-Formulas):
 
-- **Might** and **Arcana** multiply damage (never below ×0.2).
-- **Guard** is capped at 60% damage reduction.
-- **Haste** is capped between −40% and +45%.
-- **Agility** multiplies movement speed (never below ×0.5).
+- **Might** and **Arcana** multiply damage. At or above ×0.2 they stay linear with no cap. Below that they bend toward ×0.05 and never hit zero.
+- **Guard** used to stop at 60% damage reduction (and −50% could raise damage taken). Past those knees it still stacks, bending toward 90% off or 80% more damage taken, and never reaches either.
+- **Haste** used to stop between −40% and +45%. Past that it still stacks, bending toward −150% / +82%, and a cooldown never reaches zero.
+- **Agility** multiplies movement speed. At or above ×0.5 it stays linear. Below that it bends toward ×0.05.
 - **Recovery** multiplies out-of-combat healing.
 - **Lifesteal** heals that share of the damage you deal.
-- **Fortune** and **Insight** multiply kyo and experience from kills (never below ×0.2).
+- **Fortune** and **Insight** multiply kyo and experience from kills. At or above ×0.2 they stay linear. Below that they bend toward ×0.05.
 - **Affinity** adds damage to verses of your class's element.
 
 ### Skill aptitudes

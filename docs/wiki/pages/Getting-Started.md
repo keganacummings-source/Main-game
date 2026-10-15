@@ -33,7 +33,7 @@ Monsters drop gear. A new piece is **worn automatically** if it scores higher th
 
 ## 5. Spend your points
 
-Every level gives **3 skill points**. Open **Verses** (**V**) to unlock new verses or rank up the ones you use (each rank is +15% power, up to rank 5). You can equip up to **9 verses**. See [Leveling and Skills](Leveling-and-Skills).
+Every level gives **3 skill points**. Open **Verses** (**V**) to unlock new verses or rank up the ones you use (ranks 1–5 are +15% power each; later ranks keep adding +8%). You can equip up to **9 verses**. See [Leveling and Skills](Leveling-and-Skills).
 
 ## 6. Things to try next
 

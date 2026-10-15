@@ -14,7 +14,8 @@ function moduleUrl(path, imports = {}) {
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 }
 const classesUrl = moduleUrl("../src/game/classes.ts");
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl });
+const overmaxUrl = moduleUrl("../src/game/overmax.ts");
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl });
 const content = await import(contentUrl);
 const world = await import(
   moduleUrl("../src/game/world.ts", {
@@ -106,7 +107,7 @@ const dungeons = await import(
 );
 const creaturesUrl = moduleUrl("../src/game/creature-sprites.ts", { "./content": contentUrl });
 const creatures = await import(creaturesUrl);
-const balanceUrl = moduleUrl("../src/game/balance.ts", { "./content": contentUrl });
+const balanceUrl = moduleUrl("../src/game/balance.ts", { "./content": contentUrl, "./overmax": overmaxUrl });
 const shippedEnemies = `data:text/javascript;base64,${Buffer.from("export default [];").toString("base64")}`;
 const enemies = await import(
   moduleUrl("../src/game/enemy-design.ts", { "./content": contentUrl, "./balance": balanceUrl, "./creature-sprites": creaturesUrl, "./enemies/custom-enemies.json": shippedEnemies })
@@ -129,16 +130,18 @@ test("skill migration grants historical level points once and preserves purchase
   assert.equal(save.skillPoints, 8);
   for (let i = 0; i < 4; i++) assert.equal(abilities.spendAbilityPoint(save, "shard"), true);
   assert.equal(abilities.abilityMultiplier(save, "shard"), 1.6);
-  assert.equal(abilities.spendAbilityPoint(save, "shard"), false);
+  assert.equal(abilities.spendAbilityPoint(save, "shard"), true);
+  assert.equal(save.abilityRanks.shard, 6);
+  assert.ok(Math.abs(abilities.abilityMultiplier(save, "shard") - 1.68) < 1e-9);
   assert.equal(abilities.spendAbilityPoint(save, "bogus"), false);
   save.skillPoints = 0;
   assert.equal(abilities.spendAbilityPoint(save, "lantern"), false);
 });
 
-test("fixed equipment stats do not grant attacks or random enchantments", () => {
+test("fixed equipment stats keep rolled enchantments and grant no verse attacks", () => {
   for (const slot of ["weapon", "head", "chest", "legs", "feet", "relic"]) {
     const g = content.rollGear(content.mulberry32(42), { level: 12, slot });
-    assert.deepEqual(g.enchants, []);
+    assert.ok(g.enchants.every((e) => content.ENCHANT_BY_ID[e.id] && e.power > 0));
     assert.deepEqual(g.moves, []);
     const stats = content.equipmentStats(g);
     assert.ok(stats.damage + stats.armor > 0);
@@ -252,9 +255,14 @@ test("enemy design round trip validates identity, sprite and moves, and clamps s
   for (const change of [{ id: "bad id!" }, { name: "" }, { type: "bogus" }, { moves: [] }, { sprite: null }, { id: "onibi", replaces: null }])
     assert.throws(() => enemies.parseEnemyDesign({ ...d, ...change }));
   const wild = enemies.parseEnemyDesign({ ...d, stats: { hp: 99, dmg: -1, speed: 9, crit: 2, dodge: 2, physRes: 2, spellRes: 2 }, scale: 9, weight: 99, loot: 99 });
-  assert.equal(wild.stats.hp, 5);
-  assert.equal(wild.stats.dmg, 0.2);
-  assert.ok(wild.stats.dodge <= 0.35 && wild.stats.physRes <= 0.55 && wild.scale <= 3 && wild.weight <= 5 && wild.loot <= 3);
+  assert.equal(wild.stats.hp, 50);
+  assert.equal(wild.stats.dmg, 0.05);
+  assert.equal(wild.stats.speed, 9);
+  assert.equal(wild.stats.dodge, 2);
+  assert.equal(wild.stats.physRes, 2);
+  assert.equal(wild.scale, 6);
+  assert.equal(wild.weight, 20);
+  assert.equal(wild.loot, 40);
   const remix = enemies.designFromBuiltin("onibi");
   assert.equal(remix.replaces, "onibi");
   assert.deepEqual(remix.sprite, { kind: "sheet", cell: creatures.CREATURE_CELLS.onibi });
@@ -265,22 +273,21 @@ test("every enemy and animal has a supplied pixel sprite", () => {
     assert.ok(creatures.CREATURE_CELLS[m.id], `Missing sprite for ${m.id}`);
 });
 
-test("equipment migration retains legacy rolls for recovery without reactivating them", () => {
+test("equipment migration keeps enchantments and can restore a stripped piece", () => {
   const g = content.rollGear(content.mulberry32(1), { level: 5, slot: "weapon" });
   g.enchants = [{ id: "might", power: 8 }];
   g.moves = ["ember"];
   content.migrateEquipment(g);
-  assert.deepEqual(g.previousEquipment, {
-    enchants: [{ id: "might", power: 8 }],
-    moves: ["ember"],
-  });
-  assert.deepEqual(g.enchants, []);
+  assert.deepEqual(g.enchants, [{ id: "might", power: 8 }]);
   assert.deepEqual(g.moves, []);
+  g.enchants = [];
+  g.previousEquipment = { enchants: [{ id: "might", power: 8 }], moves: ["ember"] };
   content.migrateEquipment(g);
-  assert.deepEqual(g.previousEquipment.moves, ["ember"]);
+  assert.deepEqual(g.enchants, [{ id: "might", power: 8 }]);
+  assert.deepEqual(g.moves, []);
 });
 
-const survival = await import(moduleUrl('../src/game/survival.ts'));
+const survival = await import(moduleUrl("../src/game/survival.ts", { "./building": moduleUrl("../src/game/building.ts") }));
 test('survival drains only active time, is frame independent, and sleep never restores food or water', () => {
   const a = survival.normalizeSurvival(), b = survival.normalizeSurvival();
   const da = survival.advanceSurvival(a, 2500);
@@ -296,13 +303,13 @@ test('survival drains only active time, is frame independent, and sleep never re
 });
 test('campfire recipes require proximity, consume exact materials atomically, and produce food or safe water', () => {
   const bag = { meat: 1, timber: 1, raw_water: 1 };
-  assert.equal(survival.craftAtCamp(bag, 'cook', false), false); assert.equal(bag.meat, 1);
-  assert.equal(survival.craftAtCamp(bag, 'cook', true), true);
+  assert.equal(survival.craftAtCamp(bag, 'cook', false), null); assert.equal(bag.meat, 1);
+  assert.equal(survival.craftAtCamp(bag, 'cook', true)?.id, 'cook');
   assert.equal(bag.cooked_meat, 1); assert.equal(bag.meat, 0); assert.equal(bag.timber, 0);
-  assert.equal(survival.craftAtCamp(bag, 'purify', true), false); assert.equal(bag.raw_water, 1);
-  bag.timber = 1; assert.equal(survival.craftAtCamp(bag, 'purify', true), true);
+  assert.equal(survival.craftAtCamp(bag, 'purify', true), null); assert.equal(bag.raw_water, 1);
+  bag.timber = 1; assert.equal(survival.craftAtCamp(bag, 'purify', true)?.id, 'purify');
   assert.equal(bag.drinking_water, 1); assert.equal(bag.raw_water, 0);
-  assert.equal(survival.craftAtCamp(bag, 'unknown', true), false);
+  assert.equal(survival.craftAtCamp(bag, 'unknown', true), null);
 });
 test('water can only be harvested beside a water tile, with bounds checked', () => {
   const map = { w: 8, h: 8, tiles: Array.from({length: 64}, () => ({ floor: 0 })) };
@@ -337,7 +344,7 @@ test('rebuilt worlds are deterministic, distinct, and connect all landmarks and 
   assert.ok(normal.tiles.filter((t, i) => t.floor !== hard.tiles[i].floor || t.biome !== hard.tiles[i].biome).length > normal.tiles.length / 2);
 });
 
-const itemUse = await import(moduleUrl('../src/game/item-use.ts', { './survival': moduleUrl('../src/game/survival.ts') }));
+const itemUse = await import(moduleUrl('../src/game/item-use.ts', { './survival': moduleUrl('../src/game/survival.ts', { './building': moduleUrl('../src/game/building.ts') }) }));
 test('items protect full reserves, distinguish buffs from healing, and keep resources for recipes', () => {
   const full = { hardcore: false, hp: 90, maxHp: 90 };
   assert.match(itemUse.itemUseProblem(content.ITEM_BY_ID.potion, full), /full/);

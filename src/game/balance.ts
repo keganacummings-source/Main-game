@@ -20,6 +20,7 @@
  * Every number lives in this file so balance passes can stay in one place.
  */
 import { MOVES, QUALITY_LEVEL, attackForm, dropGearLevel, moveTactic, type Move, type QualityId, type Rng, type TypeId } from "./content";
+import { bend } from "./overmax";
 
 // ---------------------------------------------------------------------------
 // Enemy kinds and scaling targets
@@ -104,7 +105,9 @@ export function enemyTargets(o: TargetOpts): EnemyTargets {
   hits *= Math.sqrt(growth);
   frac *= Math.sqrt(growth);
   lv += Math.floor((growth - 1) * 10);
-  return { hits: Math.round(hits * 10) / 10, frac: Math.min(0.32, frac), levelOffset: Math.max(0, Math.round(lv)), speedOffset: spd };
+  // Hit share used to stop at 32% of your health. Overmax still raises it, but one hit bends toward 54% and never reaches it.
+  const share = bend(frac, 0.32, 0.54);
+  return { hits: Math.round(hits * 10) / 10, frac: share, levelOffset: Math.max(0, Math.round(lv)), speedOffset: spd };
 }
 
 /** Hardcore difficulty climbs with level, nights survived and bounties taken. */
@@ -305,10 +308,8 @@ export function rollEnemyKit(rng: Rng, o: KitOpts): EnemyKit {
     if (id === "armored") stats.physRes += 0.25;
     if (id === "spellward") stats.spellRes += 0.25;
   }
-  stats.dodge = Math.min(0.35, stats.dodge);
-  stats.crit = Math.min(0.45, stats.crit);
-  stats.physRes = Math.min(0.55, stats.physRes);
-  stats.spellRes = Math.min(0.55, stats.spellRes);
+  // Dodge, crit and resists are stored raw, including overmax from enchantments.
+  // Combat bends them so a stack still matters but cannot reach certainty or immunity.
 
   // Moves: a short kit of the foe's element, preferring the forms its archetype likes.
   const size = o.kind === "animal" ? 1 : o.kind === "normal" || o.kind === "minion" ? 2 + (rng() < 0.4 ? 1 : 0) : o.kind === "hunter" ? 3 : 4;
@@ -337,7 +338,7 @@ function designKit(rng: Rng, o: KitOpts): EnemyKit {
   const jitter = () => 0.95 + rng() * 0.1;
   const stats: EnemyStats = { ...d.stats, hp: d.stats.hp * jitter(), dmg: d.stats.dmg * jitter() };
   const enchants: MobEnchantId[] = [...new Set(d.enchants)];
-  const extra = Math.max(0, Math.min(4, d.extraEnchants)) + (o.hardcore && o.kind !== "animal" ? 1 : 0);
+  const extra = Math.max(0, Math.min(12, d.extraEnchants)) + (o.hardcore && o.kind !== "animal" ? 1 : 0);
   let guard = 0;
   for (let n = 0; n < extra && guard++ < 40; ) {
     const id = MOB_ENCHANT_IDS[Math.floor(rng() * MOB_ENCHANT_IDS.length)]!;
@@ -351,10 +352,6 @@ function designKit(rng: Rng, o: KitOpts): EnemyKit {
     if (id === "armored") stats.physRes += 0.25;
     if (id === "spellward") stats.spellRes += 0.25;
   }
-  stats.dodge = Math.min(0.35, stats.dodge);
-  stats.crit = Math.min(0.45, stats.crit);
-  stats.physRes = Math.min(0.55, stats.physRes);
-  stats.spellRes = Math.min(0.55, stats.spellRes);
   const moves = d.moves.filter((id) => MOVES.some((m) => m.id === id)).slice(0, 4);
   return { stats, enchants, moves: moves.length ? moves : ["measured"] };
 }

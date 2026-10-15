@@ -14,7 +14,7 @@ function moduleUrl(path, imports = {}) {
 }
 
 const classesUrl = moduleUrl("../src/game/classes.ts");
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl });
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": moduleUrl("../src/game/overmax.ts") });
 const qb = await import(moduleUrl("../src/game/quest-board.ts", { "./content": contentUrl }));
 const content = await import(contentUrl);
 

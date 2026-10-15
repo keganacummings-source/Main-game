@@ -33,9 +33,9 @@ Every factor below multiplies the base.
 | Melee strength | ×1.35 for melee verses |
 | Target's hide | ×1.2 if your kind matches its hide (spells and channels vs ethereal, physical vs solid), otherwise ×0.8 |
 | Verse shape | heavy ×1.7, channel ×1.25, blink ×0.55, lunge ×0.72, dash ×0.6, roll ×0.36 |
-| Critical hit | ×1.75 × (1 + Crit Force %, at most +80%) |
-| Verse rank | 1 + 0.15 per rank above 1 (rank 5 = ×1.6) |
-| Class Might / Arcana | 1 + class Might % (physical) or Arcana % (spells and channels), never below ×0.2 |
+| Critical hit | ×1.75 × (1 + Crit Force %). Past +80% Crit Force still helps but bends and never reaches +97% |
+| Verse rank | Ranks 1–5: 1 + 0.15 per rank above 1 (rank 5 = ×1.6). Each rank past 5 adds another 8% |
+| Class Might / Arcana | 1 + class Might % (physical) or Arcana % (spells and channels). At or above ×0.2 this stays linear. Below that it bends toward ×0.05 |
 | Element Affinity | 1 + Affinity % when the verse is your class's element |
 
 "Levels above 1" means a skill at level 10 counts as 9.
@@ -44,7 +44,7 @@ Every factor below multiplies the base.
 
 - **Armor only stops ranged hits.** Melee and spells ignore it. Ranged damage × 100 ÷ (100 + armor). A normal foe has 4 + 2 × level armor (bosses +24, bounties and witches 10 + 3 × level, most animals 2). **Armor Crack** removes armor.
 - **Exposed** targets take ×1.25.
-- The foe's **physical resist** (melee and ranged) or **spell resist** removes up to 55%.
+- The foe's **physical resist** (melee and ranged) or **spell resist** is used as stored. Past 55% it bends toward 88% and never becomes immunity.
 - **Warded** foes take 15% less from everything.
 
 ### Step 4: chance rolls
@@ -79,14 +79,14 @@ That comes to **about 83 damage**, before rank, class and enchantments.
 
 ## Cooldowns
 
-**Cooldown = max(0.28, 0.55 + power ÷ 90 − 0.08 × priority) × (1 − Swift %, at most 40% off)**
+**Cooldown = max(0.28, 0.55 + power ÷ 90 − 0.08 × priority) × (1 − Swift %). Swift used to stop at 40% off. Past that it bends toward 75%.**
 
 That is then adjusted by kind:
 
 | Kind | Adjustment |
 | --- | --- |
 | Heavy and channel | ×1.7 |
-| Other spells | ×1.35 × (1 − 0.113% per Magic level, at most 45% off) × (1 − Focus %, at most 35% off) |
+| Other spells | ×1.35 × (1 − Magic cooldown reduction) × (1 − Focus %). Magic reduction is 0.113% per level and bends past 45% toward 75%. Focus bends past 35% toward 70%. |
 | Melee | ×0.8 |
 | Roll | at least 2.6 s |
 | Ward | at least 5.5 s |
@@ -94,7 +94,7 @@ That is then adjusted by kind:
 | Dash | at least 1.6 s |
 | Surge | at least 8 s |
 
-Finally × (1 − class Haste %, Haste capped at −40%/+45%), and never below 0.2 s. The [Verses](Verses) table lists every verse's base cooldown.
+Finally × (1 − class Haste). Haste used to stop at −40%/+45%. Past that it bends toward −150%/+82%. The result is never below 0.2 s. The [Verses](Verses) table lists every verse's base cooldown.
 
 ## Enemy health
 
@@ -121,8 +121,8 @@ Then:
 
 Then your defenses, in order (see [Defense and Evasion](Defense-and-Evasion)):
 
-1. Ward enchantments and Ironroot Phial (at most 45% off).
-2. Class Guard (at most 60% off).
+1. Ward enchantments and Ironroot Phial (bend past 45% toward 80% off).
+2. Class Guard (bends past 60% toward 90% off).
 3. Echo Guard chance to ignore the hit.
 4. Evade, ward and roll windows.
 5. Your shield absorbs the rest first.

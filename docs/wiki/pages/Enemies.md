@@ -102,7 +102,7 @@ Animals give meat and leather for [crafting](Gathering-and-Crafting) and Hardcor
 
 ## Respawns and spawns
 
-- Normal foes respawn **22 s** after dying, bosses **70 s**. Foes in dungeon rifts, shrines and bounty fights don't respawn.
+- In TurboHunt, normal foes respawn **22 s** after dying and bosses **70 s** (a zone can set its own timer). In **Hardcore on the overworld**, every ordinary foe and world boss comes back in **2 minutes**, even if you walk away. Foes in dungeon rifts, shrines, bounties, witch hunts and hunter squads don't respawn.
 - New spawns appear near your level: within 5 levels either way in TurboHunt, never below your level − 1 in Hardcore (plus Hardcore threat levels).
 - 55% of foes are **ghost-type** spirits with their own look (eyes, horns, tails, glow). Spirit-element foes always are.
 

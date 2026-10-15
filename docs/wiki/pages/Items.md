@@ -20,7 +20,7 @@ Everything that goes in the **Bag** that isn't gear. Use an item from the Bag.
 | **Potion, Big Potion, Spirit Candy, food** (TurboHunt) | Heal max(listed amount, max health × listed ÷ 300) × (1 + Deep Sip %). A Potion heals at least 15% of your max health, a Big Potion at least about 37%. |
 | **Warmth Tonic** | Heals 70 (TurboHunt), then 25 s: fire verses +22% damage (counts as matching element gear). |
 | **Cat's Eye Draught** | 25 s: +20 crit chance. |
-| **Ironroot Phial** | 25 s: 20% less damage taken (counts toward the 45% Ward cap). |
+| **Ironroot Phial** | 25 s: 20% less damage taken (counts toward Ward; past 45% the reduction bends and never reaches 80%). |
 | **Ghost Jar** | 60 s: +45% catch chance. |
 | **Cleanse Salt** | Clears all harmful effects (immunity after sleep, root, silence). Two pinches also complete *Salt Run*. |
 | **Smoke Bomb** | Steps you back out of melee. |

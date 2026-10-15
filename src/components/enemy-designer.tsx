@@ -145,6 +145,11 @@ function Slider({ label, value, min, max, step, onChange, fmt }: { label: string
   );
 }
 
+/** Past the old design knee the number still counts. Combat bends chances so they cannot become immunity. */
+function overFmt(knee: number, text: (v: number) => string) {
+  return (v: number) => (v > knee + 1e-6 ? `${text(v)} overmax` : text(v));
+}
+
 export function EnemyDesigner({ onBack }: { onBack: () => void }) {
   const [d, setD] = useState<EnemyDesign>(newEnemyDesign);
   const [saved, setSaved] = useState<EnemyDesign[]>(() => localEnemyDesigns());
@@ -255,7 +260,7 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
           <Tabs value={spriteTab} onChange={(t) => { setSpriteTab(t); if (t === "pixels" && d.sprite.kind !== "pixels") set({ sprite: { kind: "pixels", pixels: Array(256).fill(null) } }); if (t === "sheet" && d.sprite.kind !== "sheet") set({ sprite: { kind: "sheet", cell: [0, 0] } }); }} tabs={[{ id: "sheet", label: "From sprite sheet" }, { id: "pixels", label: "Draw pixels" }]} />
           {spriteTab === "sheet" && d.sprite.kind === "sheet" && <SheetPicker cell={d.sprite.cell} onPick={(cell) => set({ sprite: { kind: "sheet", cell } })} />}
           {spriteTab === "pixels" && d.sprite.kind === "pixels" && <PixelEditor pixels={d.sprite.pixels} onChange={(pixels) => set({ sprite: { kind: "pixels", pixels } })} />}
-          <Slider label="Size" value={d.scale} min={1} max={3} step={0.25} onChange={(v) => set({ scale: v })} fmt={(v) => `${v}×`} />
+          <Slider label="Size" value={d.scale} min={0.5} max={6} step={0.25} onChange={(v) => set({ scale: v })} fmt={overFmt(3, (v) => `${v}×`)} />
         </div>
 
         <div className="px-panel enemy-form ui-stack">
@@ -285,14 +290,14 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
           {tab === "combat" && (
             <>
               <Section title="STATS · ON TOP OF NORMAL SCALING">
-                <Slider label="Health" value={d.stats.hp} min={0.2} max={5} step={0.05} onChange={(v) => setStat("hp", v)} fmt={(v) => `${v.toFixed(2)}×`} />
-                <Slider label="Damage" value={d.stats.dmg} min={0.2} max={5} step={0.05} onChange={(v) => setStat("dmg", v)} fmt={(v) => `${v.toFixed(2)}×`} />
-                <Slider label="Turn speed" value={d.stats.speed} min={0.5} max={2} step={0.05} onChange={(v) => setStat("speed", v)} fmt={(v) => `${v.toFixed(2)}×`} />
-                <Slider label="Crit chance" value={d.stats.crit} min={0} max={0.45} step={0.01} onChange={(v) => setStat("crit", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="Dodge" value={d.stats.dodge} min={0} max={0.35} step={0.01} onChange={(v) => setStat("dodge", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="Physical resist" value={d.stats.physRes} min={0} max={0.55} step={0.01} onChange={(v) => setStat("physRes", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="Spell resist" value={d.stats.spellRes} min={0} max={0.55} step={0.01} onChange={(v) => setStat("spellRes", v)} fmt={(v) => `${Math.round(v * 100)}%`} />
-                <Slider label="Levels above you" value={d.levelBonus} min={0} max={20} step={1} onChange={(v) => set({ levelBonus: v })} fmt={(v) => `+${v}`} />
+                <Slider label="Health" value={d.stats.hp} min={0.05} max={50} step={0.05} onChange={(v) => setStat("hp", v)} fmt={overFmt(5, (v) => `${v.toFixed(2)}×`)} />
+                <Slider label="Damage" value={d.stats.dmg} min={0.05} max={50} step={0.05} onChange={(v) => setStat("dmg", v)} fmt={overFmt(5, (v) => `${v.toFixed(2)}×`)} />
+                <Slider label="Turn speed" value={d.stats.speed} min={0.1} max={20} step={0.05} onChange={(v) => setStat("speed", v)} fmt={overFmt(2, (v) => `${v.toFixed(2)}×`)} />
+                <Slider label="Crit chance" value={d.stats.crit} min={0} max={3} step={0.01} onChange={(v) => setStat("crit", v)} fmt={overFmt(0.45, (v) => `${Math.round(v * 100)}%`)} />
+                <Slider label="Dodge" value={d.stats.dodge} min={0} max={3} step={0.01} onChange={(v) => setStat("dodge", v)} fmt={overFmt(0.35, (v) => `${Math.round(v * 100)}%`)} />
+                <Slider label="Physical resist" value={d.stats.physRes} min={0} max={3} step={0.01} onChange={(v) => setStat("physRes", v)} fmt={overFmt(0.55, (v) => `${Math.round(v * 100)}%`)} />
+                <Slider label="Spell resist" value={d.stats.spellRes} min={0} max={3} step={0.01} onChange={(v) => setStat("spellRes", v)} fmt={overFmt(0.55, (v) => `${Math.round(v * 100)}%`)} />
+                <Slider label="Levels above you" value={d.levelBonus} min={0} max={200} step={1} onChange={(v) => set({ levelBonus: v })} fmt={overFmt(20, (v) => `+${v}`)} />
               </Section>
               <Section title={`ENCHANTMENTS · ${d.enchants.length} ALWAYS`}>
                 <div className="ench-grid">
@@ -303,7 +308,7 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
                     </label>
                   ))}
                 </div>
-                <Slider label="Random extra enchants per spawn" value={d.extraEnchants} min={0} max={4} step={1} onChange={(v) => set({ extraEnchants: v })} fmt={(v) => String(v)} />
+                <Slider label="Random extra enchants per spawn" value={d.extraEnchants} min={0} max={12} step={1} onChange={(v) => set({ extraEnchants: v })} fmt={overFmt(4, (v) => String(v))} />
               </Section>
               <Section title={`MOVES · ${d.moves.length}/4`}>
                 <div className="cost-row">
@@ -343,13 +348,13 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
                         </label>
                       ))}
                     </div>
-                    <Slider label="How common" value={d.weight} min={1} max={5} step={1} onChange={(v) => set({ weight: v })} fmt={(v) => ["", "Rare", "Uncommon", "Common", "Very common", "Everywhere"][v] ?? String(v)} />
+                    <Slider label="How common" value={d.weight} min={1} max={20} step={1} onChange={(v) => set({ weight: v })} fmt={overFmt(5, (v) => ["", "Rare", "Uncommon", "Common", "Very common", "Everywhere"][v] ?? String(v))} />
                     <p className="text-dim">It can also be placed in Map Builder spawn zones. With no biome ticked it only appears where you place it.</p>
                   </>
                 )}
               </Section>
               <Section title="LOOT">
-                <Slider label="Kyo and gear drop" value={d.loot} min={0.5} max={3} step={0.1} onChange={(v) => set({ loot: v })} fmt={(v) => `${v.toFixed(1)}×`} />
+                <Slider label="Kyo and gear drop" value={d.loot} min={0.1} max={40} step={0.1} onChange={(v) => set({ loot: v })} fmt={overFmt(3, (v) => `${v.toFixed(1)}×`)} />
               </Section>
             </>
           )}

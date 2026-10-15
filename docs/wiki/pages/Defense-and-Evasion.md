@@ -62,9 +62,9 @@ How much of a blow a roll avoids depends on distance travelled versus the attack
 
 ## Damage reduction, in order
 
-1. **Ward** enchantment: damage × (1 − Ward ÷ 160). An **Ironroot Phial** adds 20%. Together they cap at **45%** off.
-2. **Guard** (class and trait stat): up to **60%** off. A negative Guard can raise damage by up to 50%.
-3. **Echo Guard**: a chance (at most **40%**) to ignore the whole hit (**ECHO**).
+1. **Ward** enchantment: damage × (1 − Ward ÷ 160). An **Ironroot Phial** adds 20%. Together they used to stop at **45%** off. Past that the reduction still grows but bends toward **80%** and never reaches it.
+2. **Guard** (class and trait stat): the old knee is **60%** off. Past that it bends toward **90%**. A negative Guard bends toward **80%** more damage taken (the old knee was 50% more).
+3. **Echo Guard**: a chance to ignore the whole hit (**ECHO**). The old knee is **40%**. Past that it bends toward **75%** and never becomes certain.
 4. **Evade window** (dash, roll, blink, lunge): the hit is ignored (**EVADE**).
 5. **Ward window**: the hit is ignored (**WARD**).
 6. **Roll**: partial or full cover, as above.

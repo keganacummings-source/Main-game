@@ -219,3 +219,11 @@ Three new account-wide skills (15 in total), built on the map and Hardcore camp 
 - Old saves get the new skills at level 1. Nothing is lost or moved.
 - Fixed: walking into a town no longer risks being recorded as visited before its first-visit XP is paid.
 - Code: `SKILLS` and `skillLine()` in `content.ts`, `advanceSurvival(…, drain)` and the recipe `skill` fields in `survival.ts`, hooks in `engine.ts`. Tests are in `scripts/survival-night.test.mjs`.
+
+## Overmax stats and Hardcore respawn
+
+- **Overworld foes come back.** Dying in a rift, crypt or cave and returning no longer leaves the overworld empty. The map rebuilds its camps when you come back to it.
+- **Hardcore overworld respawn is 2 minutes** for ordinary foes and world bosses, including time spent out of sight. Rifts, shrines, bounties, witches and hunter squads still do not respawn. Other modes keep their zone timer, or 22s / 70s.
+- **Levels, skills, account level, verse ranks and perks are not capped.** Ranks 1–5 stay +15% each (rank 5 = ×1.6). Later ranks add +8% each. Perks can be bought past their old maximum and still add their effect.
+- **Chance and reduction stats bend past the old knee** instead of slamming into a wall. Dodge, resists, ward, guard, haste, echo guard, thorns, cooldowns, shop prices and similar bonuses keep stacking but never reach immunity, a free shop, or a zero-second cooldown. Damage, health, sell price and wayfinding stay linear.
+- Code: `src/game/overmax.ts`, `src/game/respawn.ts`, hooks in `engine.ts`, `balance.ts`, `content.ts`, `ability-progression.ts`.

@@ -41,12 +41,12 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
               <div key={p.id} className={`ui-card perk-card ${p.power >= p.max ? "ui-card-done" : ""}`}>
                 <div className="ui-row">
                   <span className="text-kyo">{p.name}</span>
-                  <span className="text-dim">{p.power}/{p.max}</span>
+                  <span className="text-dim">{p.power > p.max ? `${p.power} overmax` : `${p.power}/${p.max}`}</span>
                 </div>
-                <Meter value={p.power} max={p.max} small detail={p.power >= p.max ? "MAX" : `${p.power}/${p.max}`} />
+                <Meter value={Math.min(p.power, p.max)} max={Math.max(1, p.max)} small detail={p.power > p.max ? `${p.power} overmax` : `${p.power}/${p.max}`} />
                 <p className="ui-card-about">{p.about.split(". You have")[0]}.</p>
-                <button type="button" className="px-btn ui-btn-sm" disabled={s.perkPoints < 1 || p.power >= p.max} onClick={() => game?.spendPerk(p.id)}>
-                  {p.power >= p.max ? "Maxed" : "+1 point"}
+                <button type="button" className="px-btn ui-btn-sm" disabled={s.perkPoints < 1} onClick={() => game?.spendPerk(p.id)}>
+                  {p.power >= p.max ? "Overmax +1" : "+1 point"}
                 </button>
               </div>
             ))}
@@ -55,13 +55,13 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
       )}
       {tab === "skills" && (
         <>
-          <p className="text-dim">Skills cap at 400 and stay on the account. {s.skillPoints} skill points to spend in Verses.</p>
+          <p className="text-dim">Skills stay on the account and do not cap. Chance bonuses bend before they can break a fight. {s.skillPoints} skill points to spend in Verses.</p>
           <div className="ui-list">
             {s.skills.map((sk) => (
               <div key={sk.id} className="ui-card skill-row">
                 <div className="ui-row">
                   <span className="text-kyo">{sk.name}</span>
-                  <span>{sk.level}<span className="text-dim">/400</span></span>
+                  <span>{sk.level}</span>
                 </div>
                 <Meter value={sk.xp} max={sk.need} small />
                 <p className="ui-card-about">{sk.line}</p>
@@ -131,11 +131,11 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
             </div>
             {pickedMove && picked !== null && (
               <div className="verse-actions" data-testid="verse-actions">
-                <span className="ui-row"><span className={typeClass(pickedMove.type)}>Key {picked + 1} · {pickedMove.name}</span>{pickedInfo && <Pips value={pickedInfo.rank} max={5} />}</span>
+                <span className="ui-row"><span className={typeClass(pickedMove.type)}>Key {picked + 1} · {pickedMove.name}</span>{pickedInfo && (pickedInfo.rank > 5 ? <span className="text-dim">Rank {pickedInfo.rank}</span> : <Pips value={pickedInfo.rank} max={5} />)}</span>
                 {pickedInfo && <span className="text-dim verse-stats">Pow {pickedInfo.power} · Acc {pickedInfo.accuracy}% · Rng {pickedInfo.range}{pickedInfo.effect !== "none" ? ` · ${pickedInfo.effect}` : ""}</span>}
                 <div className="ui-row-gap">
-                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="verse-upgrade-btn" disabled={!pickedInfo || s.skillPoints < 1 || pickedInfo.rank >= 5} onClick={() => game?.spendAbility(pickedMove.id)}>
-                    {pickedInfo && pickedInfo.rank >= 5 ? "Max rank" : `Upgrade · 1 pt (${s.skillPoints})`}
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="verse-upgrade-btn" disabled={!pickedInfo || s.skillPoints < 1} onClick={() => game?.spendAbility(pickedMove.id)}>
+                    {pickedInfo && pickedInfo.rank >= 5 ? `Overmax · 1 pt (${s.skillPoints})` : `Upgrade · 1 pt (${s.skillPoints})`}
                   </button>
                   <button type="button" className="px-btn ui-btn-sm" data-testid="verse-move-btn" onClick={() => setMoving(picked)}>Move</button>
                   <button type="button" className="px-btn ui-btn-sm" data-testid="verse-unequip-btn" onClick={() => { game?.setBar(picked, ""); setPicked(null); }}>Unequip</button>
@@ -151,7 +151,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
                 {unlocked.map((m) => (
                   <button key={m.id} type="button" className={`ui-card verse-pick ${equipped.has(m.id) ? "ui-card-done" : ""}`} disabled={equipped.has(m.id) || s.bar.length >= MAX_BAR} onClick={() => game?.setBar(s.bar.length, m.id)}>
                     <span className={typeClass(m.type)}>{m.name}</span>
-                    <span className="ui-row"><Pips value={m.rank} max={5} /><span className="text-dim">{equipped.has(m.id) ? "equipped" : m.effect}</span></span>
+                    <span className="ui-row">{m.rank > 5 ? <span className="text-dim">Rank {m.rank}</span> : <Pips value={m.rank} max={5} />}<span className="text-dim">{equipped.has(m.id) ? "equipped" : m.effect}</span></span>
                   </button>
                 ))}
               </div>
@@ -163,7 +163,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
       )}
       {tab === "library" && (
         <>
-          <p className="text-dim">1 point unlocks a verse or adds a rank (max 5). Each rank adds 15% damage, healing or shield.</p>
+          <p className="text-dim">1 point unlocks a verse or adds a rank. Ranks 1–5 add 15% each (rank 5 is ×1.6). Further ranks still stack at +8% each.</p>
           <div className="bag-toolbar">
             <input className="px-input" aria-label="Search verses" placeholder="Search name, effect, words" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <select className="px-input" aria-label="Sort verses" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
@@ -180,13 +180,13 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
               <div key={m.id} className={`ui-card verse-card2 ${m.rank ? "" : "verse-locked"}`}>
                 <div className="ui-row">
                   <span className={typeClass(m.type)}>{m.name}</span>
-                  <Pips value={m.rank} max={5} />
+                  {m.rank > 5 ? <span className="text-dim">Rank {m.rank}</span> : <Pips value={m.rank} max={5} />}
                 </div>
                 <p className="ui-card-about">{m.about}</p>
                 <p className="text-dim verse-stats">Pow {m.power} · Acc {m.accuracy}% · Crit {m.crit}% · Rng {m.range}{m.effect !== "none" ? ` · ${m.effect}` : ""}</p>
                 <div className="ui-row-gap">
-                  <button type="button" className="px-btn ui-btn-sm" disabled={s.skillPoints < 1 || m.rank >= 5} onClick={() => game?.spendAbility(m.id)}>
-                    {m.rank >= 5 ? "Max rank" : m.rank ? "Upgrade · 1" : "Unlock · 1"}
+                  <button type="button" className="px-btn ui-btn-sm" disabled={s.skillPoints < 1} onClick={() => game?.spendAbility(m.id)}>
+                    {m.rank >= 5 ? "Overmax · 1" : m.rank ? "Upgrade · 1" : "Unlock · 1"}
                   </button>
                   {m.rank > 0 && !equipped.has(m.id) && (
                     <button type="button" className="px-btn px-btn-kyo ui-btn-sm" disabled={s.bar.length >= MAX_BAR} onClick={() => game?.setBar(s.bar.length, m.id)}>Equip</button>
