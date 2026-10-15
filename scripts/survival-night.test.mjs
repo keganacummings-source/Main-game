@@ -185,8 +185,9 @@ test("wayfinding, survival and cooking are skills with effect text, and the cook
     assert.match(content.skillLine(id, 1), /^\+?0\.0%/, `${id} gives no bonus at level 1`);
     assert.notEqual(content.skillLine(id, 100), content.skillLine(id, 1), `${id} grows with level`);
   }
-  assert.match(content.skillLine("survival", 400), /^65\.4% slower/, "survival bends past 50%");
-  assert.match(content.skillLine("cooking", 400), /^57\.7% chance/, "cooking bends past 50%");
+  assert.match(content.skillLine("survival", 400), /^\+159\.6% endurance/, "survival has no cap");
+  assert.match(content.skillLine("cooking", 400), /^59\.[89]% chance/, "cooking has no cap");
+  assert.match(content.skillLine("cooking", 2000), /^299\.[89]% chance/, "cooking goes past 100%");
   assert.match(content.skillLine("wayfinding", 400), /^\+29\.9% movement speed/);
   for (const id of ["cook", "fish", "purify"]) assert.equal(surv.CAMP_RECIPES[id].skill?.id, "cooking", `${id} trains cooking`);
   for (const c of content.CLASSES) for (const id of Object.keys(c.aptitudes ?? {})) assert.ok(content.SKILLS.some((k) => k.id === id), `${c.id}: unknown aptitude ${id}`);
@@ -201,9 +202,22 @@ test("the survival drain multiplier slows every bar, never stops them, and defau
   for (const id of ["hunger", "thirst", "rest"]) {
     assert.ok(Math.abs(normal[id] - dflt[id]) < 1e-8, `${id}: drain 1 is normal`);
     assert.ok(Math.abs((100 - slow[id]) * 2 - (100 - normal[id])) < 1e-8, `${id} drains at half speed`);
-    assert.ok(Math.abs((100 - floor[id]) * 10 - (100 - slow[id])) < 1e-6, `${id} can go past half speed but not to a stop`);
+    assert.ok(Math.abs((100 - floor[id]) * 50 - (100 - slow[id])) < 1e-6, `${id} has no floor: 0.01 drains at 1/100 speed`);
+    assert.ok(floor[id] < 100, `${id} never stops`);
   }
   const a = surv.normalizeSurvival({ hunger: 0, thirst: 0, rest: 0 }), b = surv.normalizeSurvival({ hunger: 0, thirst: 0, rest: 0 });
   assert.ok(Math.abs(surv.advanceSurvival(a, 10) - surv.advanceSurvival(b, 10, false, 0.5)) < 1e-8, "empty bars hurt the same");
 });
 
+
+test("skills have no caps: past 100% turns into guaranteed extras, speed-ups never reach zero", async () => {
+  const om = await import(moduleUrl("../src/game/overmax.ts"));
+  assert.equal(om.procs(0), 0);
+  assert.equal(om.procs(250, 0.4), 3, "250% with a good roll is three");
+  assert.equal(om.procs(250, 0.6), 2, "250% with a bad roll is two");
+  assert.equal(om.procs(100, 0.999), 1, "100% is always one");
+  assert.equal(om.rateMult(100), 0.5);
+  assert.ok(om.rateMult(1e6) > 0 && om.rateMult(1e6) < om.rateMult(1e5), "keeps improving, never zero");
+  assert.ok(om.ratingChance(1e6) < 1 && om.ratingChance(300) === 0.75);
+  for (const sk of content.SKILLS) assert.ok(content.skillLine(sk.id, 5000).length > 0, `${sk.id} has text at level 5000`);
+});

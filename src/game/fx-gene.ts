@@ -123,3 +123,44 @@ export function fxGeneLabel(gene: FxGene, accentName?: string): string {
   const name = gene.pattern.charAt(0).toUpperCase() + gene.pattern.slice(1);
   return accentName ? `${name} · ${accentName} accent` : name;
 }
+
+// ---------------------------------------------------------------------------
+// Traits: where on the body a piece shows its effect, and the rare signature shapes
+// ---------------------------------------------------------------------------
+
+/**
+ * Each slot owns a part of the body, so a full outfit spreads out instead of piling onto the chest.
+ * Rare and better pieces may roll a signature in their slot: wings (chest), a tail (legs), a trail
+ * (feet), a crown (head), a familiar (relic), or an imbue that adds a layer to your verses (weapon).
+ * Everything else shows a small pattern at the piece's own spot.
+ */
+export type FxTraitKind = "aura" | "wings" | "tail" | "trail" | "crown" | "familiar" | "imbue";
+export type FxTrait = { kind: FxTraitKind; style: number; size: number };
+
+const SIGNATURE: Record<string, FxTraitKind> = { chest: "wings", legs: "tail", feet: "trail", head: "crown", relic: "familiar", weapon: "imbue" };
+export const TRAIT_STYLES: Record<Exclude<FxTraitKind, "aura">, readonly string[]> = {
+  wings: ["Feathered Wings", "Demon Wings", "Crystal Wings", "Spirit Wings"],
+  tail: ["Demon Tail", "Flame Whip", "Wisp Tail", "Orb Chain"],
+  trail: ["Afterimage Trail", "Footprint Trail", "Ribbon Trail", "Spark Wake"],
+  crown: ["Halo", "Horns", "Shard Crown", "Third Eye"],
+  familiar: ["Orb Familiar", "Star Familiar", "Moon Familiar"],
+  imbue: ["Echo Imbue", "Burst Imbue", "Sigil Imbue", "Comet Imbue"],
+};
+/** Chance that a piece of this quality rolls its slot's signature. Rare 45%, Epic 75%, Legendary always. */
+export function signatureChance(quality: number): number {
+  return quality >= 5 ? 1 : quality >= 4 ? 0.75 : quality >= 3 ? 0.45 : 0;
+}
+
+export function fxTrait(seed: number, slot: string, quality: number): FxTrait {
+  const kind = SIGNATURE[slot];
+  if (kind && bits(seed, 21) < signatureChance(quality)) {
+    const styles = TRAIT_STYLES[kind as Exclude<FxTraitKind, "aura">];
+    return { kind, style: Math.floor(bits(seed, 22) * styles.length) % styles.length, size: 0.85 + bits(seed, 23) * 0.35 + (quality >= 5 ? 0.15 : 0) };
+  }
+  return { kind: "aura", style: 0, size: 1 };
+}
+
+export function fxTraitLabel(t: FxTrait): string {
+  if (t.kind === "aura") return "";
+  return TRAIT_STYLES[t.kind][t.style] ?? "";
+}

@@ -17,7 +17,7 @@ When a foe falls, the chance it stays is:
 
 **12% + 0.12% per Catching level + Catch Boost ÷ 220 + 3% per rarity step + 45% while a Ghost Jar is active**
 
-The chance is capped at 92%.
+There is no cap. Past a sure catch, the extra chance raises the odds that the ghost is shiny and gives it more health.
 
 - **Can't be caught:** animals, bosses, witches, shrine Saints, and anything summoned by another foe.
 - A **Ghost Jar** lasts 60 seconds. Use it from the Bag before a fight.

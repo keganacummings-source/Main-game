@@ -87,6 +87,8 @@ import { readAccountMeta, writeAccountMeta } from "./account-save";
 import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
 import { geneSeedOf } from "./fx-gene";
+import { gearImbue } from "./gear-fx";
+import { drawGhostFx, ghostImbue } from "./ghost-fx";
 /** Each set gets its own aura variant (tint, spin, size, crest) so the 10 aura kinds look like 100. */
 const SET_VARIANT: Record<string, number> = Object.fromEntries(SETS.map((s, i) => [s.id, i * 7 + s.style + 1]));
 const SET_PIECES = ["head", "chest", "legs", "feet", "relic"];
@@ -99,7 +101,7 @@ const BURN_PCT_PER_SECOND = 0.05;
 /** Autogrind fishes for this long, then lets another skill have a turn. */
 const FISH_GRIND_SECONDS = 75;
 const FISH_GRIND_PAUSE = 150;
-import { bend, bendChance, bendDown, bendSigned } from "./overmax";
+import { bend, bendChance, bendDown, bendSigned, procs, rateMult, ratingChance } from "./overmax";
 import { respawnSeconds } from "./respawn";
 import { FLOOR_COLOR, expandZones, mapToWorld, regionAt, savedMaps } from "./map-format";
 import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./builtin-maps";
@@ -190,7 +192,7 @@ export type Snap = {
   shrine: string;
   companion: string;
   box: string[];
-  spirits: { uid: string; name: string; type: TypeId; level: number; rarity: number; hp: number; max: number; active: boolean; shiny: boolean; known: { id: string; name: string; about: string; type: TypeId; player: boolean; slotted: boolean }[]; slots: string[] }[];
+  spirits: { uid: string; name: string; type: TypeId; level: number; rarity: number; hp: number; max: number; speed: number; active: boolean; shiny: boolean; known: { id: string; name: string; about: string; type: TypeId; player: boolean; slotted: boolean }[]; slots: string[] }[];
   spiritSlots: number;
   spiritCap: number;
   /** Ghosts kept in the Ghost Box. */
@@ -1464,10 +1466,10 @@ export class TurbzGame {
 		const cost = BUILD_PIECES[piece].cost;
 		consumeMaterials(save.bag, cost);
 		this.gainSkill("building", xp);
-		if (Math.random() * 100 < bend(this.skillN("building") * 0.25, 50, 85)) {
+		for (let r = procs(this.skillN("building") * 0.25); r > 0; r--) {
 			const ids = Object.keys(cost);
 			const id = ids[Math.floor(Math.random() * ids.length)];
-			if (id) { this.giveItem(id, 1); this.float(save.x, save.y - 52, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a"); }
+			if (id) { this.giveItem(id, 1); this.float(save.x, save.y - 52 - r * 8, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a"); }
 		}
 	}
 	placeLog(tx, ty, piece = "wood") {
@@ -1626,6 +1628,7 @@ export class TurbzGame {
 	/** Plays a verse's FX and returns the seconds until it visually lands. */
 	playMoveFx(move, x0, y0, x1, y1, opts = {}) {
 		this.cfx = this.cfx ?? new CombatFx();
+		if (this.castImbue && !opts.imbue) opts = { ...opts, imbue: this.castImbue };
 		return this.cfx.cast(move, attackForm(move), moveTactic(move), x0, y0, x1, y1, opts);
 	}
 	/** Runs fn after `delay` seconds of game time (frozen while paused, dropped if the map changes). */
@@ -1663,7 +1666,7 @@ export class TurbzGame {
 	tickSurvival(dt) {
 		const s = this.save.survival, before = s.elapsed;
 		if (this.sleeping && (!this.nearCamp() || this.combat > 0 || this.inFight())) this.sleeping = false;
-		const damage = advanceSurvival(s, dt, this.sleeping, 1 - bend(this.skillN("survival") * 0.002, 0.5, 0.82));
+		const damage = advanceSurvival(s, dt, this.sleeping, rateMult(this.skillN("survival") * 0.4));
 		if (damage > 0) { this.save.hp -= damage; if (this.save.hp <= 0) this.die(); }
 		if (this.sleeping && s.rest >= 100 && !this.isNightNow()) { this.sleeping = false; this.gainSkill("survival", 15); this.say("Rested. Your wounds still need a healing spell."); this.regrowNodes("sleep"); }
 		if (Math.floor(before / 10) !== Math.floor(s.elapsed / 10)) this.persist();
@@ -1706,10 +1709,10 @@ export class TurbzGame {
 				return this.say(`Missing: ${missing.join(", ")}.`);
 			}
 			if (made.skill) this.gainSkill(made.skill.id, made.skill.xp);
-			const extra = made.skill?.id === "cooking" ? bend(this.skillN("cooking") * 0.15, 50, 85) : 0;
-			if (extra > 0 && Math.random() * 100 < extra) {
-				for (const [id, n] of Object.entries(made.outputs)) save.bag[id] = (save.bag[id] ?? 0) + n;
-				this.say("A second portion comes off the fire.");
+			const extra = made.skill?.id === "cooking" ? procs(this.skillN("cooking") * 0.15) : 0;
+			if (extra > 0) {
+				for (const [id, n] of Object.entries(made.outputs)) save.bag[id] = (save.bag[id] ?? 0) + n * extra;
+				this.say(extra === 1 ? "A second portion comes off the fire." : `${extra} extra portions come off the fire.`);
 			}
 			this.say(`Crafted ${Object.entries(made.outputs).map(([id, n]) => `${ITEM_BY_ID[id]?.name ?? id} x${n}`).join(", ")}.`);
 			this.boardEvent("craft");
@@ -2214,7 +2217,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!nearestWaterTile(this.world, save.x, save.y, 80)) { this.say("Stand beside water to fish."); return; }
 		const perk = 1 - bend(this.chan("fish_luck"), 75, 92) / 100;
-		const skill = 1 - bend(this.skillN("fishing") * 0.175, 70, 92) / 100;
+		const skill = rateMult(this.skillN("fishing") * 0.5);
 		const wait = (FISH_BITE_MIN + Math.random() * (FISH_BITE_MAX - FISH_BITE_MIN)) * perk * skill;
 		this.dest = null;
 		if (this.autoplay) { this.path = []; this.pathI = 0; }
@@ -2528,7 +2531,29 @@ export class TurbzGame {
 		if (tac === "channel" && dist < attackRange(m)) score += 10;
 		return score;
 	}
+	/** Casts a verse. An imbued weapon adds its layer to everything this cast draws. */
 	castMove(move, prefer) {
+		this.castImbue = this.playerImbue();
+		try {
+			return this.castMoveInner(move, prefer);
+		} finally {
+			this.castImbue = null;
+		}
+	}
+	/** The imbue layer from your worn gear (an imbued Rare+ weapon), cached until your gear changes. */
+	playerImbue() {
+		const save = this.save;
+		if (!save) return null;
+		const key = Object.values(save.equipped ?? {}).join("|");
+		if (this.imbueKey === key) return this.imbueCache;
+		const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
+		const pieces = ["weapon", "head", "chest", "legs", "feet", "relic"].map((slot) => this.piece(slot)).filter(Boolean)
+			.map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) }));
+		this.imbueKey = key;
+		this.imbueCache = gearImbue(pieces);
+		return this.imbueCache;
+	}
+	castMoveInner(move, prefer) {
 		const save = this.save;
 		if (!save || this.dead || snap.panel === "death" || !save.abilityRanks?.[move.id]) return false;
 		if (this.castLock > 0 || this.lunge) return false;
@@ -2715,7 +2740,7 @@ export class TurbzGame {
 			const mob = this.nearestMob(save.x, save.y, 64);
 			const move = MOVE_BY_ID[lung.moveId] ?? MOVES.find((m) => moveTactic(m) === "lunge") ?? MOVES[0];
 			const lungeMiss = Math.random() * 100 > move.accuracy;
-			const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss });
+			const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
 			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, lung.failed ? 0.22 : 0.72, { missed: lungeMiss }); });
 		}
 		if (u >= 1) this.lunge = null;
@@ -2823,8 +2848,8 @@ export class TurbzGame {
 		const tactic = moveTactic(move);
 		const form = attackForm(move);
 		let cd = baseMoveCooldown(move) * (1 - bend(this.chan("swift") / 100, 0.4, 0.75));
-		if (form === "spell" && tactic !== "heavy" && tactic !== "channel") cd *= (1 - bend(this.skillN("magic") * 0.00113, 0.45, 0.75)) * (1 - bend(this.chan("focus") / 100, 0.35, 0.7));
-		cd *= 1 - bend(this.skillN(masteryOf(move.type)) * 0.0005, 0.2, 0.4);
+		if (form === "spell" && tactic !== "heavy" && tactic !== "channel") cd *= rateMult(this.skillN("magic") * 0.2) * (1 - bend(this.chan("focus") / 100, 0.35, 0.7));
+		cd *= rateMult(this.skillN(masteryOf(move.type)) * 0.1);
 		if (tactic === "roll") cd = Math.max(cd, 2.6);
 		if (tactic === "ward") cd = Math.max(cd, 5.5);
 		if (tactic === "heal") cd = Math.max(cd, 3.2);
@@ -2960,7 +2985,7 @@ export class TurbzGame {
 			return;
 		}
 		if (mob.animal) {
-			const skin = Math.random() * 100 < bend(this.skillN("skinning") * 0.3, 60, 90) ? 1 : 0;
+			const skin = procs(this.skillN("skinning") * 0.3);
 			const meat = (mob.species === "stag" || mob.species === "boar" ? 2 : 1) + skin;
 			const hide = (mob.species === "stag" ? 2 : 1) + skin;
 			this.gainSkill("skinning", 10);
@@ -3019,9 +3044,15 @@ export class TurbzGame {
 		if (!save || mob.animal || mob.boss || mob.witch || mob.id.startsWith("shrine") || mob.master) return;
 		const jar = (save.jarLeft ?? 0) > 0 ? 0.45 : 0;
 		const raw = 0.12 + this.skillN("catching") * 0.0012 + this.chan("catch_boost") / 220 + mob.rarity * 0.03 + jar;
-		const chance = bend(raw, 0.92, 0.99);
-		if (Math.random() > chance) return;
+		// No cap: past a sure catch the extra raises the shiny odds and the ghost's health.
+		if (Math.random() > raw) return;
 		const spirit = this.spiritFrom(mob);
+		const over = Math.max(0, raw - 1);
+		if (over > 0) {
+			if (!spirit.shiny && Math.random() < SHINY_CHANCE * over) spirit.shiny = true;
+			spirit.max = Math.floor(spirit.max * (1 + over * 0.25));
+			spirit.hp = spirit.max;
+		}
 		if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
 		this.gainSkill("catching", 16);
 		save.catches[mob.type] = (save.catches[mob.type] ?? 0) + 1;
@@ -3279,7 +3310,7 @@ export class TurbzGame {
 		save.chests.push(chest);
 		if (save.chests.length > 40) save.chests.splice(0, save.chests.length - 40);
 		this.openDrop = { src: mob.id, chest };
-		if (Math.random() * 100 < bend(this.skillN("looting") * 0.15, 40, 75)) {
+		for (let r = procs(this.skillN("looting") * 0.15); r > 0; r--) {
 			const extra = ["potion", "cleanse_salt", "meat", "leather", "ore", "timber", "mushroom"][Math.floor(Math.random() * 7)];
 			chest.items[extra] = (chest.items[extra] ?? 0) + 1;
 		}
@@ -3859,7 +3890,7 @@ export class TurbzGame {
 			this.float(save.x, save.y - 36, "ECHO", "#6a4cff");
 			return;
 		}
-		if (this.skillN("evasion") && Math.random() * 100 < bend(this.skillN("evasion") * 0.05, 15, 35)) {
+		if (this.skillN("evasion") && Math.random() < ratingChance(this.skillN("evasion") * 0.1)) {
 			this.float(save.x, save.y - 36, "SLIP", "#9ad8c8");
 			this.gainSkill("evasion", 2);
 			return;
@@ -4235,7 +4266,7 @@ export class TurbzGame {
 			this.say(`Timber x${n}.`);
 		} else if (node === "shroom") {
 			const bonus = this.chan("shroom_sense");
-			const extra = Math.random() < bend(this.skillN("shroom") * 0.002, 0.8, 0.95) ? 1 : 0;
+			const extra = procs(this.skillN("shroom") * 0.2);
 			this.giveItem(Math.random() < .34 ? "dreamspore" : Math.random() < .5 ? "embercap" : "blue_lantern", 1 + (bonus > 20 ? 1 : 0) + extra);
 			this.giveItem("mushroom", 1 + extra);
 			this.gainSkill("shroom", 16);
@@ -4333,7 +4364,7 @@ export class TurbzGame {
 		if (tactic === "ward" || move.effect === "shell") cd = Math.max(cd, 8);
 		if (move.effect === "cleanse") cd = Math.max(cd, 5);
 		if (tactic === "surge") cd = Math.max(cd, 10);
-		cd *= 1 - bend(this.skillN(masteryOf(move.type)) * 0.0005, 0.2, 0.4);
+		cd *= rateMult(this.skillN(masteryOf(move.type)) * 0.1);
 		return Math.max(.6, cd * (spirit.shiny ? 0.9 : 1));
 	}
 	/**
@@ -4387,7 +4418,12 @@ export class TurbzGame {
 		at.swing = 1;
 		if (attackForm(move) === "melee") { at.dashT = .38; at.dashX = foe.x - (foe.x > at.x ? 14 : -14); at.dashY = foe.y; }
 		if (slot >= 0) this.mates[slot] = at;
-		this.strike(move, at.x, at.y - 12, foe, { fromPet: true, mult: 0.75 + spirit.rarity * 0.12, pet: spirit });
+		this.castImbue = ghostImbue({ type: spirit.type, rarity: spirit.rarity, seed: spirit.uid, shiny: spirit.shiny });
+		try {
+			this.strike(move, at.x, at.y - 12, foe, { fromPet: true, mult: 0.75 + spirit.rarity * 0.12, pet: spirit });
+		} finally {
+			this.castImbue = null;
+		}
 		this.gainSkill("ghostkeeping", 1);
 		if (Math.random() < .5) this.gainSkill(masteryOf(move.type), 1);
 		return true;
@@ -4608,7 +4644,7 @@ export class TurbzGame {
 			const aimX = hit.form === "melee" ? save.x : hit.ax;
 			const aimY = hit.form === "melee" ? save.y : hit.ay;
 			const follow = hit.form === "melee" ? () => [save.x, save.y - 18] : undefined;
-			const delay = this.playMoveFx(move, m.x, m.y - 16, aimX, aimY - 18, { follow });
+			const delay = this.playMoveFx(move, m.x, m.y - 16, aimX, aimY - 18, { follow, imbue: m.enemyGhost ? ghostImbue({ type: m.type, rarity: m.rarity, seed: m.id, shiny: m.shiny }) : null });
 			this.later(delay, () => {
 				if (this.dead) return;
 				const dist = Math.hypot(save.x - m.x, save.y - m.y);
@@ -4921,7 +4957,7 @@ export class TurbzGame {
 			this.say(`Timber x${n}.`);
 		} else if (node === "shroom") {
 			const bonus = this.chan("shroom_sense");
-			const extra = Math.random() < bend(this.skillN("shroom") * 0.002, 0.8, 0.95) ? 1 : 0;
+			const extra = procs(this.skillN("shroom") * 0.2);
 			this.giveItem(Math.random() < .34 ? "dreamspore" : Math.random() < .5 ? "embercap" : "blue_lantern", 1 + (bonus > 20 ? 1 : 0) + extra);
 			this.giveItem("mushroom", 1 + extra);
 			this.gainSkill("shroom", 16);
@@ -5684,7 +5720,7 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	price(n) {
-		const off = bend(this.skillN("trading") * 0.00125, 0.5, 0.85);
+		const off = 1 - rateMult(this.skillN("trading") * 0.25);
 		const charm = bend(Math.max(0, this.chan("shop_charm")) / 140, 0.75, 0.92);
 		const mult = Math.max(0.05, (1 - off) * (1 - charm));
 		return Math.max(1, Math.floor(n * mult));
@@ -5709,7 +5745,10 @@ export class TurbzGame {
 		}
 		for (const [id, n] of Object.entries(recipe.costs)) save.bag[id] -= n;
 		this.giveItem(recipe.output, recipe.n);
-		if (Math.random() < bend(this.skillN("alchemy") * 0.00125, 0.5, 0.85)) this.giveItem(recipe.output, recipe.n);
+		{
+			const doses = procs(this.skillN("alchemy") * 0.125);
+			if (doses) this.giveItem(recipe.output, recipe.n * doses);
+		}
 		this.gainSkill("alchemy", 18);
 		this.say(`Brewed ${ITEM_BY_ID[recipe.output]?.name ?? recipe.name}.`);
 		this.persist();
@@ -7459,7 +7498,7 @@ export class TurbzGame {
 			const haste = bendSigned(prof.stats.haste / 100, -1.5, -0.4, 0.45, 0.82);
 			const swiftCut = bend(this.chan("swift") / 100, 0.4, 0.75);
 			const atk = (1 - swiftCut) * (1 - haste);
-			const magicCut = bend(this.skillN("magic") * 0.00113, 0.45, 0.75);
+			const magicCut = 1 - rateMult(this.skillN("magic") * 0.2);
 			const focusCut = bend(this.chan("focus") / 100, 0.35, 0.7);
 			const spl = atk * (1 - magicCut) * (1 - focusCut);
 			const l = [];
@@ -7770,6 +7809,7 @@ export class TurbzGame {
 				max: Math.max(1, Math.ceil(s.max)),
 				active: !!s.active,
 				shiny: !!s.shiny,
+				speed: s.speed ?? 10,
 				slots: s.slots ?? [],
 				known: (s.known ?? []).map((id) => {
 					const m = MOVE_BY_ID[id];
@@ -8078,7 +8118,10 @@ export class TurbzGame {
 					setFx: null,
 					setOn: false
 				});
-			} else drawMonster(ctx, {
+			} else {
+				const gfx = m.enemyGhost ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id } : null;
+				if (gfx) drawGhostFx(ctx, gfx, this.clock, "back");
+				drawMonster(ctx, {
 				x: m.x,
 				y: m.y,
 				template: m.template,
@@ -8095,7 +8138,9 @@ export class TurbzGame {
 				species: m.enemyGhost ? undefined : m.species,
 				look: m.look ?? null,
 				time: this.clock
-			});
+				});
+				if (gfx) drawGhostFx(ctx, gfx, this.clock, "front");
+			}
 			this.queuePlate(m);
 		}
 		if (save.map === "world") for (const tavern of TAVERNS) {
@@ -8135,6 +8180,8 @@ export class TurbzGame {
 		if (!homeAway) this.activeSpirits().forEach((spirit, i) => {
 			const at = this.mates[i];
 			if (!at || spirit.hp <= 0) return;
+			const gfx = { x: at.x, y: at.y, type: spirit.type, rarity: spirit.rarity, level: spirit.level, speed: spirit.speed, max: spirit.max, shiny: !!spirit.shiny, seed: spirit.uid };
+			drawGhostFx(ctx, gfx, this.clock, "back");
 			drawMonster(ctx, {
 				x: at.x,
 				y: at.y,
@@ -8151,6 +8198,7 @@ export class TurbzGame {
 				look: spirit.look,
 				time: this.clock
 			});
+			drawGhostFx(ctx, gfx, this.clock, "front");
 			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - 36, spirit.shiny ? `hsl(${(this.clock * 120) % 360},90%,70%)` : TYPES[spirit.type].color);
 		});
 		if (!homeAway) for (const id of save.party ?? []) {

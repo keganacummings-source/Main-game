@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ENCHANT_BY_ID, TYPES, enchantText, equipmentStats, gearPrice, gearScore, type Gear, type QualityId, type Slot } from "@/game/content";
 import { gearSellValue } from "@/game/balance";
-import { fxGene, fxGeneLabel, geneSeedOf } from "@/game/fx-gene";
+import { fxGene, fxGeneLabel, fxTrait, fxTraitLabel, geneSeedOf } from "@/game/fx-gene";
 import { ConfirmButton } from "./ui-kit";
 import type { getSnap, TurbzGame } from "@/game/engine";
 
@@ -25,6 +25,8 @@ function fxLine(g: Gear): string {
   const q = QUALITY_RANK[g.quality] ?? 0;
   if (q < 2) return "FX: none until Fine quality.";
   const gene = fxGene(geneSeedOf(g), g.type, q);
+  const trait = fxTraitLabel(fxTrait(geneSeedOf(g), g.slot, q));
+  if (trait) return `FX: ${trait} in ${TYPES[g.type]?.name ?? g.type}${gene.accent ? ` with ${TYPES[gene.accent].name}` : ""}${trait.endsWith("Imbue") ? " · adds a layer to your verses" : ""}`;
   const label = fxGeneLabel(gene, gene.accent ? TYPES[gene.accent].name : undefined);
   return `FX: ${label} · ${gene.shape}${gene.flare ? " · flare" : ""}${gene.dir < 0 ? " · counter-spin" : ""}`;
 }

@@ -124,6 +124,8 @@ export type CastOpts = {
   miss?: boolean;
   /** Force a three-shot volley so the visuals agree with a volley's three hits. */
   volley?: boolean;
+  /** An extra layer from an imbued weapon (or a ghost's own FX) on top of the verse's look. */
+  imbue?: { type: TypeId; accent: TypeId; style: number; quality: number } | null;
 };
 type MoteKind = "px" | "drop" | "spark" | "ring" | "flake";
 type Mote = { x: number; y: number; vx: number; vy: number; life: number; max: number; c: string; g: number; k: MoteKind; drag: number };
@@ -161,7 +163,37 @@ export class CombatFx {
     const start = this.list.length;
     const delay = this.castBase(move, form, tactic, x0, y0, x1, y1, opts);
     this.signature(move, tactic, x0, y0, x1, y1, delay, opts, start);
+    if (opts.imbue) this.imbueLayer(opts.imbue, x0, y0, x1, y1, delay, opts, start);
     return delay;
+  }
+
+  /**
+   * Imbue: an imbued weapon (or a ghost) adds its own element to every verse it casts.
+   * Echo: a twin spirals each shot. Burst: a second, bigger impact. Sigil: a rune at both ends.
+   * Comet: a smaller copy of each shot chases the first. Melee and self verses get an extra slash or flourish.
+   */
+  private imbueLayer(im: NonNullable<CastOpts["imbue"]>, x0: number, y0: number, x1: number, y1: number, delay: number, opts: CastOpts, start: number) {
+    const pal = PAL[im.type] ?? PAL.normal;
+    const accent = PAL[im.accent] ?? pal;
+    const big = 0.7 + im.quality * 0.12;
+    const seed = (im.style * 0.17 + im.quality * 0.07) % 1;
+    const base = { x0, y0, x1, y1, pal, type: im.type, seed, big, tilt: 0.6, accent };
+    const chase = opts.follow ? { follow: opts.follow, fox: 0, foy: 0 } : {};
+    const shots = this.list.slice(start).filter((f) => f.kind === "proj" || f.kind === "beam");
+    const slashes = this.list.slice(start).filter((f) => f.kind === "slash" || f.kind === "thrust");
+    if (im.style === 2 || (!shots.length && !slashes.length)) this.list.push({ ...base, kind: "sigCast", t: 0, dur: 0.45, variant: (im.quality + 3) % 6, x1: x0, y1: y0 });
+    if (slashes.length) {
+      const f = slashes[0]!;
+      this.list.push({ ...f, pal, accent, kind: "slash", t: (f.t ?? 0) - 0.06, dir: -(f.dir ?? 1), big: (f.big ?? 1) * 0.9 });
+    }
+    for (const f of shots) {
+      if (im.style === 0 && f.kind === "proj") this.list.push({ ...f, pal, kind: "orbiter", impact: undefined, variant: im.quality % 3, accent, seed });
+      if (im.style === 3 && f.kind === "proj") this.list.push({ ...f, pal, accent, kind: "proj", t: (f.t ?? 0) - 0.07, big: (f.big ?? 1) * 0.6, impact: undefined });
+    }
+    if (opts.miss) return;
+    const hitAt = Math.max(0, delay);
+    if (im.style === 1) this.list.push({ ...base, ...chase, kind: "impact", t: -hitAt - 0.05, dur: 0.45, x0: x1, y0: y1, big: big * 1.3, burst: true });
+    else this.list.push({ ...base, ...chase, kind: "sigHit", t: -hitAt - 0.03, dur: 0.45, variant: (im.style * 2 + im.quality) % 7, x0: x1, y0: y1, x1: x0, y1: y0 });
   }
 
   /**

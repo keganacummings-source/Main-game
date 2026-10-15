@@ -1,4 +1,4 @@
-import { bend } from "./overmax";
+
 
 export type TypeId =
   | "normal"
@@ -1055,56 +1055,64 @@ export function xpNeed(level: number): number {
   return Number.isFinite(need) ? Math.max(20, need) : Number.MAX_SAFE_INTEGER;
 }
 
+/**
+ * What a skill does at a level. No skill has a cap. Chances past 100% are not wasted: every full
+ * 100% is a guaranteed extra and the rest is a roll. Speed-ups are rates (+100% = twice as fast),
+ * so they keep improving forever without ever hitting zero time. Evasion is a rating.
+ */
 export function skillLine(id: SkillId, level: number): string {
   const lv = Math.max(1, Math.floor(level) || 1);
   const n = lv - 1;
-  const shown = (raw: number, knee: number, ceiling: number) => bend(raw, knee, ceiling).toFixed(1);
+  const f = (v: number) => v.toFixed(1);
+  const extra = (pct: number, what: string) => `${f(pct)}% ${what}. Every full 100% is a guaranteed one, the rest is a roll`;
   switch (id) {
     case "mining":
     case "woodcutting":
-      return `+${(n * 0.3).toFixed(1)}% materials from each node. 0.3% per level, no cap.`;
+      return `+${f(n * 0.3)}% materials from each node. 0.3% per level, no cap.`;
     case "hunting":
-      return `+${(n * 0.2).toFixed(1)}% damage against wild foes. 0.2% per level, no cap.`;
+      return `+${f(n * 0.2)}% damage against wild foes. 0.2% per level, no cap.`;
     case "catching":
-      return `+${(n * 0.12).toFixed(1)}% chance a fallen foe stays as a spirit. 0.12% per level. Past 92% the chance still climbs, but it never reaches 99%.`;
+      return `+${f(n * 0.12)}% catch chance. 0.12% per level, no cap. Past a sure catch, the extra raises the odds of a shiny and gives the ghost more health.`;
     case "trading":
-      return `Sell prices +${(n * 0.2).toFixed(1)}%. Shops charge ${(100 - bend(n * 0.125, 50, 85)).toFixed(1)}% of the list price from this skill. 0.2% sell and 0.125% off per level. Past 50% off, the discount still grows but the price never hits zero.`;
+      return `Sell prices +${f(n * 0.2)}%. Buying power +${f(n * 0.25)}%: shops charge ${f(100 / (1 + n * 0.0025))}% of the list price. 0.2% and 0.25% per level, no cap; prices keep falling but never reach zero.`;
     case "fishing":
-      return `Bites come ${shown(n * 0.175, 70, 92)}% sooner. 0.175% per level. Past 70% the bonus still climbs, but it never reaches 92%.`;
+      return `Bites come +${f(n * 0.5)}% faster (waits are ${f(100 / (1 + n * 0.005))}% as long). 0.5% per level, no cap.`;
     case "social":
-      return `Quest kyo +${(n * 0.15).toFixed(1)}%. 0.15% per level.`;
+      return `Quest kyo +${f(n * 0.15)}%. 0.15% per level, no cap.`;
     case "shroom":
-      return `${shown(n * 0.2, 80, 95)}% chance a patch drops one extra reagent. 0.2% per level. Past 80% the chance still climbs, but it never reaches 95%.`;
+      return `${extra(n * 0.2, "chance a patch gives an extra reagent and shroom")}. 0.2% per level, no cap.`;
     case "alchemy":
-      return `${shown(n * 0.125, 50, 85)}% chance to brew a second dose. 0.125% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
+      return `${extra(n * 0.125, "chance to brew an extra dose")}. 0.125% per level, no cap.`;
     case "adventuring":
       return `Out of combat, restore ${(1.2 + lv * 0.15).toFixed(1)} health per second. The formula is 1.2 + level × 0.15. No cap.`;
     case "physical":
       return `+${(n * 2).toFixed(0)}% damage with physical weapons. 2% per level, no cap.`;
     case "magic":
-      return `+${(n * 2.5).toFixed(0)}% spell damage, and spell cooldowns are ${shown(n * 0.113, 45, 75)}% shorter. Damage is 2.5% per level, no cap. Cooldown reduction is 0.113% per level; past 45% it still climbs but never reaches 75%.`;
+      return `+${(n * 2.5).toFixed(0)}% spell damage, and spells recharge +${f(n * 0.2)}% faster. 2.5% and 0.2% per level, no cap.`;
     case "wayfinding":
-      return `+${(n * 0.075).toFixed(1)}% movement speed. 0.075% per level, no cap.`;
+      return `+${f(n * 0.075)}% movement speed. 0.075% per level, no cap.`;
     case "survival":
-      return `${shown(n * 0.2, 50, 82)}% slower hunger, thirst and rest drain (Hardcore). 0.2% per level. Past 50% it still slows you, but the bars never stop draining.`;
+      return `+${f(n * 0.4)}% endurance: hunger, thirst and rest drain ${f(100 - 100 / (1 + n * 0.004))}% slower (Hardcore). 0.4% per level, no cap; the bars slow forever but never stop.`;
     case "cooking":
-      return `${shown(n * 0.15, 50, 85)}% chance a campfire recipe makes a second portion (Hardcore). 0.15% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
+      return `${extra(n * 0.15, "chance a campfire recipe makes an extra portion")} (Hardcore). 0.15% per level, no cap.`;
     case "building":
-      return `${shown(n * 0.25, 50, 85)}% chance a wall, bed, campfire or Ghost Box refunds one material. 0.25% per level. Past 50% the chance still climbs, but it never reaches 85%.`;
+      return `${extra(n * 0.25, "chance a wall, bed, campfire or Ghost Box refunds a material")}. 0.25% per level, no cap.`;
     case "ghostkeeping":
-      return `Your ghosts deal +${(n * 0.4).toFixed(1)}% damage and have +${(n * 0.3).toFixed(1)}% health. 0.4% and 0.3% per level, no cap.`;
-    case "evasion":
-      return `${shown(n * 0.05, 15, 35)}% chance to slip a hit that lands on you. 0.05% per level. Past 15% the chance still climbs, but it never reaches 35%.`;
+      return `Your ghosts deal +${f(n * 0.4)}% damage and have +${f(n * 0.3)}% health. 0.4% and 0.3% per level, no cap.`;
+    case "evasion": {
+      const rating = n * 0.1;
+      return `Evasion rating ${f(rating)}: ${f((rating / (rating + 100)) * 100)}% chance to slip a hit that lands on you. 0.1 rating per level, no cap (100 rating is 50%, 300 is 75%).`;
+    }
     case "bountyhunting":
-      return `+${(n * 0.5).toFixed(1)}% damage against bounties, witches and hunters. 0.5% per level, no cap.`;
+      return `+${f(n * 0.5)}% damage against bounties, witches and hunters. 0.5% per level, no cap.`;
     case "skinning":
-      return `${shown(n * 0.3, 60, 90)}% chance a hunted animal gives one more meat and hide. 0.3% per level. Past 60% the chance still climbs, but it never reaches 90%.`;
+      return `${extra(n * 0.3, "chance a hunted animal gives one more meat and hide")}. 0.3% per level, no cap.`;
     case "looting":
-      return `${shown(n * 0.15, 40, 75)}% chance a loot chest holds one extra supply, and chests last +${(n * 0.5).toFixed(0)} s. 0.15% per level (bends past 40%, never 75%) and 0.5 s per level.`;
+      return `${extra(n * 0.15, "chance a loot chest holds an extra supply")}, and chests last +${(n * 0.5).toFixed(0)} s. 0.15% and 0.5 s per level, no cap.`;
     default:
       if (id.startsWith("m_")) {
         const t = TYPES[id.slice(2) as TypeId];
-        return `+${(n * 0.6).toFixed(1)}% damage with ${t?.name ?? ""} verses (yours and your ghosts'), and their cooldowns are ${shown(n * 0.05, 20, 40)}% shorter. 0.6% damage per level, no cap. Cooldown is 0.05% per level; past 20% it still climbs but never reaches 40%.`;
+        return `+${f(n * 0.6)}% damage with ${t?.name ?? ""} verses (yours and your ghosts'), and they recharge +${f(n * 0.1)}% faster. 0.6% and 0.1% per level, no cap.`;
       }
       return "";
   }

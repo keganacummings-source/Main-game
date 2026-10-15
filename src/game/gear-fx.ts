@@ -1,6 +1,6 @@
 import type { TypeId } from "./content";
 import { P, PAL, px } from "./combat-fx";
-import { fxGene, type FxGene, type FxShape } from "./fx-gene";
+import { fxGene, fxTrait, type FxGene, type FxShape, type FxTrait } from "./fx-gene";
 
 type Piece = { slot: string; style: number; type: TypeId; fxSeed: number; quality: number; gene?: number };
 type Actor = { x: number; y: number; pieces: Piece[]; walk: number; facing: number };
@@ -317,52 +317,290 @@ function dotRing(ctx: C, r: number, c: string, rot: number, gap: number, flat: n
   }
 }
 
-const COUNT_BY_QUALITY = [0, 0, 3, 5, 7, 10];
+const COUNT_BY_QUALITY = [0, 0, 2, 3, 4, 6];
+
+// ---------------------------------------------------------------------------
+// Signatures: wings, tails, trails, crowns and familiars
+// ---------------------------------------------------------------------------
+
+type Sig = { ctx: C; t: number; s: number; pal: Pal4; alt: Pal4; g: FxGene; tr: FxTrait; flip: number; q: number };
+
+function seg(ctx: C, x0: number, y0: number, x1: number, y1: number, c: string) {
+  const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / P));
+  for (let i = 0; i <= n; i++) px(ctx, x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n, c);
+}
+
+/** Wings spread from between the shoulders, behind the body. Four builds, coloured by the piece. */
+function drawWings(c: Sig) {
+  const { ctx, t, s, pal, alt, g, tr } = c;
+  const flap = Math.sin(t * (2.2 + g.speed * 1.4) + g.phase * 6);
+  const size = tr.size * s;
+  const rootY = -12 * s;
+  const angles = [-1.15, -0.62, -0.12];
+  const lengths = [11, 15, 10.5];
+  for (const side of [-1, 1]) {
+    const rx = side * 2 * s;
+    const tips = angles.map((a, i) => {
+      const ang = a - flap * 0.22 * (1 - i * 0.25);
+      const L = lengths[i]! * size;
+      return [rx + Math.cos(ang) * L * side, rootY + Math.sin(ang) * L] as const;
+    });
+    switch (tr.style) {
+      case 0: { // Feathered: long quills with barbs, lightest at the tips.
+        for (let i = 0; i < tips.length; i++) {
+          const [tx, ty] = tips[i]!;
+          const n = Math.ceil(Math.hypot(tx - rx, ty - rootY) / P);
+          for (let j = 0; j <= n; j++) {
+            const u = j / n;
+            const x = rx + (tx - rx) * u, y = rootY + (ty - rootY) * u;
+            px(ctx, x, y, pal[u > 0.8 ? 3 : u > 0.4 ? 2 : 1]);
+            if (j % 2 === 0 && u > 0.2) px(ctx, x, y + P, (i % 2 && g.accent ? alt : pal)[u > 0.7 ? 2 : 1]);
+          }
+        }
+        break;
+      }
+      case 1: { // Demon: dark bone spars with a scalloped membrane between them.
+        for (let i = 0; i < tips.length - 1; i++) {
+          const [ax, ay] = tips[i]!, [bx, by] = tips[i + 1]!;
+          for (let u = 0.15; u < 1; u += 0.12) for (let v = 0.1; v < 1; v += 0.18) {
+            const x = rx + ((ax - rx) * (1 - v) + (bx - rx) * v) * u;
+            const y = rootY + ((ay - rootY) * (1 - v) + (by - rootY) * v) * u + Math.sin(v * Math.PI) * 2 * u;
+            px(ctx, x, y, u > 0.85 ? pal[2] : pal[1]);
+          }
+        }
+        for (const [tx, ty] of tips) { seg(ctx, rx, rootY, tx, ty, pal[0]); px(ctx, tx, ty - P, pal[3]); }
+        break;
+      }
+      case 2: { // Crystal: floating shards fanned along the wing line.
+        tips.forEach(([tx, ty], i) => {
+          for (let u = 0.35; u <= 1; u += 0.32) {
+            const bob = Math.sin(t * 3 + i + u * 4) * P;
+            shape(ctx, "diamond", rx + (tx - rx) * u, rootY + (ty - rootY) * u + bob, i % 2 && g.accent ? alt : pal, u > 0.9 ? 3 : 2, 2);
+          }
+        });
+        break;
+      }
+      default: { // Spirit: a glowing dotted outline that pulses from root to tip.
+        const pulse = (t * 1.4 + g.phase) % 1;
+        const pts = [[rx, rootY], ...tips, [rx + side * 3 * s, -7 * s]] as const;
+        for (let i = 0; i < pts.length - 1; i++) {
+          const [x0, y0] = pts[i]!, [x1, y1] = pts[i + 1]!;
+          const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (P * 2));
+          for (let j = 0; j <= n; j++) {
+            const u = (i + j / n) / (pts.length - 1);
+            const lit = Math.abs(u - pulse) < 0.12;
+            px(ctx, x0 + ((x1 - x0) * j) / n, y0 + ((y1 - y0) * j) / n, lit ? alt[3] : pal[2]);
+          }
+        }
+      }
+    }
+  }
+}
+
+/** A tail swings out behind the hips, opposite the way you face. */
+function drawTail(c: Sig) {
+  const { ctx, t, s, pal, alt, g, tr, flip } = c;
+  const back = -flip;
+  const n = 9;
+  const len = 2.1 * s * tr.size;
+  let x = back * 3 * s, y = -6 * s;
+  const pts: [number, number][] = [];
+  for (let i = 0; i < n; i++) {
+    const u = i / n;
+    const ang = 0.35 + u * 0.9 + Math.sin(t * (2 + g.speed) - u * 3.2 + g.phase * 5) * 0.55 * u;
+    x += back * Math.cos(ang - 0.6) * len;
+    y += -Math.sin(ang - 0.4) * len * 0.8;
+    pts.push([x, y]);
+  }
+  pts.forEach(([px0, py0], i) => {
+    const u = i / n;
+    switch (tr.style) {
+      case 0: // Demon tail: thick base thinning to a spade.
+        px(ctx, px0, py0, pal[u > 0.6 ? 2 : 1], u < 0.4 ? 2 : 1);
+        break;
+      case 1: { // Flame whip: flickering segments with sparks.
+        const flick = Math.floor(t * 16 + i) % 3;
+        px(ctx, px0, py0, pal[flick === 0 ? 3 : 2], u < 0.3 ? 2 : 1);
+        if (flick === 0 && u > 0.5) px(ctx, px0, py0 - 2 * P, pal[3]);
+        break;
+      }
+      case 2: // Wisp tail: fading dots.
+        if (Math.floor(t * 10 + i) % 4) px(ctx, px0, py0, (u > 0.5 ? alt : pal)[u > 0.7 ? 3 : 2]);
+        break;
+      default: // Orb chain.
+        if (i % 2 === 0) shape(ctx, "ring", px0, py0, i % 4 ? pal : alt, 2, u > 0.7 ? 2 : 1);
+    }
+  });
+  const [ex, ey] = pts[pts.length - 1]!;
+  if (tr.style === 0) { // Spade tip.
+    px(ctx, ex, ey, pal[3]); px(ctx, ex + back * P, ey - P, pal[2]); px(ctx, ex + back * P, ey + P, pal[2]); px(ctx, ex + back * 2 * P, ey, pal[3]); px(ctx, ex - back * P, ey - 2 * P, pal[2]); px(ctx, ex - back * P, ey + 2 * P, pal[2]);
+  } else if (tr.style === 1) {
+    for (let j = 0; j < 3; j++) px(ctx, ex + (hash(Math.floor(t * 12) + j) - 0.5) * 6, ey - j * P * 2 - ((t * 20) % 4), pal[3 - (j % 2)]);
+  }
+}
+
+/** Head pieces sit on or above the head. */
+function drawCrown(c: Sig, front: boolean) {
+  const { ctx, t, s, pal, alt, g, tr } = c;
+  const top = -19 * s;
+  switch (tr.style) {
+    case 0: { // Halo: a tilted ring above the head.
+      const n = 16;
+      for (let i = 0; i < n; i++) {
+        const a = t * 1.1 * g.dir + (i / n) * Math.PI * 2;
+        const depth = Math.sin(a);
+        if ((depth >= 0) !== front) continue;
+        px(ctx, Math.cos(a) * 5 * s * tr.size, top - 2 * s + depth * 1.4 * s, pal[i % 4 === 0 ? 3 : 2]);
+      }
+      break;
+    }
+    case 1: { // Horns.
+      if (!front) break;
+      for (const side of [-1, 1]) for (let j = 0; j < 5; j++) {
+        const u = j / 4;
+        px(ctx, side * (3 * s + u * 2.4 * s * tr.size), -16 * s - u * 3.5 * s * tr.size + u * u * 1.6 * s, pal[u > 0.7 ? 3 : u > 0.3 ? 2 : 1]);
+      }
+      break;
+    }
+    case 2: { // Shard crown: small diamonds circling above the head.
+      const m = 5;
+      for (let i = 0; i < m; i++) {
+        const a = t * 0.9 * g.dir + (i / m) * Math.PI * 2;
+        const depth = Math.sin(a);
+        if ((depth >= 0) !== front) continue;
+        shape(ctx, "diamond", Math.cos(a) * 5 * s, top - 3 * s + depth * s + Math.sin(t * 3 + i) * P, i % 2 && g.accent ? alt : pal, 2, 1);
+      }
+      break;
+    }
+    default: { // Third eye.
+      if (!front) break;
+      const open = (Math.sin(t * 1.3 + g.phase * 6) + 1) / 2;
+      shape(ctx, "diamond", 0, -14 * s, pal, open > 0.5 ? 3 : 2, open > 0.7 ? 2 : 1);
+    }
+  }
+}
+
+/** One companion that orbits wide around you, with a short tail. */
+function drawFamiliar(c: Sig, front: boolean) {
+  const { ctx, t, s, pal, alt, g, tr } = c;
+  const R = 15 * s * tr.size;
+  for (let j = 5; j >= 0; j--) {
+    const a = t * (0.9 + g.speed * 0.5) * g.dir + g.phase * 6 - j * 0.09 * g.dir;
+    const depth = Math.sin(a);
+    if ((depth >= 0) !== front) continue;
+    const x = Math.cos(a) * R, y = -11 * s + depth * R * 0.32 + Math.sin(t * 2.4) * 2 * s;
+    if (j > 0) { px(ctx, x, y, (g.accent ? alt : pal)[Math.max(0, 3 - j)]); continue; }
+    if (tr.style === 0) shape(ctx, "block", x, y, pal, 3, 2);
+    else if (tr.style === 1) shape(ctx, "star", x, y, pal, 3, 2);
+    else { px(ctx, x, y, pal[3], 2); px(ctx, x + 2 * P, y, pal[0]); px(ctx, x + P * 2, y + P, pal[0]); }
+  }
+}
+
+/** Trails need where the wearer was: a short position history per trail piece. */
+type TrailPt = { x: number; y: number; t: number };
+const trails = new Map<number, TrailPt[]>();
+function trackTrail(key: number, x: number, y: number, t: number, keep: number): TrailPt[] {
+  let list = trails.get(key);
+  if (!list) { list = []; trails.set(key, list); if (trails.size > 64) trails.delete(trails.keys().next().value as number); }
+  const last = list[list.length - 1];
+  if (last && last.t > t + 1) list.length = 0; // clock reset
+  if (!last || Math.hypot(last.x - x, last.y - y) > 5) list.push({ x, y, t });
+  while (list.length && t - list[0]!.t > keep) list.shift();
+  return list;
+}
+function drawTrail(c: Sig, ax: number, ay: number, key: number) {
+  const { ctx, t, s, pal, alt, tr } = c;
+  const keep = tr.style === 1 ? 1.6 : 0.55;
+  const list = trackTrail(key, ax, ay, t, keep);
+  list.forEach((p, i) => {
+    const age = (t - p.t) / keep;
+    if (age >= 1) return;
+    const x = p.x - ax, y = p.y - ay;
+    switch (tr.style) {
+      case 0: // Afterimages: a fading body-shaped column.
+        if (i % 2) break;
+        for (let h = 0; h < 16; h += 2) if (hash(i * 31 + h) > age) px(ctx, x + (h % 4 ? P : -P), y - h * s * 0.55 - 4, pal[age < 0.3 ? 3 : 2]);
+        break;
+      case 1: // Footprints.
+        if (i % 2) break;
+        px(ctx, x + (i % 4 ? 3 : -3), y - 1, pal[age < 0.4 ? 2 : 1]);
+        break;
+      case 2: // Ribbon at the waist.
+        px(ctx, x, y - 8 * s + Math.sin(p.t * 9) * 2, (i % 2 ? alt : pal)[age < 0.4 ? 3 : 2]);
+        break;
+      default: // Spark wake.
+        if (hash(i * 7 + Math.floor(t * 10)) > 0.45) px(ctx, x + (hash(i) - 0.5) * 8, y - 2 - age * 14, pal[age < 0.3 ? 3 : 2]);
+    }
+  });
+}
 
 export function drawGearFx(ctx: C, a: Actor, t: number, s: number, layer: Layer): void {
   const worn = a.pieces.filter((p) => p.quality >= 2);
   if (!worn.length) return;
-  const power = gearPower(a.pieces);
   const top = worn.reduce((m, p) => Math.max(m, p.quality), 0);
   const lead = worn.slice().sort((x, y) => y.quality - x.quality)[0]!;
   const leadGene = fxGene(seedOf(lead), lead.type, lead.quality);
   const leadPal = PAL[lead.type] ?? PAL.normal;
   const k = s / 2;
   const flip = a.facing < 0 ? -1 : 1;
+  const front = layer === "front";
   ctx.save();
   ctx.translate(Math.round(a.x / P) * P, Math.round(a.y / P) * P);
-  // Ground ring: its gaps, spin, tilt and colour come from the strongest piece.
-  if (layer === "back") {
+  // One quiet ground ring from the strongest piece, only on Epic and Legendary outfits.
+  if (!front && top >= 4) {
     const gap = [0, 2, 3, 4][Math.floor(leadGene.phase * 4)]!;
-    const flat = 0.3 + leadGene.radius * 0.08;
-    dotRing(ctx, (9 + Math.min(6, power * 0.4)) * k * leadGene.radius, leadPal[leadGene.shade]!, t * 0.6 * leadGene.dir * leadGene.speed, gap, flat);
-    if (top >= 4) dotRing(ctx, 13 * k * leadGene.radius, (PAL[leadGene.accent ?? lead.type] ?? leadPal)[2], -t * 1.6 * leadGene.dir, 3, flat);
-    if (top >= 5) dotRing(ctx, 16 * k * leadGene.radius, leadPal[3], t * 2.4 * leadGene.dir, 2, flat);
+    dotRing(ctx, 11 * k * leadGene.radius, leadPal[leadGene.shade]!, t * 0.6 * leadGene.dir * leadGene.speed, gap, 0.3 + leadGene.radius * 0.08);
   }
-  // Each fine+ piece adds its own pattern. Budget keeps crowded outfits fast.
-  let budget = 48;
+  // Each piece shows itself in its own part of the body. Signatures (wings, tail, trail, crown,
+  // familiar) replace the piece's small pattern; ordinary pieces show a small pattern at their spot.
+  let budget = 24;
   for (const p of worn.slice().sort((x, y) => y.quality - x.quality)) {
-    if (budget <= 0) break;
     const seed = seedOf(p);
     const g = fxGene(seed, p.type, p.quality);
-    const n = Math.min(budget, Math.max(2, Math.round(COUNT_BY_QUALITY[p.quality]! * g.density)));
-    budget -= n;
+    const tr = fxTrait(seed, p.slot, p.quality);
     const pal = PAL[p.type] ?? PAL.normal;
     const alt = g.accent ? PAL[g.accent] ?? pal : pal;
-    const [lx, ly] = ANCHOR[p.slot] ?? [0, -8];
-    drawPattern({ ctx, t, k, g, pal, alt, n, big: p.quality >= 4 ? 2 : 1, layer, seed: seed % 9973, ax: lx * s * flip, ay: ly * s });
-  }
-  if (layer === "front") {
-    // Weapon edge glint, coloured and timed by the weapon's own gene.
-    const weapon = worn.find((p) => p.slot === "weapon");
-    if (weapon) {
-      const g = fxGene(seedOf(weapon), weapon.type, weapon.quality);
-      const pal = g.accent && g.phase > 0.5 ? PAL[g.accent] ?? PAL.normal : PAL[weapon.type] ?? PAL.normal;
-      const u = (t * 1.6 * g.speed + g.phase) % 1;
-      const wx = 7 * s * flip;
-      for (let j = 0; j < 2 + weapon.quality; j++) px(ctx, wx, (-14 + u * 10) * s + j * P, j === 0 ? pal[3] : pal[2]);
+    const sig: Sig = { ctx, t, s, pal, alt, g, tr, flip, q: p.quality };
+    if (tr.kind === "wings") { if (!front) drawWings(sig); continue; }
+    if (tr.kind === "tail") { if (!front) drawTail(sig); continue; }
+    if (tr.kind === "trail") { if (!front) drawTrail(sig, a.x, a.y, seed); continue; }
+    if (tr.kind === "crown") { drawCrown(sig, front); continue; }
+    if (tr.kind === "familiar") { drawFamiliar(sig, front); continue; }
+    if (tr.kind === "imbue") {
+      // The weapon itself glows; the rest of the imbue shows up on your verses.
+      if (front) {
+        const u = (t * 1.6 * g.speed + g.phase) % 1;
+        const wx = 7 * s * flip;
+        for (let j = 0; j < 3 + p.quality; j++) px(ctx, wx + (j % 2 ? P : 0), (-15 + u * 10) * s + j * P, j === 0 ? alt[3] : pal[2]);
+        if (Math.floor(t * 6) % 3 === 0) px(ctx, wx + (hash(Math.floor(t * 6)) - 0.5) * 8, -12 * s - hash(Math.floor(t * 6) + 1) * 8, alt[3]);
+      }
+      continue;
     }
-    if (top >= 4) motif(ctx, lead.type, t, k, top);
+    if (budget <= 0) continue;
+    const n = Math.min(budget, Math.max(2, Math.round(COUNT_BY_QUALITY[p.quality]! * g.density)));
+    budget -= n;
+    const [lx, ly] = ANCHOR[p.slot] ?? [0, -8];
+    // Small and anchored: the pattern is drawn around the piece's own slot, at about half size.
+    const kk = k * 0.55;
+    ctx.save();
+    ctx.translate(Math.round((lx * s * flip * 0.8) / P) * P, Math.round((ly * s + 10 * kk) / P) * P);
+    drawPattern({ ctx, t, k: kk, g, pal, alt, n, big: p.quality >= 4 ? 2 : 1, layer, seed: seed % 9973, ax: 0, ay: -10 * kk });
+    ctx.restore();
   }
+  if (front && top >= 5) motif(ctx, lead.type, t, k * 0.8, top);
   ctx.restore();
+}
+
+/** The verse layer an imbued weapon adds to your casts, or null. */
+export type Imbue = { type: TypeId; accent: TypeId; style: number; quality: number };
+export function gearImbue(pieces: Piece[]): Imbue | null {
+  for (const p of pieces) {
+    if (p.quality < 3) continue;
+    const seed = seedOf(p);
+    const tr = fxTrait(seed, p.slot, p.quality);
+    if (tr.kind !== "imbue") continue;
+    const g = fxGene(seed, p.type, p.quality);
+    return { type: p.type, accent: g.accent ?? p.type, style: tr.style, quality: p.quality };
+  }
+  return null;
 }

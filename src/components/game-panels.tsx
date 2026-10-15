@@ -4,6 +4,7 @@ import { classGendered, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/cla
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
 import { BUILD_PIECES, BUILD_PIECE_IDS } from "@/game/building";
+import { ghostFxLabel } from "@/game/ghost-fx";
 import { resetLayout } from "@/game/ui-layout";
 import { listChat, postChat } from "@/game/social-client";
 import type { ChatLine } from "@/game/social-types";
@@ -563,6 +564,7 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
             <div>
               <p className={typeClass(sel.type)}>{sel.name} <span className="text-dim">Lv {sel.level}</span> {shinyTag(sel.shiny)}</p>
               <p className="text-dim">{sel.known.filter((m) => m.slotted).length}/3 readied · {sel.known.length} known · tap a move to ready it</p>
+              <p className="text-dim" data-testid="ghost-fx-label">{ghostFxLabel({ type: sel.type, rarity: sel.rarity, level: sel.level, speed: sel.speed, max: sel.max, seed: sel.uid, shiny: sel.shiny })}</p>
             </div>
             <button type="button" className="float-win-btn" aria-label="Close" onClick={() => setOpen(null)}>×</button>
           </div>

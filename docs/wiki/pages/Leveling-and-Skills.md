@@ -35,7 +35,14 @@ Your **loadout** holds up to **9** equipped verses, and only those are used. Reo
 
 ## Skills
 
-Skills are **account-wide** and stay through every death and both modes. Each gives a bonus per level with no level cap. Chance and reduction bonuses (fishing, magic cooldown, survival, cooking, and the rest) bend once they pass their old knee so they keep stacking without hitting 100% or a free shop. Damage, sell price, wayfinding speed, mining and woodcutting stay linear. Train them by doing the thing. Your class's **aptitude** speeds up or slows down each one, and **Hardcore gives 2.4× skill experience**.
+Skills are **account-wide** and stay through every death and both modes. Each gives a bonus per level, and **no skill has a cap or a curve that flattens it**. Bonuses that could not sensibly pass 100% use a system that keeps paying:
+
+- **Extra-roll chances** (Cooking, Alchemy, Shroom, Skinning, Building, Looting) climb past 100%. Every full 100% is a guaranteed extra and the rest is a roll: 250% means two extras and a 50% chance of a third.
+- **Speed-ups** (Fishing bites, Magic and Mastery cooldowns, Survival drain, Trading prices) are rates: +100% is twice as fast (or half the price), +300% four times. They improve forever and never reach zero.
+- **Catching** past a sure catch raises the odds of a shiny and gives the ghost more health.
+- **Evasion** is a rating: 100 rating is a 50% chance to slip a hit, 300 is 75%, and it keeps climbing.
+
+Damage, sell price, wayfinding speed, mining and woodcutting stay linear. Train them by doing the thing. Your class's **aptitude** speeds up or slows down each one, and **Hardcore gives 2.4× skill experience**.
 
 **Wayfinding**, **Survival** and **Cooking** are the exploration and camp skills. Wayfinding works in both modes. Survival and Cooking only pay off in Hardcore, because only Hardcore has hunger, thirst, rest and campfire recipes. You can still train them there and keep them if you go back to TurboHunt, the same way Adventuring's healing only works in TurboHunt.
 
@@ -63,8 +70,8 @@ Every point of character experience you earn also goes to your **account**. Each
 
 - **Max health** = (78 + 12 × level + Spark of Life + Vitality) × (1 + Vitality class stat %), never below 20.
 - **Movement speed** = 118 px/s × class Agility (linear at or above ×0.5; below that it bends toward ×0.05) × 1.45 while Swift × (1 + Swift Step %, bending past +45% toward +85%) × (1 + 0.075% × Wayfinding levels above 1, no cap). Soak ×0.62. Hardcore exhaustion (rest under 15) ×0.7.
-- **Survival** multiplies how fast hunger, thirst and rest drain by (1 − 0.2% × Survival levels above 1). Past 50% slower the reduction bends toward 82% and the bars never stop.
-- **Cooking** gives a campfire recipe a (0.15% × Cooking levels above 1) chance to make a second portion. Past 50% the chance bends toward 85%.
+- **Survival** gives +0.4% endurance per level above 1. Hunger, thirst and rest drain at 1 ÷ (1 + endurance): +100% endurance halves the drain. The bars slow forever and never stop.
+- **Cooking** gives a campfire recipe a (0.15% × Cooking levels above 1) chance to make an extra portion. Every full 100% is a guaranteed extra portion.
 - **Out-of-combat healing** (TurboHunt) = (1.2 + 0.15 × Adventuring level) per second × (1 + class Recovery %).
 - The **Afterglow** enchantment heals 0.4 health per point whenever a foe falls (TurboHunt).
 - Levels and skills do not stop. A huge experience dump settles over several frames so the game cannot freeze.
