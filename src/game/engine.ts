@@ -146,10 +146,16 @@ import {
   type WorldData,
 } from "./world";
 
-export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest";
+export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost";
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
 export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
+export type WildGhostView = {
+  id: string; t: number; near: boolean; name: string; species: string; type: TypeId; level: number; rarity: number;
+  hp: number; max: number; speed: number; shiny: boolean; uid: string;
+  moves: { id: string; name: string; about: string; type: TypeId; power: number; player: boolean; slotted: boolean }[];
+  party: number; partyMax: number; out: number; outMax: number; boxPlaced: boolean; store: number; storeMax: number;
+};
 export type Snap = {
   mode: "title" | "create" | "play";
   hasSave: boolean;
@@ -202,6 +208,8 @@ export type Snap = {
   ghostBox: { placed: boolean; near: boolean; max: number };
   /** The loot chest you have open (Hardcore). */
   chest: ChestView | null;
+  /** The lingering ghost you are looking at, or null. */
+  wildGhost: WildGhostView | null;
   /** Last Man Standing scoreboard, or null outside a match. */
   lms: { alive: number; total: number; kills: number; age: string; feed: string[]; over: boolean; won: boolean; place: number; hunting: number; nearest: string } | null;
   jarLeft: number;
@@ -365,6 +373,9 @@ const GHOST_CD_MULT = 1.5;
 /** Hardcore loot chests: how long they last and how close you must be to open one. */
 const CHEST_SECONDS = 300;
 const CHEST_REACH = 56;
+/** A fallen foe's ghost lingers this long (s) where it fell, waiting for you to decide. */
+const WILD_GHOST_LIFE = 300;
+const WILD_REACH = 64;
 /** Beds: how close you must be to climb in, and how much faster rest comes in one. */
 const BED_REACH = 44;
 const BED_REST = 1.5;
@@ -417,6 +428,7 @@ const emptySnap = (): Snap => ({
 	ghostStore: [],
 	ghostBox: { placed: false, near: false, max: 300 },
 	chest: null,
+	wildGhost: null,
 	lms: null,
 	jarLeft: 0,
 	known: [],
@@ -1325,6 +1337,7 @@ export class TurbzGame {
 		if (this.rules === "hardcore" && !this.dead) this.tickSurvival(dt);
 		this.tickParty(dt);
 		this.tickChests(dt);
+		this.tickWildGhosts(dt);
 		this.tickLater(dt);
 		this.tickFx(dt);
 		this.netAcc += dt;
@@ -2524,6 +2537,12 @@ export class TurbzGame {
 			else { this.pendingBed = b; this.dest = { x: b.tx * 32 + 16, y: b.ty * 32 + 28, mob: null }; this.say("Heading to bed."); }
 			return;
 		}
+		for (const g of this.save.wildGhosts ?? []) {
+			if (g.map !== this.save.map || Math.abs(g.x - x) > 18 || y < g.y - 40 || y > g.y + 8) continue;
+			if (Math.hypot(g.x - this.save.x, g.y - this.save.y) <= WILD_REACH) this.openWild(g.id);
+			else { this.pendingWild = g.id; this.dest = { x: g.x, y: g.y + 6, mob: null }; }
+			return;
+		}
 		for (const c of this.save.chests ?? []) {
 			if (c.map !== this.save.map || Math.abs(c.x - x) > 16 || y < c.y - 24 || y > c.y + 6) continue;
 			if (Math.hypot(c.x - this.save.x, c.y - this.save.y) <= CHEST_REACH) this.openChest(c.id);
@@ -3220,11 +3239,167 @@ export class TurbzGame {
 			spirit.max = Math.floor(spirit.max * (1 + over * 0.25));
 			spirit.hp = spirit.max;
 		}
-		if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
+		// Autoplay keeps the old behaviour: the ghost joins on the spot.
+		if (this.autoplay) {
+			if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
+			this.creditCatch(mob.type);
+			return;
+		}
+		this.lingerGhost(mob, spirit);
+	}
+	creditCatch(type) {
+		const save = this.save;
 		this.gainSkill("catching", 16);
-		save.catches[mob.type] = (save.catches[mob.type] ?? 0) + 1;
+		save.catches[type] = (save.catches[type] ?? 0) + 1;
 		this.boardEvent("catch");
-		this.noteCatch(mob);
+		this.noteCatch({ type });
+	}
+	// ---------- Lingering ghosts ----------
+	/** The ghost of a fallen foe stands where it fell for 5 minutes, until you look at it and decide. */
+	lingerGhost(mob, spirit) {
+		const save = this.save;
+		save.wildGhosts = save.wildGhosts ?? [];
+		const g = { id: `wg-${nextUid()}`, map: save.map, x: mob.x + 18, y: mob.y - 4, t: WILD_GHOST_LIFE, spirit, catchType: mob.type };
+		save.wildGhosts.push(g);
+		if (save.wildGhosts.length > 30) save.wildGhosts.splice(0, save.wildGhosts.length - 30);
+		if (spirit.shiny) { this.float(g.x, g.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.tone(980, .25, "triangle"); }
+		this.float(g.x, g.y - 50, "A GHOST LINGERS", "#c9a6e8");
+		this.say(`${spirit.name}'s ghost lingers${spirit.shiny ? " ✦ SHINY ✦" : ""}. Press E or click it to look (5 min).`);
+		this.tone(660, .12, "sine");
+	}
+	wildById(id) {
+		return (this.save?.wildGhosts ?? []).find((g) => g.id === id) ?? null;
+	}
+	nearestWild(reach = WILD_REACH) {
+		const save = this.save;
+		let best = null, bd = reach;
+		for (const g of save?.wildGhosts ?? []) {
+			if (g.map !== save.map) continue;
+			const d = Math.hypot(g.x - save.x, g.y - save.y);
+			if (d <= bd) { bd = d; best = g; }
+		}
+		return best;
+	}
+	openWild(id) {
+		const g = this.wildById(id);
+		if (!g) return;
+		this.wildOpen = g.id;
+		this.pendingWild = null;
+		this.dest = null;
+		if (snap.panel === "chest") this.chestOpen = null;
+		publish({ panel: "wildghost" });
+		this.tone(560, .06, "sine");
+		this.syncHud(true);
+	}
+	tickWildGhosts(dt) {
+		const save = this.save;
+		if (!save?.wildGhosts?.length) { if (snap.panel === "wildghost") { this.wildOpen = null; publish({ panel: null }); } return; }
+		let changed = false;
+		for (const g of save.wildGhosts) g.t -= dt;
+		const keep = save.wildGhosts.filter((g) => g.t > 0);
+		if (keep.length !== save.wildGhosts.length) {
+			changed = true;
+			for (const g of save.wildGhosts) if (!keep.includes(g) && g.map === save.map) { this.float(g.x, g.y - 30, "THE GHOST FADES", "#8a7a9a"); this.say(`${g.spirit.name}'s ghost faded away.`); }
+			save.wildGhosts = keep;
+		}
+		if (this.pendingWild) {
+			const g = this.wildById(this.pendingWild);
+			if (!g || g.map !== save.map) this.pendingWild = null;
+			else if (Math.hypot(g.x - save.x, g.y - save.y) <= WILD_REACH) this.openWild(g.id);
+		}
+		if (snap.panel === "wildghost") {
+			const g = this.wildById(this.wildOpen);
+			if (!g || g.map !== save.map || Math.hypot(g.x - save.x, g.y - save.y) > WILD_REACH * 3) { this.wildOpen = null; publish({ panel: null }); changed = true; }
+		}
+		if (changed) { this.persist(); this.syncHud(true); }
+	}
+	/** Gives the lingering ghost a name before you keep it. */
+	renameWild(id, name) {
+		const g = this.wildById(id);
+		const clean = String(name ?? "").replace(/[^\p{L}\p{N} '\-]/gu, "").replace(/\s+/g, " ").trim().slice(0, 20);
+		if (!g || !clean) return;
+		g.spirit.name = clean;
+		this.syncHud(true);
+	}
+	/** Keeps the lingering ghost: "party" (follows if fewer than 3 are out) or "box" (the Ghost Box). */
+	keepWild(id, where = "party") {
+		const save = this.save;
+		const g = this.wildById(id);
+		if (!save || !g || this.dead) return;
+		if (g.map !== save.map || Math.hypot(g.x - save.x, g.y - save.y) > WILD_REACH * 3) return this.say("Walk closer to the ghost.");
+		save.spirits = save.spirits ?? [];
+		save.ghostStore = save.ghostStore ?? [];
+		const sp = g.spirit;
+		if (where === "box") {
+			if (!save.ghostBox) return this.say("Build a Ghost Box at your camp first.");
+			if (save.ghostStore.length >= GHOST_STORE_MAX) return this.say(`The Ghost Box is full (${GHOST_STORE_MAX}). Release some.`);
+			sp.active = false;
+			save.ghostStore.push(sp);
+			this.say(`${sp.name} drifts off to your Ghost Box.`);
+		} else {
+			if (save.spirits.length >= PARTY_MAX) return this.say(`Your party is full (${PARTY_MAX}). Send it to the Ghost Box, or make room first.`);
+			sp.active = save.spirits.filter((s) => s.active).length < OUT_MAX;
+			save.spirits.push(sp);
+			this.say(sp.active ? `${sp.name} joins you, and follows.` : `${sp.name} joins your party. Send it out from Spirits.`);
+		}
+		save.wildGhosts = save.wildGhosts.filter((x) => x !== g);
+		this.creditCatch(g.catchType ?? sp.type);
+		this.gainSkill("ghostkeeping", 2);
+		this.float(g.x, g.y - 40, "KEPT", "#7ee0a0");
+		this.tone(880, .12, "triangle");
+		if (this.wildOpen === g.id) { this.wildOpen = null; publish({ panel: null }); }
+		this.persist();
+		this.syncHud(true);
+	}
+	dismissWild(id) {
+		const save = this.save;
+		const g = this.wildById(id);
+		if (!save || !g) return;
+		save.wildGhosts = save.wildGhosts.filter((x) => x !== g);
+		this.float(g.x, g.y - 30, "SET FREE", "#8a7a9a");
+		this.say(`You let ${g.spirit.name}'s ghost go.`);
+		if (this.wildOpen === g.id) { this.wildOpen = null; publish({ panel: null }); }
+		this.persist();
+		this.syncHud(true);
+	}
+	wildView() {
+		const save = this.save;
+		if (!save || !this.wildOpen) return null;
+		const g = this.wildById(this.wildOpen);
+		if (!g) return null;
+		const sp = g.spirit;
+		const key = `${g.id}|${sp.name}|${Math.ceil(g.t)}|${save.spirits?.length}|${save.ghostStore?.length}|${!!save.ghostBox}`;
+		if (this.wildViewCache?.key === key) return this.wildViewCache.view;
+		const view = {
+			id: g.id, t: Math.ceil(g.t), near: Math.hypot(g.x - save.x, g.y - save.y) <= WILD_REACH * 3,
+			name: sp.name, species: (MONSTER_BY_ID[sp.species] ?? ANIMAL_BY_ID[sp.species])?.name ?? sp.species ?? "", type: sp.type, level: sp.level, rarity: sp.rarity ?? 0,
+			hp: Math.ceil(sp.hp), max: Math.ceil(sp.max), speed: sp.speed ?? 10, shiny: !!sp.shiny, uid: sp.uid,
+			moves: (sp.known ?? []).map((mid) => {
+				const m = MOVE_BY_ID[mid];
+				return { id: mid, name: m?.name ?? mid, about: m?.about ?? "", type: m?.type ?? sp.type, power: m?.power ?? 0, player: m ? spiritAidsPlayer(m) : false, slotted: (sp.slots ?? []).includes(mid) };
+			}),
+			party: save.spirits?.length ?? 0, partyMax: PARTY_MAX, out: (save.spirits ?? []).filter((s) => s.active).length, outMax: OUT_MAX,
+			boxPlaced: !!save.ghostBox, store: save.ghostStore?.length ?? 0, storeMax: GHOST_STORE_MAX,
+		};
+		this.wildViewCache = { key, view };
+		return view;
+	}
+	paintWildGhost(ctx, g) {
+		const sp = g.spirit;
+		const blink = g.t < 30 && Math.floor(g.t * 3) % 2 === 0;
+		const bob = Math.sin(this.clock * 2 + g.x) * 3;
+		ctx.save();
+		ctx.globalAlpha = blink ? .4 : .85;
+		ctx.fillStyle = `rgba(201,166,232,${.14 + Math.sin(this.clock * 2.5) * .06})`;
+		ctx.beginPath(); ctx.ellipse(g.x, g.y + 2, 18, 6, 0, 0, Math.PI * 2); ctx.fill();
+		const gfx = { x: g.x, y: g.y + bob, type: sp.type, rarity: sp.rarity, level: sp.level, speed: sp.speed, max: sp.max, shiny: !!sp.shiny, seed: sp.uid };
+		drawGhostFx(ctx, gfx, this.clock, "back");
+		drawMonster(ctx, { x: g.x, y: g.y + bob, template: sp.template, type: sp.type, facing: 1, walk: 0, hurt: 0, boss: false, rarity: sp.rarity, ghost: true, shiny: !!sp.shiny, spin: 0, look: sp.look, time: this.clock });
+		drawGhostFx(ctx, gfx, this.clock, "front");
+		ctx.restore();
+		const near = Math.hypot(g.x - this.save.x, g.y - this.save.y) <= WILD_REACH;
+		drawShadowName(ctx, `${sp.shiny ? "✦ " : ""}${sp.name} · Lv ${sp.level}`, g.x, g.y - 44 + bob, sp.shiny ? `hsl(${(this.clock * 120) % 360},90%,70%)` : TYPES[sp.type]?.color ?? "#c9a6e8");
+		drawShadowName(ctx, near ? "E · LOOK" : `GHOST ${Math.ceil(g.t / 60)}m`, g.x, g.y - 32 + bob, near ? "#ffd166" : "#c9a6e8");
 	}
 	/** Ghosts that can be out with you at once. */
 	spiritCap() {
@@ -4275,7 +4450,7 @@ export class TurbzGame {
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
-		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; }
+		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; save.wildGhosts = []; this.wildOpen = null; }
 		save.kyo = Math.floor(save.kyo * .85);
 		save.bag = {
 			potion: 2,
@@ -5016,7 +5191,13 @@ export class TurbzGame {
 		if (!save || this.dead || !this.world) return;
 		{
 			const chest = this.nearestChest();
+			const wild = this.nearestWild();
+			const dc = chest ? Math.hypot(chest.x - save.x, chest.y - save.y) : Infinity;
+			const dw = wild ? Math.hypot(wild.x - save.x, wild.y - save.y) : Infinity;
+			// Pressing E again by both flips between them.
+			if (wild && (dw <= dc || snap.panel === "chest") && snap.panel !== "wildghost") { this.openWild(wild.id); return; }
 			if (chest) { this.openChest(chest.id); return; }
+			if (wild) { this.openWild(wild.id); return; }
 			if (this.rules === "hardcore" && this.bedNear()) { if (this.sleeping) this.wakeUp(); else this.goToSleep(); return; }
 		}
 		if (this.customFile && this.interactMapPlace()) return;
@@ -6741,6 +6922,7 @@ export class TurbzGame {
 	closePanel() {
 		if (this.dead || snap.panel === "loot") return;
 		if (snap.panel === "chest") this.chestOpen = null;
+		if (snap.panel === "wildghost") this.wildOpen = null;
 		publish({ panel: null });
 	}
 	toTitle() {
@@ -8019,6 +8201,7 @@ export class TurbzGame {
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny })),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
 			chest: this.chestView(),
+			wildGhost: this.wildView(),
 			lms: this.lmsView?.() ?? null,
 			jarLeft: Math.ceil(save.jarLeft ?? 0),
 			accountScore: !slow ? snap.accountScore : save.accountScore ?? 0,
@@ -8621,6 +8804,10 @@ export class TurbzGame {
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
 			this.paintChest(ctx, c.x, c.y, c.t, c.boss);
+		}
+		for (const g of save.wildGhosts ?? []) {
+			if (g.map !== save.map || Math.abs(g.x - this.cam.x) > halfW || Math.abs(g.y - this.cam.y) > halfH) continue;
+			this.paintWildGhost(ctx, g);
 		}
 		this.drawTelegraphs(ctx);
 	}

@@ -553,6 +553,73 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
 });
 
 // ---------------------------------------------------------------------------
+// Lingering ghost: a fallen foe's ghost, waiting for you to decide
+// ---------------------------------------------------------------------------
+
+const RARITY_NAME = ["Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythic"];
+
+export const WildGhostPanel = memo(function WildGhostPanel({ game }: GameProp) {
+  const { wildGhost: g } = useSnapPick(["wildGhost"] as const);
+  const [name, setName] = useState("");
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { setName(g?.name ?? ""); setEditing(false); }, [g?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!g) return <Empty>The ghost is gone.</Empty>;
+  const partyFull = g.party >= g.partyMax;
+  const boxFull = g.store >= g.storeMax;
+  const mins = Math.floor(g.t / 60), secs = String(g.t % 60).padStart(2, "0");
+  const commit = () => { if (name.trim() && name.trim() !== g.name) game?.renameWild(g.id, name); setEditing(false); };
+  return (
+    <div className="ui-stack" data-testid="wild-ghost-panel">
+      <div className="gear-detail-head">
+        <div>
+          {editing ? (
+            <span className="ui-row-gap">
+              <input className="px-input" data-testid="wild-name" maxLength={20} autoFocus value={name} onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => { e.stopPropagation(); if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }} aria-label="Ghost name" />
+              <button type="button" className="px-btn ui-btn-sm" onClick={commit}>Save</button>
+            </span>
+          ) : (
+            <p className={`${typeClass(g.type)} ${g.shiny ? "shiny-name" : ""}`}>
+              {g.shiny ? "✦ " : ""}{g.name} <span className="text-dim">Lv {g.level}</span>
+              {g.shiny && <span className="shiny-tag"> ✦ SHINY</span>}
+              <button type="button" className="px-btn ui-btn-sm wild-rename" data-testid="wild-rename" onClick={() => setEditing(true)}>Rename</button>
+            </p>
+          )}
+          <p className="text-dim">{g.species} · <span className={typeClass(g.type)}>{TYPES[g.type]?.name}</span> · {RARITY_NAME[g.rarity] ?? `Rarity ${g.rarity}`}</p>
+        </div>
+        <span className={g.t < 60 ? "text-bad" : "text-dim"}>Fades in {mins}:{secs}</span>
+      </div>
+      <Meter value={g.hp} max={g.max} kind="good" label="Health" detail={`${g.hp}/${g.max}`} />
+      <div className="ui-row-gap text-dim">
+        <span>Speed {g.speed}</span><span>·</span><span>Rarity {g.rarity}</span><span>·</span><span>{g.moves.length} moves known</span>
+      </div>
+      <p className="text-dim" data-testid="wild-fx">{ghostFxLabel({ type: g.type, rarity: g.rarity, level: g.level, speed: g.speed, max: g.max, seed: g.uid, shiny: g.shiny })}</p>
+      <Section title="MOVES">
+        <div className="ui-grid" style={{ "--min": "180px" } as React.CSSProperties}>
+          {g.moves.map((m) => (
+            <div key={m.id} className={`ui-card ${m.slotted ? "ui-card-hl" : ""}`} title={m.about}>
+              <span className={typeClass(m.type)}>{m.slotted ? "● " : "○ "}{m.name}</span>
+              <span className="text-dim">{m.player ? "Aids you" : `Strikes foes · Pow ${m.power}`}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+      <p className="text-dim">Party {g.party}/{g.partyMax} · out {g.out}/{g.outMax} · Ghost Box {g.boxPlaced ? `${g.store}/${g.storeMax}` : "not built"}</p>
+      <div className="gear-actions">
+        <button type="button" className="px-btn px-btn-kyo" data-testid="wild-party" disabled={partyFull || !g.near} onClick={() => game?.keepWild(g.id, "party")}>
+          {partyFull ? "Party full" : g.out < g.outMax ? "Add to party · follows" : "Add to party"}
+        </button>
+        <button type="button" className="px-btn" data-testid="wild-box" disabled={!g.boxPlaced || boxFull || !g.near} onClick={() => game?.keepWild(g.id, "box")}>
+          {!g.boxPlaced ? "Send to Box (build one)" : boxFull ? "Box full" : "Send to Ghost Box"}
+        </button>
+        <ConfirmButton plain label="Dismiss" confirm="Tap again to let it go" onConfirm={() => game?.dismissWild(g.id)} />
+      </div>
+      {!g.near && <p className="text-dim">Walk back to the ghost to decide.</p>}
+    </div>
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Spirits
 // ---------------------------------------------------------------------------
 

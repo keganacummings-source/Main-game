@@ -4,7 +4,7 @@ Some foes **stay with you** after you beat them, as spirits that follow and figh
 
 ## In short
 
-- After a kill, there is a chance the foe stays (**catching**). **Ghost Jars** make it much more likely for a minute.
+- After a kill, there is a chance the foe stays (**catching**). Its ghost **lingers** where it fell for 5 minutes. **Ghost Jars** make it much more likely for a minute.
 - Up to **3 ghosts are out** with you at once.
 - Your **party holds 6**. Swap who is out in **Spirits** (**G**).
 - Everything else lives in your **Ghost Box**, a chest you place at your camp. Stand by it to store, take, swap and release ghosts.
@@ -12,6 +12,18 @@ Some foes **stay with you** after you beat them, as spirits that follow and figh
 - Each spirit knows up to 10 verses and readies **3**. Healers will heal you, cleansers will cleanse you, and the rest attack.
 
 ## Catching
+
+### Lingering ghosts
+
+A caught ghost does not join straight away. It stands where the foe fell, with its name, level and a timer, so you can finish the fight first. Walk up and press **E**, or click it, to open its window:
+
+- **Stats:** health, speed, rarity, element, FX and every move it knows (readied moves are marked ●).
+- **Rename** it (up to 20 letters).
+- **Add to party:** it follows if fewer than 3 ghosts are out, otherwise it waits in the party (6 at most).
+- **Send to Ghost Box:** needs a built Ghost Box; works from anywhere.
+- **Dismiss:** let it go.
+
+Unclaimed ghosts fade after **5 minutes** and blink in the last 30 seconds. Catching XP and catch counts are given when you keep the ghost. With autoplay on, ghosts join on the spot as before.
 
 When a foe falls, the chance it stays is:
 
@@ -60,7 +72,7 @@ Ghost slots no longer exist. Any skill points spent on them were refunded.
 
 - **Hardcore:** build it inside a camp (a campfire's safe zone) from **Survival & Camp → Build**: 4 Logs and 4 Vein Ore. Click it in build mode to pick it up.
 - **TurboHunt:** place it anywhere in the overworld from **Spirits** (same cost).
-- When your party is full, new catches go straight into the box. Without a box, a catch with a full party slips away.
+- When your party is full, send a lingering ghost to the box instead. Without a box, make room in the party first or the ghost fades.
 - The box holds up to 300 ghosts. One per hunter.
 
 ## Spirit power

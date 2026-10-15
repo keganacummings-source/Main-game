@@ -1195,3 +1195,5 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .lms-feed { color: #f0d0c0; font-size: 16px; }
 .verse-nums { display: flex; flex-direction: column; gap: 2px; }
 .verse-next { font-size: 0.85em; color: #e6c15a; }
+.text-bad { color: #e0605a; }
+.wild-rename { margin-left: 8px; vertical-align: middle; }
