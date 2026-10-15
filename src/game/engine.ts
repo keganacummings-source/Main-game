@@ -499,6 +499,19 @@ export function baseMoveCooldown(move) {
 	return cd;
 }
 
+/**
+ * Returns true when the straight line from (ax,ay) to (bx,by) passes through
+ * at least one blocked tile.  Step size is 10 px — fine enough for 32-px tiles.
+ */
+function wallBetween(world, ax: number, ay: number, bx: number, by: number): boolean {
+	const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / 10));
+	for (let s = 1; s < steps; s++) {
+		const t = s / steps;
+		if (blocked(world, ax + (bx - ax) * t, ay + (by - ay) * t)) return true;
+	}
+	return false;
+}
+
 export class TurbzGame {
 	canvas!: HTMLCanvasElement;
 	ctx!: CanvasRenderingContext2D;
@@ -1662,7 +1675,12 @@ export class TurbzGame {
 		if (this.dead || !this.world) return;
 		// Autogrind rotates skills. Fishing never runs out of fish, so without a time limit it
 		// kept recasting forever and the other skills never got a turn.
-		if (this.grind !== this.grindSeen) { this.grindSeen = this.grind; this.grindT = 0; }
+		// Only reset the timer when genuinely switching to a different skill — not when the
+		// planner bounces back to fishing right after a skip (the skip pause handles that).
+		if (this.grind !== this.grindSeen && !(this.grind === "fishing" && (this.grindSkip?.["fishing"] ?? 0) > this.clock)) {
+			this.grindSeen = this.grind;
+			this.grindT = 0;
+		}
 		this.grindT = (this.grindT ?? 0) + dt;
 		if (this.grind === "fishing" && this.grindT > FISH_GRIND_SECONDS && !this.channel) { this.skipGrind("fishing", FISH_GRIND_PAUSE); return; }
 		if (this.channel) return;
@@ -3198,15 +3216,21 @@ export class TurbzGame {
 		}
 	}
 	wantsFight(m: Mob, d: number) {
+		const save = this.save;
 		if (m.master) {
 			const boss = this.mobs.find((x) => x.id === m.master && x.alive);
 			if (boss && (boss.seen || boss.huntIn <= 0 || boss.hurt > 0 || boss.aggro)) return d < 240;
 			return false;
 		}
 		if (m.flee) return false;
+		// Already hurt / aggro'd — keep fighting even through walls (they know where you are).
 		if (m.hurt > 0 || m.aggro || m.hp < m.max) return d < (m.boss ? 280 : 240);
 		if ((m.drift || m.look?.aggression === "drift") && !m.boss && !m.witch) return false;
-		return d < (m.boss ? 240 : m.animal ? 110 : 168);
+		// Fresh aggro: don't detect the player through solid walls.
+		const range = d < (m.boss ? 240 : m.animal ? 110 : 168);
+		if (!range) return false;
+		if (this.world && save && wallBetween(this.world, m.x, m.y, save.x, save.y)) return false;
+		return true;
 	}
 	moveMob(m, dx, dy) {
 		const world = this.world;
@@ -3826,6 +3850,8 @@ export class TurbzGame {
 		const move = this.pickFoeMove(m);
 		const reach = attackForm(move) === "melee" || m.animal ? 62 : attackRange(move) + 24;
 		if (d > reach) { m.atkCd = 0.15; return; }
+		// Do not attack through walls — require clear line of sight.
+		if (this.world && wallBetween(this.world, m.x, m.y, save.x, save.y)) { m.atkCd = 0.2; return; }
 		this.mobAttack(m, move);
 		m.atkCd = this.mobAttackGap(m, move);
 	}
@@ -7894,13 +7920,18 @@ export class TurbzGame {
 				dot(it.tx, it.ty, col, k >= 5 ? 4.5 : 3, label);
 			}
 			if (save.map === "world") {
-				for (const p of POIS) {
-					if (p.kind === "npc" || p.kind === "boss" || !("tx" in p)) continue;
-					const a = scaleTile(p.tx, p.ty);
-					const col = p.kind === "dungeon" ? "#b4a6ff" : p.kind === "shrine" ? "#8fd0ff" : "#ff9a4a";
-					dot(a.tx, a.ty, col, 5, p.kind === "hearth" ? "Hearth" : k >= 1.5 ? p.name : "");
+				// Classic POI/tavern overlay only applies to the procedurally-generated world.
+				// When the new overworld (Veilreach) is active its own interactables are already
+				// drawn above via file.interactables, so skip the old overlay entirely.
+				if (!this.overworldFile) {
+					for (const p of POIS) {
+						if (p.kind === "npc" || p.kind === "boss" || !("tx" in p)) continue;
+						const a = scaleTile(p.tx, p.ty);
+						const col = p.kind === "dungeon" ? "#b4a6ff" : p.kind === "shrine" ? "#8fd0ff" : "#ff9a4a";
+						dot(a.tx, a.ty, col, 5, p.kind === "hearth" ? "Hearth" : k >= 1.5 ? p.name : "");
+					}
+					for (const t of TAVERNS) dot(t.boardTx, t.boardTy, "#e6c15a", 4, k >= 3 ? t.name : "");
 				}
-				for (const t of TAVERNS) dot(t.boardTx, t.boardTy, "#e6c15a", 4, k >= 3 ? t.name : "");
 				for (const portal of save.dungeons?.portals ?? []) if (!portal.cleared) { glyph(portal.x / TILE - .5, portal.y / TILE - .5, "◆", "#b4a6ff", 18); dot(portal.x / TILE - .5, portal.y / TILE - .5, "#b4a6ff", 4, `Rift ${portal.id.slice(5)}`, "#e7d9ff"); }
 			}
 			for (const fire of save.survival?.campfires ?? []) if (fire.map === save.map) dot(fire.x / TILE - .5, fire.y / TILE - .5, "#ffac45", 4, k >= 3 ? "Campfire" : "");
@@ -7913,7 +7944,8 @@ export class TurbzGame {
 				if (mk && (mk === "?" || k >= 2)) { glyph(n.tx, n.ty, mk, mk === "?" ? "#ffe08a" : "#e6c15a", 18); dot(n.tx, n.ty, mk === "?" ? "#ffe08a" : "#c9a6e8", 3.5, k >= 6 ? n.name : ""); }
 				else if (k >= 2.5) dot(n.tx, n.ty, "#c9a6e8", 3, k >= 6 ? n.name : "");
 			}
-			if (save.map === "world") for (const p of POIS) {
+			// Classic NPC dots only for the procedural world; Veilreach serves its own via mapNpcs.
+		if (save.map === "world" && !this.overworldFile) for (const p of POIS) {
 				if (p.kind !== "npc") continue;
 				const n = NPCS.find((x) => x.id === p.id);
 				if (!n || n.map !== "world") continue;
