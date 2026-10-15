@@ -3,7 +3,7 @@ import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
 import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
-import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, POINTS_PER_LEVEL } from "./ability-progression";
+import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, buildProceduralDungeon, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonState } from "./procedural-dungeon";
 import { P2PRoom } from "@/lib/multiplayer";
 import {
@@ -160,7 +160,7 @@ export type Snap = {
   dungeonCountdown: number;
   dungeonPortals: { id: string; x: number; y: number; cleared: boolean }[];
   skillPoints: number;
-  abilities: (Move & { rank: number })[];
+  abilities: (Move & { rank: number; now: { mult: number; power: number; heal: number; shield: number }; next: { mult: number; power: number; heal: number; shield: number } })[];
   xp: number;
   xpNeed: number;
   hp: number;
@@ -2644,7 +2644,12 @@ export class TurbzGame {
 		// A newly unlocked verse goes straight onto the bar while there is room.
 		if (first && this.save.loadout.length < MAX_EQUIPPED) this.save.loadout.push(id);
 		this.syncArsenal(this.save);
-		this.say(`${MOVE_BY_ID[id].name} rank ${this.save.abilityRanks[id]}.`);
+		{
+			const mv = MOVE_BY_ID[id], rank = this.save.abilityRanks[id];
+			const v = verseValues(mv, rank, moveTactic(mv));
+			const what = v.heal ? `heals ${v.heal}` : v.shield ? `wards ${v.shield}` : `power ${v.power}`;
+			this.say(`${mv.name} rank ${rank}: ${what} (×${v.mult.toFixed(2)}).`);
+		}
 		this.persist(); this.syncHud(true); return true;
 	}
 	syncArsenal(save) {
@@ -7852,7 +7857,11 @@ export class TurbzGame {
 		const key = JSON.stringify(ranks);
 		if (this.abilityKey !== key || !this.abilityCache) {
 			this.abilityKey = key;
-			this.abilityCache = MOVES.map((m) => ({ ...m, rank: ranks[m.id] ?? 0 }));
+			this.abilityCache = MOVES.map((m) => {
+				const rank = ranks[m.id] ?? 0;
+				const tactic = moveTactic(m);
+				return { ...m, rank, now: verseValues(m, rank, tactic), next: verseValues(m, rank + 1, tactic) };
+			});
 		}
 		return this.abilityCache;
 	}

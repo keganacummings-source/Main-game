@@ -59,3 +59,17 @@ export function abilityMultiplier(save: AbilityProgress, id: string): number {
   if (steps <= RANK_KNEE - 1) return 1 + steps * 0.15;
   return 1 + (RANK_KNEE - 1) * 0.15 + (steps - (RANK_KNEE - 1)) * 0.08;
 }
+
+/** What a verse actually does at a given rank: the numbers the UI shows. Rank 0 (locked) reads as rank 1. */
+export type VerseValues = { mult: number; power: number; heal: number; shield: number };
+export function verseValues(move: { id: string; power: number; effect?: string }, rank: number, tactic = ""): VerseValues {
+  const mult = abilityMultiplier({ level: 1, abilityRanks: { [move.id]: Math.max(1, rank) } }, move.id);
+  const heals = tactic === "heal" || move.effect === "mend";
+  const wards = tactic === "ward";
+  return {
+    mult,
+    power: Math.round(move.power * mult),
+    heal: heals ? Math.floor((18 + Math.max(8, move.power) * 0.45) * mult) : 0,
+    shield: wards ? Math.floor((12 + move.power) * mult) : 0,
+  };
+}

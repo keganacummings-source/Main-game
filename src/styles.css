@@ -1193,3 +1193,5 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .lms-hud { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 30; padding: 6px 10px; max-width: min(92vw, 460px); font-size: 18px; line-height: 1.1; pointer-events: none; }
 .lms-hud p { margin: 0; }
 .lms-feed { color: #f0d0c0; font-size: 16px; }
+.verse-nums { display: flex; flex-direction: column; gap: 2px; }
+.verse-next { font-size: 0.85em; color: #e6c15a; }

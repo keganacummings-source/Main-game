@@ -9,7 +9,7 @@ import { resetLayout } from "@/game/ui-layout";
 import { listChat, postChat } from "@/game/social-client";
 import type { ChatLine } from "@/game/social-types";
 import type { BoardView } from "@/game/quest-board";
-import type { TurbzGame } from "@/game/engine";
+import type { Snap, TurbzGame } from "@/game/engine";
 import { ClassPicker, makeLobbyCode, type Pick } from "./character-ui";
 import { AccountChip } from "./hub-ui";
 import { useSnapPick } from "./use-snap";
@@ -134,7 +134,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
             {pickedMove && picked !== null && (
               <div className="verse-actions" data-testid="verse-actions">
                 <span className="ui-row"><span className={typeClass(pickedMove.type)}>Key {picked + 1} · {pickedMove.name}</span>{pickedInfo && (pickedInfo.rank > 5 ? <span className="text-dim">Rank {pickedInfo.rank}</span> : <Pips value={pickedInfo.rank} max={5} />)}</span>
-                {pickedInfo && <span className="text-dim verse-stats">Pow {pickedInfo.power} · Acc {pickedInfo.accuracy}% · Rng {pickedInfo.range}{pickedInfo.effect !== "none" ? ` · ${pickedInfo.effect}` : ""}</span>}
+                {pickedInfo && <VerseNums m={pickedInfo} />}
                 <div className="ui-row-gap">
                   <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="verse-upgrade-btn" disabled={!pickedInfo || s.skillPoints < 1} onClick={() => game?.spendAbility(pickedMove.id)}>
                     {pickedInfo && pickedInfo.rank >= 5 ? `Overmax · 1 pt (${s.skillPoints})` : `Upgrade · 1 pt (${s.skillPoints})`}
@@ -185,7 +185,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
                   {m.rank > 5 ? <span className="text-dim">Rank {m.rank}</span> : <Pips value={m.rank} max={5} />}
                 </div>
                 <p className="ui-card-about">{m.about}</p>
-                <p className="text-dim verse-stats">Pow {m.power} · Acc {m.accuracy}% · Crit {m.crit}% · Rng {m.range}{m.effect !== "none" ? ` · ${m.effect}` : ""}</p>
+                <VerseNums m={m} crit />
                 <div className="ui-row-gap">
                   <button type="button" className="px-btn ui-btn-sm" disabled={s.skillPoints < 1} onClick={() => game?.spendAbility(m.id)}>
                     {m.rank >= 5 ? "Overmax · 1" : m.rank ? "Upgrade · 1" : "Unlock · 1"}
@@ -203,6 +203,22 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
     </div>
   );
 });
+
+/** A verse's numbers at its current rank, and what the next rank gives. */
+function VerseNums({ m, crit }: { m: Snap["abilities"][number]; crit?: boolean }) {
+  const main = (v: typeof m.now) => (v.heal ? `Heal ${v.heal}` : v.shield ? `Ward ${v.shield}` : `Pow ${v.power}`);
+  return (
+    <span className="verse-nums">
+      <span className="text-dim verse-stats">
+        {main(m.now)} · Acc {m.accuracy}%{crit ? ` · Crit ${m.crit}%` : ""} · Rng {m.range}{m.effect !== "none" ? ` · ${m.effect}` : ""}
+        {m.rank > 0 && ` · ×${m.now.mult.toFixed(2)}`}
+      </span>
+      <span className="verse-next">
+        {m.rank > 0 ? `Next rank ${m.rank + 1}: ${main(m.next)} (×${m.next.mult.toFixed(2)})` : `Unlock: ${main(m.now)}`}
+      </span>
+    </span>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Quests

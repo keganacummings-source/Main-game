@@ -317,7 +317,7 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
           {s.moves.map((m) => (
             <div key={m.id} className="sheet-calc">
               <button type="button" className="sheet-calc-head" aria-expanded={open === `m:${m.id}`} onClick={() => setOpen(open === `m:${m.id}` ? null : `m:${m.id}`)} title={m.about}>
-                <span className={typeClass(m.type)}>{open === `m:${m.id}` ? "▾" : "▸"} {m.signature ? "★ " : m.movement ? "» " : ""}{m.name} <span className="text-dim">· {m.tactic} · {m.rank ? `rank ${m.rank}/5` : "locked"}</span></span>
+                <span className={typeClass(m.type)}>{open === `m:${m.id}` ? "▾" : "▸"} {m.signature ? "★ " : m.movement ? "» " : ""}{m.name} <span className="text-dim">· {m.tactic} · {m.rank ? `rank ${m.rank}` : "locked"}</span></span>
                 <b className="text-kyo">
                   {m.kind === "damage" ? `${m.hit}${m.critHit > m.hit ? ` / ${m.critHit}` : ""}` : m.kind === "heal" ? `+${m.heal} hp` : m.kind === "ward" ? `${m.shield} shield` : "utility"}
                 </b>
