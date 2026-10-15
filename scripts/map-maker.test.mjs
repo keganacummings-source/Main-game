@@ -12,10 +12,12 @@ function moduleUrl(path, imports = {}) {
 }
 const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts") });
 const atlasStub = `data:text/javascript;base64,${Buffer.from("export const findAtlasTile=()=>null;").toString("base64")}`;
-const formatUrl = moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": atlasStub });
+const idbUrl = moduleUrl("../src/game/idb-store.ts");
+const formatUrl = moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": atlasStub, "./idb-store": idbUrl });
 const maps = await import(formatUrl);
 const quests = await import(moduleUrl("../src/game/map-quests.ts"));
 const tools = await import(moduleUrl("../src/game/map-tools.ts", { "./content": contentUrl, "./map-format": formatUrl }));
+const gen = await import(moduleUrl("../src/game/map-gen.ts", { "./content": contentUrl, "./map-format": formatUrl }));
 
 function village() {
   const m = maps.emptyMap("village", "Village", 24, 16, 0);
@@ -178,4 +180,46 @@ test("packed maps are small and unpack to exactly the same map", () => {
   assert.deepEqual(back.quests, m.quests);
   assert.throws(() => maps.parseMapJson({ ...packed, tilesPacked: { palette: [], runs: [3, 1] } }), /damaged/);
   assert.throws(() => maps.parseMapJson({ ...packed, tilesPacked: { ...packed.tilesPacked, runs: [0, 999999] } }), /damaged/);
+});
+
+test("named areas survive a round trip and the smallest one wins", () => {
+  const m = village();
+  m.regions = [
+    { id: "land", name: "Hearthmere", kind: "region", tx: 0, ty: 0, tw: 24, th: 16, levelMin: 1, levelMax: 12 },
+    { id: "town", name: "Ashford", kind: "city", tx: 2, ty: 2, tw: 6, th: 5, about: "A quiet town." },
+    { id: "bad", name: "", kind: "nonsense", tx: 0, ty: 0, tw: 0, th: 0 },
+  ];
+  const r = maps.parseMapJson(JSON.parse(JSON.stringify(m)));
+  assert.deepEqual(r.regions.map((x) => x.id), ["land", "town", "bad"]);
+  assert.deepEqual([r.regions[2].name, r.regions[2].kind, r.regions[2].tw], ["Unnamed area", "region", 1], "bad rows are repaired, not fatal");
+  assert.equal(maps.regionAt(r, 3, 3).name, "Ashford");
+  assert.equal(maps.regionAt(r, 20, 12).name, "Hearthmere");
+  const back = maps.parseMapJson(JSON.parse(JSON.stringify(maps.packMap(r))));
+  assert.deepEqual(back.regions, r.regions);
+});
+
+test("ferry portals on the same map count as a way across the sea", () => {
+  const m = maps.emptyMap("isle", "Isle", 30, 12, 0);
+  for (let y = 0; y < 12; y++) m.tiles[y * 30 + 15] = { ...m.tiles[y * 30 + 15], floor: 2 };
+  m.npcs = [{ id: "far", name: "Far", tx: 24, ty: 6, lines: ["Hi."] }];
+  m.spawn = { tx: 4, ty: 6 };
+  assert.ok(!tools.reachable(m)[6 * 30 + 24]);
+  m.tiles[6 * 30 + 6].portal = { map: "isle", tx: 22, ty: 6 };
+  assert.ok(tools.reachable(m)[6 * 30 + 24]);
+});
+
+test("the world generator makes a connected world with several continents, cities and quests", async () => {
+  const m = gen.generateWorld({ id: "t", name: "T", seed: 42, w: 200, h: 200, continentCount: 3, citiesPerContinent: 2, islands: 3, story: true });
+  const r = maps.parseMapJson(JSON.parse(JSON.stringify(maps.packMap(m))));
+  assert.equal(r.tiles.length, 200 * 200);
+  assert.equal(r.regions.filter((x) => x.kind === "region").length >= 3, true, "continents are named areas");
+  assert.ok(r.regions.filter((x) => x.kind === "city").length >= 6);
+  assert.ok(r.npcs.length >= 10 && r.quests.length >= 10);
+  assert.ok(r.quests.some((q) => q.requires), "the story is a chain");
+  const reach = tools.reachable(r);
+  for (const n of r.npcs) assert.ok(reach[n.ty * r.w + n.tx], `NPC ${n.name} can be reached`);
+  const content = await import(contentUrl);
+  const errors = tools.validateMap(r, new Set(content.ITEMS.map((i) => i.id)), new Set()).filter((i) => i.level === "error");
+  assert.deepEqual(errors, []);
+  assert.equal(JSON.stringify(gen.generateWorld({ id: "t", name: "T", seed: 42, w: 120, h: 120, continentCount: 2 }).tiles.slice(0, 500)), JSON.stringify(gen.generateWorld({ id: "t", name: "T", seed: 42, w: 120, h: 120, continentCount: 2 }).tiles.slice(0, 500)), "same seed, same world");
 });

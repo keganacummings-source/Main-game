@@ -139,3 +139,30 @@ Designer Mode → Enemy Designer (`src/components/enemy-designer.tsx`, data in `
   - an accent colour, plus a per-verse projectile size and trail tint;
   - on some projectiles, a companion that spirals around the shot;
   - a status overlay showing what it does: sleep Zs, rising roots, silence rune, flame ring, splash, gloom smoke, exposed reticle, sparks, drain motes streaming back to the caster.
+
+## Veilreach world & Map Builder 2
+
+- **Veilreach**, a new 500×500 world built with the Map Builder: seven continents split by sea, plus islands.
+  - Hearthmere (levels 1–12, the start), Saltmire, Frostmarch, Emberwaste, Hollowdeep, Bonereach, and Crownfall Isle (75–90) in the middle.
+  - 41 towns: walled capitals, towns and ports, plus villages, with shops, plazas and NPCs, joined by roads.
+  - Mines, woods, fisheries and mushroom groves; ruins, barrows, altars and watchstones; about 200 enemy camps and a boss on every continent.
+  - **Ferries.** Step onto the end of a pier to sail to the next port. The ports form a ring that links every continent.
+  - **Main story, "The Sundered Crown".** It sends you to each continent's capital for a shard. Every chapter has you talk to people in sister towns, gather, fight and visit landmarks, then ends on Crownfall Isle.
+  - Every town also has three side quests.
+  - Enter it from Menu → **Worlds & Designer Maps**. Walking into a named area announces it and gives a little Adventuring XP the first time. Quests now say "Travel to *place*" instead of coordinates.
+  - Rebuild it with `node --import ./scripts/wiki/register.mjs scripts/maps/build-veilreach.mjs` (it writes `public/Maps/veilreach.json`). The generator lives in `src/game/map-gen.ts`.
+- **Map Builder 2.**
+  - **Open a copy of Veilreach** (Files → Built-in worlds) to make your own edits. Saving it under the id `veilreach` replaces the built-in world on your device.
+  - **Generate a world** (Files) builds a whole map for you, using your choice of size, continents, cities per continent, islands, seed and an optional main story.
+  - **Areas tab.** Draw named areas (continent, city, resource, landmark, dungeon, water), each with a description and a level range. They are announced in game and shown on the map.
+  - **New tools:**
+    - **Line**, for roads, rivers and walls;
+    - **Scatter**, to sprinkle trees or rocks over a rectangle at a set density;
+    - **Copy / Stamp**, to clone a house or a whole town block;
+    - **Mix variants**, which paints random siblings of a tile so ground does not look stamped.
+  - **Minimap** with click or drag to jump.
+  - **Find** box, to jump to any area, NPC, quest or zone.
+  - **Zoom** out to a whole-map overview.
+  - **Storage.** Maps are now kept in IndexedDB, so 500×500 maps save. Older maps are moved over automatically.
+  - Ferry portals that point to the same map count as a path in "Check map".
+

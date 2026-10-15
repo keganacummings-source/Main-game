@@ -34,3 +34,13 @@ Boss contracts always need 1 boss (2 on Elite), and catch contracts at most 3 sp
 ## Map quests
 
 Maps made in the [Map Builder](Designer-Mode) can have their own NPCs, story and quests: talk, reach places, gather, defeat foes. They show under **This map** in Quests. The **Green Cave** (Hardcore) has one that starts over each time you enter.
+
+[Veilreach](World-and-Regions#veilreach) has the biggest set:
+
+- **The Sundered Crown**, a chained main story. Chapter I starts with the elder in Hearthmere's capital. Each later chapter takes you by ferry to another continent's capital, has you talk to people in its sister towns, gather, fight, and visit a landmark, and ends with a shard. The finale is on Crownfall Isle.
+- **Three side quests in every town**:
+  - clear the roads (defeat foes);
+  - a supply run (gather and bring back);
+  - a letter to deliver to an NPC in another town.
+
+Travel steps name the place ("Travel to Ulbrook Ruins"), and the gold ring on the map shows where your next step is.

@@ -60,7 +60,7 @@ export function accept(map: MapFile, questId: string, states: QuestStates): bool
   return true;
 }
 
-export type Ctx = { npcName: (id: string) => string; itemName: (id: string) => string; speciesName: (id: string) => string };
+export type Ctx = { npcName: (id: string) => string; itemName: (id: string) => string; speciesName: (id: string) => string; placeName?: (tx: number, ty: number) => string | null };
 
 export function stepText(step: MapQuestStep, q: MapQuest, c: Ctx, n = 0): string {
   const hint = step.hint ? ` ${step.hint}` : "";
@@ -69,7 +69,10 @@ export function stepText(step: MapQuestStep, q: MapQuest, c: Ctx, n = 0): string
     case "bring": return `Bring ${step.count} ${c.itemName(step.itemId)} to ${c.npcName(step.npcId || turnInOf(q))}.${hint}`;
     case "kill": return `Defeat ${step.species ? c.speciesName(step.species) : "foes"}: ${Math.min(n, step.count)}/${step.count}.${hint}`;
     case "gather": return `Gather from ${step.node === "tree" ? "trees" : step.node === "ore" ? "ore veins" : step.node === "fish" ? "fishing spots" : "mushroom patches"}: ${Math.min(n, step.count)}/${step.count}.${hint}`;
-    case "goto": return `Travel to tile ${step.tx}, ${step.ty}.${hint}`;
+    case "goto": {
+      const place = c.placeName?.(step.tx, step.ty);
+      return place ? `Travel to ${place} (${step.tx}, ${step.ty}).${hint}` : `Travel to tile ${step.tx}, ${step.ty}.${hint}`;
+    }
   }
 }
 

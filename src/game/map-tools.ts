@@ -25,6 +25,7 @@ export function resizeMap(map: MapFile, w: number, h: number, floor = 0): MapFil
     zones: (map.zones ?? []).filter((z) => z.tx + z.tw <= w && z.ty + z.th <= h),
     interactables: (map.interactables ?? []).filter((i) => inside(i.tx, i.ty)),
     npcs: (map.npcs ?? []).filter((n) => inside(n.tx, n.ty)),
+    regions: (map.regions ?? []).filter((r) => r.tx + r.tw <= w && r.ty + r.th <= h),
   };
 }
 
@@ -47,7 +48,7 @@ export function floodIndices(map: MapFile, tx: number, ty: number, same: (t: Map
   return out;
 }
 
-/** Tiles the hunter can walk to from the start tile (4-way). Water and blocked tiles stop the walk. */
+/** Tiles the hunter can walk to from the start tile (4-way, plus portals within the same map). Water and blocked tiles stop the walk. */
 export function reachable(map: MapFile): Uint8Array {
   const seen = new Uint8Array(map.w * map.h);
   const s = map.spawn;
@@ -60,7 +61,11 @@ export function reachable(map: MapFile): Uint8Array {
   while (stack.length) {
     const i = stack.pop()!;
     const x = i % map.w, y = (i / map.w) | 0;
-    for (const n of [x > 0 ? i - 1 : -1, x < map.w - 1 ? i + 1 : -1, y > 0 ? i - map.w : -1, y < map.h - 1 ? i + map.w : -1]) {
+    const next = [x > 0 ? i - 1 : -1, x < map.w - 1 ? i + 1 : -1, y > 0 ? i - map.w : -1, y < map.h - 1 ? i + map.w : -1];
+    // Portals to another spot on this same map (ferries) count as a way through.
+    const p = map.tiles[i]!.portal;
+    if (p && p.map === map.id && p.tx !== undefined && p.ty !== undefined && p.tx >= 0 && p.ty >= 0 && p.tx < map.w && p.ty < map.h) next.push(p.ty * map.w + p.tx);
+    for (const n of next) {
       if (n >= 0 && !seen[n] && ok(map.tiles[n]!)) { seen[n] = 1; stack.push(n); }
     }
   }

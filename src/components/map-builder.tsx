@@ -6,16 +6,22 @@ import {
   deleteDesignerMap,
   downloadMapFile,
   emptyMap,
-  packMap,
+  initDesignerStore,
+  loadDraft,
+  onDesignerStore,
   parseMapJson,
   saveDesignerMap,
+  saveDraft,
   savedMaps,
   type MapFile,
   type MapQuest,
   type MapTile,
 } from "@/game/map-format";
 import { blankTile, floodIndices, resizeMap, validateMap, type Issue } from "@/game/map-tools";
-import { drawAtlasTile, findAtlasTile, tileImageRevision } from "@/game/tile-atlas";
+import { drawAtlasTile, findAtlasTile, loadTileCatalog, tileImage, tileImageRevision } from "@/game/tile-atlas";
+import { REGION_KINDS, type MapRegion } from "@/game/map-format";
+import { generateWorld } from "@/game/map-gen";
+import { PLAYABLE_WORLDS, loadPlayableWorlds, playableWorlds } from "@/game/builtin-maps";
 import { DEFAULT_OPTS, Inspector, PlaceSettings, type PlaceOpts, type Sel } from "@/components/map-builder-entities";
 import { QuestEditor } from "@/components/map-builder-quests";
 import { TilePalette, type Brush } from "@/components/map-builder-tiles";
@@ -23,26 +29,50 @@ import type { Spawn } from "@/game/world";
 
 type Tool =
   | "pan" | "select" | "remove"
-  | "paint" | "overlay" | "peel" | "rect" | "fill" | "pick" | "erase" | "wall" | "walk"
+  | "paint" | "overlay" | "peel" | "rect" | "line" | "fill" | "scatter" | "pick" | "erase" | "wall" | "walk"
+  | "copy" | "stamp"
   | "portal" | "unportal"
-  | "start" | "enemy" | "boss" | "zone" | "node" | "npc" | "bounty" | "arena" | "shrine" | "hearth" | "dungeon";
-type Tab = "map" | "tiles" | "place" | "quests" | "files";
+  | "start" | "enemy" | "boss" | "zone" | "region" | "node" | "npc" | "bounty" | "arena" | "shrine" | "hearth" | "dungeon";
+type Tab = "map" | "tiles" | "place" | "areas" | "quests" | "files";
 
 const TOOL_GROUPS: { label: string; tools: [Tool, string, string][] }[] = [
   { label: "View", tools: [["pan", "Pan", "Drag to move the view. Right-drag or middle-drag does this with any tool."], ["select", "Select", "Click something to edit it. Drag to move it."], ["remove", "Remove", "Click a placed thing to delete it."]] },
-  { label: "Terrain", tools: [["paint", "Paint", "Paint the selected tile or ground."], ["rect", "Rectangle", "Drag a rectangle and fill it."], ["fill", "Fill", "Fill a connected area."], ["overlay", "Overlay", "Add a decoration layer on top (up to 4)."], ["peel", "Peel", "Remove the top layer."], ["pick", "Pick", "Copy a tile's look into the brush."], ["erase", "Erase", "Reset to bare ground."], ["wall", "Block", "Make tiles solid."], ["walk", "Open", "Make tiles walkable."]] },
+  { label: "Terrain", tools: [["paint", "Paint", "Paint the selected tile or ground."], ["rect", "Rectangle", "Drag a rectangle and fill it."], ["line", "Line", "Drag a straight line with the brush: roads, rivers, walls."], ["fill", "Fill", "Fill a connected area."], ["overlay", "Overlay", "Add a decoration layer on top (up to 4)."], ["scatter", "Scatter", "Drag a rectangle to sprinkle the brush tile as decoration (trees, rocks, flowers)."], ["peel", "Peel", "Remove the top layer."], ["pick", "Pick", "Copy a tile's look into the brush."], ["erase", "Erase", "Reset to bare ground."], ["wall", "Block", "Make tiles solid."], ["walk", "Open", "Make tiles walkable."]] },
+  { label: "Edit", tools: [["copy", "Copy", "Drag a rectangle to copy its tiles (a house, a town block…)."], ["stamp", "Stamp", "Click to paste the copied tiles; the click is the top-left corner."]] },
   { label: "Links", tools: [["portal", "Portal", "Make tiles portals to another map."], ["unportal", "No portal", "Remove portals."]] },
-  { label: "Place", tools: [["start", "Start", "Where hunters arrive."], ["enemy", "Enemy", "A single enemy spawn."], ["boss", "Boss", "A boss spawn."], ["zone", "Spawn zone", "A rectangle that keeps spawning enemies."], ["node", "Node", "Tree, ore, mushrooms or fishing spot."], ["npc", "NPC", "A person who talks and gives quests."], ["bounty", "Bounty board", "Bounty hunts."], ["arena", "Arena", "A fight against a saint."], ["shrine", "Shrine", "An elemental shrine fight."], ["hearth", "Hearth", "Heals when used."], ["dungeon", "Door", "A door to another map."]] },
+  { label: "Place", tools: [["start", "Start", "Where hunters arrive."], ["enemy", "Enemy", "A single enemy spawn."], ["boss", "Boss", "A boss spawn."], ["zone", "Spawn zone", "A rectangle that keeps spawning enemies."], ["region", "Area", "Drag a rectangle to name an area: a town, forest, continent… Announced in game."], ["node", "Node", "Tree, ore, mushrooms or fishing spot."], ["npc", "NPC", "A person who talks and gives quests."], ["bounty", "Bounty board", "Bounty hunts."], ["arena", "Arena", "A fight against a saint."], ["shrine", "Shrine", "An elemental shrine fight."], ["hearth", "Hearth", "Heals when used."], ["dungeon", "Door", "A door to another map."]] },
 ];
 
 const ENTITY_TOOLS: Tool[] = ["node", "npc", "bounty", "arena", "shrine", "hearth", "dungeon"];
-const DRAFT_KEY = "turbz-designer-draft-v1";
 const HISTORY = 60;
 
-type Meta = Pick<MapFile, "spawns" | "zones" | "interactables" | "npcs" | "quests" | "spawn" | "intro">;
+type Meta = Pick<MapFile, "spawns" | "zones" | "interactables" | "npcs" | "quests" | "spawn" | "intro" | "regions">;
 type Entry = { tiles?: Map<number, MapTile>; meta?: Meta; full?: MapFile };
 
-const metaOf = (m: MapFile): Meta => ({ spawns: m.spawns, zones: m.zones, interactables: m.interactables, npcs: m.npcs, quests: m.quests, spawn: m.spawn, intro: m.intro });
+const metaOf = (m: MapFile): Meta => ({ spawns: m.spawns, zones: m.zones, interactables: m.interactables, npcs: m.npcs, quests: m.quests, spawn: m.spawn, intro: m.intro, regions: m.regions });
+const REGION_COLOR: Record<MapRegion["kind"], string> = { region: "#f0e2c8", city: "#e6c15a", resource: "#8fd06a", landmark: "#c9a6e8", dungeon: "#ff7a5a", water: "#7ec8ea" };
+/** Tiles that differ only by their number are variants of one look (grass_0, grass_1…). */
+const familyOf = (path: string) => path.replace(/(_?\d+)?(_old|_new)?\.png$/, "");
+type Clip = { w: number; h: number; tiles: MapTile[] };
+const spriteRgb = new Map<string, readonly [number, number, number] | null>();
+/** Average colour of a tile picture, for the zoomed-out view and minimap. Null until it has loaded. */
+function spriteColor(path: string): readonly [number, number, number] | null {
+  const hit = spriteRgb.get(path);
+  if (hit !== undefined) return hit;
+  const img = tileImage(path);
+  if (!img.complete || img.naturalWidth <= 0) return null;
+  let col: readonly [number, number, number] | null = null;
+  try {
+    const c = document.createElement("canvas");
+    c.width = c.height = 1;
+    const g = c.getContext("2d")!;
+    g.drawImage(img, 0, 0, 1, 1);
+    const d = g.getImageData(0, 0, 1, 1).data;
+    col = d[3]! < 40 ? null : [d[0]!, d[1]!, d[2]!];
+  } catch { col = null; }
+  spriteRgb.set(path, col);
+  return col;
+}
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "map";
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -53,16 +83,9 @@ function starterMap(): MapFile {
   return m;
 }
 
-function loadDraft(): MapFile {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (raw) return parseMapJson(JSON.parse(raw));
-  } catch { /* fall through to a fresh map */ }
-  return starterMap();
-}
 
 export function MapBuilder({ onBack }: { onBack: () => void }) {
-  const [map, setMapState] = useState<MapFile>(loadDraft);
+  const [map, setMapState] = useState<MapFile>(starterMap);
   const mapRef = useRef(map);
   mapRef.current = map;
   const [, redraw] = useState(0);
@@ -85,6 +108,31 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const [saved, setSaved] = useState<MapFile[]>(() => savedMaps());
   const [form, setForm] = useState({ name: "My World", id: "my-world", w: 96, h: 64, kind: "world" as NonNullable<MapFile["kind"]>, floor: 0 });
   const [importText, setImportText] = useState("");
+  const [mix, setMix] = useState(true);
+  const [density, setDensity] = useState(12);
+  const [regionKind, setRegionKind] = useState<MapRegion["kind"]>("city");
+  const [showAreas, setShowAreas] = useState(true);
+  const [regionId, setRegionId] = useState<string | null>(null);
+  const [find, setFind] = useState("");
+  const [genForm, setGenForm] = useState({ name: "New World", id: "new-world", w: 300, h: 300, seed: 1234, continents: 4, cities: 3, islands: 8, story: false });
+  const [families, setFamilies] = useState<Map<string, string[]> | null>(null);
+  const clip = useRef<Clip | null>(null);
+  const dirtyRef = useRef(false);
+  dirtyRef.current = dirty;
+  const overview = useRef<{ key: unknown; ver: number; rev: number; canvas: HTMLCanvasElement } | null>(null);
+  const tilesVer = useRef(0);
+  const lastOverview = useRef(0);
+  const mini = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    let live = true;
+    void loadTileCatalog().then((c) => {
+      if (!live || !c) return;
+      const f = new Map<string, string[]>();
+      for (const cat of c.categories) for (const t of cat.tiles) { const k = familyOf(t.path); f.set(k, [...(f.get(k) ?? []), t.path]); }
+      setFamilies(f);
+    });
+    return () => { live = false; };
+  }, []);
 
   const canvas = useRef<HTMLCanvasElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -92,7 +140,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const undo = useRef<Entry[]>([]);
   const redo = useRef<Entry[]>([]);
   const stroke = useRef<Entry | null>(null);
-  const drag = useRef<{ kind: "pan" | "paint" | "rect" | "move"; sx: number; sy: number; ox: number; oy: number; a?: { tx: number; ty: number }; b?: { tx: number; ty: number } } | null>(null);
+  const drag = useRef<{ kind: "pan" | "paint" | "rect" | "line" | "move" | "mini"; sx: number; sy: number; ox: number; oy: number; a?: { tx: number; ty: number }; b?: { tx: number; ty: number } } | null>(null);
   const frame = useRef(0);
   const imgRev = useRef(-1);
 
@@ -108,8 +156,8 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     if (e.meta) { inverse.meta = metaOf(m); Object.assign(m, e.meta); }
     into.push(inverse);
   };
-  const doUndo = () => { const e = undo.current.pop(); if (!e) return; applyEntry(e, redo.current); setDirty(true); setSel(null); bump(); };
-  const doRedo = () => { const e = redo.current.pop(); if (!e) return; applyEntry(e, undo.current); setDirty(true); setSel(null); bump(); };
+  const doUndo = () => { const e = undo.current.pop(); if (!e) return; applyEntry(e, redo.current); tilesVer.current++; setDirty(true); setSel(null); bump(); };
+  const doRedo = () => { const e = redo.current.pop(); if (!e) return; applyEntry(e, undo.current); tilesVer.current++; setDirty(true); setSel(null); bump(); };
   /** Change entities (anything but tiles) with undo support. */
   const edit = (fn: (m: MapFile) => void, keepRedo = false) => {
     const m = mapRef.current;
@@ -123,13 +171,18 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   useEffect(() => {
     if (!dirty) return;
     const t = setTimeout(() => {
-      try {
-        const m = mapRef.current;
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(packMap(m)));
-      } catch { /* draft is a convenience only */ }
-    }, 1500);
+      void saveDraft(mapRef.current);
+    }, 2500);
     return () => clearTimeout(t);
   });
+  // Restore the unsaved draft from last time (IndexedDB; can be a full 512×512 world).
+  useEffect(() => {
+    let live = true;
+    void loadDraft().then((m) => { if (live && m && !dirtyRef.current) { loadRef.current(m); setStatus(`Restored your draft "${m.name}".`); } });
+    void initDesignerStore().then(() => { if (live) setSaved(savedMaps()); });
+    const off = onDesignerStore((e) => { if (e.error) setStatus(e.error); });
+    return () => { live = false; off(); };
+  }, []);
 
   // ---- tiles --------------------------------------------------------------------------------
   const paintTile = (old: MapTile, mode: Tool): MapTile => {
@@ -146,14 +199,17 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       return { ...rest, floor: brush.floor, block: brush.floor === 1 ? 1 : 0 };
     }
     const solid = brush.tile.solid ? 1 : 0;
+    // "Mix variants": paint a random sibling of the chosen tile so ground does not look stamped.
+    const sibs = mix ? families?.get(familyOf(brush.tile.path)) : undefined;
+    const path = sibs && sibs.length > 1 ? sibs[Math.floor(Math.random() * sibs.length)]! : brush.tile.path;
     if (mode === "overlay") {
       const layers = [...(old.layers ?? [])];
-      if (layers.length >= MAX_LAYERS || layers[layers.length - 1] === brush.tile.path) return old;
-      layers.push(brush.tile.path);
+      if (layers.length >= MAX_LAYERS || layers[layers.length - 1] === path) return old;
+      layers.push(path);
       return { ...old, layers, block: solid ? 1 : old.block };
     }
     const { layers: _l, ...rest } = old;
-    return { ...rest, sprite: brush.tile.path, floor: brush.liquid ? 2 : old.floor === 2 || old.floor === 1 ? 0 : old.floor, block: solid };
+    return { ...rest, sprite: path, floor: brush.liquid ? 2 : old.floor === 2 || old.floor === 1 ? 0 : old.floor, block: solid };
   };
 
   const setTileAt = (idx: number, next: MapTile) => {
@@ -194,6 +250,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const endStroke = () => {
     const s = stroke.current;
     stroke.current = null;
+    tilesVer.current++;
     if (s?.tiles?.size) pushUndo(s);
     bump();
   };
@@ -349,7 +406,20 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       return;
     }
     if (tool === "fill") return doFill(tx, ty);
-    if (tool === "rect" || tool === "zone") { drag.current = { kind: "rect", sx: 0, sy: 0, ox: 0, oy: 0, a: { tx, ty }, b: { tx, ty } }; bump(); return; }
+    if (tool === "rect" || tool === "zone" || tool === "scatter" || tool === "copy" || tool === "region") { drag.current = { kind: "rect", sx: 0, sy: 0, ox: 0, oy: 0, a: { tx, ty }, b: { tx, ty } }; bump(); return; }
+    if (tool === "line") { drag.current = { kind: "line", sx: 0, sy: 0, ox: 0, oy: 0, a: { tx, ty }, b: { tx, ty } }; bump(); return; }
+    if (tool === "stamp") {
+      const c = clip.current;
+      if (!c) return setStatus("Copy something first: pick Copy and drag a rectangle.");
+      stroke.current = { tiles: new Map() };
+      for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) {
+        const X = tx + x, Y = ty + y;
+        if (X < 0 || Y < 0 || X >= m.w || Y >= m.h) continue;
+        setTileAt(Y * m.w + X, { ...c.tiles[y * c.w + x]! });
+      }
+      endStroke();
+      return setStatus(`Stamped ${c.w}×${c.h} tiles.`);
+    }
     if (["paint", "overlay", "peel", "erase", "wall", "walk", "unportal"].includes(tool)) {
       stroke.current = { tiles: new Map() };
       drag.current = { kind: "paint", sx: 0, sy: 0, ox: 0, oy: 0 };
@@ -373,7 +443,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     if (!d) return;
     const m = mapRef.current;
     if (d.kind === "pan") { cam.current.x = d.ox - (e.clientX - d.sx) / zoom; cam.current.y = d.oy - (e.clientY - d.sy) / zoom; clampCam(); bump(); return; }
-    if (d.kind === "rect") { d.b = { tx: Math.max(0, Math.min(m.w - 1, tx)), ty: Math.max(0, Math.min(m.h - 1, ty)) }; bump(); return; }
+    if (d.kind === "rect" || d.kind === "line") { d.b = { tx: Math.max(0, Math.min(m.w - 1, tx)), ty: Math.max(0, Math.min(m.h - 1, ty)) }; bump(); return; }
     if (d.kind === "paint") {
       if (tool === "portal") place(tx, ty);
       else if (tool === "unportal") unportal(tx, ty);
@@ -397,8 +467,52 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     if (!d) return;
     const m = mapRef.current;
     if (d.kind === "paint") endStroke();
+    if (d.kind === "line" && d.a && d.b) {
+      // Bresenham with the brush size: roads, rivers and walls in one drag.
+      stroke.current = { tiles: new Map() };
+      let x = d.a.tx, y = d.a.ty;
+      const dx = Math.abs(d.b.tx - x), dy = -Math.abs(d.b.ty - y), sx = x < d.b.tx ? 1 : -1, sy = y < d.b.ty ? 1 : -1;
+      let err = dx + dy, n = 0;
+      for (;;) {
+        applyTerrain(x, y); n++;
+        if (x === d.b.tx && y === d.b.ty) break;
+        const e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x += sx; }
+        if (e2 <= dx) { err += dx; y += sy; }
+      }
+      endStroke();
+      setStatus(`Drew a line of ${n} tiles.`);
+    }
     if (d.kind === "rect" && d.a && d.b) {
       const x0 = Math.min(d.a.tx, d.b.tx), x1 = Math.max(d.a.tx, d.b.tx), y0 = Math.min(d.a.ty, d.b.ty), y1 = Math.max(d.a.ty, d.b.ty);
+      if (tool === "copy") {
+        const w = x1 - x0 + 1, h = y1 - y0 + 1;
+        clip.current = { w, h, tiles: Array.from({ length: w * h }, (_, i) => ({ ...m.tiles[(y0 + Math.floor(i / w)) * m.w + x0 + (i % w)]! })) };
+        setTool("stamp");
+        setStatus(`Copied ${w}×${h} tiles. Click to stamp them (top-left corner).`);
+        return;
+      }
+      if (tool === "scatter") {
+        if (brush.mode !== "sprite") { setStatus("Pick a tile from the tile pack to scatter."); return; }
+        stroke.current = { tiles: new Map() };
+        let n = 0;
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+          const t = m.tiles[y * m.w + x]!;
+          if (t.block || t.floor === 2 || Math.random() * 100 >= density) continue;
+          setTileAt(y * m.w + x, paintTile(t, "overlay")); n++;
+        }
+        endStroke();
+        setStatus(`Scattered ${n} tiles.`);
+        return;
+      }
+      if (tool === "region") {
+        const id = `area-${uid()}`;
+        edit((mm) => { mm.regions = [...(mm.regions ?? []), { id, name: regionKind === "city" ? "New Town" : regionKind === "resource" ? "New Grove" : regionKind === "region" ? "New Land" : "New Place", kind: regionKind, tx: x0, ty: y0, tw: x1 - x0 + 1, th: y1 - y0 + 1 }]; });
+        setRegionId(id);
+        setTab("areas");
+        setStatus("Area added. Name it on the Areas tab.");
+        return;
+      }
       if (tool === "zone") {
         const id = `zone-${uid()}`;
         edit((mm) => { mm.zones = [...(mm.zones ?? []), { id, tx: x0, ty: y0, tw: x1 - x0 + 1, th: y1 - y0 + 1, levelMin: opts.zone.levelMin, levelMax: opts.zone.levelMax, species: [...opts.zone.species], count: opts.zone.count, respawn: opts.zone.respawn }]; });
@@ -416,7 +530,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
 
   const onWheel = (e: React.WheelEvent) => {
     const before = toTile(e.clientX, e.clientY);
-    const next = Math.max(6, Math.min(56, zoom + (e.deltaY < 0 ? 2 : -2)));
+    const next = Math.max(2, Math.min(56, zoom + (e.deltaY < 0 ? (zoom < 6 ? 1 : 2) : zoom <= 6 ? -1 : -2)));
     if (next === zoom) return;
     const r = canvas.current!.getBoundingClientRect();
     cam.current.x = before.tx + 0.5 - (e.clientX - r.left) / next;
@@ -442,6 +556,32 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+
+  // ---- overview (1 pixel per tile) for zoomed-out view and the minimap --------------------------
+  const getOverview = (): HTMLCanvasElement => {
+    const m = mapRef.current;
+    const o = overview.current;
+    const rev = tileImageRevision();
+    if (o && o.key === m.tiles && o.ver === tilesVer.current && (o.rev === rev || performance.now() - lastOverview.current < 1500)) return o.canvas;
+    lastOverview.current = performance.now();
+    const cv = o?.canvas ?? document.createElement("canvas");
+    cv.width = m.w; cv.height = m.h;
+    const g = cv.getContext("2d")!;
+    const img = g.createImageData(m.w, m.h);
+    const rgb = (f: number) => { const n = parseInt((FLOOR_COLOR[f] ?? "#3d5a3a").slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255] as const; };
+    for (let i = 0; i < m.tiles.length; i++) {
+      const t = m.tiles[i]!;
+      let [r, gg, b] = (t.sprite && spriteColor(t.sprite)) || rgb(t.floor);
+      const top = t.layers?.length ? spriteColor(t.layers[t.layers.length - 1]!) : null;
+      if (top) { r = (r + top[0]) >> 1; gg = (gg + top[1]) >> 1; b = (b + top[2]) >> 1; }
+      const k = t.block ? 0.55 : 1;
+      img.data[i * 4] = r * k; img.data[i * 4 + 1] = gg * k; img.data[i * 4 + 2] = b * k; img.data[i * 4 + 3] = 255;
+      if (t.portal) { img.data[i * 4] = 201; img.data[i * 4 + 1] = 166; img.data[i * 4 + 2] = 232; }
+    }
+    g.putImageData(img, 0, 0);
+    overview.current = { key: m.tiles, ver: tilesVer.current, rev, canvas: cv };
+    return cv;
+  };
 
   // ---- drawing ------------------------------------------------------------------------------
   useEffect(() => {
@@ -472,7 +612,9 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       const x1 = Math.min(m.w, Math.ceil(cam.current.x + c.width / z)), y1 = Math.min(m.h, Math.ceil(cam.current.y + c.height / z));
       const px = (tx: number) => Math.round((tx - cam.current.x) * z);
       const py = (ty: number) => Math.round((ty - cam.current.y) * z);
-      for (let y = y0; y < y1; y++)
+      const far = z < 6;
+      if (far) ctx.drawImage(getOverview(), px(0), py(0), m.w * z, m.h * z);
+      if (!far) for (let y = y0; y < y1; y++)
         for (let x = x0; x < x1; x++) {
           const t = m.tiles[y * m.w + x]!;
           const sx = px(x), sy = py(y);
@@ -494,9 +636,26 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         for (let y = y0; y <= y1; y++) { ctx.moveTo(px(x0), py(y) + 0.5); ctx.lineTo(px(x1), py(y) + 0.5); }
         ctx.stroke();
       }
+      if (showAreas) for (const r of m.regions ?? []) {
+        const rx = px(r.tx), ry = py(r.ty), rw = r.tw * z, rh = r.th * z;
+        if (rx > c.width || ry > c.height || rx + rw < 0 || ry + rh < 0) continue;
+        const col = REGION_COLOR[r.kind] ?? "#f0e2c8";
+        const on = regionId === r.id;
+        if (on) { ctx.fillStyle = col + "22"; ctx.fillRect(rx, ry, rw, rh); }
+        ctx.strokeStyle = on ? "#ffe08a" : col; ctx.globalAlpha = on ? 1 : r.kind === "region" ? 0.45 : 0.8; ctx.setLineDash(r.kind === "region" ? [10, 6] : []); ctx.lineWidth = on ? 3 : 2;
+        ctx.strokeRect(rx + 0.5, ry + 0.5, rw, rh); ctx.setLineDash([]); ctx.lineWidth = 1; ctx.globalAlpha = 1;
+        const big = r.kind === "region";
+        if (rw > 40 && (z >= 4 || big || r.kind === "city")) {
+          ctx.font = `bold ${big ? 14 : 11}px monospace`;
+          const tw = ctx.measureText(r.name).width;
+          const lx = Math.max(rx + 4, Math.min(rx + rw - tw - 4, 4)), ly = Math.max(ry + 14, 16);
+          if (ly < ry + rh) { ctx.fillStyle = "rgba(14,10,9,0.75)"; ctx.fillRect(lx - 2, ly - 11, tw + 4, 14); ctx.fillStyle = col; ctx.fillText(r.name, lx, ly); }
+        }
+      }
       const label = (text: string, tx: number, ty: number, color: string, fill = true) => {
         const sx = px(tx), sy = py(ty);
         if (sx < -z || sy < -z || sx > c.width || sy > c.height) return;
+        if (far) { ctx.fillStyle = color; ctx.fillRect(sx, sy, Math.max(2, z), Math.max(2, z)); return; }
         ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.strokeRect(sx + 2, sy + 2, z - 4, z - 4); ctx.lineWidth = 1;
         if (fill) { ctx.fillStyle = color + "55"; ctx.fillRect(sx + 2, sy + 2, z - 4, z - 4); }
         if (z >= 12) { ctx.fillStyle = "#fff"; ctx.font = `bold ${Math.max(8, Math.floor(z * 0.42))}px monospace`; ctx.fillText(text, sx + 4, sy + z * 0.65); }
@@ -520,8 +679,41 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 2; ctx.strokeRect(px(a), py(b), w * z, h * z); ctx.lineWidth = 1;
         ctx.fillStyle = "#ffe08a"; ctx.font = "11px monospace"; ctx.fillText(`${w}×${h}`, px(a) + 3, py(b) - 4);
       }
-      if (hover && !drag.current) {
-        const n = ["paint", "overlay", "peel", "erase", "wall", "walk", "portal", "unportal"].includes(tool) ? size : 1;
+      const ln = drag.current?.kind === "line" ? drag.current : null;
+      if (ln?.a && ln.b) {
+        ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = Math.max(2, z * size * 0.6); ctx.globalAlpha = 0.55; ctx.beginPath();
+        ctx.moveTo(px(ln.a.tx) + z / 2, py(ln.a.ty) + z / 2); ctx.lineTo(px(ln.b.tx) + z / 2, py(ln.b.ty) + z / 2); ctx.stroke();
+        ctx.globalAlpha = 1; ctx.lineWidth = 1;
+        ctx.fillStyle = "#ffe08a"; ctx.font = "11px monospace"; ctx.fillText(`${Math.max(Math.abs(ln.a.tx - ln.b.tx), Math.abs(ln.a.ty - ln.b.ty)) + 1} tiles`, px(ln.b.tx) + z + 4, py(ln.b.ty));
+      }
+      if (hover && !drag.current && tool === "stamp" && clip.current) {
+        const cl = clip.current;
+        ctx.globalAlpha = 0.6;
+        if (!far) for (let y = 0; y < cl.h; y++) for (let x = 0; x < cl.w; x++) {
+          const t = cl.tiles[y * cl.w + x]!, sx = px(hover.tx + x), sy = py(hover.ty + y);
+          ctx.fillStyle = FLOOR_COLOR[t.floor] ?? "#3d5a3a"; ctx.fillRect(sx, sy, z + 1, z + 1);
+          if (t.sprite) drawAtlasTile(ctx, t.sprite, sx, sy, z + 1);
+          if (t.layers) for (const l of t.layers) drawAtlasTile(ctx, l, sx, sy, z + 1);
+        }
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 2; ctx.strokeRect(px(hover.tx), py(hover.ty), cl.w * z, cl.h * z); ctx.lineWidth = 1;
+      }
+      // minimap
+      const mc = mini.current, mg = mc?.getContext("2d");
+      if (mc && mg) {
+        const sc = Math.min(mc.width / m.w, mc.height / m.h);
+        mg.imageSmoothingEnabled = false;
+        mg.fillStyle = "#0e0a09"; mg.fillRect(0, 0, mc.width, mc.height);
+        mg.drawImage(getOverview(), 0, 0, m.w * sc, m.h * sc);
+        if (showAreas) for (const r of m.regions ?? []) if (r.kind === "city" || r.kind === "region") { mg.strokeStyle = REGION_COLOR[r.kind]; mg.globalAlpha = r.kind === "region" ? 0.5 : 0.9; mg.strokeRect(r.tx * sc, r.ty * sc, Math.max(2, r.tw * sc), Math.max(2, r.th * sc)); }
+        mg.globalAlpha = 1;
+        mg.fillStyle = "#c9a6e8"; for (const n of m.npcs ?? []) mg.fillRect(n.tx * sc - 0.5, n.ty * sc - 0.5, 1.5, 1.5);
+        if (m.spawn) { mg.fillStyle = "#8fd06a"; mg.fillRect(m.spawn.tx * sc - 2, m.spawn.ty * sc - 2, 4, 4); }
+        mg.strokeStyle = "#ffe08a"; mg.lineWidth = 2;
+        mg.strokeRect(cam.current.x * sc, cam.current.y * sc, (c.width / z) * sc, (c.height / z) * sc); mg.lineWidth = 1;
+      }
+      if (hover && !drag.current && tool !== "stamp") {
+        const n = ["paint", "overlay", "peel", "erase", "wall", "walk", "portal", "unportal", "line"].includes(tool) ? size : 1;
         const r = Math.floor((n - 1) / 2);
         ctx.strokeStyle = pick ? "#8fd06a" : "#fff"; ctx.lineWidth = 2;
         ctx.strokeRect(px(hover.tx - r), py(hover.ty - r), n * z, n * z); ctx.lineWidth = 1;
@@ -554,9 +746,65 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     undo.current = []; redo.current = [];
     setMap(m); setSel(null); setQuestId(null); setIssues(null); setDirty(false);
     setForm({ name: m.name, id: m.id, w: m.w, h: m.h, kind: m.kind ?? "world", floor: 0 });
-    cam.current = { x: Math.max(0, (m.spawn?.tx ?? 0) - 10), y: Math.max(0, (m.spawn?.ty ?? 0) - 6) };
+    setRegionId(null);
+    if (m.w * m.h > 40000) setZoom(8);
+    cam.current = { x: Math.max(0, (m.spawn?.tx ?? 0) - 30), y: Math.max(0, (m.spawn?.ty ?? 0) - 20) };
     bump();
   };
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
+  const onMini = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.type === "pointermove" && e.buttons !== 1) return;
+    const mc = mini.current, m = mapRef.current;
+    if (!mc) return;
+    const r = mc.getBoundingClientRect();
+    const sc = Math.min(mc.width / m.w, mc.height / m.h);
+    jump(((e.clientX - r.left) * (mc.width / r.width)) / sc, ((e.clientY - r.top) * (mc.height / r.height)) / sc);
+  };
+
+  const generate = () => {
+    if (dirty && !window.confirm("Generate a new world? Unsaved changes to the current map will be lost.")) return;
+    const f = genForm;
+    setStatus("Generating… big worlds take a few seconds.");
+    setTimeout(() => {
+      try {
+        const n = Math.max(2, Math.min(8, Math.floor(f.continents) || 4));
+        const w = Math.max(96, Math.min(512, Math.floor(f.w) || 300)), h = Math.max(96, Math.min(512, Math.floor(f.h) || 300));
+        const m = generateWorld({
+          id: slug(f.id || f.name), name: f.name.trim() || "New World", w, h, seed: Math.floor(f.seed) || 1,
+          continentCount: n,
+          citiesPerContinent: Math.max(1, Math.min(5, Math.floor(f.cities) || 3)), islands: Math.max(0, Math.min(40, Math.floor(f.islands) || 0)), story: f.story,
+        });
+        load(m);
+        setDirty(true);
+        setStatus(`Generated "${m.name}": ${(m.regions ?? []).length} areas, ${(m.npcs ?? []).length} NPCs, ${(m.quests ?? []).length} quests. Rename the lands on the Areas tab, then Save.`);
+      } catch (err) {
+        setStatus(err instanceof Error ? `Generation failed: ${err.message}` : "Generation failed.");
+      }
+    }, 30);
+  };
+
+  const openWorldCopy = async (id: string) => {
+    if (dirty && !window.confirm("Open a copy? Unsaved changes to the current map will be lost.")) return;
+    setStatus("Loading the world…");
+    await loadPlayableWorlds();
+    const w = playableWorlds().find((x) => x.id === id);
+    if (!w) return setStatus("Could not load that world. Check your connection and try again.");
+    load(parseMapJson(w));
+    setStatus(`Opened an editable copy of "${w.name}". Saving keeps the id "${w.id}", so your version replaces the built-in one on this device. Change the File ID on the Map tab to keep both.`);
+  };
+
+  const findHits = useMemo(() => {
+    const q = find.trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out: { label: string; tx: number; ty: number; act: () => void }[] = [];
+    for (const r of map.regions ?? []) if (r.name.toLowerCase().includes(q)) out.push({ label: `Area · ${r.name}`, tx: r.tx + r.tw / 2, ty: r.ty + r.th / 2, act: () => { setRegionId(r.id); setTab("areas"); } });
+    for (const n of map.npcs ?? []) if (n.name.toLowerCase().includes(q)) out.push({ label: `NPC · ${n.name}`, tx: n.tx, ty: n.ty, act: () => { setSel({ kind: "npc", id: n.id }); setTab("place"); } });
+    for (const qq of map.quests ?? []) if (qq.name.toLowerCase().includes(q)) { const g = map.npcs?.find((n) => n.id === qq.giver); out.push({ label: `Quest · ${qq.name}`, tx: g?.tx ?? 0, ty: g?.ty ?? 0, act: () => { setQuestId(qq.id); setTab("quests"); } }); }
+    for (const z of map.zones ?? []) if (z.species.some((sp) => sp.toLowerCase().includes(q))) out.push({ label: `Zone · ${z.species.join(", ")} L${z.levelMin}-${z.levelMax}`, tx: z.tx + z.tw / 2, ty: z.ty + z.th / 2, act: () => { setSel({ kind: "zone", id: z.id }); setTab("place"); } });
+    return out.slice(0, 40);
+  }, [find, map]);
 
   const createNew = () => {
     if (dirty && !window.confirm("Start a new map? Unsaved changes to the current one will be lost.")) return;
@@ -598,7 +846,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const spawnCount = (map.spawns ?? []).filter((s) => s.kind === "mob").length;
   const isEntityTool = ENTITY_TOOLS.includes(tool);
   const optionTool = ["enemy", "boss", "zone", "node", "shrine", "dungeon", "portal"].includes(tool);
-  const brushTool = ["paint", "rect", "fill", "overlay", "portal", "unportal", "erase", "peel", "wall", "walk"].includes(tool);
+  const brushTool = ["paint", "line", "overlay", "portal", "unportal", "erase", "peel", "wall", "walk"].includes(tool);
   const tabBtn = (id: Tab, label: string) => (
     <button key={id} type="button" role="tab" aria-selected={tab === id} className={`px-btn !min-h-9 !py-0 ${tab === id ? "px-btn-kyo" : ""}`} onClick={() => setTab(id)}>{label}</button>
   );
@@ -625,7 +873,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
           <div key={g.label} className="flex flex-wrap items-center gap-1">
             <span className="text-dim">{g.label}</span>
             {g.tools.map(([id, label, help]) => (
-              <button key={id} type="button" title={help} aria-pressed={tool === id} className={`px-btn !min-h-8 !px-2 !py-0 ${tool === id ? "px-btn-kyo" : ""}`} onClick={() => { setTool(id); if (id === "zone" || id === "enemy" || id === "boss" || id === "portal") setTab("place"); if (["paint", "rect", "fill", "overlay"].includes(id)) setTab("tiles"); }}>{label}</button>
+              <button key={id} type="button" title={help} aria-pressed={tool === id} className={`px-btn !min-h-8 !px-2 !py-0 ${tool === id ? "px-btn-kyo" : ""}`} onClick={() => { setTool(id); if (id === "zone" || id === "enemy" || id === "boss" || id === "portal") setTab("place"); if (["paint", "rect", "fill", "overlay", "line", "scatter"].includes(id)) setTab("tiles"); if (id === "region") setTab("areas"); }}>{label}</button>
             ))}
           </div>
         ))}
@@ -638,13 +886,28 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
             </select>
           </label>
         )}
+        {["paint", "rect", "fill", "line", "overlay", "scatter"].includes(tool) && <label className="flex items-center gap-1" title="Paint random variants of the chosen tile (grass_0, grass_1…) so ground does not look stamped."><input type="checkbox" checked={mix} onChange={(e) => setMix(e.target.checked)} /> Mix variants</label>}
+        {tool === "scatter" && (
+          <label className="flex items-center gap-1">Density
+            <input type="range" min={2} max={60} value={density} onChange={(e) => setDensity(Number(e.target.value))} /> {density}%
+          </label>
+        )}
+        {tool === "region" && (
+          <label className="flex items-center gap-1">Area kind
+            <select className="border-2 border-bone bg-ink !min-h-8 px-1" value={regionKind} onChange={(e) => setRegionKind(e.target.value as MapRegion["kind"])}>
+              {REGION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+        )}
+        {tool === "stamp" && <span>{clip.current ? `Stamp ${clip.current.w}×${clip.current.h}` : "Nothing copied yet"}</span>}
         <label className="flex items-center gap-1"><input type="checkbox" checked={grid} onChange={(e) => setGrid(e.target.checked)} /> Grid</label>
+        <label className="flex items-center gap-1"><input type="checkbox" checked={showAreas} onChange={(e) => setShowAreas(e.target.checked)} /> Areas</label>
         <label className="flex items-center gap-1"><input type="checkbox" checked={collision} onChange={(e) => setCollision(e.target.checked)} /> Show solid tiles</label>
-        <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => setZoom(Math.max(6, zoom - 4))} aria-label="Zoom out">−</button>
+        <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => setZoom(zoom <= 6 ? Math.max(2, zoom - 2) : Math.max(6, zoom - 4))} aria-label="Zoom out">−</button>
         <span>{Math.round((zoom / 24) * 100)}%</span>
         <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => setZoom(Math.min(56, zoom + 4))} aria-label="Zoom in">+</button>
         {hover && <span>tile {hover.tx}, {hover.ty}</span>}
-        <span>{spawnCount} enemies · {(map.zones ?? []).length} zones · {(map.npcs ?? []).length} NPCs · {(map.quests ?? []).length} quests</span>
+        <span>{spawnCount} enemies · {(map.zones ?? []).length} zones · {(map.npcs ?? []).length} NPCs · {(map.quests ?? []).length} quests · {(map.regions ?? []).length} areas</span>
       </div>
 
       <div className="mt-2 grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -665,9 +928,20 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
 
         <div className="grid content-start gap-2">
+          <div className="flex items-start gap-2">
+            <canvas ref={mini} width={150} height={150} data-testid="builder-minimap" title="Overview: click or drag to jump" className="shrink-0 cursor-pointer border-2 border-bone" style={{ width: 150, height: 150, imageRendering: "pixelated", touchAction: "none" }} onPointerDown={onMini} onPointerMove={onMini} />
+            <div className="grid min-w-0 flex-1 gap-1">
+              <input className="border-2 border-bone bg-ink px-1" placeholder="Find a place, NPC, quest…" value={find} onChange={(e) => setFind(e.target.value)} aria-label="Find on map" />
+              <div className="grid max-h-28 gap-0.5 overflow-auto">
+                {findHits.map((h, i) => <button key={i} type="button" className="truncate text-left text-dim hover:text-bone" onClick={() => { jump(h.tx, h.ty); h.act(); }}>{h.label}</button>)}
+                {find.trim().length >= 2 && findHits.length === 0 && <span className="text-dim">No matches.</span>}
+              </div>
+            </div>
+          </div>
           <div role="tablist" className="flex flex-wrap gap-1">
             {tabBtn("tiles", "Tiles")}
             {tabBtn("place", "Places")}
+            {tabBtn("areas", "Areas")}
             {tabBtn("quests", "Quests")}
             {tabBtn("map", "Map")}
             {tabBtn("files", "Files")}
@@ -692,6 +966,20 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                   savedIds={savedIds}
                 />
               </div>
+            )}
+            {tab === "areas" && (
+              <AreasPanel
+                map={map}
+                selected={regionId}
+                onSelect={(id) => { setRegionId(id); const r = map.regions?.find((x) => x.id === id); if (r) jump(r.tx + r.tw / 2, r.ty + r.th / 2); }}
+                onPatch={(id, p) => edit((mm) => { mm.regions = (mm.regions ?? []).map((r) => (r.id === id ? { ...r, ...p } : r)); })}
+                onDelete={(id) => { edit((mm) => { mm.regions = (mm.regions ?? []).filter((r) => r.id !== id); }); setRegionId(null); }}
+                kind={regionKind}
+                onKind={setRegionKind}
+                onDraw={() => setTool("region")}
+                show={showAreas}
+                onShow={setShowAreas}
+              />
             )}
             {tab === "quests" && <QuestEditor map={map} selected={questId} onSelect={setQuestId} onChange={setQuests} onPickTile={(cb) => { setPick(() => cb); setStatus("Click the map to choose the tile."); }} />}
             {tab === "map" && (
@@ -737,18 +1025,42 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                 {saved.map((s) => (
                   <div key={s.id} className="flex flex-wrap items-center gap-1 border border-bone/40 p-1">
                     <span className="min-w-0 flex-1 truncate">{s.name} <span className="text-dim">{s.w}×{s.h}</span></span>
-                    <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => { if (!dirty || window.confirm("Open it? Unsaved changes to the current map will be lost.")) { load(s); setStatus(`Opened "${s.name}".`); } }}>Open</button>
+                    <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => { if (!dirty || window.confirm("Open it? Unsaved changes to the current map will be lost.")) { load(parseMapJson(s)); setStatus(`Opened "${s.name}".`); } }}>Open</button>
                     <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => downloadMapFile(s)}>Export</button>
                     <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => { if (window.confirm(`Delete "${s.name}" from this device?`)) { deleteDesignerMap(s.id); setSaved(savedMaps()); } }}>Delete</button>
                   </div>
                 ))}
                 <button type="button" className="px-btn" onClick={() => downloadMapFile(parseMapJson(mapRef.current))}>Export this map (.json)</button>
+                <p className="font-display text-xs text-kyo">BUILT-IN WORLDS</p>
+                {PLAYABLE_WORLDS.map((w) => (
+                  <div key={w.id} className="flex flex-wrap items-center gap-1 border border-bone/40 p-1">
+                    <span className="min-w-0 flex-1 truncate">{w.name} <span className="text-dim">{w.about}</span></span>
+                    <button type="button" className="px-btn !min-h-7 !py-0" data-testid={`open-world-${w.id}`} onClick={() => void openWorldCopy(w.id)}>Open a copy to edit</button>
+                  </div>
+                ))}
+                <p className="font-display text-xs text-kyo">GENERATE A WORLD</p>
+                <p className="text-dim">Builds continents split by sea, islands, mountains, lakes, walled cities with shops, ports with ferries, roads, resource groves, enemy camps, NPCs and quests. Then edit anything by hand.</p>
+                <div className="grid grid-cols-2 gap-2 [&_input]:w-full [&_input]:min-w-0 [&_label]:min-w-0 [&_select]:w-full">
+                  <label className="grid text-dim">Name<input className="border-2 border-bone bg-ink px-1" value={genForm.name} onChange={(e) => setGenForm({ ...genForm, name: e.target.value, id: slug(e.target.value) })} /></label>
+                  <label className="grid text-dim">File ID<input className="border-2 border-bone bg-ink px-1" value={genForm.id} onChange={(e) => setGenForm({ ...genForm, id: slug(e.target.value) })} /></label>
+                  <label className="grid text-dim">Width<input className="border-2 border-bone bg-ink px-1" type="number" min={96} max={512} value={genForm.w} onChange={(e) => setGenForm({ ...genForm, w: Number(e.target.value) })} /></label>
+                  <label className="grid text-dim">Height<input className="border-2 border-bone bg-ink px-1" type="number" min={96} max={512} value={genForm.h} onChange={(e) => setGenForm({ ...genForm, h: Number(e.target.value) })} /></label>
+                  <label className="grid text-dim">Continents (2–8)<input className="border-2 border-bone bg-ink px-1" type="number" min={2} max={8} value={genForm.continents} onChange={(e) => setGenForm({ ...genForm, continents: Number(e.target.value) })} /></label>
+                  <label className="grid text-dim">Cities each (1–5)<input className="border-2 border-bone bg-ink px-1" type="number" min={1} max={5} value={genForm.cities} onChange={(e) => setGenForm({ ...genForm, cities: Number(e.target.value) })} /></label>
+                  <label className="grid text-dim">Islands<input className="border-2 border-bone bg-ink px-1" type="number" min={0} max={40} value={genForm.islands} onChange={(e) => setGenForm({ ...genForm, islands: Number(e.target.value) })} /></label>
+                  <label className="grid text-dim">Seed<input className="border-2 border-bone bg-ink px-1" type="number" value={genForm.seed} onChange={(e) => setGenForm({ ...genForm, seed: Number(e.target.value) })} /></label>
+                </div>
+                <label className="flex items-center gap-1 text-dim"><input type="checkbox" checked={genForm.story} onChange={(e) => setGenForm({ ...genForm, story: e.target.checked })} /> Add a main story that visits every continent</label>
+                <div className="flex gap-1">
+                  <button type="button" className="px-btn px-btn-kyo" data-testid="generate-world-btn" onClick={generate}>Generate</button>
+                  <button type="button" className="px-btn" onClick={() => setGenForm({ ...genForm, seed: Math.floor(Math.random() * 99999) })}>New seed</button>
+                </div>
                 <p className="font-display text-xs text-kyo">OPEN A FILE</p>
                 <input type="file" accept=".json,application/json" className="text-dim" onChange={async (e) => { const f = e.target.files?.[0]; if (f) importJson(await f.text()); e.target.value = ""; }} />
                 <textarea className="min-h-16 border-2 border-bone bg-ink px-1" placeholder="…or paste map JSON here" value={importText} onChange={(e) => setImportText(e.target.value)} />
                 <button type="button" className="px-btn" disabled={!importText.trim()} onClick={() => importJson(importText)}>Open pasted JSON</button>
                 <p className="font-display text-xs text-kyo">NEW MAP</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-2 [&_input]:w-full [&_input]:min-w-0 [&_label]:min-w-0 [&_select]:w-full">
                   <label className="grid text-dim">Name<input className="border-2 border-bone bg-ink px-1" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value, id: slug(e.target.value) })} /></label>
                   <label className="grid text-dim">File ID<input className="border-2 border-bone bg-ink px-1" value={form.id} onChange={(e) => setForm({ ...form, id: slug(e.target.value) })} /></label>
                   <label className="grid text-dim">Width<input className="border-2 border-bone bg-ink px-1" type="number" min={8} max={512} value={form.w} onChange={(e) => setForm({ ...form, w: Number(e.target.value) })} /></label>
@@ -772,5 +1084,76 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function AreasPanel({ map, selected, onSelect, onPatch, onDelete, kind, onKind, onDraw, show, onShow }: {
+  map: MapFile;
+  selected: string | null;
+  onSelect: (id: string) => void;
+  onPatch: (id: string, p: Partial<MapRegion>) => void;
+  onDelete: (id: string) => void;
+  kind: MapRegion["kind"];
+  onKind: (k: MapRegion["kind"]) => void;
+  onDraw: () => void;
+  show: boolean;
+  onShow: (v: boolean) => void;
+}) {
+  const [filter, setFilter] = useState<MapRegion["kind"] | "all">("all");
+  const list = (map.regions ?? []).filter((r) => filter === "all" || r.kind === filter);
+  const r = map.regions?.find((x) => x.id === selected);
+  const num = (v: string) => (v === "" ? undefined : Math.max(1, Math.min(99, Math.floor(Number(v)) || 1)));
+  return (
+    <div className="grid gap-2" data-testid="areas-panel">
+      <p className="text-dim">Areas name parts of the map: continents, towns, groves, dungeons. Hunters see the name when they walk in (and earn a little Adventuring XP the first time). Quests say "Travel to" the area name instead of bare coordinates.</p>
+      <div className="flex flex-wrap items-center gap-1">
+        <select className="border-2 border-bone bg-ink !min-h-8 px-1" value={kind} onChange={(e) => onKind(e.target.value as MapRegion["kind"])} aria-label="New area kind">
+          {REGION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+        <button type="button" className="px-btn px-btn-kyo !min-h-8 !py-0" onClick={onDraw}>Draw an area</button>
+        <label className="flex items-center gap-1 text-dim"><input type="checkbox" checked={show} onChange={(e) => onShow(e.target.checked)} /> Show</label>
+      </div>
+      {r && (
+        <div className="grid gap-1 border-2 border-kyo p-2">
+          <label className="grid text-dim">Name<input className="border-2 border-bone bg-ink px-1" maxLength={60} value={r.name} onChange={(e) => onPatch(r.id, { name: e.target.value })} /></label>
+          <label className="grid text-dim">Kind
+            <select className="border-2 border-bone bg-ink px-1" value={r.kind} onChange={(e) => onPatch(r.id, { kind: e.target.value as MapRegion["kind"] })}>
+              {REGION_KINDS.map((k) => <option key={k} value={k}>{k}</option>)}
+            </select>
+          </label>
+          <label className="grid text-dim">Shown on arrival (optional)<textarea className="min-h-12 border-2 border-bone bg-ink px-1" maxLength={200} value={r.about ?? ""} onChange={(e) => onPatch(r.id, { about: e.target.value || undefined })} /></label>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="grid text-dim">Level from<input className="w-16 border-2 border-bone bg-ink px-1" type="number" min={1} max={99} value={r.levelMin ?? ""} onChange={(e) => onPatch(r.id, { levelMin: num(e.target.value) })} /></label>
+            <label className="grid text-dim">to<input className="w-16 border-2 border-bone bg-ink px-1" type="number" min={1} max={99} value={r.levelMax ?? ""} onChange={(e) => onPatch(r.id, { levelMax: num(e.target.value) })} /></label>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            {(["tx", "ty", "tw", "th"] as const).map((k) => (
+              <label key={k} className="grid text-dim">{({ tx: "X", ty: "Y", tw: "Width", th: "Height" })[k]}
+                <input className="w-16 border-2 border-bone bg-ink px-1" type="number" min={k === "tw" || k === "th" ? 1 : 0} value={r[k]} onChange={(e) => onPatch(r.id, { [k]: Math.max(k === "tw" || k === "th" ? 1 : 0, Math.floor(Number(e.target.value)) || 0) })} />
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-1">
+            <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => onSelect(r.id)}>Jump</button>
+            <button type="button" className="px-btn !min-h-7 !py-0" onClick={() => { if (window.confirm(`Delete the area "${r.name}"?`)) onDelete(r.id); }}>Delete</button>
+          </div>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-1">
+        {(["all", ...REGION_KINDS] as const).map((k) => (
+          <button key={k} type="button" className={`px-btn !min-h-7 !px-2 !py-0 ${filter === k ? "px-btn-kyo" : ""}`} onClick={() => setFilter(k)}>{k}</button>
+        ))}
+      </div>
+      {list.length === 0 && <p className="text-dim">No areas yet. Pick a kind and press Draw an area, then drag on the map.</p>}
+      <div className="grid gap-0.5">
+        {list.map((x) => (
+          <button key={x.id} type="button" className={`flex items-center gap-2 border border-bone/30 px-1 text-left ${x.id === selected ? "border-kyo text-bone" : "text-dim"}`} onClick={() => onSelect(x.id)}>
+            <span style={{ color: REGION_COLOR[x.kind] }}>■</span>
+            <span className="min-w-0 flex-1 truncate">{x.name}</span>
+            <span className="text-xs">{x.kind}{x.levelMin ? ` · L${x.levelMin}${x.levelMax ? `–${x.levelMax}` : ""}` : ""}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }

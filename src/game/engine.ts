@@ -100,8 +100,8 @@ const BURN_PCT_PER_SECOND = 0.05;
 /** Autogrind fishes for this long, then lets another skill have a turn. */
 const FISH_GRIND_SECONDS = 75;
 const FISH_GRIND_PAUSE = 150;
-import { FLOOR_COLOR, expandZones, mapToWorld, savedMaps } from "./map-format";
-import { GREEN_CAVE_ID, findMapFile, isBuiltinMap } from "./builtin-maps";
+import { FLOOR_COLOR, expandZones, mapToWorld, regionAt, savedMaps } from "./map-format";
+import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./builtin-maps";
 import { tileImage } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
@@ -959,6 +959,8 @@ export class TurbzGame {
 			if (!file) return this.loadMap("world", true);
 			this.customFile = file;
 			this.mapNpcs = file.npcs ?? [];
+			this.regionKey = "";
+			this.mapRegion = null;
 			this.world = mapToWorld(file);
 			this.world.spawns.push(...expandZones(file));
 			this.world.entry = { x: (file.spawn?.tx ?? 1) * 32 + 16, y: (file.spawn?.ty ?? 1) * 32 + 16 };
@@ -972,7 +974,7 @@ export class TurbzGame {
 			this.world = buildDungeon(map, save.seed);
 			this.world.cache = null;
 		}
-		if (!map.startsWith("custom-")) { this.customFile = null; this.mapNpcs = []; }
+		if (!map.startsWith("custom-")) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
 		if (freshMobs || this.mobs.length === 0 || map !== "world") {
@@ -4125,7 +4127,8 @@ export class TurbzGame {
 		return {
 			npcName: (id) => npcs.find((n) => n.id === id)?.name ?? "someone",
 			itemName: (id) => ITEMS.find((i) => i.id === id)?.name ?? id,
-			speciesName: (id) => MONSTER_BY_ID[id]?.name ?? ANIMAL_BY_ID[id]?.name ?? id
+			speciesName: (id) => MONSTER_BY_ID[id]?.name ?? ANIMAL_BY_ID[id]?.name ?? id,
+			placeName: (tx, ty) => (this.customFile ? regionAt(this.customFile, tx, ty)?.name ?? null : null)
 		};
 	}
 	openMapStory() {
@@ -4240,11 +4243,37 @@ export class TurbzGame {
 	}
 	tickMapQuests(dt) {
 		const save = this.save;
-		if (!save || !save.map.startsWith("custom-") || !this.customFile?.quests?.length) return;
+		if (!save || !save.map.startsWith("custom-")) return;
+		this.tickMapRegion(dt);
+		if (!this.customFile?.quests?.length) return;
 		this.questTick = (this.questTick ?? 0) - dt;
 		if (this.questTick > 0) return;
 		this.questTick = .4;
 		this.mapQuestEvent({ t: "goto", tx: Math.floor(save.x / 32), ty: Math.floor(save.y / 32) });
+	}
+	/** Announces named regions (towns, continents, forests…) as you walk into them. First visits give Adventuring experience. */
+	tickMapRegion(dt) {
+		const file = this.customFile;
+		const save = this.save;
+		if (!file?.regions?.length || !save) return;
+		this.regionTick = (this.regionTick ?? 0) - dt;
+		if (this.regionTick > 0) return;
+		this.regionTick = .5;
+		const r = regionAt(file, Math.floor(save.x / 32), Math.floor(save.y / 32));
+		const key = r ? `${file.id}:${r.id}` : "";
+		if (key === this.regionKey) return;
+		this.regionKey = key;
+		this.mapRegion = r ?? null;
+		if (!r) { this.syncHud(true); return; }
+		const levels = r.levelMin ? ` · foes ${r.levelMin}${r.levelMax && r.levelMax !== r.levelMin ? `–${r.levelMax}` : ""}` : "";
+		this.say(`${r.name}${levels}${r.about ? ` · ${r.about}` : ""}`);
+		save.mapRegionsSeen = save.mapRegionsSeen ?? [];
+		if (!save.mapRegionsSeen.includes(key)) {
+			save.mapRegionsSeen.push(key);
+			if (save.mapRegionsSeen.length > 3000) save.mapRegionsSeen.splice(0, save.mapRegionsSeen.length - 3000);
+			if (r.kind !== "landmark" || r.tw > 1) this.gainSkill("adventuring", r.kind === "region" ? 20 : 10);
+		}
+		this.syncHud(true);
 	}
 	/** E near a designer-placed bounty board, arena, shrine, hearth, door or NPC. Returns true when handled. */
 	interactMapPlace() {
@@ -4283,9 +4312,13 @@ export class TurbzGame {
 		const file = this.customFile;
 		const save = this.save;
 		if (!file || !save) return;
+		const { w: vw, h: vh } = this.cssSize();
+		const viewX = vw / this.zoom * .62 + 120, viewY = vh / this.zoom * .62 + 140;
+		const offscreen = (x, y) => Math.abs(x - this.cam.x) > viewX || Math.abs(y - this.cam.y) > viewY;
 		for (const it of file.interactables ?? []) {
 			if (it.kind === "node") continue;
 			const x = it.tx * 32 + 16, y = it.ty * 32 + 16;
+			if (offscreen(x, y)) continue;
 			const col = it.kind === "bounty" ? "#e8c46a" : it.kind === "arena" ? "#c4473a" : it.kind === "shrine" ? "#8fd0ff" : it.kind === "hearth" ? "#ff9a4a" : "#c9a6e8";
 			const bob = Math.sin(this.clock * 2 + it.tx) * 2;
 			ctx.save();
@@ -4303,6 +4336,7 @@ export class TurbzGame {
 		const states = save.mapQuests ?? {};
 		for (const n of this.mapNpcs) {
 			const x = n.tx * 32 + 16, y = n.ty * 32 + 20;
+			if (offscreen(x, y)) continue;
 			const outfit = n.outfit ?? ((n.id.length * 7 + n.tx) % 8);
 			drawActor(ctx, {
 				x, y, race: "vesper", female: !!n.female, hair: n.hair ?? (n.tx + n.ty) % 6, skin: outfit % 5, facing: Math.sin(this.clock * .4 + n.tx) > 0 ? 1 : -1,
@@ -4433,10 +4467,12 @@ export class TurbzGame {
 		this.switchTo(map, at);
 	}
 	customMaps() {
-		return savedMaps().map((m) => ({ id: m.id, name: m.name, kind: m.kind ?? "world" }));
+		const mine = savedMaps().map((m) => ({ id: m.id, name: m.name, kind: m.kind ?? "world", builtin: false }));
+		const worlds = playableWorlds().filter((w) => !mine.some((m) => m.id === w.id)).map((m) => ({ id: m.id, name: m.name, kind: "world", builtin: true }));
+		return [...worlds, ...mine];
 	}
 	enterCustom(id) {
-		const file = savedMaps().find((m) => m.id === id);
+		const file = findMapFile(id);
 		if (!file || !this.save || isBuiltinMap(id)) return;
 		this.closePanel();
 		this.returnTo = this.save.map === "world" ? { x: this.save.x, y: this.save.y } : hearthXY();
@@ -4485,8 +4521,25 @@ export class TurbzGame {
 			this.switchTo("world", at);
 			return;
 		}
-		const file = savedMaps().find((m) => m.id === p.map);
-		if (!file) { this.say("This portal leads nowhere yet. Save the target map in the Map Builder."); return; }
+		// A portal to another spot on the same map (ferries): move without reloading the map.
+		if (save.map === `custom-${p.map}` && p.tx !== undefined && this.world) {
+			const to = nearestOpen(this.world, p.tx * 32 + 16, p.ty * 32 + 16);
+			save.x = to.x;
+			save.y = to.y;
+			this.cam.x = save.x;
+			this.cam.y = save.y;
+			this.dest = null;
+			this.path = [];
+			this.incoming = [];
+			this.portalCd = 2.5;
+			const where = this.customFile ? regionAt(this.customFile, p.tx, p.ty) : null;
+			this.say(where ? `You sail to ${where.name}.` : "The ferry carries you across.");
+			this.tone(330, .2, "triangle");
+			this.persist();
+			return;
+		}
+		const file = findMapFile(p.map);
+		if (!file || isBuiltinMap(p.map)) { this.say("This portal leads nowhere yet. Save the target map in the Map Builder."); return; }
 		if (save.map === "world") this.returnTo = { x: save.x, y: save.y + 40 };
 		const ax = p.tx ?? file.spawn?.tx ?? 1, ay = p.ty ?? file.spawn?.ty ?? 1;
 		this.switchTo(`custom-${file.id}`, { x: ax * 32 + 16, y: ay * 32 + 16 });
@@ -6607,7 +6660,7 @@ export class TurbzGame {
 		const sheetOpen = snap.panel === "sheet" || isPinned("panel-sheet");
 		const set = this.setInfo();
 		const q = QUESTS.find((d) => !save.quests[d.id]?.done) ?? QUESTS[QUESTS.length - 1];
-		const region = this.world && save.map === "world" ? BIOME_LABEL[biomeNameAt(this.world, save.x, save.y)] : save.map === "crypt" ? "Tiny Crypt" : save.map.startsWith("rift-") ? `Dungeon ${save.map.slice(5)}` : save.map.startsWith("custom-") ? this.customFile?.name ?? "Custom map" : "Ash Kiln";
+		const region = this.world && save.map === "world" ? BIOME_LABEL[biomeNameAt(this.world, save.x, save.y)] : save.map === "crypt" ? "Tiny Crypt" : save.map.startsWith("rift-") ? `Dungeon ${save.map.slice(5)}` : save.map.startsWith("custom-") ? (this.mapRegion ? `${this.mapRegion.name} · ${this.customFile?.name ?? ""}` : this.customFile?.name ?? "Custom map") : "Ash Kiln";
 		const npc = NPCS.find((n) => n.id === this.talkId);
 		publish({
 			mode: "play",
@@ -7404,7 +7457,10 @@ export class TurbzGame {
 		const top = 18, bottom = 22;
 		const k = Math.min(W / file.w, (H - top - bottom) / file.h);
 		const ox = Math.floor((W - file.w * k) / 2), oy = top + Math.floor((H - top - bottom - file.h * k) / 2);
-		const img = document.createElement("canvas");
+		// The terrain picture only changes when the map does: build it once per map.
+		let img = this.customMapImg?.file === file ? this.customMapImg.img : null;
+		if (!img) {
+		img = document.createElement("canvas");
 		img.width = file.w; img.height = file.h;
 		const ig = img.getContext("2d");
 		const data = ig.createImageData(file.w, file.h);
@@ -7419,8 +7475,11 @@ export class TurbzGame {
 			data.data.set([c[0], c[1], c[2], 255], i * 4);
 		}
 		ig.putImageData(data, 0, 0);
+		this.customMapImg = { file, img };
+		}
 		ctx.imageSmoothingEnabled = false;
 		ctx.drawImage(img, ox, oy, file.w * k, file.h * k);
+		const big = file.w * file.h > 40000;
 		ctx.strokeStyle = "#f0e2c8";
 		ctx.lineWidth = 1;
 		ctx.strokeRect(ox - .5, oy - .5, file.w * k + 1, file.h * k + 1);
@@ -7433,14 +7492,40 @@ export class TurbzGame {
 			ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 			if (label) { ctx.font = "13px VT323, monospace"; ctx.fillStyle = "#fff6e8"; ctx.textAlign = "left"; ctx.fillText(label, x + r + 3, y + 4); }
 		};
-		for (const z of file.zones ?? []) {
+		for (const z of big ? [] : file.zones ?? []) {
 			ctx.strokeStyle = "rgba(196,71,58,.9)"; ctx.setLineDash([4, 3]); ctx.lineWidth = 1.5;
 			ctx.strokeRect(ox + z.tx * k, oy + z.ty * k, z.tw * k, z.th * k);
 			ctx.setLineDash([]);
 		}
-		for (const n of world.spawns) if (n.kind === "node") dot(Math.floor(n.x / TILE), Math.floor(n.y / TILE), "#8fd06a", 2.5);
+		if (!big) for (const n of world.spawns) if (n.kind === "node") dot(Math.floor(n.x / TILE), Math.floor(n.y / TILE), "#8fd06a", 2.5);
+		// Named regions: continents in big letters, towns as gold squares.
+		ctx.textAlign = "center";
+		// Labels skip spots another label already took, so a crowded world stays readable.
+		const taken = [];
+		const free = (x, y, w, h) => { if (taken.some((b) => x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + h > b.y)) return false; taken.push({ x, y, w, h }); return true; };
+		const regions = [...(file.regions ?? [])].sort((a, b) => (a.kind === "region" ? 0 : 1) - (b.kind === "region" ? 0 : 1));
+		for (const r of regions) {
+			const [cx, cy] = at(r.tx + r.tw / 2, r.ty + r.th / 2);
+			if (r.kind === "region") {
+				ctx.font = "17px VT323, monospace";
+				const lw = ctx.measureText(r.name).width + 4;
+				free(cx - lw / 2, oy + r.ty * k, lw, 14);
+				ctx.fillStyle = "rgba(20,14,12,.7)"; ctx.fillText(r.name.toUpperCase(), cx + 1, oy + r.ty * k + 13);
+				ctx.fillStyle = "#f0e2c8"; ctx.fillText(r.name.toUpperCase(), cx, oy + r.ty * k + 12);
+			} else if (r.kind === "city") {
+				ctx.fillStyle = "#e6c15a"; ctx.strokeStyle = "#1a1214"; ctx.lineWidth = 1;
+				const sz = Math.max(3, r.tw * k * .5);
+				ctx.fillRect(cx - sz / 2, cy - sz / 2, sz, sz); ctx.strokeRect(cx - sz / 2, cy - sz / 2, sz, sz);
+				if (big) {
+					ctx.font = "12px VT323, monospace";
+					const lw = ctx.measureText(r.name).width + 2;
+					if (free(cx - lw / 2, cy - sz / 2 - 12, lw, 11)) { ctx.fillStyle = "rgba(20,14,12,.75)"; ctx.fillText(r.name, cx + 1, cy - sz / 2 - 1); ctx.fillStyle = "#fff6e8"; ctx.fillText(r.name, cx, cy - sz / 2 - 2); }
+				}
+			}
+		}
+		ctx.textAlign = "left";
 		for (const m of this.mobs) if (m.alive && m.boss) dot(Math.floor(m.x / TILE), Math.floor(m.y / TILE), "#c4473a", 5, m.name);
-		for (const it of file.interactables ?? []) {
+		for (const it of big ? [] : file.interactables ?? []) {
 			if (it.kind === "node") continue;
 			const color = it.kind === "dungeon" ? "#b4a6ff" : it.kind === "hearth" ? "#ff9a4a" : it.kind === "shrine" ? "#8fd0ff" : "#e6c15a";
 			const label = it.kind === "dungeon" ? it.name || "Door" : it.kind === "shrine" ? it.name || "Shrine" : it.kind === "hearth" ? "Hearth" : it.label || (it.kind === "bounty" ? "Bounty Board" : "Arena");
@@ -7449,7 +7534,9 @@ export class TurbzGame {
 		const states = save.mapQuests ?? {};
 		for (const n of this.mapNpcs) {
 			const mk = questMarker(file, n, states);
-			dot(n.tx, n.ty, "#c9a6e8", 4, `${mk ? mk + " " : ""}${n.name}`);
+			if (big && !mk) continue;
+			// On a big world only hand-ins ('?') get a label; offers show as a dot so towns are not a wall of '!'.
+			dot(n.tx, n.ty, mk === "?" ? "#ffe08a" : "#c9a6e8", big ? 3 : 4, big ? (mk === "?" ? mk : undefined) : `${mk ? mk + " " : ""}${n.name}`);
 		}
 		// Where the open quests want you to go.
 		for (const q of openQuests(file, states)) {

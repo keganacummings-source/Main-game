@@ -1,6 +1,7 @@
 import type { Spawn, Tile as WorldTile, WorldData } from "./world";
 import { TILE, WORLD_H, WORLD_W, MONSTER_BY_ID, ANIMAL_BY_ID, MONSTERS } from "./content";
 import { findAtlasTile } from "./tile-atlas";
+import { idbAll, idbAvailable, idbDelete, idbGet, idbPut, STORE_DRAFTS, STORE_MAPS } from "./idb-store";
 
 export const MAP_VERSION = 1;
 
@@ -83,30 +84,29 @@ export type MapTile = WorldTile & {
   portal?: Portal;
 };
 export const MAX_LAYERS = 4;
+/** Most things one map may hold. Big enough for a 512×512 world with dozens of towns. */
+export const LIMITS = { interactables: 3000, npcs: 500, zones: 500, quests: 400, regions: 400 } as const;
 export const DESIGNER_KEY = "turbz-designer-maps-v1";
 
-/** Saves (or replaces) a designer map on this device. Returns an error message, or null on success. */
-export function saveDesignerMap(map: MapFile): string | null {
-  try {
-    const clean = parseMapJson(map);
-    const list = (JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]") as { id?: string }[]).filter((m) => m && m.id !== clean.id);
-    localStorage.setItem(DESIGNER_KEY, JSON.stringify([...list, packMap(clean)]));
-    return null;
-  } catch (err) {
-    if (err instanceof DOMException && (err.name === "QuotaExceededError" || err.code === 22)) return "This device has no room left for the map. Export it as a JSON file instead, or delete other saved maps.";
-    return err instanceof Error ? err.message : "Save failed.";
-  }
-}
+/**
+ * Designer maps saved on this device.
+ *
+ * Maps live in IndexedDB (no practical size limit) and are mirrored in an in-memory cache so the
+ * rest of the game can read them synchronously. Older builds kept them in localStorage; those are
+ * moved into IndexedDB the first time the store starts. Call initDesignerStore() once at startup.
+ */
+let mapCache: Map<string, MapFile> | null = null;
+let idbReady = false;
+const storeListeners = new Set<(event: { error?: string }) => void>();
 
-export function deleteDesignerMap(id: string): void {
-  try {
-    const list = JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]") as { id?: string }[];
-    localStorage.setItem(DESIGNER_KEY, JSON.stringify(list.filter((m) => m && m.id !== id)));
-  } catch { /* nothing to delete */ }
+/** Hear about saves finishing or failing in the background (the Map Builder shows these). */
+export function onDesignerStore(fn: (event: { error?: string }) => void): () => void {
+  storeListeners.add(fn);
+  return () => storeListeners.delete(fn);
 }
+const emitStore = (event: { error?: string }) => { for (const fn of storeListeners) fn(event); };
 
-/** Designer maps saved on this device, keyed by id. */
-export function savedMaps(): MapFile[] {
+function legacyMaps(): MapFile[] {
   try {
     const list = JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]");
     return Array.isArray(list) ? list.flatMap((m) => { try { return [parseMapJson(m)]; } catch { return []; } }) : [];
@@ -114,6 +114,120 @@ export function savedMaps(): MapFile[] {
     return [];
   }
 }
+
+function cache(): Map<string, MapFile> {
+  if (!mapCache) {
+    mapCache = new Map();
+    for (const m of legacyMaps()) mapCache.set(m.id, m);
+  }
+  return mapCache;
+}
+
+/** Loads every saved map into memory (and moves old localStorage maps into IndexedDB). Safe to call twice. */
+export async function initDesignerStore(): Promise<void> {
+  const c = cache();
+  if (idbReady || !idbAvailable()) return;
+  try {
+    const rows = await idbAll<unknown>(STORE_MAPS);
+    for (const row of rows) {
+      try {
+        const m = parseMapJson(row);
+        c.set(m.id, m);
+      } catch { /* skip a damaged map */ }
+    }
+    const legacy = legacyMaps();
+    for (const m of legacy) {
+      if (!rows.some((r) => (r as { id?: string })?.id === m.id)) await idbPut(STORE_MAPS, m.id, packMap(m));
+    }
+    if (legacy.length) localStorage.removeItem(DESIGNER_KEY);
+    idbReady = true;
+  } catch {
+    /* IndexedDB unavailable (private mode): fall back to localStorage */
+  }
+}
+
+function writeLegacy(): string | null {
+  try {
+    localStorage.setItem(DESIGNER_KEY, JSON.stringify([...cache().values()].map(packMap)));
+    return null;
+  } catch (err) {
+    if (err instanceof DOMException && (err.name === "QuotaExceededError" || err.code === 22)) return "This device has no room left for the map. Export it as a JSON file instead, or delete other saved maps.";
+    return err instanceof Error ? err.message : "Save failed.";
+  }
+}
+
+/** Saves (or replaces) a designer map on this device. Returns an error message, or null on success. */
+export function saveDesignerMap(map: MapFile): string | null {
+  let clean: MapFile;
+  try {
+    clean = parseMapJson(map);
+  } catch (err) {
+    return err instanceof Error ? err.message : "Save failed.";
+  }
+  cache().set(clean.id, clean);
+  if (idbReady) {
+    idbPut(STORE_MAPS, clean.id, packMap(clean)).then(() => emitStore({}), (err) => emitStore({ error: `Saving to this device failed: ${err instanceof Error ? err.message : "unknown error"}. Export the map as a file to keep it.` }));
+    return null;
+  }
+  const err = writeLegacy();
+  if (err) cache().delete(clean.id);
+  return err;
+}
+
+export function deleteDesignerMap(id: string): void {
+  cache().delete(id);
+  if (idbReady) void idbDelete(STORE_MAPS, id).catch(() => undefined);
+  else writeLegacy();
+}
+
+/** Designer maps saved on this device. Treat the returned maps as read-only; copy one before editing it. */
+export function savedMaps(): MapFile[] {
+  return [...cache().values()];
+}
+
+/** The Map Builder's unsaved work, kept between visits. */
+export async function saveDraft(map: MapFile): Promise<void> {
+  const packed = packMap(map);
+  if (idbAvailable()) {
+    try {
+      await idbPut(STORE_DRAFTS, "current", packed);
+      return;
+    } catch { /* fall back below */ }
+  }
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify(packed)); } catch { /* the draft is a convenience only */ }
+}
+
+export async function loadDraft(): Promise<MapFile | null> {
+  if (idbAvailable()) {
+    try {
+      const raw = await idbGet(STORE_DRAFTS, "current");
+      if (raw) return parseMapJson(raw);
+    } catch { /* try the old place */ }
+  }
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (raw) return parseMapJson(JSON.parse(raw));
+  } catch { /* nothing usable */ }
+  return null;
+}
+const DRAFT_KEY = "turbz-designer-draft-v1";
+
+/** A named area: shown in the Map Builder, announced in game when you walk in, and labelled on the map. */
+export type MapRegion = {
+  id: string;
+  name: string;
+  kind: "region" | "city" | "resource" | "landmark" | "dungeon" | "water";
+  tx: number;
+  ty: number;
+  tw: number;
+  th: number;
+  /** Shown under the name when announced and on hover. */
+  about?: string;
+  /** Suggested level range (for players and quest makers). */
+  levelMin?: number;
+  levelMax?: number;
+};
+export const REGION_KINDS: MapRegion["kind"][] = ["region", "city", "resource", "landmark", "dungeon", "water"];
 
 export type MapFile = {
   version: number;
@@ -137,6 +251,8 @@ export type MapFile = {
   quests?: MapQuest[];
   /** Story text shown the first time a hunter enters. Blank line = new page. */
   intro?: string;
+  /** Named areas: continents, cities, forests, mines… */
+  regions?: MapRegion[];
 };
 
 export const FLOOR_COLOR: Record<number, string> = {
@@ -320,6 +436,7 @@ export function parseMapJson(input: unknown): MapFile {
     zones: parseZones(m.zones, m.w!, m.h!),
     interactables: parseInteractables(m.interactables, m.w!, m.h!),
     ...questsAndNpcs(m, m.w!, m.h!),
+    regions: parseRegions(m.regions, m.w!, m.h!),
     spawn,
     ...(typeof m.intro === "string" && m.intro.trim() ? { intro: m.intro.slice(0, 4000) } : {}),
     notes: typeof m.notes === "string" ? m.notes.slice(0, 2000) : undefined,
@@ -343,7 +460,7 @@ function parseStep(s: unknown): MapQuestStep {
 }
 
 function parseQuests(raw: unknown, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapQuest[] {
-  if (raw != null && (!Array.isArray(raw) || raw.length > 120)) throw new Error("Invalid quests (maximum 120).");
+  if (raw != null && (!Array.isArray(raw) || raw.length > LIMITS.quests)) throw new Error(`Invalid quests (maximum ${LIMITS.quests}).`);
   const ids = new Set<string>();
   const out: MapQuest[] = [];
   const add = (q: Partial<MapQuest> & { id?: unknown; name?: unknown }) => {
@@ -389,7 +506,7 @@ function questsAndNpcs(m: Partial<MapFile>, w: number, h: number): { npcs: MapNp
 
 function parseInteractables(raw: unknown, w: number, h: number): MapInteractable[] {
   if (raw == null) return [];
-  if (!Array.isArray(raw) || raw.length > 200) throw new Error("Invalid interactables (maximum 200).");
+  if (!Array.isArray(raw) || raw.length > LIMITS.interactables) throw new Error(`Invalid interactables (maximum ${LIMITS.interactables}).`);
   const ids = new Set<string>();
   const inMap = (tx: number, ty: number) => Number.isInteger(tx) && Number.isInteger(ty) && tx >= 0 && ty >= 0 && tx < w && ty < h;
   return raw.map((row) => {
@@ -416,7 +533,7 @@ function parseInteractables(raw: unknown, w: number, h: number): MapInteractable
 
 function parseNpcs(raw: unknown, w: number, h: number, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapNpc[] {
   if (raw == null) return [];
-  if (!Array.isArray(raw) || raw.length > 80) throw new Error("Invalid NPCs (maximum 80).");
+  if (!Array.isArray(raw) || raw.length > LIMITS.npcs) throw new Error(`Invalid NPCs (maximum ${LIMITS.npcs}).`);
   const ids = new Set<string>();
   const inMap = (tx: number, ty: number) => Number.isInteger(tx) && Number.isInteger(ty) && tx >= 0 && ty >= 0 && tx < w && ty < h;
   return raw.map((row) => {
@@ -443,9 +560,43 @@ function parseNpcs(raw: unknown, w: number, h: number, legacy: { giver: string; 
   });
 }
 
+function parseRegions(raw: unknown, w: number, h: number): MapRegion[] {
+  if (raw == null) return [];
+  if (!Array.isArray(raw) || raw.length > LIMITS.regions) throw new Error(`Invalid regions (maximum ${LIMITS.regions}).`);
+  const ids = new Set<string>();
+  const out: MapRegion[] = [];
+  for (const row of raw) {
+    const r = row as MapRegion;
+    if (!r || typeof r.id !== "string" || !r.id || ids.has(r.id)) throw new Error("Areas need a unique id.");
+    ids.add(r.id);
+    const tx = Math.max(0, Math.min(w - 1, Math.floor(Number(r.tx)) || 0));
+    const ty = Math.max(0, Math.min(h - 1, Math.floor(Number(r.ty)) || 0));
+    const tw = Math.max(1, Math.min(w - tx, Math.floor(Number(r.tw)) || 1));
+    const th = Math.max(1, Math.min(h - ty, Math.floor(Number(r.th)) || 1));
+    const lv = (v: unknown) => (Number.isInteger(v) && (v as number) >= 1 && (v as number) <= 1000 ? (v as number) : undefined);
+    out.push({
+      id: r.id.slice(0, 60), name: (typeof r.name === "string" && r.name.trim() ? r.name : "Unnamed area").slice(0, 60), kind: REGION_KINDS.includes(r.kind) ? r.kind : "region", tx, ty, tw, th,
+      ...(typeof r.about === "string" && r.about.trim() ? { about: r.about.slice(0, 200) } : {}),
+      ...(lv(r.levelMin) ? { levelMin: lv(r.levelMin) } : {}),
+      ...(lv(r.levelMax) ? { levelMax: lv(r.levelMax) } : {}),
+    });
+  }
+  return out;
+}
+
+/** The smallest named region containing a tile (cities win over the continent they sit on). */
+export function regionAt(map: Pick<MapFile, "regions">, tx: number, ty: number): MapRegion | null {
+  let best: MapRegion | null = null;
+  for (const r of map.regions ?? []) {
+    if (tx < r.tx || ty < r.ty || tx >= r.tx + r.tw || ty >= r.ty + r.th) continue;
+    if (!best || r.tw * r.th < best.tw * best.th) best = r;
+  }
+  return best;
+}
+
 function parseZones(raw: unknown, w: number, h: number): SpawnZone[] {
   if (raw == null) return [];
-  if (!Array.isArray(raw) || raw.length > 80) throw new Error("Invalid spawn zones (maximum 80).");
+  if (!Array.isArray(raw) || raw.length > LIMITS.zones) throw new Error(`Invalid spawn zones (maximum ${LIMITS.zones}).`);
   const ids = new Set<string>();
   return raw.map((z) => {
     if (!z || typeof z !== "object") throw new Error("Invalid spawn zone.");

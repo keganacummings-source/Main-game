@@ -1,6 +1,40 @@
-/** Built-in maps: shipped with the game, never listed in Designer Maps. */
+/**
+ * Built-in maps shipped with the game.
+ *
+ * - Hidden maps (the Green Cave) are only reached through game mechanics.
+ * - Playable worlds (Veilreach) are fetched from /Maps at startup, listed in the pause menu, and can
+ *   be opened as a copy in the Map Builder.
+ */
 import { parseMapJson, savedMaps, type MapFile } from "./map-format";
 import greenCaveJson from "./maps/greencave.json";
+
+/** Worlds fetched from public/Maps. */
+export const PLAYABLE_WORLDS: { id: string; name: string; about: string }[] = [
+  { id: "veilreach", name: "Veilreach", about: "A 500×500 world of seven continents, 41 towns and a main story across the sea." },
+];
+const playable = new Map<string, MapFile>();
+let loading: Promise<void> | null = null;
+
+/** Fetches the playable worlds (once). Safe to call many times. */
+export function loadPlayableWorlds(): Promise<void> {
+  if (loading) return loading;
+  loading = (async () => {
+    if (typeof fetch === "undefined") return;
+    await Promise.all(PLAYABLE_WORLDS.map(async (w) => {
+      try {
+        const res = await fetch(`/Maps/${w.id}.json`, { cache: "no-cache" });
+        if (!res.ok) return;
+        playable.set(w.id, parseMapJson(await res.json()));
+      } catch { /* the world stays unavailable */ }
+    }));
+  })();
+  return loading;
+}
+
+/** Playable built-in worlds that have loaded. */
+export function playableWorlds(): MapFile[] {
+  return [...playable.values()];
+}
 
 /** The Green Cave (Hardcore, level 30+). Reached only by eating a Green Mushroom. */
 export const GREEN_CAVE_ID = "greencave";
@@ -37,11 +71,12 @@ export function builtinMaps(): MapFile[] {
   return out;
 }
 
+/** Hidden built-in maps (the Green Cave). Playable worlds are not "builtin" in this sense: anyone can walk in. */
 export function isBuiltinMap(id: string): boolean {
   return builtinMaps().some((m) => m.id === id);
 }
 
-/** A designer map saved on this device, or a built-in map. */
+/** A designer map saved on this device (wins, so your own edits of a world are what you play), a playable world, or a hidden built-in map. */
 export function findMapFile(id: string): MapFile | undefined {
-  return builtinMaps().find((m) => m.id === id) ?? savedMaps().find((m) => m.id === id);
+  return savedMaps().find((m) => m.id === id) ?? playable.get(id) ?? builtinMaps().find((m) => m.id === id);
 }

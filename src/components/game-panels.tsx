@@ -521,12 +521,12 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
         </div>
         <p className="text-dim">Right-click for more actions. Drag windows by their title bar, resize from the corner, pin to keep them open.</p>
       </Section>
-      <Section title="DESIGNER MAPS">
+      <Section title="WORLDS & DESIGNER MAPS">
         <div className="ui-list" data-testid="designer-maps">
           {map.startsWith("custom-") && <button type="button" className="px-btn px-btn-kyo" data-testid="leave-custom-map-btn" onClick={() => game?.leaveCustom()}>Return to the overworld</button>}
           {maps.map((m) => (
             <button key={m.id} type="button" className={`px-btn text-left ${map === `custom-${m.id}` ? "map-btn-active" : ""}`} data-testid={`enter-map-${m.id}`} disabled={map === `custom-${m.id}`} onClick={() => game?.enterCustom(m.id)}>
-              {map === `custom-${m.id}` ? `▶ ${m.name}` : `Enter ${m.name}`} <span className="text-dim">· {m.kind}</span>
+              {map === `custom-${m.id}` ? `▶ ${m.name}` : `Enter ${m.name}`} <span className="text-dim">· {m.builtin ? "world" : m.kind}</span>
             </button>
           ))}
           {!maps.length && <Empty>Build and save maps in Designer Mode, then enter them here.</Empty>}

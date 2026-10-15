@@ -31,6 +31,26 @@ Companions fight beside you:
 - **World bosses**: Tide Tyrant, Void Cantor and Marrow Saint.
 - **Dungeon rifts**: open every 10 minutes near you.
 
+## Veilreach
+
+A second, hand-editable world of 500×500 tiles, made with the [Map Builder](Designer-Mode#worlds). Enter it from Menu → **Worlds & Designer Maps**. You arrive in Hearthmere's capital.
+
+| Continent | Theme | Foe levels (they overlap, so you can push ahead) |
+|---|---|---|
+| Hearthmere | green woods and fields | 1–12 (start) |
+| Saltmire | coasts and marsh | 10–24 |
+| Frostmarch | snow and ice | 20–36 |
+| Emberwaste | ash and lava | 32–48 |
+| Hollowdeep | void and dark stone | 45–62 |
+| Bonereach | bone fields | 60–78 |
+| Crownfall Isle | the ruined crown, in the middle | 75–90 |
+
+- **Towns.** Each continent has a walled capital, towns, a port and an unwalled village. Towns have shops, a plaza and NPCs.
+- **Ferries.** Walk to the end of a pier to sail to the next port. The ports form a ring, so every continent can be reached.
+- **Wilds.** Woods, mines, fisheries and mushroom groves are full of gathering nodes. You will also find ruins, barrows, altars and watchstones, about 200 enemy camps, and a boss on each continent.
+- **Areas.** Walking into a continent, town or landmark announces its name and levels. Your first visit gives a little Adventuring XP.
+- **Story.** *The Sundered Crown* sends you to every capital for a shard of the crown, then to Crownfall Isle. Each town also has three side quests: clearing roads, supply runs and letters. See [Quests](Quests#map-quests).
+
 ## Designer maps
 
 Maps built in the [Map Builder](Designer-Mode) can be entered from the game. They have their own spawn zones, NPCs, stories and quests. In TurboHunt, dying on one only knocks you out.
