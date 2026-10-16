@@ -11,7 +11,7 @@
  * Everything is ordinary Map Builder data, so the result can be opened and edited by hand.
  */
 import { MONSTER_BY_ID, ANIMAL_BY_ID, TILE, mulberry32, type Rng } from "./content";
-import { MAP_VERSION, type MapFile, type MapInteractable, type MapNpc, type MapQuest, type MapQuestStep, type MapRegion, type MapTile, type SpawnZone } from "./map-format";
+import { LIMITS, MAP_VERSION, type MapFile, type MapInteractable, type MapNpc, type MapQuest, type MapQuestStep, type MapRegion, type MapTile, type SpawnZone } from "./map-format";
 import type { Spawn } from "./world";
 
 // ---------------------------------------------------------------------------
@@ -125,6 +125,11 @@ type Theme = {
   shrine: string;
   lakes: boolean;
 };
+
+/** A local keepsake each land hands out as a quest reward (all real items). */
+const THEME_LOOT: Record<ThemeId, string> = { verdant: "blue_lantern", frost: "frost_crystal", ashen: "embercap", tide: "tide_pearl", void: "veil_dust", bone: "bone_shard", crown: "lantern_mote" };
+/** What a gather step puts in the bag, so a "bring" step can follow it. */
+const NODE_ITEM = { tree: "timber", ore: "ore", shroom: "mushroom", fish: "fish" } as const;
 
 const g = (art: string[], floor: number, biome: number, accent?: string[], accentChance = 0): Ground => ({ art, floor, biome, accent, accentChance });
 
@@ -402,11 +407,23 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
   const spawns: Spawn[] = [];
   const occupied = new Uint8Array(N); // cities, landmarks: no camps or trees here
   const occupy = (x: number, y: number, ww: number, hh: number, pad = 0) => { for (let yy = y - pad; yy < y + hh + pad; yy++) for (let xx = x - pad; xx < x + ww + pad; xx++) if (inside(xx, yy)) occupied[at(xx, yy)] = 1; };
-  const freeRect = (x: number, y: number, ww: number, hh: number, cont: number, minCoast = 4) => {
+  /**
+   * True when the whole rectangle is plain, free ground of continent `cont`: no mountain, lake, lava,
+   * wall, town or earlier area. With `allowWater` (fisheries) lake and sea tiles are fine, so a rect can
+   * sit on a shore. Mountains and lava are never allowed, so nothing is ever cut out of a range.
+   */
+  const freeRect = (x: number, y: number, ww: number, hh: number, cont: number, minCoast = 4, allowWater = false, terrain: "flat" | "hills" | "any" = "flat") => {
     for (let yy = y; yy < y + hh; yy++) for (let xx = x; xx < x + ww; xx++) {
-      if (!inside(xx, yy)) return false;
+      if (xx < 1 || yy < 1 || xx >= w - 1 || yy >= h - 1) return false;
       const i = at(xx, yy);
-      if (!land[i] || occupied[i] || contAt[i] !== cont || coastDist[i]! < minCoast) return false;
+      const t = tiles[i]!;
+      if (terrain === "any") { if (!land[i] || occupied[i] || contAt[i] !== cont || coastDist[i]! < minCoast) return false; continue; }
+      // "hills": mountains are allowed (a town can sit in a valley), lakes and lava are not.
+      if (terrain === "hills") { if (!land[i] || occupied[i] || lake[i] || t.floor === FL.lava || contAt[i] !== cont || coastDist[i]! < minCoast) return false; continue; }
+      if (mountain[i] || t.floor === FL.lava) return false;
+      if (occupied[i]) return false;
+      if (allowWater && (!land[i] || lake[i])) continue;
+      if (!land[i] || lake[i] || contAt[i] !== cont || coastDist[i]! < minCoast || t.block) return false;
     }
     return true;
   };
@@ -428,11 +445,18 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       let best: { x: number; y: number } | null = null, bs = -Infinity;
       for (let k = 0; k < 500; k++) {
         const x = Math.floor(c.x * w - c.r + rng() * c.r * 2), y = Math.floor(c.y * h - c.r + rng() * c.r * 2);
-        if (!freeRect(x - 3, y - 3, cw + 6, chh + 6, ci, kind === "port" ? 3 : 5)) continue;
+        // The town itself needs flat, dry ground. Its outer margin may lean against hills, so towns
+        // nestle into valleys instead of being rare.
+        if (!freeRect(x - 1, y - 1, cw + 2, chh + 2, ci, kind === "port" ? 3 : 5, false, "hills")) continue;
+        if (!freeRect(x - 3, y - 3, cw + 6, chh + 6, ci, kind === "port" ? 3 : 5, false, "any")) continue;
         const cx = x + cw / 2, cy = y + chh / 2;
         const spread = Math.min(999, ...cities.filter((o) => o.cont === ci).map((o) => Math.hypot(o.x + o.w / 2 - cx, o.y + o.h / 2 - cy)));
         const coast = coastDist[at(Math.floor(cx), Math.floor(cy))]!;
-        const score = kind === "port" ? -Math.abs(coast - 16) * 4 + Math.min(spread, 80) : kind === "capital" ? -Math.hypot(cx - c.x * w, cy - c.y * h) : Math.min(spread, kind === "village" ? 70 : 90);
+        let hill = 0;
+        for (let yy = y; yy < y + chh; yy += 2) for (let xx = x; xx < x + cw; xx += 2) if (mountain[at(xx, yy)]) hill++;
+        const hillShare = hill / (Math.ceil(cw / 2) * Math.ceil(chh / 2));
+        if (hillShare > 0.5) continue; // never bury a town in rock
+        const score = (kind === "port" ? -Math.abs(coast - 16) * 4 + Math.min(spread, 80) : kind === "capital" ? -Math.hypot(cx - c.x * w, cy - c.y * h) : Math.min(spread, kind === "village" ? 70 : 90)) - hillShare * 80;
         if (score > bs) { bs = score; best = { x, y }; }
       }
       if (!best) continue;
@@ -441,9 +465,44 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       cities.push(city);
     }
   });
-  for (const o of orchards) occupy(o.x, o.y, o.w, o.h, 1);
+  // Orchards go in after every town exists, in whatever free ground sits closest to their town. A town
+  // with no room simply has no orchard, instead of one overlapping a wall, a mountain or its neighbour.
+  const orchardsPlaced: typeof orchards = [];
+  for (const o of orchards) {
+    const city = cities.find((c) => c.name === o.name)!;
+    const cands: { x: number; y: number }[] = [];
+    for (let gap = 2; gap <= 9; gap += 1) {
+      cands.push({ x: city.plaza.x + 4, y: city.y + city.h + gap }, { x: city.plaza.x - 12, y: city.y + city.h + gap }, { x: city.x + city.w + gap, y: city.plaza.y - 3 }, { x: city.x - gap - o.w, y: city.plaza.y - 3 }, { x: city.plaza.x + 4, y: city.y - gap - o.h }, { x: city.plaza.x - 12, y: city.y - gap - o.h });
+    }
+    const spot = cands.find((c) => freeRect(c.x - 1, c.y - 1, o.w + 2, o.h + 2, o.ci, 3));
+    if (!spot) continue;
+    o.x = spot.x; o.y = spot.y;
+    occupy(o.x, o.y, o.w, o.h, 1);
+    orchardsPlaced.push(o);
+  }
+  orchards.length = 0;
+  orchards.push(...orchardsPlaced);
+
+  /**
+   * Opens a valley around a town that sits in hills: mountain tiles near the town become ordinary
+   * ground along a wobbly outline, so the range parts around it instead of having a box bored through it.
+   */
+  function openValley(th: Theme, x0: number, y0: number, cw: number, chh: number) {
+    const R = 6;
+    for (let y = y0 - R; y < y0 + chh + R; y++) for (let x = x0 - R; x < x0 + cw + R; x++) {
+      if (!inside(x, y)) continue;
+      const i = at(x, y);
+      if (!mountain[i]) continue;
+      const dx = Math.max(x0 - x, 0, x - (x0 + cw - 1)), dy = Math.max(y0 - y, 0, y - (y0 + chh - 1));
+      if (Math.hypot(dx, dy) + (fbm(x / 5, y / 5, seed + 71) - 0.5) * 6 > R - 1) continue;
+      mountain[i] = 0;
+      const gr = th.grounds[1];
+      tiles[i] = { floor: gr.floor, biome: gr.biome, block: 0, decor: 0, sprite: pickArt(gr.art, x, y, 4) };
+    }
+  }
 
   function buildCity(ci: number, th: Theme, x0: number, y0: number, cw: number, chh: number, kind: City["kind"], name: string): City {
+    openValley(th, x0, y0, cw, chh);
     occupy(x0, y0, cw, chh, 3);
     const floor = FL.stone;
     for (let y = y0; y < y0 + chh; y++) for (let x = x0; x < x0 + cw; x++) ground(x, y, th.cityFloor, floor, 40);
@@ -516,9 +575,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       interactables.push({ id: id("arena"), kind: "arena", tx: midX + pr + 2, ty: midY - 3, label: `${name} Proving Ring` });
     }
     // Orchard sits east of the south road so the gate road is not a tree line.
-    const ox = Math.min(w - 12, Math.max(2, midX + 4));
-    const oy = Math.min(h - 10, y0 + chh + 2);
-    orchards.push({ name, ci, x: ox, y: oy, w: 9, h: 7 });
+    orchards.push({ name, ci, x: 0, y: 0, w: 9, h: 7 });
     return city;
   }
 
@@ -565,7 +622,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
         const nx = x + dx, ny = y + dy;
         if (!inside(nx, ny)) continue;
         const j = at(nx, ny);
-        const occ = occupied[j] && j !== e ? 6 : 0;
+        const occ = occupied[j] && j !== e ? 18 : 0;
         const c = cost[i]! + cellCost(j) + occ;
         if (c < cost[j]!) { cost[j] = c; from[j] = i; open.push(j, c + Math.abs(nx - bx) + Math.abs(ny - by)); }
       }
@@ -626,11 +683,15 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
 
   // ---- landmarks and resource areas ---------------------------------------------------------
   const places: Place[] = [];
-  const findSpot = (ci: number, ww: number, hh: number, pred: (x: number, y: number) => boolean, tries = 400) => {
+  /** A free rectangle with a one-tile margin of plain ground all round it (so it never touches a range). */
+  const findSpot = (ci: number, ww: number, hh: number, pred: (x: number, y: number) => boolean, tries = 700, allowWater = false) => {
     const c = conts[ci]!;
     for (let k = 0; k < tries; k++) {
       const x = Math.floor(c.x * w - c.r * 1.1 + rng() * c.r * 2.2), y = Math.floor(c.y * h - c.r * 1.1 + rng() * c.r * 2.2);
-      if (freeRect(x, y, ww, hh, ci, 2) && pred(x, y)) return { x, y };
+      if (freeRect(x - 1, y - 1, ww + 2, hh + 2, ci, allowWater ? 0 : 2, allowWater) && pred(x, y)) {
+        if (allowWater) { let dry = 0; for (let yy = y; yy < y + hh; yy++) for (let xx = x; xx < x + ww; xx++) if (land[at(xx, yy)] && !lake[at(xx, yy)]) dry++; if (dry < ww * hh * 0.4) continue; }
+        return { x, y };
+      }
     }
     return null;
   };
@@ -664,8 +725,8 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       { node: "fish", word: "Fishery", n: 1 },
     ];
     for (const r of res) for (let k = 0; k < r.n; k++) {
-      const near = (x: number, y: number) => r.node === "ore" ? anyNear(x + 5, y + 5, 10, (i) => !!mountain[i]) : r.node === "fish" ? anyNear(x + 5, y + 5, 7, (i) => tiles[i]!.floor === FL.water) : r.node === "tree" ? moist[at(x + 5, y + 5)]! > 0.5 : true;
-      const spot = findSpot(ci, 11, 11, near);
+      const near = (x: number, y: number) => r.node === "ore" ? anyNear(x + 5, y + 5, 13, (i) => !!mountain[i]) : r.node === "fish" ? anyNear(x + 5, y + 5, 7, (i) => tiles[i]!.floor === FL.water) : r.node === "tree" ? moist[at(x + 5, y + 5)]! > 0.5 : true;
+      const spot = findSpot(ci, 11, 11, near, 700, r.node === "fish");
       if (!spot) continue;
       const name = `${placeName(rng, usedNames)} ${r.word}`;
       const rid = id("res");
@@ -705,20 +766,27 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
   for (const it of interactables) if (it.kind === "node") nodeTile[at(it.tx, it.ty)] = 1;
   const cell = 22;
   for (let cy = 0; cy < h; cy += cell) for (let cx = 0; cx < w; cx += cell) {
-    const mx = cx + Math.floor(cell / 2), my = cy + Math.floor(cell / 2);
-    if (!inside(mx, my)) continue;
-    const mi = at(mx, my);
-    if (!land[mi] || contAt[mi]! < 0) continue;
-    if (occupied[mi] || nodeTile[mi]) continue;
-    const tw = 10, thh = 10, zx = mx - 5, zy = my - 5;
-    let open = 0, nodes = 0;
-    for (let y = zy; y < zy + thh; y++) for (let x = zx; x < zx + tw; x++) {
-      if (!inside(x, y)) continue;
-      const i = at(x, y);
-      if (nodeTile[i]) nodes++;
-      else if (!occupied[i] && !mountain[i] && !lake[i] && land[i] && !tiles[i]!.block && tiles[i]!.floor !== FL.water && tiles[i]!.floor !== FL.lava) open++;
+    const tw = 10, thh = 10;
+    let mx = 0, my = 0, zx = 0, zy = 0, found = false;
+    // Try the cell centre, then a few nudged spots, and take the first clean square.
+    for (let a = 0; a < 7 && !found; a++) {
+      mx = cx + Math.floor(cell / 2) + (a === 0 ? 0 : Math.floor((rng() - 0.5) * 12));
+      my = cy + Math.floor(cell / 2) + (a === 0 ? 0 : Math.floor((rng() - 0.5) * 12));
+      if (!inside(mx, my)) continue;
+      const mi0 = at(mx, my);
+      if (!land[mi0] || contAt[mi0]! < 0 || occupied[mi0] || nodeTile[mi0]) continue;
+      zx = mx - 5; zy = my - 5;
+      let o = 0, c = 0;
+      for (let y = zy; y < zy + thh; y++) for (let x = zx; x < zx + tw; x++) {
+        if (!inside(x, y)) { c++; continue; }
+        const i = at(x, y);
+        if (nodeTile[i] || occupied[i]) c++;
+        else if (!mountain[i] && !lake[i] && land[i] && !tiles[i]!.block && tiles[i]!.floor !== FL.water && tiles[i]!.floor !== FL.lava) o++;
+      }
+      if (c === 0 && o >= tw * thh * 0.8) found = true;
     }
-    if (nodes > 0 || open < 24) continue;
+    if (!found) continue;
+    const mi = at(mx, my);
     const ci = contAt[mi]!;
     const c = conts[ci]!, th = THEMES[c.theme];
     const cap = cities.find((x) => x.cont === ci && x.kind === "capital");
@@ -728,7 +796,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     const animal = rng() < 0.22 && th.animals.length;
     const pool = (animal ? th.animals : th.monsters).filter((s) => MONSTER_BY_ID[s] || ANIMAL_BY_ID[s]);
     const pick = pool.length > 2 ? pool.filter(() => rng() < 0.6) : pool;
-    if (zones.length >= 420) continue;
+    if (zones.length >= LIMITS.zones - 20) continue;
     zones.push({ id: id("camp"), tx: Math.max(1, zx), ty: Math.max(1, zy), tw, th: thh, levelMin: Math.max(1, lo), levelMax: Math.max(1, hi), species: (pick.length ? pick : pool).slice(0, 4), count: animal ? 3 : 2 + Math.floor(rng() * 2), respawn: 45 + Math.floor(rng() * 60) });
     occupy(zx, zy, tw, thh, 1);
   }
@@ -749,6 +817,16 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     for (let r = 0; r < 12; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) if (walkable(x + dx, y + dy)) return { x: x + dx, y: y + dy };
     return { x, y };
   }
+  /** Like nearestWalkable, but skips tiles that already hold an NPC, board, shrine or node, and claims the one it picks. */
+  const taken = new Set<number>();
+  for (const it of interactables) taken.add(at(it.tx, it.ty));
+  function freeSpot(x: number, y: number) {
+    for (let r = 0; r < 14; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      if (walkable(x + dx, y + dy) && !taken.has(at(x + dx, y + dy))) { taken.add(at(x + dx, y + dy)); return { x: x + dx, y: y + dy }; }
+    }
+    return nearestWalkable(x, y);
+  }
 
   // ---- NPCs ---------------------------------------------------------------------------------
   const npcIndex = new Map<string, MapNpc>();
@@ -758,7 +836,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     // Stand on a street near the plaza, spread out.
     const k = city.npcs.length;
     const ang = (k / 7) * Math.PI * 2 + 0.4;
-    const spot = nearestWalkable(Math.round(city.plaza.x + Math.cos(ang) * (city.kind === "capital" ? 7 : 5)), Math.round(city.plaza.y + Math.sin(ang) * 3));
+    const spot = freeSpot(Math.round(city.plaza.x + Math.cos(ang) * (city.kind === "capital" ? 7 : 5)), Math.round(city.plaza.y + Math.sin(ang) * 3));
     n.tx = spot.x;
     n.ty = spot.y;
     npcs.push(n);
@@ -783,46 +861,158 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       }
       if (role === "Harbourmaster") lines.push(`Ferries leave from the end of the pier. Step on the glowing tile.`, `From here you can sail to ${(ferryTargets.get(city) ?? []).map((b) => b.name).join(" or ") || "nowhere yet"}.`);
       if (role === "Merchant" || role === "Innkeeper") lines.push(`The bounty board is by the south gate. The hearth by the plaza mends you.`);
+      if (role === "Innkeeper" || role === "Merchant" || role === "Harbourmaster") { const gb = bossOf.get(city.cont); if (gb) lines.push(`They say something old guards ${gb.place.name}. Nobody goes alone.`); }
       if (role === "Smith" || role === "Herbalist" || role === "Fisher") if (resHere.length) lines.push(`For materials, try ${resHere.slice(0, 3).map((p) => p.name).join(", ")}.`);
       if (!lines.length) lines.push(`Safe travels.`);
       addNpc(city, role, lines.slice(0, 4), rng() < 0.5);
     }
   }
 
-  // ---- side quests (two per town) -----------------------------------------------------------
+  // ---- side quests ---------------------------------------------------------------------------
+  // Every town gets a small chain of jobs: clear the roads, run supplies, deliver a crafted order, carry a
+  // letter, hunt an elite, and look into the old places nearby. Capitals also post a bounty on the
+  // continent's guardian. Hermits, prospectors and anglers in the wild give their own errands.
   const questIds = new Set<string>();
   const qid = (base: string) => { let q = base.replace(/[^a-z0-9_-]/gi, "-").slice(0, 34); while (questIds.has(q)) q += "x"; questIds.add(q); return q; };
-  const reward = (ci: number, mult = 1) => ({ kyo: Math.round((40 + conts[ci]!.levelMin * 12) * mult), xp: Math.round((30 + conts[ci]!.levelMin * 10) * mult) });
+  const questCont = new Map<string, number>();
+  /** Respects the file limit, so a huge world can never produce a map that will not load. */
+  const addQuest = (q: MapQuest, ci: number) => {
+    if (quests.length >= LIMITS.quests - 30) return false;
+    quests.push(q);
+    questCont.set(q.id, ci);
+    return true;
+  };
+  const reward = (ci: number, mult = 1, loot = 0) => ({
+    kyo: Math.round((40 + conts[ci]!.levelMin * 12) * mult),
+    xp: Math.round((30 + conts[ci]!.levelMin * 10) * mult),
+    ...(loot ? { items: [{ itemId: THEME_LOOT[conts[ci]!.theme], count: loot }] } : {}),
+  });
+  const monName = (sp: string) => MONSTER_BY_ID[sp]?.name ?? ANIMAL_BY_ID[sp]?.name ?? "monsters";
+  /** Species that really spawn on a continent (from the camps just placed), strongest-looking last. */
+  const foesIn = (ci: number): string[] => {
+    const out: string[] = [];
+    for (const z of zones) {
+      const o = contAt[at(Math.min(w - 1, z.tx + 5), Math.min(h - 1, z.ty + 5))];
+      if (o === ci) for (const sp of z.species) if (!out.includes(sp)) out.push(sp);
+    }
+    return out.length ? out : THEMES[conts[ci]!.theme].monsters.filter((s) => MONSTER_BY_ID[s]);
+  };
+  const pickFoe = (ci: number, k: number) => { const f = foesIn(ci); return f[k % f.length]!; };
+
+  // Wilderness folk: a hermit at each ruin, a prospector at a mine, an angler at a fishery.
+  const wildNpc = (p: Place, role: string, first: string[], female: boolean) => {
+    if (npcs.length >= LIMITS.npcs - 10) return null;
+    const spot = freeSpot(p.x, p.y);
+    const n: MapNpc = { id: id("npc"), name: `${role} ${FIRST[Math.floor(rng() * FIRST.length)]!}`, role: `${role} near ${p.name}`, tx: spot.x, ty: spot.y, female, lines: first.slice(0, 4), outfit: Math.floor(rng() * 8), hair: Math.floor(rng() * 6) };
+    npcs.push(n);
+    npcIndex.set(n.id, n);
+    return n;
+  };
+  conts.forEach((c, ci) => {
+    const lms = places.filter((p) => p.cont === ci && p.kind === "landmark");
+    const mines = places.filter((p) => p.cont === ci && p.kind === "resource" && p.node === "ore");
+    const fish = places.filter((p) => p.cont === ci && p.kind === "resource" && p.node === "fish");
+    const boss = bossOf.get(ci);
+    lms.slice(0, 2).forEach((lm, k) => {
+      const other = lms[(k + 1) % lms.length]!;
+      const npc = wildNpc(lm, "Hermit", [`Few come out to ${lm.name} any more.`, `The stones hum at night. Something is stirring in ${c.name}.`, ...(boss && boss.place === lm ? [`Do not linger. A guardian sleeps here.`] : [])], k % 2 === 0);
+      if (!npc || other === lm) return;
+      addQuest({
+        id: qid(`${lm.name}-relics`), name: `${lm.name}: Old Echoes`, about: `The hermit of ${lm.name} wants you to read the stones at ${other.name} and drive off what haunts them.`,
+        giver: npc.id, steps: [{ type: "goto", tx: other.x, ty: other.y, radius: 5, hint: `${other.name}.` }, { type: "kill", count: 5, species: pickFoe(ci, k + 1), hint: `Near the stones of ${c.name}.` }], reward: reward(ci, 1.1, 2),
+        offer: `Walk to ${other.name} for me, and clear whatever lurks there. I will make it worth your while.`, progress: "The stones are not quiet yet.", done: "The hum has settled. Take this.",
+      }, ci);
+    });
+    mines.slice(0, 1).forEach((m) => {
+      const npc = wildNpc(m, "Prospector", [`Good seams here, if the ${monName(pickFoe(ci, 0))} would leave us be.`, "Bring me ore and I will pay fair."], false);
+      if (!npc) return;
+      addQuest({
+        id: qid(`${m.name}-ore`), name: `${m.name}: Rock and Stone`, about: `Fill the prospector's order with ore from ${m.name}.`, giver: npc.id,
+        steps: [{ type: "gather", node: "ore", count: 6, hint: `At ${m.name}.` }, { type: "bring", itemId: NODE_ITEM.ore, count: 6, hint: "Hand it to the prospector." }], reward: reward(ci, 0.9, 1),
+        offer: "Six pieces of ore, fresh out of the seam. That is all I ask.", progress: "I am still short of ore.", done: "Clean cut. Here is your share.",
+      }, ci);
+    });
+    fish.slice(0, 1).forEach((f) => {
+      const npc = wildNpc(f, "Angler", ["The big ones bite at dusk.", `${f.name} has never failed me.`], true);
+      if (!npc) return;
+      addQuest({
+        id: qid(`${f.name}-catch`), name: `${f.name}: The Big Catch`, about: `Land five fish for the angler at ${f.name}.`, giver: npc.id,
+        steps: [{ type: "gather", node: "fish", count: 5, hint: `At ${f.name}.` }, { type: "bring", itemId: NODE_ITEM.fish, count: 5, hint: "Hand them to the angler." }], reward: reward(ci, 0.8, 1),
+        offer: "Five fish. My arms are too sore to cast.", progress: "The line is still quiet.", done: "A fine haul. Share some with the town.",
+      }, ci);
+    });
+  });
+
   for (const city of cities) {
     const ci = city.cont;
+    const c = conts[ci]!;
     const giver = city.npcs[1] ?? city.npcs[0];
     if (!giver) continue;
     const res = places.filter((p) => p.cont === ci && p.kind === "resource");
+    const lms = places.filter((p) => p.cont === ci && p.kind === "landmark");
     const r = res[Math.floor(rng() * Math.max(1, res.length))];
-    const th = THEMES[conts[ci]!.theme];
-    const sp = th.monsters[Math.floor(rng() * th.monsters.length)]!;
-    quests.push({
-      id: qid(`${city.name}-pests`), name: `${city.name}: Clear the Roads`, about: `${MONSTER_BY_ID[sp]?.name ?? "Monsters"} prowl the roads around ${city.name}. Thin them out.`,
-      giver, steps: [{ type: "kill", count: 6, species: sp, hint: `They camp in the wilds of ${contName(ci)}.` }], reward: reward(ci),
-      offer: `The ${MONSTER_BY_ID[sp]?.name ?? "monsters"} are getting bold. Six of them, and the roads are safe again.`, progress: "Still too many out there.", done: "The carts are moving again. Thank you.",
-    });
+    const sp = pickFoe(ci, Math.floor(rng() * 6));
+    const pestsId = qid(`${city.name}-pests`);
+    questIds.add(pestsId);
+    addQuest({
+      id: pestsId, name: `${city.name}: Clear the Roads`, about: `${monName(sp)} prowl the roads around ${city.name}. Thin them out.`,
+      giver, steps: [{ type: "kill", count: 6, species: sp, hint: `They camp in the wilds of ${c.name}.` }], reward: reward(ci),
+      offer: `The ${monName(sp)} are getting bold. Six of them, and the roads are safe again.`, progress: "Still too many out there.", done: "The carts are moving again. Thank you.",
+    }, ci);
+    let supplyId = "";
     if (r) {
       const giver2 = city.npcs[city.npcs.length - 1] ?? giver;
-      quests.push({
-        id: qid(`${city.name}-supply`), name: `${city.name}: Supply Run`, about: `Gather at ${r.name} for the town stores.`, giver: giver2,
+      supplyId = qid(`${city.name}-supply`);
+      addQuest({
+        id: supplyId, name: `${city.name}: Supply Run`, about: `Gather at ${r.name} for the town stores.`, giver: giver2,
         steps: [{ type: "goto", tx: r.x, ty: r.y, radius: 6, hint: `${r.name}.` }, { type: "gather", node: r.node!, count: 4, hint: `At ${r.name}.` }], reward: reward(ci, 0.8),
         offer: `We are short on supplies. ${r.name} has what we need.`, progress: `${r.name} is not far.`, done: "That will see us through the season.",
-      });
+      }, ci);
+      // Second half of the chain: a bigger order that actually takes the goods back to the NPC.
+      if (city.kind !== "village" && r.node !== "fish") {
+        const smith = city.npcs[Math.min(2, city.npcs.length - 1)] ?? giver2;
+        addQuest({
+          id: qid(`${city.name}-order`), name: `${city.name}: The Big Order`, requires: supplyId, about: `Deliver a full order of ${r.node === "tree" ? "timber" : r.node === "ore" ? "ore" : "mushrooms"} to ${npcIndex.get(smith)?.name}.`, giver: smith,
+          steps: [{ type: "gather", node: r.node!, count: 8, hint: `Try ${r.name}.` }, { type: "bring", itemId: NODE_ITEM[r.node!], count: 8, hint: `Hand it over to ${npcIndex.get(smith)?.name}.` }], reward: reward(ci, 1.2, 1),
+          offer: "That first haul was good. Can you manage eight more?", progress: "Not enough yet.", done: "Now that is a proper delivery.",
+        }, ci);
+      }
     }
     // Courier: talk to someone in a sister town.
     const sister = cities.find((o) => o.cont === ci && o !== city && o.npcs.length);
     if (sister) {
       const to = sister.npcs[0]!;
-      quests.push({
+      addQuest({
         id: qid(`${city.name}-letter`), name: `${city.name}: A Letter for ${sister.name}`, about: `Carry a sealed letter to ${npcIndex.get(to)?.name} in ${sister.name}.`, giver: city.npcs[0]!,
         steps: [{ type: "talk", npcId: to, hint: `In ${sister.name}.` }], turnIn: to, reward: reward(ci, 0.6),
         offer: `Could you carry this to ${npcIndex.get(to)?.name} in ${sister.name}? Follow the road.`, progress: `${sister.name} is down the road.`, done: "A letter from home. Bless you, traveller.",
-      });
+      }, ci);
+    }
+    if (city.kind === "village") continue;
+    // Elite hunt, unlocked once the roads are clear.
+    const elite = pickFoe(ci, Math.floor(rng() * 6) + 2);
+    addQuest({
+      id: qid(`${city.name}-elite`), name: `${city.name}: Wanted, Dead or Fled`, requires: pestsId, about: `A pack leader of ${monName(elite)} has been stalking travellers near ${city.name}.`,
+      giver: city.npcs[0]!, steps: [{ type: "kill", count: 10, species: elite, hint: `Deeper in ${c.name}.` }], reward: reward(ci, 1.4, 2),
+      offer: `The roads are quiet, but their leaders are not. Ten ${monName(elite)} will break the pack.`, progress: "The pack still hunts.", done: "No more screams on the road. Well done.",
+    }, ci);
+    // Look into an old place nearby.
+    const lm = lms.slice().sort((a, b) => Math.hypot(a.x - city.plaza.x, a.y - city.plaza.y) - Math.hypot(b.x - city.plaza.x, b.y - city.plaza.y))[0];
+    if (lm) {
+      addQuest({
+        id: qid(`${city.name}-rumour`), name: `${city.name}: Rumours of ${lm.name}`, about: `Travellers report strange lights at ${lm.name}. See what is there.`, giver: city.npcs[city.npcs.length - 1] ?? giver,
+        steps: [{ type: "goto", tx: lm.x, ty: lm.y, radius: 5, hint: `${lm.name}.` }, { type: "kill", count: 4, species: pickFoe(ci, 3), hint: `Around ${lm.name}.` }], reward: reward(ci, 1, 1),
+        offer: `Folk speak of lights at ${lm.name}. Look into it, and bring back word.`, progress: `${lm.name} is waiting.`, done: "So the rumours were true. Thank you.",
+      }, ci);
+    }
+    // The capital's captain posts a bounty on the continent's guardian.
+    const boss = bossOf.get(ci);
+    if (city.kind === "capital" && boss) {
+      addQuest({
+        id: qid(`${city.name}-guardian`), name: `${city.name}: The Guardian's Bounty`, requires: pestsId, about: `The council offers a bounty on the guardian at ${boss.place.name}.`, giver: city.npcs[1] ?? city.npcs[0]!,
+        steps: [{ type: "goto", tx: boss.place.x, ty: boss.place.y, radius: 6, hint: `${boss.place.name}.` }, { type: "kill", count: 1, species: boss.species, hint: `The guardian at ${boss.place.name}.` }], reward: { ...reward(ci, 2.5, 3), items: [{ itemId: "big_potion", count: 2 }, { itemId: "ghost_jar", count: 1 }, { itemId: THEME_LOOT[c.theme], count: 3 }] },
+        offer: `Our scouts say a guardian holds ${boss.place.name}. Bring it down and the council pays well.`, progress: "The guardian still stands.", done: "The council will sing of this.",
+      }, ci);
     }
   }
 
@@ -859,7 +1049,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       const trial: MapQuestStep[] = [];
       if (scholar) trial.push({ type: "talk", npcId: scholar.npcs[0]!, hint: `In ${scholar.name}.` });
       if (res && k % 2 === 0) trial.push({ type: "gather", node: res.node!, count: 5, hint: `${res.name}.` });
-      trial.push({ type: "kill", count: 8, species: th.monsters[0]!, hint: `In the wilds of ${c.name}.` });
+      trial.push({ type: "kill", count: 8, species: pickFoe(ci, 0), hint: `In the wilds of ${c.name}.` });
       if (lm) trial.push({ type: "goto", tx: lm.x, ty: lm.y, radius: 5, hint: `${lm.name}.` });
       if (boss && k >= 2) trial.push({ type: "kill", count: 1, species: boss.species, hint: `The guardian at ${boss.place.name}.` });
       add({
@@ -966,6 +1156,15 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     let n = 0;
     for (let y = z.ty; y < z.ty + z.th; y++) for (let x = z.tx; x < z.tx + z.tw; x++) if (reach[at(x, y)]) n++;
     if (n < 12) zones.splice(k, 1);
+  }
+  // Kill quests must name something that really spawns here. Camps cut for being unreachable can leave a
+  // quest pointing at a species nobody spawns; those fall back to a species from the same continent.
+  const spawned = new Set<string>([...zones.flatMap((z) => z.species), ...spawns.flatMap((s) => (s.kind === "mob" && s.species ? [s.species] : []))]);
+  for (const q of quests) for (const st of q.steps) {
+    if (st.type !== "kill" || !st.species || spawned.has(st.species)) continue;
+    const ci = questCont.get(q.id);
+    const near = ci === undefined ? undefined : zones.find((z) => contAt[at(Math.min(w - 1, z.tx + 5), Math.min(h - 1, z.ty + 5))] === ci);
+    st.species = near?.species[0];
   }
   // Quest destinations snap to the nearest reachable tile.
   const nearestReach = (x: number, y: number) => {

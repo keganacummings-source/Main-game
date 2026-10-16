@@ -223,3 +223,36 @@ test("the world generator makes a connected world with several continents, citie
   assert.deepEqual(errors, []);
   assert.equal(JSON.stringify(gen.generateWorld({ id: "t", name: "T", seed: 42, w: 120, h: 120, continentCount: 2 }).tiles.slice(0, 500)), JSON.stringify(gen.generateWorld({ id: "t", name: "T", seed: 42, w: 120, h: 120, continentCount: 2 }).tiles.slice(0, 500)), "same seed, same world");
 });
+
+// ---------------------------------------------------------------------------
+// World generator: nothing overlaps, nothing is cut out of a mountain, quests are playable
+// ---------------------------------------------------------------------------
+const rectsHit = (a, b) => a.tx < b.tx + b.tw && b.tx < a.tx + a.tw && a.ty < b.ty + b.th && b.ty < a.ty + a.th;
+
+for (const [seed, cont] of [[1, 4], [77, 5], [2024, 6]]) {
+  test(`generated world (seed ${seed}) has no overlapping areas and nothing cut out of mountains`, () => {
+    const m = gen.generateWorld({ id: `g${seed}`, name: "G", w: 300, h: 300, seed, continentCount: cont, citiesPerContinent: 3, islands: 4, story: true });
+    const areas = m.regions.filter((r) => ["city", "resource", "landmark"].includes(r.kind) && !/Docks|Ferry/.test(r.name));
+    for (let i = 0; i < areas.length; i++) for (let j = i + 1; j < areas.length; j++) assert.equal(rectsHit(areas[i], areas[j]), false, `${areas[i].name} overlaps ${areas[j].name}`);
+    for (const z of m.zones) for (const a of areas) assert.equal(rectsHit(z, a), false, `camp ${z.id} overlaps ${a.name}`);
+    // resource areas and landmarks never have wall/mountain tiles inside them
+    for (const r of areas.filter((a) => a.kind !== "city")) {
+      let walls = 0;
+      for (let y = r.ty; y < r.ty + r.th; y++) for (let x = r.tx; x < r.tx + r.tw; x++) { const t = m.tiles[y * m.w + x]; if (t.block && !t.layers && t.floor !== 2) walls++; }
+      assert.equal(walls, 0, `${r.name} has ${walls} wall tiles inside it`);
+    }
+  });
+}
+
+test("a generated world's quests and NPCs are all valid, with chains, deliveries and wilderness givers", () => {
+  const m = gen.generateWorld({ id: "q", name: "Q", w: 300, h: 300, seed: 5, continentCount: 4, citiesPerContinent: 3, islands: 3, story: true });
+  const parsed = maps.parseMapJson(JSON.parse(JSON.stringify(m)));
+  const known = new Set(["potion", "big_potion", "ghost_jar", "cleanse_salt", "blue_lantern", "frost_crystal", "embercap", "tide_pearl", "veil_dust", "bone_shard", "lantern_mote", "timber", "ore", "mushroom", "fish"]);
+  const errs = tools.validateMap(parsed, known).filter((i) => i.level === "error");
+  assert.deepEqual(errs, []);
+  assert.ok(parsed.quests.some((q) => q.requires && !q.id.startsWith("story")), "side quests are chained");
+  assert.ok(parsed.quests.some((q) => q.steps.some((s) => s.type === "bring")), "there are delivery quests");
+  assert.ok(parsed.npcs.some((n) => /^(Hermit|Prospector|Angler)/.test(n.name)), "there are wilderness quest givers");
+  const spots = new Set(parsed.npcs.map((n) => `${n.tx},${n.ty}`));
+  assert.equal(spots.size, parsed.npcs.length, "no two NPCs share a tile");
+});
