@@ -1,0 +1,69 @@
+name = "dreamdaw"
+main = "worker/index.ts"
+compatibility_date = "2025-10-01"
+
+# Attach the apex domain as a Custom Domain (Cloudflare creates the DNS record
+# + certificate on deploy). dreamdaw.com must be a zone on this Cloudflare
+# account, and the apex must not already have an A/AAAA/CNAME record.
+#
+# www is intentionally NOT attached: serving the game from two origins would
+# split players' localStorage saves. Add a Redirect Rule in the dashboard
+# (www.dreamdaw.com/* -> https://dreamdaw.com/${1}, 301) instead.
+routes = [
+  { pattern = "dreamdaw.com", custom_domain = true },
+]
+
+# Only reachable at dreamdaw.com: no *.workers.dev address, no preview URLs.
+# (Flip workers_dev to true temporarily if you want to smoke-test before the
+# domain is attached, then turn it back off.)
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "./dist-static"
+binding = "ASSETS"
+# Only /api/* invokes the worker. Everything else (game files, tiles, sprites)
+# is served straight from the asset store, which is free and unmetered.
+run_worker_first = ["/api/*"]
+# Do NOT enable "single-page-application" here: the game probes optional files
+# (/music/veil.ogg via HEAD, /Maps/main.json) and relies on a real 404 when
+# they're absent. An SPA fallback would answer 200 + index.html and break that.
+not_found_handling = "none"
+
+# Accounts + cloud saves (one SQLite-backed Durable Object per username).
+[[durable_objects.bindings]]
+name = "ACCOUNTS"
+class_name = "UserAccount"
+
+[[durable_objects.bindings]]
+name = "GRAVES"
+class_name = "GravesBoard"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SignalingRoom", "LobbyRegistry"]
+
+# v2: the public lobby list is gone (players host their own lobbies); accounts arrive.
+[[migrations]]
+tag = "v2"
+deleted_classes = ["LobbyRegistry"]
+new_sqlite_classes = ["UserAccount"]
+
+# v3: global leaderboard of graves.
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["GravesBoard"]
+
+# v4: live multiplayer is gone (no lobbies); the signaling rooms are deleted.
+[[migrations]]
+tag = "v4"
+deleted_classes = ["SignalingRoom"]
+
+# Discord bot (the TURBZ death feed). These two are public; the bot token is a secret that the
+# deploy workflow uploads from the DISCORD_BOT_TOKEN repository secret.
+[vars]
+DISCORD_APP_ID = "1558859258467188807"
+DISCORD_PUBLIC_KEY = "6c2eefcd167a2e8c80ff85f453ea63d0257597a36a00f34a08cd5557e26561bc"
+
+[observability]
+enabled = true

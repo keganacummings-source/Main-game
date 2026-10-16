@@ -1,0 +1,57 @@
+name: Publish Wiki
+
+# Rebuilds the player wiki from docs/wiki + the game's own data and publishes it to the repo's
+# GitHub Wiki. Runs on every push to main that touches the game or the wiki sources.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/wiki/**"
+      - "scripts/wiki/**"
+      - "src/game/**"
+      - "README.md"
+      - ".github/workflows/wiki.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: true
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install TypeScript (the builder reads the game's .ts data files)
+        run: npm install --no-save --no-audit --no-fund --ignore-scripts typescript@5
+
+      - name: Build wiki
+        run: node --import ./scripts/wiki/register.mjs scripts/wiki/build-wiki.mjs wiki-out
+
+      - name: Publish to the GitHub Wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if ! git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git" wiki-repo; then
+            echo "::error::The wiki repository does not exist yet. Open the repo's Wiki tab on GitHub, click 'Create the first page', save it, then re-run this workflow."
+            exit 1
+          fi
+          # Replace every page with the fresh build (keeps git history).
+          find wiki-repo -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -r wiki-out/. wiki-repo/
+          cd wiki-repo
+          git config user.name "turbz-wiki-bot"
+          git config user.email "turbz-wiki-bot@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "Wiki already up to date."; exit 0; fi
+          git commit -m "Update wiki from ${GITHUB_SHA::7}"
+          git push

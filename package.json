@@ -1,0 +1,38 @@
+{
+  "name": "turbz",
+  "version": "6.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 8080",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "map:audit": "node scripts/map-gen-audit.mjs",
+    "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
+    "test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs scripts/sfx-bank.test.mjs scripts/dungeon-gen.test.mjs && node --experimental-strip-types --test worker/account-store.test.ts worker/discord.test.ts && npm run wiki:check",
+    "deploy": "npm run build && wrangler deploy",
+    "dev:worker": "npm run build && wrangler dev",
+    "cf:types": "wrangler types",
+    "wiki": "node --import ./scripts/wiki/register.mjs scripts/wiki/build-wiki.mjs",
+    "wiki:check": "node --import ./scripts/wiki/register.mjs scripts/wiki/build-wiki.mjs --check"
+  },
+  "dependencies": {
+    "@fontsource/press-start-2p": "^5.3.0",
+    "@fontsource/vt323": "^5.3.0",
+    "lucide-react": "^0.510.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^22.16.5",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.2.0",
+    "wrangler": "^4.151.0"
+  }
+}
