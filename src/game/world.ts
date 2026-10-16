@@ -265,6 +265,15 @@ export function buildWorld(seed: number, hardcore = false): WorldData {
     t.sprite = t.floor === 2 ? "/MapAssets/03_Water_and_Liquid_Tiles/shoals_shallow_water_0.png" :
       `/MapAssets/01_Floor_and_Ground_Tiles/${t.floor === 3 ? "dirt_full_new.png" : t.floor === 4 || t.floor === 9 ? "sandstone_floor_0.png" : ground[t.biome]}`;
   }
+  // Decor 1 is a tree. Reachable ones become choppable nodes; the rest stop looking like trees.
+  for (let i = 0; i < tiles.length; i++) {
+    const t = tiles[i]!;
+    if (t.decor !== 1) continue;
+    t.decor = 0;
+    if (!reached[i] || t.block || t.floor === 1 || t.floor === 2) continue;
+    const x = i % w, y = (i / w) | 0;
+    spawns.push({ id: `grove-${x}-${y}`, kind: "node", node: "tree", x: x * TILE + 16, y: y * TILE + 16, level: 1 });
+  }
   return { w, h, tiles, spawns, cache: null };
 
 }

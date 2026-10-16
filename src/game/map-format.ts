@@ -85,7 +85,7 @@ export type MapTile = WorldTile & {
 };
 export const MAX_LAYERS = 4;
 /** Most things one map may hold. Big enough for a 512×512 world with dozens of towns. */
-export const LIMITS = { interactables: 3000, npcs: 500, zones: 500, quests: 400, regions: 400 } as const;
+export const LIMITS = { interactables: 8000, npcs: 500, zones: 500, quests: 400, regions: 800 } as const;
 export const DESIGNER_KEY = "turbz-designer-maps-v1";
 
 /**
@@ -307,7 +307,22 @@ export function emptyMap(id: string, name: string, w: number, h: number, floor =
   };
 }
 
+/** Tree and mangrove art. These are never scenery: a tile that wears one is a tree you can chop. */
+export function isChopTreeArt(sprite: string | undefined): boolean {
+  if (!sprite) return false;
+  return sprite.includes("/04_Trees_and_Vegetation/tree_") || sprite.includes("/04_Trees_and_Vegetation/mangrove_");
+}
+
 export function mapToWorld(map: MapFile): WorldData {
+  const tiles = map.tiles.map((t) => ({
+    floor: t.floor,
+    biome: t.biome,
+    block: t.block,
+    decor: t.decor,
+    sprite: t.sprite,
+    layers: t.layers ? [...t.layers] : undefined,
+    portal: t.portal,
+  })) as WorldTile[];
   const nodeSpawns = (map.interactables ?? [])
     .filter((it): it is Extract<MapInteractable, { kind: "node" }> => it.kind === "node")
     .map((it) => ({
@@ -318,18 +333,33 @@ export function mapToWorld(map: MapFile): WorldData {
       y: (it.ty + 0.5) * TILE,
       level: 1,
     }));
+  const taken = new Set<string>();
+  for (const s of [...(map.spawns ?? []), ...nodeSpawns]) {
+    if (s.kind !== "node") continue;
+    taken.add(`${Math.floor(s.x / TILE)},${Math.floor(s.y / TILE)}`);
+  }
+  for (let i = 0; i < tiles.length; i++) {
+    const t = tiles[i]!;
+    const layers = t.layers ?? [];
+    const trees = layers.filter((l) => isChopTreeArt(l));
+    const decorTree = t.decor === 1;
+    if (!trees.length && !decorTree) continue;
+    if (trees.length) {
+      const rest = layers.filter((l) => !isChopTreeArt(l));
+      t.layers = rest.length ? rest : undefined;
+    }
+    if (decorTree) t.decor = 0;
+    if (t.block && t.floor !== 1 && t.floor !== 2 && t.floor !== 11) t.block = 0;
+    const x = i % map.w, y = (i / map.w) | 0;
+    const key = `${x},${y}`;
+    if (taken.has(key)) continue;
+    taken.add(key);
+    nodeSpawns.push({ id: `tiletree-${x}-${y}`, kind: "node", node: "tree", x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, level: 1 });
+  }
   return {
     w: map.w,
     h: map.h,
-    tiles: map.tiles.map((t) => ({
-      floor: t.floor,
-      biome: t.biome,
-      block: t.block,
-      decor: t.decor,
-      sprite: t.sprite,
-      layers: t.layers,
-      portal: t.portal,
-    })) as WorldTile[],
+    tiles,
     spawns: [...(map.spawns ? map.spawns.map((s) => ({ ...s })) : []), ...nodeSpawns],
     cache: null,
   };

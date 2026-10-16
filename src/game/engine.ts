@@ -19,6 +19,8 @@ import {
   ITEM_BY_ID,
   ITEMS,
   ALCHEMY_RECIPES,
+  ENEMY_MATS,
+  SCRAP_LOOT,
   MONSTER_BY_ID,
   MONSTERS,
   MOVE_BY_ID,
@@ -84,7 +86,7 @@ import {
 } from "./content";
 import type { GraveBody } from "./social-types";
 import { readAccountMeta, writeAccountMeta } from "./account-save";
-import { aptitudeOf, buffLines, classProfile, classGendered, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
+import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
 import { captureDeathGif } from "./death-gif";
@@ -3177,6 +3179,7 @@ export class TurbzGame {
 			this.gainSkill("skinning", 10);
 			this.lootItem(mob, "meat", meat);
 			this.lootItem(mob, "leather", hide);
+			if (Math.random() < 0.4) this.lootItem(mob, "beast_fang", 1);
 			if (!this.chestsOn()) this.say(`${mob.name}: meat ${meat}, leather ${hide}.`);
 			this.gainSkill("hunting", 8);
 			this.gainSkill("physical", 4);
@@ -3216,6 +3219,9 @@ export class TurbzGame {
 		if (Math.random() < Math.min(0.8, 0.22 + mob.level * 0.012 + mob.rarity * 0.06)) this.lootItem(mob, mob.type === "water" ? "fish" : mob.type === "earth" ? "mushroom" : "meat", 1 + (mob.level >= 20 ? 1 : 0));
 		if (Math.random() < Math.min(0.55, 0.08 + mob.level * 0.008 + mob.rarity * 0.05)) this.lootItem(mob, "cleanse_salt", 1);
 		if (mob.rarity >= 3 && Math.random() < 0.12 + mob.level * 0.004) this.lootItem(mob, "ghost_jar", 1);
+		const mat = ENEMY_MATS[mob.type];
+		if (mat && Math.random() < Math.min(0.72, 0.38 + mob.rarity * 0.06)) this.lootItem(mob, mat, 1 + (mob.level >= 18 && Math.random() < 0.35 ? 1 : 0));
+		if (Math.random() < 0.16) this.lootItem(mob, SCRAP_LOOT[Math.floor(Math.random() * SCRAP_LOOT.length)], 1);
 		if (this.shrine && mob.id.startsWith("shrine")) this.shrineClear();
 		if (this.role === "host") this.room?.send({
 			t: "dead",
@@ -3338,7 +3344,7 @@ export class TurbzGame {
 			this.say(`${sp.name} drifts off to your Ghost Box.`);
 		} else {
 			if (save.spirits.length >= PARTY_MAX) return this.say(`Your party is full (${PARTY_MAX}). Send it to the Ghost Box, or make room first.`);
-			sp.active = save.spirits.filter((s) => s.active).length < OUT_MAX;
+			sp.active = save.spirits.filter((s) => s.active).length < this.spiritCap();
 			save.spirits.push(sp);
 			this.say(sp.active ? `${sp.name} joins you, and follows.` : `${sp.name} joins your party. Send it out from Spirits.`);
 		}
@@ -3378,7 +3384,7 @@ export class TurbzGame {
 				const m = MOVE_BY_ID[mid];
 				return { id: mid, name: m?.name ?? mid, about: m?.about ?? "", type: m?.type ?? sp.type, power: m?.power ?? 0, player: m ? spiritAidsPlayer(m) : false, slotted: (sp.slots ?? []).includes(mid) };
 			}),
-			party: save.spirits?.length ?? 0, partyMax: PARTY_MAX, out: (save.spirits ?? []).filter((s) => s.active).length, outMax: OUT_MAX,
+			party: save.spirits?.length ?? 0, partyMax: PARTY_MAX, out: (save.spirits ?? []).filter((s) => s.active).length, outMax: this.spiritCap(),
 			boxPlaced: !!save.ghostBox, store: save.ghostStore?.length ?? 0, storeMax: GHOST_STORE_MAX,
 		};
 		this.wildViewCache = { key, view };
@@ -3401,9 +3407,9 @@ export class TurbzGame {
 		drawShadowName(ctx, `${sp.shiny ? "✦ " : ""}${sp.name} · Lv ${sp.level}`, g.x, g.y - 44 + bob, sp.shiny ? `hsl(${(this.clock * 120) % 360},90%,70%)` : TYPES[sp.type]?.color ?? "#c9a6e8");
 		drawShadowName(ctx, near ? "E · LOOK" : `GHOST ${Math.ceil(g.t / 60)}m`, g.x, g.y - 32 + bob, near ? "#ffd166" : "#c9a6e8");
 	}
-	/** Ghosts that can be out with you at once. */
+	/** Ghosts that can be out with you at once. Spirit Caller holds six; every other class holds three. */
 	spiritCap() {
-		return OUT_MAX;
+		return classSpiritOut(this.save?.classId);
 	}
 	/**
 	 * A new ghost joins: it follows if fewer than 3 are out, waits in the party (6 at most), or goes to
@@ -3429,7 +3435,7 @@ export class TurbzGame {
 			this.say(`${spirit.name}${shine} stays. Your party is full, so it waits in your Ghost Box.`);
 			return true;
 		}
-		spirit.active = save.spirits.filter((s) => s.active).length < OUT_MAX;
+		spirit.active = save.spirits.filter((s) => s.active).length < this.spiritCap();
 		save.spirits.push(spirit);
 		this.say(spirit.active ? `${spirit.name}${shine} stays, and follows.` : `${spirit.name}${shine} stays in the party. Send it out from Spirits.`);
 		return true;
@@ -3471,7 +3477,7 @@ export class TurbzGame {
 		}
 		save.ghostStore = save.ghostStore.filter((x) => x !== s);
 		s.hp = s.max;
-		s.active = save.spirits.filter((x) => x.active).length < OUT_MAX;
+		s.active = save.spirits.filter((x) => x.active).length < this.spiritCap();
 		save.spirits.push(s);
 		this.say(`${s.name} leaves the Ghost Box${s.active ? " and follows you" : " and joins the party"}.`);
 		this.persist();
@@ -4445,6 +4451,14 @@ export class TurbzGame {
 		save.race = race;
 		save.classId = classId;
 		save.traitId = traitId && TRAIT_BY_ID[traitId] ? traitId : null;
+		{
+			const cap = classSpiritOut(classId);
+			let following = 0;
+			for (const s of save.spirits ?? []) {
+				if (s.active && following < cap) following += 1;
+				else s.active = false;
+			}
+		}
 		save.female = female !== false;
 		save.classMovesV = 2;
 		save.level = 1;
@@ -7082,7 +7096,7 @@ export class TurbzGame {
 			save.ghostStore = [...save.ghostStore, ...extra].slice(0, GHOST_STORE_MAX);
 			save.spirits = save.spirits.filter((s) => keep.includes(s));
 		}
-		const cap = OUT_MAX;
+		const cap = this.spiritCap();
 		let following = 0;
 		for (const s of save.spirits) {
 			if (!Array.isArray(s.known) || !s.known.length) {
@@ -8196,7 +8210,7 @@ export class TurbzGame {
 					};
 				})
 			})),
-			spiritSlots: OUT_MAX,
+			spiritSlots: this.spiritCap(),
 			spiritCap: PARTY_MAX,
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny })),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },

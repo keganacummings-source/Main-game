@@ -245,7 +245,7 @@ export const MOVES: Move[] = [
   // Class signatures
   { id: "shieldbash", name: "Shield Bash", type: "earth", power: 58, accuracy: 92, crit: 6, priority: 1, effect: "root", anim: ["burst", "shield"], range: 52, about: "Bulwark signature. A shield to the face roots them in place.", tactic: "heavy" },
   { id: "arcbolt", name: "Arc Bolt", type: "electric", power: 64, accuracy: 90, crit: 12, priority: 0, effect: "spark", anim: ["spark", "beam", "burst"], range: 170, about: "Spellweaver signature. A long-charged bolt that chains sparks.", tactic: "channel" },
-  { id: "soulmend", name: "Soul Mend", type: "spirit", power: 34, accuracy: 100, crit: 0, priority: 2, effect: "mend", anim: ["orbit", "shield"], range: 40, about: "Soulmender signature. Borrowed spirits knit your wounds.", tactic: "heal", react: "heal" },
+  { id: "soulmend", name: "Soul Mend", type: "spirit", power: 34, accuracy: 100, crit: 0, priority: 2, effect: "mend", anim: ["orbit", "shield"], range: 40, about: "Spirit Caller signature. Borrowed spirits knit your wounds.", tactic: "heal", react: "heal" },
   { id: "shadowstrike", name: "Shadow Strike", type: "void", power: 34, accuracy: 96, crit: 30, priority: 3, effect: "expose", anim: ["orbit", "slash", "burst"], range: 170, about: "Nightblade signature. Blink behind them and open the guard.", tactic: "blink", react: "move", fail: 18 },
   { id: "piercingvolley", name: "Piercing Volley", type: "air", power: 46, accuracy: 94, crit: 14, priority: 1, effect: "expose", anim: ["beam", "slash"], range: 190, about: "Pathfinder signature. Arrows that punch through armor.", tactic: "strike", form: "ranged" },
   { id: "hundredpalm", name: "Hundred Palm", type: "normal", power: 52, accuracy: 96, crit: 14, priority: 2, effect: "none", anim: ["slash", "burst", "slash"], range: 48, about: "Ironpalm signature. A blur of open-hand strikes.", tactic: "strike", form: "melee" },
@@ -1145,10 +1145,46 @@ export const ITEMS: ItemDef[] = [
   { id: "meat", name: "Raw Meat", about: "From hunted animals. Cook on a campfire before eating in Hardcore.", price: 9, heal: 22 },
   { id: "leather", name: "Hide Leather", about: "Ten hides and ten mushrooms stitch a piece at your account level.", price: 14 },
   { id: "mushroom", name: "Shroom", about: "The patch was generous.", price: 11 },
+  { id: "bone_shard", name: "Bone Shard", about: "Cracked from a ghoul. Brews a tincture.", price: 7 },
+  { id: "cinder_ash", name: "Cinder Ash", about: "Still warm. Fire foes leave it behind.", price: 8 },
+  { id: "tide_pearl", name: "Tide Pearl", about: "A hard drop from something that lived in water.", price: 12 },
+  { id: "resin", name: "Heartroot Resin", about: "Sticky sap pulled off an earth foe.", price: 7 },
+  { id: "beast_fang", name: "Beast Fang", about: "From a beast, or from anything that bites.", price: 8 },
+  { id: "spark_core", name: "Spark Core", about: "A buzzing stone. Electric foes crack one loose.", price: 11 },
+  { id: "frost_crystal", name: "Frost Crystal", about: "Ice that does not melt in a pocket.", price: 9 },
+  { id: "veil_dust", name: "Veil Dust", about: "What a void thing leaves when it comes apart.", price: 10 },
+  { id: "spirit_ash", name: "Spirit Ash", about: "Cold ash from a spirit.", price: 10 },
+  { id: "lantern_mote", name: "Lantern Mote", about: "A pinch of light that used to be a foe.", price: 9 },
+  { id: "mushroom_stew", name: "Mushroom Stew", about: "A campfire bowl. Restores 45 hunger.", price: 16, heal: 28 },
+  { id: "hearty_skewer", name: "Hearty Skewer", about: "Two cuts of meat over the fire. Restores 70 hunger.", price: 24, heal: 36 },
+  { id: "fish_stew", name: "Fish Stew", about: "Fish, shroom and boiled water. Restores 60 hunger.", price: 22, heal: 32 },
+  { id: "bone_broth", name: "Bone Broth", about: "A thin, hot cup. Restores 35 hunger.", price: 14, heal: 20 },
+  { id: "resin_jerky", name: "Resin Jerky", about: "Meat dried with heartroot. Restores 55 hunger.", price: 18, heal: 24 },
+  { id: "pearl_salve", name: "Pearl Salve", about: "A tide pearl ground into a ward.", price: 0, heal: 80, buff: "ward" },
+  { id: "spark_flask", name: "Spark Flask", about: "Crits come easier for a short while.", price: 0, heal: 20, buff: "crit" },
+  { id: "spirit_lamp", name: "Spirit Lamp", about: "Spirit ash in a lantern. Favors fire.", price: 0, heal: 40, buff: "fire" },
   { id: "green_mushroom", name: "Green Mushroom", about: "Hardcore, level 30+. Eat it and wake in a fresh Green Cave. Black market only.", price: 400 },
 ];
 
 export const ITEM_BY_ID: Record<string, ItemDef> = Object.fromEntries(ITEMS.map((i) => [i.id, i]));
+
+/** Material a random foe of this element is likely to drop. */
+export const ENEMY_MATS: Partial<Record<TypeId, string>> = {
+  fire: "cinder_ash",
+  water: "tide_pearl",
+  earth: "resin",
+  air: "beast_fang",
+  electric: "spark_core",
+  ice: "frost_crystal",
+  void: "veil_dust",
+  spirit: "spirit_ash",
+  light: "lantern_mote",
+  ghoul: "bone_shard",
+  normal: "beast_fang",
+};
+
+/** Extra pocket scrap any foe can drop, on top of its element material. */
+export const SCRAP_LOOT = ["bone_shard", "beast_fang", "resin", "veil_dust", "cinder_ash", "spirit_ash"] as const;
 
 export type AlchemyRecipe = {
   id: string;
@@ -1166,6 +1202,16 @@ export const ALCHEMY_RECIPES: AlchemyRecipe[] = [
   { id: "potion", name: "Potion", about: "Two shrooms and an embercap. A modest mend.", costs: { mushroom: 2, embercap: 1 }, output: "potion", n: 1 },
   { id: "big", name: "Big Potion", about: "The long brew. Two roots, a spore, a lantern.", costs: { ironroot: 2, dreamspore: 1, blue_lantern: 1 }, output: "big_potion", n: 1 },
   { id: "candy", name: "Spirit Candy", about: "Spore, shroom, and lantern light. A rush of spirit.", costs: { dreamspore: 1, mushroom: 1, blue_lantern: 1 }, output: "spirit_candy", n: 1 },
+  { id: "ash_tonic", name: "Ash Tonic", about: "Cinder ash and an embercap. The same fire as a warmth tonic.", costs: { cinder_ash: 1, embercap: 1 }, output: "warmth_tonic", n: 1 },
+  { id: "pearl", name: "Pearl Salve", about: "A tide pearl and ironroot. A heavy mend and a bark ward.", costs: { tide_pearl: 1, ironroot: 1 }, output: "pearl_salve", n: 1 },
+  { id: "fang", name: "Fang Draught", about: "A beast fang and dreamspore. Crits come easier.", costs: { beast_fang: 1, dreamspore: 1 }, output: "cats_eye", n: 1 },
+  { id: "spark", name: "Spark Flask", about: "A spark core and a blue lantern.", costs: { spark_core: 1, blue_lantern: 1 }, output: "spark_flask", n: 1 },
+  { id: "rime", name: "Rime Phial", about: "Frost crystal and ironroot. Another bark ward.", costs: { frost_crystal: 1, ironroot: 1 }, output: "ironroot_phial", n: 1 },
+  { id: "veil", name: "Veil Candy", about: "Veil dust, spore and a shroom. Two pieces of spirit candy.", costs: { veil_dust: 1, dreamspore: 1, mushroom: 1 }, output: "spirit_candy", n: 2 },
+  { id: "lamp", name: "Spirit Lamp", about: "Spirit ash in lantern light. Heals, and favors fire.", costs: { spirit_ash: 1, blue_lantern: 1 }, output: "spirit_lamp", n: 1 },
+  { id: "mote", name: "Lantern Oil", about: "A lantern mote and an embercap. A warmth tonic.", costs: { lantern_mote: 1, embercap: 1 }, output: "warmth_tonic", n: 1 },
+  { id: "bone", name: "Bone Tincture", about: "Two bone shards and a shroom. Two modest potions.", costs: { bone_shard: 2, mushroom: 1 }, output: "potion", n: 2 },
+  { id: "resin", name: "Resin Balm", about: "Resin, a shroom and an embercap. A modest potion.", costs: { resin: 1, mushroom: 1, embercap: 1 }, output: "potion", n: 1 },
 ];
 
 export type QuestDef = {

@@ -54,6 +54,12 @@ export const CAMP_RECIPE_LIST: CampRecipe[] = [
   { id: "cook", name: "Cook Meat", about: "Cook raw meat over the fire.", costs: { meat: 1, timber: 1 }, outputs: { cooked_meat: 1 }, skill: { id: "cooking", xp: 8 } },
   { id: "fish", name: "Cook Fish", about: "Cook a raw fish over the fire.", costs: { fish: 1, timber: 1 }, outputs: { fish_meal: 1 }, skill: { id: "cooking", xp: 10 } },
   { id: "purify", name: "Purify Water", about: "Boil raw water until it is safe to drink.", costs: { raw_water: 1, timber: 1 }, outputs: { drinking_water: 1 }, skill: { id: "cooking", xp: 6 } },
+  { id: "mushroom_stew", name: "Mushroom Stew", about: "Shrooms boiled in raw water.", costs: { mushroom: 2, raw_water: 1, timber: 1 }, outputs: { mushroom_stew: 1 }, skill: { id: "cooking", xp: 10 } },
+  { id: "hearty_skewer", name: "Hearty Skewer", about: "Two cuts of meat on one fire.", costs: { meat: 2, timber: 1 }, outputs: { hearty_skewer: 1 }, skill: { id: "cooking", xp: 12 } },
+  { id: "fish_stew", name: "Fish Stew", about: "Fish, a shroom and boiled water.", costs: { fish: 1, mushroom: 1, raw_water: 1, timber: 1 }, outputs: { fish_stew: 1 }, skill: { id: "cooking", xp: 12 } },
+  { id: "field_ration", name: "Field Rations", about: "Pack cooked meat and a shroom into trail food.", costs: { cooked_meat: 1, mushroom: 1 }, outputs: { trail_ration: 2 }, skill: { id: "cooking", xp: 8 } },
+  { id: "bone_broth", name: "Bone Broth", about: "A bone shard and a shroom, boiled.", costs: { bone_shard: 1, mushroom: 1, raw_water: 1, timber: 1 }, outputs: { bone_broth: 1 }, skill: { id: "cooking", xp: 10 } },
+  { id: "resin_jerky", name: "Resin Jerky", about: "Meat dried with heartroot resin.", costs: { meat: 1, resin: 1, timber: 1 }, outputs: { resin_jerky: 1 }, skill: { id: "cooking", xp: 10 } },
 ];
 
 export const CAMP_RECIPES: Record<string, CampRecipe> = Object.fromEntries(CAMP_RECIPE_LIST.map((r) => [r.id, r]));
@@ -118,4 +124,4 @@ export function waterWithinReach(world: { w: number; h: number; tiles: { floor: 
   }
   return false;
 }
-export const FOOD: Record<string, number> = { trail_ration: 35, cooked_meat: 50, fish_meal: 40, mushroom: 8 };
+export const FOOD: Record<string, number> = { trail_ration: 35, cooked_meat: 50, fish_meal: 40, mushroom: 8, mushroom_stew: 45, hearty_skewer: 70, fish_stew: 60, bone_broth: 35, resin_jerky: 55 };

@@ -367,11 +367,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       if (th.id === "ashen" && moist[i]! > 0.66 && fbm(x / 12, y / 12, seed + 19) > 0.7) gr = g(ART.lava, FL.lava, BI.ashen);
       const t: MapTile = { floor: gr.floor, biome: gr.biome, block: gr.floor === FL.lava ? 1 : 0, decor: 0, sprite: pickArt(gr.art, x, y, 4) };
       if (gr.accent && hash2(x, y, seed + 21) < (gr.accentChance ?? 0)) t.sprite = pickArt(gr.accent, x, y, 5);
-      // Forest decoration: trees on the wet side (block where dense).
-      if (th.trees && moist[i]! > 0.55 && coastDist[i]! > 3) {
-        const dens = fbm(x / 9, y / 9, seed + 23);
-        if (dens > 0.62 && hash2(x, y, seed + 25) < 0.55) { t.layers = [pickArt(th.trees, x, y, 6)]; t.block = dens > 0.7 ? 1 : 0; }
-      }
+      // Trees are never painted onto tiles. Forests are choppable nodes, placed after the roads.
       tiles[i] = t;
     }
   function hasLandNear(x: number, y: number, r: number): boolean {
@@ -419,6 +415,8 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
 
   // ---- cities --------------------------------------------------------------------------------
   const cities: City[] = [];
+  /** Side groves planted once the roads exist, so every town tree is a node you can chop. */
+  const orchards: { name: string; ci: number; x: number; y: number; w: number; h: number }[] = [];
   const perCont = Math.max(1, Math.min(5, opts.citiesPerContinent ?? 3));
   conts.forEach((c, ci) => {
     const th = THEMES[c.theme];
@@ -443,6 +441,7 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       cities.push(city);
     }
   });
+  for (const o of orchards) occupy(o.x, o.y, o.w, o.h, 1);
 
   function buildCity(ci: number, th: Theme, x0: number, y0: number, cw: number, chh: number, kind: City["kind"], name: string): City {
     occupy(x0, y0, cw, chh, 3);
@@ -478,30 +477,33 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     for (let y = midY - pr; y <= midY + pr; y++) for (let x = midX - pr; x <= midX + pr; x++) ground(x, y, kind === "capital" ? ART.mosaic : ART.marble, FL.stone, 44);
     set(midX, midY, { block: 1, layers: [pickArt(ART.fountain, midX, midY, 45)] });
     if (kind === "capital") for (const [dx, dy] of [[-pr, -pr], [pr, -pr], [-pr, pr], [pr, pr]] as const) set(midX + dx, midY + dy, { block: 1, layers: [ART.statues[Math.floor(rng() * ART.statues.length)]!] });
-    // Buildings in the four quarters.
-    const m0 = walled ? 4 : 1;
-    const quarters = [
-      [x0 + m0, y0 + m0, midX - 2 - (x0 + m0), midY - 2 - (y0 + m0)],
-      [midX + 3, y0 + m0, x0 + cw - m0 - (midX + 3), midY - 2 - (y0 + m0)],
-      [x0 + m0, midY + 3, midX - 2 - (x0 + m0), y0 + chh - m0 - (midY + 3)],
-      [midX + 3, midY + 3, x0 + cw - m0 - (midX + 3), y0 + chh - m0 - (midY + 3)],
-    ] as const;
+    // Houses face the east-west avenue only, with an alley between each one.
+    // The east and west quarters stay open: a yard, a shrine garden, or cargo ground.
+    const rowH = 4;
+    const bands: [number, boolean][] = [[midY - 2 - rowH, true], [midY + 3, false]];
+    const left = x0 + (walled ? 3 : 1);
+    const right = x0 + cw - (walled ? 4 : 2);
     let shopN = 0;
-    for (const [qx, qy, qw, qh] of quarters) {
-      let bx = qx;
-      while (bx < qx + qw - 3) {
-        const bw = Math.min(qx + qw - bx, 4 + Math.floor(rng() * 4));
-        if (bw < 3) break;
-        const bh = Math.max(3, Math.min(qh, 3 + Math.floor(rng() * 3)));
-        // Skip some plots near the plaza to keep space around it.
-        if (Math.abs(bx + bw / 2 - midX) < pr + 3 && Math.abs(qy + bh / 2 - midY) < pr + 3) { bx += bw + 1; continue; }
-        const facingDown = qy < midY;
-        const by = facingDown ? qy : qy + qh - bh;
-        for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) set(x, y, { floor: FL.stone, block: 1, sprite: pickArt(th.houseWall, x, y, 46), layers: undefined });
-        const dx = bx + Math.floor(bw / 2), dy = facingDown ? by + bh - 1 : by;
-        const shop = rng() < 0.45;
+    for (const [by, facingDown] of bands) {
+      if (by <= y0 || by + rowH >= y0 + chh - 1) continue;
+      let bx = left;
+      while (bx + 4 < right) {
+        if (Math.abs(bx + 2 - midX) < 3) { bx += 1; continue; }
+        const bw = Math.min(5, right - bx);
+        if (bw < 4) break;
+        if (Math.abs(bx + bw / 2 - midX) < pr + 2 && Math.abs(by + rowH / 2 - midY) < pr + 2) { bx += bw + 1; continue; }
+        for (let y = by; y < by + rowH; y++) for (let x = bx; x < bx + bw; x++) set(x, y, { floor: FL.stone, block: 1, sprite: pickArt(th.houseWall, x, y, 46), layers: undefined });
+        const dx = bx + Math.floor(bw / 2), dy = facingDown ? by + rowH - 1 : by;
+        const shop = rng() < (kind === "port" ? 0.75 : kind === "village" ? 0.25 : 0.5);
         set(dx, dy, { layers: [shop ? ART.shops[(shopN++ + Math.floor(rng() * 3)) % ART.shops.length]! : ART.doors[0]!] });
-        bx += bw + 1;
+        bx += bw + 2;
+      }
+    }
+    // Villages keep a green: four choppable trees around the fountain, not wall art.
+    if (kind === "village") {
+      for (const [dx, dy] of [[-2, -2], [2, -2], [-2, 2], [2, 2]] as const) {
+        const tx = midX + dx, ty = midY + dy;
+        if (walkable(tx, ty)) interactables.push({ id: id("node"), kind: "node", node: "tree", tx, ty });
       }
     }
     const city: City = { id: id("city"), name, cont: ci, x: x0, y: y0, w: cw, h: chh, kind, plaza: { x: midX, y: midY }, gates, npcs: [] };
@@ -513,6 +515,10 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       interactables.push({ id: id("shrine"), kind: "shrine", type: th.shrine, tx: midX - pr - 2, ty: midY - 3, name: `${name} Shrine` });
       interactables.push({ id: id("arena"), kind: "arena", tx: midX + pr + 2, ty: midY - 3, label: `${name} Proving Ring` });
     }
+    // Orchard sits east of the south road so the gate road is not a tree line.
+    const ox = Math.min(w - 12, Math.max(2, midX + 4));
+    const oy = Math.min(h - 10, y0 + chh + 2);
+    orchards.push({ name, ci, x: ox, y: oy, w: 9, h: 7 });
     return city;
   }
 
@@ -652,10 +658,10 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     }
     // Resource areas
     const res: { node: "tree" | "ore" | "shroom" | "fish"; word: string; n: number }[] = [
-      { node: th.trees ? "tree" : "ore", word: th.trees ? "Wood" : "Quarry", n: 2 },
+      { node: th.trees ? "tree" : "ore", word: th.trees ? "Woodlot" : "Quarry", n: th.trees ? 3 : 2 },
       { node: "ore", word: "Mine", n: 2 },
-      { node: "shroom", word: "Grove", n: 1 },
-      { node: "fish", word: "Fishery", n: 2 },
+      { node: "shroom", word: "Hollow", n: 2 },
+      { node: "fish", word: "Fishery", n: 1 },
     ];
     for (const r of res) for (let k = 0; k < r.n; k++) {
       const near = (x: number, y: number) => r.node === "ore" ? anyNear(x + 5, y + 5, 10, (i) => !!mountain[i]) : r.node === "fish" ? anyNear(x + 5, y + 5, 7, (i) => tiles[i]!.floor === FL.water) : r.node === "tree" ? moist[at(x + 5, y + 5)]! > 0.5 : true;
@@ -663,18 +669,29 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
       if (!spot) continue;
       const name = `${placeName(rng, usedNames)} ${r.word}`;
       const rid = id("res");
-      regions.push({ id: rid, name, kind: "resource", tx: spot.x, ty: spot.y, tw: 11, th: 11, about: r.node === "tree" ? "Good timber." : r.node === "ore" ? "Rich ore veins." : r.node === "shroom" ? "Mushrooms and alchemy reagents." : "Good fishing.", levelMin: c.levelMin, levelMax: c.levelMax });
+      regions.push({ id: rid, name, kind: "resource", tx: spot.x, ty: spot.y, tw: 11, th: 11, about: r.node === "tree" ? "A woodlot. Every tree here can be chopped." : r.node === "ore" ? "Rich ore veins." : r.node === "shroom" ? "Mushrooms and alchemy reagents." : "Good fishing.", levelMin: c.levelMin, levelMax: c.levelMax });
       places.push({ id: rid, name, cont: ci, x: spot.x + 5, y: spot.y + 5, kind: "resource", node: r.node });
-      occupy(spot.x, spot.y, 11, 11, 0);
+      occupy(spot.x, spot.y, 11, 11, 3);
+      if (r.node !== "fish") {
+        for (let y = spot.y + 1; y < spot.y + 10; y++) for (let x = spot.x + 1; x < spot.x + 10; x++) {
+          if (!inside(x, y) || !land[at(x, y)] || tiles[at(x, y)]!.floor === FL.water) continue;
+          const art = r.node === "ore" ? ART.pebble : r.node === "shroom" ? ART.moss : th.grounds[1].art;
+          const floor = r.node === "ore" ? FL.dirt : th.grounds[1].floor;
+          ground(x, y, art, floor, 55);
+        }
+      }
+      const step = r.node === "fish" ? 1 : 2;
+      const capN = r.node === "fish" ? 6 : r.node === "shroom" ? 10 : 16;
       let placed = 0;
-      for (let t = 0; t < 80 && placed < (r.node === "fish" ? 5 : 9); t++) {
-        const x = spot.x + Math.floor(rng() * 11), y = spot.y + Math.floor(rng() * 11);
-        if (!walkable(x, y)) continue;
-        if (r.node === "fish" && !anyNear(x, y, 1, (i) => tiles[i]!.floor === FL.water)) continue;
-        if (interactables.some((it) => it.tx === x && it.ty === y)) continue;
-        interactables.push({ id: id("node"), kind: "node", node: r.node, tx: x, ty: y });
-        if (r.node === "ore") set(x, y, { sprite: pickArt(ART.pebble, x, y, 55) });
-        placed++;
+      for (let y = spot.y + 1; y < spot.y + 10 && placed < capN; y += step) {
+        for (let x = spot.x + 1; x < spot.x + 10 && placed < capN; x += step) {
+          if (!walkable(x, y)) continue;
+          if (r.node === "fish" && !anyNear(x, y, 1, (i) => tiles[i]!.floor === FL.water)) continue;
+          if (interactables.some((it) => it.tx === x && it.ty === y)) continue;
+          interactables.push({ id: id("node"), kind: "node", node: r.node, tx: x, ty: y });
+          if (r.node === "ore") set(x, y, { sprite: pickArt(ART.pebble, x, y, 55) });
+          placed++;
+        }
       }
     }
   });
@@ -683,19 +700,27 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     return false;
   }
 
-  // ---- monster camps ------------------------------------------------------------------------
-  const cell = 20;
+  // ---- monster camps: open hunt grounds, never on a node or inside a town -------------
+  const nodeTile = new Uint8Array(N);
+  for (const it of interactables) if (it.kind === "node") nodeTile[at(it.tx, it.ty)] = 1;
+  const cell = 22;
   for (let cy = 0; cy < h; cy += cell) for (let cx = 0; cx < w; cx += cell) {
     const mx = cx + Math.floor(cell / 2), my = cy + Math.floor(cell / 2);
     if (!inside(mx, my)) continue;
     const mi = at(mx, my);
-    if (!land[mi] || occupied[mi] || contAt[mi]! < 0) continue;
-    let landCount = 0;
-    for (let y = cy; y < cy + cell && y < h; y += 3) for (let x = cx; x < cx + cell && x < w; x += 3) if (land[at(x, y)] && !occupied[at(x, y)]) landCount++;
-    if (landCount < 18) continue;
+    if (!land[mi] || contAt[mi]! < 0) continue;
+    if (occupied[mi] || nodeTile[mi]) continue;
+    const tw = 10, thh = 10, zx = mx - 5, zy = my - 5;
+    let open = 0, nodes = 0;
+    for (let y = zy; y < zy + thh; y++) for (let x = zx; x < zx + tw; x++) {
+      if (!inside(x, y)) continue;
+      const i = at(x, y);
+      if (nodeTile[i]) nodes++;
+      else if (!occupied[i] && !mountain[i] && !lake[i] && land[i] && !tiles[i]!.block && tiles[i]!.floor !== FL.water && tiles[i]!.floor !== FL.lava) open++;
+    }
+    if (nodes > 0 || open < 24) continue;
     const ci = contAt[mi]!;
     const c = conts[ci]!, th = THEMES[c.theme];
-    // Further from the capital = tougher.
     const cap = cities.find((x) => x.cont === ci && x.kind === "capital");
     const far = cap ? Math.min(1, Math.hypot(mx - cap.plaza.x, my - cap.plaza.y) / c.r) : 0.5;
     const lo = Math.round(c.levelMin + (c.levelMax - c.levelMin) * far * 0.6);
@@ -704,7 +729,8 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     const pool = (animal ? th.animals : th.monsters).filter((s) => MONSTER_BY_ID[s] || ANIMAL_BY_ID[s]);
     const pick = pool.length > 2 ? pool.filter(() => rng() < 0.6) : pool;
     if (zones.length >= 420) continue;
-    zones.push({ id: id("camp"), tx: Math.max(1, mx - 6), ty: Math.max(1, my - 6), tw: 12, th: 12, levelMin: Math.max(1, lo), levelMax: Math.max(1, hi), species: (pick.length ? pick : pool).slice(0, 4), count: animal ? 3 : 2 + Math.floor(rng() * 2), respawn: 45 + Math.floor(rng() * 60) });
+    zones.push({ id: id("camp"), tx: Math.max(1, zx), ty: Math.max(1, zy), tw, th: thh, levelMin: Math.max(1, lo), levelMax: Math.max(1, hi), species: (pick.length ? pick : pool).slice(0, 4), count: animal ? 3 : 2 + Math.floor(rng() * 2), respawn: 45 + Math.floor(rng() * 60) });
+    occupy(zx, zy, tw, thh, 1);
   }
 
   // ---- continent bosses ---------------------------------------------------------------------
@@ -947,6 +973,42 @@ export function generateWorld(opts: WorldGenOptions): MapFile {
     return { x, y };
   };
   for (const q of quests) for (const st of q.steps) if (st.type === "goto") { const p = nearestReach(st.tx, st.ty); st.tx = p.x; st.ty = p.y; }
+
+  // Orchards and wild forests. Every tree is a node. Nothing here paints a tree you cannot chop.
+  const treeAt = new Uint8Array(N);
+  const inZone = new Uint8Array(N);
+  for (const it of interactables) if (it.kind === "node" && it.node === "tree") treeAt[at(it.tx, it.ty)] = 1;
+  for (const z of zones) for (let y = z.ty; y < z.ty + z.th; y++) for (let x = z.tx; x < z.tx + z.tw; x++) if (inside(x, y)) inZone[at(x, y)] = 1;
+  const treeNear = (x: number, y: number) => {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (inside(x + dx, y + dy) && treeAt[at(x + dx, y + dy)]) return true;
+    return false;
+  };
+  const plantTree = (x: number, y: number, force = false) => {
+    if (interactables.length >= 2800) return false;
+    if (!inside(x, y) || !reach[at(x, y)] || !walkable(x, y) || inZone[at(x, y)]) return false;
+    if (!force && occupied[at(x, y)]) return false;
+    if (treeNear(x, y)) return false;
+    interactables.push({ id: id("node"), kind: "node", node: "tree", tx: x, ty: y });
+    treeAt[at(x, y)] = 1;
+    return true;
+  };
+  for (const o of orchards) {
+    let n = 0;
+    for (let y = o.y; y < o.y + o.h && n < 12; y += 2) for (let x = o.x; x < o.x + o.w && n < 12; x += 2) if (plantTree(x, y, true)) n++;
+    if (n) regions.push({ id: id("orchard"), name: `${o.name} Orchard`, kind: "resource", tx: o.x, ty: o.y, tw: o.w, th: o.h, about: "Town timber. Every tree can be chopped.", levelMin: conts[o.ci]!.levelMin, levelMax: conts[o.ci]!.levelMax });
+  }
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      if (interactables.length >= 2700) break;
+      const i = at(x, y);
+      if (!land[i] || occupied[i] || !reach[i] || mountain[i] || lake[i] || contAt[i]! < 0) continue;
+      const th = THEMES[conts[contAt[i]!]!.theme];
+      if (!th.trees || moist[i]! < 0.57 || coastDist[i]! < 4) continue;
+      if (fbm(x / 9, y / 9, seed + 23) < 0.64 || hash2(x, y, seed + 25) >= 0.42) continue;
+      plantTree(x, y);
+    }
+  }
+
   // Map edges are always solid.
   for (let x = 0; x < w; x++) for (const y of [0, h - 1]) tiles[at(x, y)] = { ...tiles[at(x, y)]!, block: 1 };
   for (let y = 0; y < h; y++) for (const x of [0, w - 1]) tiles[at(x, y)] = { ...tiles[at(x, y)]!, block: 1 };
