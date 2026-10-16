@@ -461,19 +461,6 @@ export function BlackMarket({ snap, game }: Props) {
         </div>
       )}
 
-      {snap.trade && (
-        <div className="mt-3 grid gap-2 border-t-2 border-bone pt-2">
-          <p className="text-dim">Player trade still available if someone is nearby.</p>
-          <p>With {snap.trade.peer}</p>
-          <p>You offer: {snap.trade.mine}</p>
-          <p>They offer: {snap.trade.theirs}</p>
-          <button type="button" className="px-btn" onClick={() => game?.offerSelected()}>Offer selected gear</button>
-          <button type="button" className="px-btn" onClick={() => game?.lockTrade()}>
-            {snap.trade.me ? "Unlock" : "Lock in"}
-            {snap.trade.them ? " · they are ready" : ""}
-          </button>
-        </div>
-      )}
     </div>
   );
 }

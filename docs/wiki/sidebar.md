@@ -37,7 +37,6 @@
 - [Economy](Economy)
 - [Hardcore Survival](Hardcore-Survival)
 - [World and Regions](World-and-Regions)
-- [Multiplayer](Multiplayer)
 - [Designer Mode](Designer-Mode)
 
 **More**

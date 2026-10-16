@@ -1942,7 +1942,7 @@ class MinHeap {
 /** Options for a full main world: big, many lands, a story, all random from the seed. */
 export function mainWorldOptions(seed: number, name = "New World", id = "newworld"): WorldGenOptions {
   const r = mulberry32((seed >>> 0) || 1);
-  return { id, name, seed, w: 500, h: 500, continentCount: 5 + Math.floor(r() * 4), citiesPerContinent: 4, islands: 8 + Math.floor(r() * 10), story: true };
+  return { id, name, seed, w: 500, h: 500, continentCount: 4 + Math.floor(r() * 5), citiesPerContinent: 2 + Math.floor(r() * 4), islands: 4 + Math.floor(r() * 18), story: true };
 }
 
 // ---------------------------------------------------------------------------

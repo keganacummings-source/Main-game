@@ -34,7 +34,6 @@ The tables (verses, classes, enemies, items, sets, enchantments and more) are **
 | [Verses](Verses) | | | [Economy](Economy) |
 | [Enemies](Enemies) | | | [Hardcore Survival](Hardcore-Survival) |
 | [Bosses and Dungeons](Bosses-and-Dungeons) | | | [World and Regions](World-and-Regions) |
-| | | | [Multiplayer](Multiplayer) |
 | | | | [Designer Mode](Designer-Mode) |
 
 ## The game at a glance

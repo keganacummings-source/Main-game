@@ -110,4 +110,5 @@ Animals give meat and leather for [crafting](Gathering-and-Crafting) and Hardcor
 
 - Every foe's level is at least the level it spawned at, and at least your level + its kind's offset.
 - **Designed enemies** (from the [Enemy Designer](Designer-Mode)) use their designer stats, fixed traits plus random extra traits, an exact move list, a level bonus, a loot multiplier and a temperament (hunt, drift or flee). A design can replace a built-in monster everywhere it spawns.
-- Foes shown to you are always computed for **your** witch. In multiplayer the host's game runs them.
+- Foes shown to you are always computed for **your** witch.
+- Out in the overworld, 45% of foes are a random kind instead of their camp's, and half of all foes roll a random element (shown in their name, e.g. "Fire Kusa"); their moves and the ghost they leave follow that element.

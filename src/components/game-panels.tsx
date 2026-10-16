@@ -6,11 +6,9 @@ import { CAMP_RECIPE_LIST } from "@/game/survival";
 import { BUILD_PIECES, BUILD_PIECE_IDS } from "@/game/building";
 import { ghostFxLabel } from "@/game/ghost-fx";
 import { resetLayout } from "@/game/ui-layout";
-import { listChat, postChat } from "@/game/social-client";
-import type { ChatLine } from "@/game/social-types";
 import type { BoardView } from "@/game/quest-board";
 import type { Snap, TurbzGame } from "@/game/engine";
-import { ClassPicker, makeLobbyCode, type Pick } from "./character-ui";
+import { ClassPicker, type Pick } from "./character-ui";
 import { AccountChip } from "./hub-ui";
 import { useSnapPick } from "./use-snap";
 import { Chips, ConfirmButton, Empty, Field, Meter, Pips, Section, Tabs } from "./ui-kit";
@@ -845,73 +843,16 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
 });
 
 // ---------------------------------------------------------------------------
-// Lobby
-// ---------------------------------------------------------------------------
-
-export const LobbyPanel = memo(function LobbyPanel({ game }: GameProp) {
-  const { lobby, mode } = useSnapPick(["lobby", "mode"] as const);
-  const inGame = mode === "play";
-  const [code, setCode] = useState("");
-  const [copied, setCopied] = useState(false);
-  if (!lobby.code) {
-    return (
-      <div className="ui-stack" data-testid="lobby-panel">
-        <p className="text-dim">Play together. One player hosts and shares the code; up to 3 witches. A lobby only exists while its host is online.</p>
-        <Field label="Lobby code">
-          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6))} placeholder="CODE" aria-label="Lobby code" data-testid="lobby-code-input" className="px-input font-display text-xs" />
-        </Field>
-        <div className="gear-actions">
-          <button type="button" className="px-btn px-btn-kyo" data-testid="lobby-create-btn" disabled={!inGame} onClick={() => game?.hostLobby(code || makeLobbyCode())}>Create lobby</button>
-          <button type="button" className="px-btn" data-testid="lobby-join-btn" disabled={!inGame || code.length < 3} onClick={() => game?.joinLobby(code)}>Join</button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="ui-stack" data-testid="lobby-panel">
-      <div className="ui-row">
-        <span className="lobby-code" data-testid="lobby-code">{lobby.code}</span>
-        <button
-          type="button"
-          className="px-btn ui-btn-sm"
-          data-testid="lobby-copy-btn"
-          onClick={() => {
-            void navigator.clipboard?.writeText(lobby.code).then(() => setCopied(true)).catch(() => {});
-            setTimeout(() => setCopied(false), 1500);
-          }}
-        >
-          {copied ? "Copied" : "Copy code"}
-        </button>
-      </div>
-      <p className="text-dim" data-testid="lobby-status">{lobby.role === "host" ? "You are hosting." : "You joined as a guest."} {lobby.net}</p>
-      <div className="ui-list" data-testid="lobby-members">
-        {lobby.members.map((m) => (
-          <div key={m.id} className="ui-card" data-testid={`lobby-member-${m.self ? "self" : m.id}`}>
-            <div className="ui-row">
-              <span>{m.host ? "♛ " : ""}{m.name}{m.self ? " (you)" : ""}</span>
-              <span className="text-dim">{m.className}{m.level ? ` · Lv ${m.level}` : ""}</span>
-            </div>
-            {m.max > 0 && <Meter value={m.hp} max={m.max} small kind="hp" />}
-          </div>
-        ))}
-        {lobby.members.length <= 1 && <Empty>Waiting for others. Share the code {lobby.code}.</Empty>}
-      </div>
-      <button type="button" className="px-btn" data-testid="lobby-leave-btn" onClick={() => game?.leaveLobby()}>Leave lobby</button>
-    </div>
-  );
-});
-
-// ---------------------------------------------------------------------------
 // Pause
 // ---------------------------------------------------------------------------
 
 const CONTROLS: [string, string][] = [
   ["WASD", "Move"], ["E", "Gather · talk"], ["1-9", "Cast verse"], ["0", "Attack"], ["B / I", "Bag"], ["V", "Verses"], ["K", "Skills"], ["G", "Spirits"],
-  ["C", "Sheet"], ["X", "Crafting"], ["Q", "Quests"], ["M", "Map"], ["L", "Lobby"], ["T", "Market"], ["H", "Camp (HC)"], ["F", "Build (HC)"], ["Esc", "Close · pause"],
+  ["C", "Sheet"], ["X", "Crafting"], ["Q", "Quests"], ["M", "Map"], ["T", "Market"], ["H", "Camp (HC)"], ["F", "Build (HC)"], ["Esc", "Close · pause"],
 ];
 
 export const PausePanel = memo(function PausePanel({ game }: GameProp) {
-  const { map, roomCode, unstuck } = useSnapPick(["map", "roomCode", "unstuck"] as const);
+  const { map, unstuck } = useSnapPick(["map", "unstuck"] as const);
   const maps = game?.customMaps() ?? [];
   return (
     <div className="ui-stack">
@@ -920,7 +861,6 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
         <button type="button" className="px-btn" data-testid="unstuck-menu-btn" onClick={() => game?.beginUnstuck()}>{unstuck ? `Unstuck ${unstuck}` : "Unstuck · 3s"}</button>
         <button type="button" className="px-btn" onClick={() => game?.toggle("skills")}>Skills (K)</button>
       </div>
-      {roomCode && <p className="text-kyo">Lobby {roomCode}</p>}
       <Section title="CONTROLS">
         <div className="controls-grid">
           {CONTROLS.map(([k, v]) => (
@@ -1040,7 +980,7 @@ export const ContextMenu = memo(function ContextMenu({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export function DiedOverlay({ game }: GameProp) {
-  const { died } = useSnapPick(["died"] as const);
+  const { died, keepWorld } = useSnapPick(["died", "keepWorld"] as const);
   if (!died) return null;
   const row = (label: string, value: React.ReactNode) => (
     <div className="flex justify-between gap-3 border-b border-bone/20 py-0.5"><span className="text-dim">{label}</span><span>{value}</span></div>
@@ -1063,6 +1003,13 @@ export function DiedOverlay({ game }: GameProp) {
           {died.gear.length > 0 && row("Wore", died.gear.join(", "))}
         </div>
         <p className="text-dim">Skills, account level and permanent bonuses stay with you.</p>
+        <div className="px-panel died-stats" data-testid="died-world">
+          <p>World: <span className="text-kyo">{died.world}</span>{died.seed ? <span className="text-dim"> · seed {died.seed}</span> : null}</p>
+          <p className="text-dim">{keepWorld ? "Your next life wakes in this same world." : "Your next life wakes in a brand-new world, unless you keep this one."}</p>
+          <button type="button" className={`px-btn ${keepWorld ? "px-btn-kyo" : ""}`} data-testid="keep-world-btn" aria-pressed={keepWorld} onClick={() => game?.setKeepWorld(!keepWorld)}>
+            {keepWorld ? "✓ Keeping Current World" : "Keep Current World"}
+          </button>
+        </div>
         <div className="screen-actions">
           <button type="button" className="px-btn" data-testid="died-menu-btn" onClick={() => game?.toTitle()}>Go to menu</button>
           <button type="button" className="px-btn px-btn-kyo" data-testid="died-again-btn" onClick={() => game?.toRebirth()}>Play again</button>
@@ -1075,6 +1022,16 @@ export function DiedOverlay({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 // The veil: choose the next witch
 // ---------------------------------------------------------------------------
+
+function RebirthWorldNote({ game }: GameProp) {
+  const { keepWorld, died } = useSnapPick(["keepWorld", "died"] as const);
+  return (
+    <p className="ui-row-gap" data-testid="rebirth-world">
+      <span className={keepWorld ? "text-kyo" : "text-dim"}>{keepWorld ? `Keeping ${died?.world ?? "this world"}.` : "A new world will be rolled for this life."}</span>
+      <button type="button" className={`px-btn ui-btn-sm ${keepWorld ? "px-btn-kyo" : ""}`} onClick={() => game?.setKeepWorld(!keepWorld)}>{keepWorld ? "✓ Keep Current World" : "Keep Current World"}</button>
+    </p>
+  );
+}
 
 export function RebirthOverlay({ game }: GameProp) {
   const { unlocked, classId: lastClass } = useSnapPick(["unlocked", "classId"] as const);
@@ -1092,6 +1049,7 @@ export function RebirthOverlay({ game }: GameProp) {
         <p className="screen-kicker">THE VEIL</p>
         <h2 className="screen-title">Choose the next witch</h2>
         <p className="text-dim">This body is gone. Account Score, skills, perks and finished sets stay. You wake in another tavern.</p>
+        <RebirthWorldNote game={game} />
         <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" /></Field>
         <ClassPicker
           pick={pick}
@@ -1122,56 +1080,3 @@ export function RebirthOverlay({ game }: GameProp) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// In-game chat: party, global and friends in one window
-// ---------------------------------------------------------------------------
-
-export function GameChat({ game }: GameProp) {
-  const { chat } = useSnapPick(["chat"] as const);
-  const [tab, setTab] = useState<"party" | "global" | "friends">("party");
-  const [lines, setLines] = useState<ChatLine[]>([]);
-  const [text, setText] = useState("");
-  const [err, setErr] = useState("");
-  useEffect(() => {
-    if (tab === "party") return;
-    let stop = false;
-    const pull = () => void listChat().then((rows) => { if (!stop) setLines(rows); }).catch(() => {});
-    pull();
-    const id = window.setInterval(pull, 3000);
-    return () => { stop = true; window.clearInterval(id); };
-  }, [tab]);
-  const shown = tab === "party" ? chat.map((c, i) => ({ id: `p${i}`, who: c.name, body: c.text, mine: false })) : lines.filter((l) => l.channel === tab).slice(-14).map((l) => ({ id: l.id, who: l.username, body: l.body, mine: l.mine }));
-  async function send() {
-    const body = text.trim();
-    if (!body) return;
-    setErr("");
-    if (tab === "party") {
-      game?.sendChat(body);
-      setText("");
-      return;
-    }
-    try {
-      await postChat(tab, body);
-      setText("");
-      setLines(await listChat());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "The veil refused that.");
-    }
-  }
-  return (
-    <div className="ui-stack-sm game-chat">
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: "party", label: "Party" }, { id: "global", label: "Global" }, { id: "friends", label: "Friends" }]} />
-      <div className="veil-log">
-        {shown.length === 0 && <p className="text-dim">{tab === "party" ? "Party chat reaches your lobby." : "The channel is quiet."}</p>}
-        {shown.map((l) => (
-          <p key={l.id}><span className={l.mine ? "text-kyo" : "text-blood"}>{l.who}</span><span className="text-dim"> · </span>{l.body}</p>
-        ))}
-      </div>
-      <form className="chat-form" onSubmit={(e) => { e.preventDefault(); void send(); }}>
-        <input value={text} onChange={(e) => setText(e.target.value.slice(0, 160))} placeholder={tab === "party" ? "Party chat" : tab === "global" ? "Speak to every witch" : "Friends only"} aria-label="Chat message" data-testid="party-chat-input" className="px-input" autoComplete="off" />
-        <button type="submit" className="px-btn px-btn-kyo ui-btn-sm">Send</button>
-      </form>
-      {err && <p className="text-blood">{err}</p>}
-    </div>
-  );
-}

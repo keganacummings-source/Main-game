@@ -20,7 +20,6 @@
 | **M** | World map: drag, zoom, hover, click to pin; in Hardcore, click a ringed town to fast travel. See [World and Regions](World-and-Regions#the-map-m) |
 | **G** | Spirits |
 | **X** | Crafting |
-| **L** | Lobby (multiplayer) |
 | **T** | Black Market (buy and sell anywhere) |
 | **H** | Survival panel (Hardcore) |
 | **F** | Build mode (Hardcore) |

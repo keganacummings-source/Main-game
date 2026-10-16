@@ -1,12 +1,7 @@
-import type { ChatLine, FriendRow, GraveBody, GraveMode, GraveRow } from "./social-types";
+import type { FriendRow, GraveBody, GraveMode, GraveRow } from "./social-types";
 
-// Chat and friends are not part of the live game (the lobby handles live play);
-// these stay as inert stubs so existing callers keep working.
+// There is no live multiplayer: friends stay as inert stubs so existing callers keep working.
 export async function ensureProfile(_username: string): Promise<void> {}
-export async function postChat(_channel: "global" | "friends", _body: string): Promise<void> {}
-export async function listChat(): Promise<ChatLine[]> {
-  return [];
-}
 export async function requestFriend(_username: string): Promise<string> {
   return "Local hunt has no veil.";
 }

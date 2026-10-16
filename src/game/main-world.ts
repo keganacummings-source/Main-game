@@ -48,9 +48,16 @@ function chosenWorld(): MapFile | null {
   return m && (m.kind ?? "world") === "world" && m.spawn ? m : null;
 }
 
-/** The map file that is the overworld: a world chosen in the Map Builder, else the embedded Veilreach. */
+let lifeWorld: MapFile | null = null;
+
+/** The current character's own world (rolled for its life), or null for Veilreach. Set by the engine on load. */
+export function setLifeWorld(file: MapFile | null): void {
+  lifeWorld = file;
+}
+
+/** The map file that is the overworld: this life's own world, else a Map Builder pick, else Veilreach. */
 export function mainWorldFile(): MapFile | null {
-  const f = chosenWorld() ?? baseWorldFile();
+  const f = lifeWorld ?? chosenWorld() ?? baseWorldFile();
   if (f && f !== installedFor) install(f);
   return f;
 }

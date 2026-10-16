@@ -1,7 +1,7 @@
 # TURBZ V6
 
 Production build of TURBZ (dreamdaw.com): a static Vite + React game served by a
-Cloudflare Worker that provides accounts, cloud saves, graves and lobby signaling.
+Cloudflare Worker that provides accounts, cloud saves, graves (leaderboards), the Shiny collection and the Discord bot. There is no live multiplayer.
 
 V6 is V5 with the old Grok-preview scaffolding removed (Better Auth, PGLite/Postgres,
 TanStack Start routes, Vercel output, base64 build step). All game source is now real
@@ -24,8 +24,8 @@ Pushing to `main` deploys via `.github/workflows/deploy-cloudflare.yml`
 
 - `src/components/` game UI (turbz-app is the main screen)
 - `src/game/` engine, content, world, combat FX, sprites
-- `src/lib/` static account client + P2P multiplayer
-- `worker/` Cloudflare Worker (accounts, saves, graves, lobby signaling)
+- `src/lib/` static account client
+- `worker/` Cloudflare Worker (accounts, saves, graves, shinies, Discord bot)
 - `public/` sprites, beasts, MapAssets tile catalog
 - `docs/` design notes
 
@@ -276,3 +276,11 @@ Three new account-wide skills (15 in total), built on the map and Hardcore camp 
 - **Ghosts float on their own:** spirits pick their own spots around you, drift there on momentum, trail when you walk and catch up. Shinies are restless little sparks that zip and loop but stay close.
 - **Tiny followers:** tag up to 20 Ghost Box ghosts (Spirits → Tiny followers) to float with you at a quarter size, on your shoulders or over your head. Cosmetic only: no stats, no attacks.
 - Resource nodes no longer have labels; walk up to one to see "E Chop / Mine / Forage".
+
+## A world for every life, random elements, no multiplayer
+
+- **Every new life gets its own 500×500 world.** Making a character, or starting again after a death, rolls a new world from a random seed. The number of lands, towns, islands and everything else comes from that seed. The seed is saved with the character, and the built world is cached on the device (`src/game/life-world.ts`, IndexedDB store `worlds`). Leaving, logging out or coming back opens the same world, and it is never re-rolled on load. Another device rebuilds the identical world from the seed.
+- **Keep Current World.** The YOU DIED screen (and the next-witch screen) has a toggle that keeps the current world for the next life instead of rolling a new one. A new world clears what was pinned to the old ground: campfires, logs, rifts, a placed Ghost Box (refunded in TurboHunt; the ghosts inside are kept) and that world's quest progress.
+- Characters from before this update stay on Veilreach until they die. Last Man Standing still uses Veilreach. In the Map Builder, **Use for my next life** queues a saved world for your next new life instead of a random roll.
+- **Random elements:** on top of the 45% random-kind roll, half of all overworld foes roll a random element. It shows in their name ("Fire Kusa"), and their moves, colours and the ghost they drop all follow it.
+- **Multiplayer removed.** No lobbies, P2P play, party chat or player trading. The `/api/rtc` route and the signaling Durable Object are gone (wrangler migration `v4` deletes `SignalingRoom`). Accounts, cloud saves, leaderboards, the Shiny collection and the Discord bot stay.

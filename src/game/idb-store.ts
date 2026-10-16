@@ -3,9 +3,11 @@
  * instead of localStorage, which stops at about 5 MB for the whole site.
  */
 const DB_NAME = "turbz-designer";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 export const STORE_MAPS = "maps";
 export const STORE_DRAFTS = "drafts";
+/** Each life's rolled world, cached so it loads instantly and never changes under a hunter. */
+export const STORE_WORLDS = "worlds";
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -25,6 +27,7 @@ function openDb(): Promise<IDBDatabase> {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_MAPS)) db.createObjectStore(STORE_MAPS);
       if (!db.objectStoreNames.contains(STORE_DRAFTS)) db.createObjectStore(STORE_DRAFTS);
+      if (!db.objectStoreNames.contains(STORE_WORLDS)) db.createObjectStore(STORE_WORLDS);
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error ?? new Error("IndexedDB failed to open."));

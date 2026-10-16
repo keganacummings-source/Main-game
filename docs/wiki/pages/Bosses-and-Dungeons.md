@@ -32,7 +32,6 @@ Every **10 minutes** of play (paused and hidden time don't count), a new **rift*
 - Each rift is a **procedurally generated** dungeon: 12 rooms on a 3×4 grid, each a different size, joined in a chain, in one of three tile themes.
 - Foes inside **don't respawn**. The **guardian** in the last room is a copy of one of the three world bosses (it hits 10% softer). Beat it to clear the rift, then leave through the entrance rift.
 - Rifts stay open until cleared, and you can have several open at once.
-- In multiplayer, the host's rifts are shared with the party.
 
 ## Shrines
 

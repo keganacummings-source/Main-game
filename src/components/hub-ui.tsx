@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { staticSignOut, useStaticAccount } from "@/lib/auth/static-account";
-import { answerFriend, ensureProfile, listChat, listFriends, listGraves, postChat, requestFriend } from "@/game/social-client";
-import type { ChatLine, FriendRow, GraveMode, GraveRow } from "@/game/social-types";
+import { answerFriend, ensureProfile, listFriends, listGraves, requestFriend } from "@/game/social-client";
+import type { FriendRow, GraveMode, GraveRow } from "@/game/social-types";
 import type { TypeId } from "@/game/content";
 import type { RaceId } from "@/game/content";
 import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
@@ -160,104 +160,6 @@ function GravePortrait({ row }: { row: GraveRow }) {
 }
 
 
-export function ChatDock({ username, playing, bare }: { username: string; playing: boolean; bare?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [channel, setChannel] = useState<"global" | "friends">("global");
-  const [lines, setLines] = useState<ChatLine[]>([]);
-  const [text, setText] = useState("");
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    if (!/^[a-zA-Z0-9_]{3,16}$/.test(username)) return;
-    void ensureProfile(username).catch(() => {});
-  }, [username]);
-
-  useEffect(() => {
-    let stop = false;
-    const pull = () => {
-      void listChat()
-        .then((rows) => {
-          if (!stop) setLines(rows);
-        })
-        .catch(() => {});
-    };
-    pull();
-    const id = window.setInterval(pull, 3000);
-    return () => {
-      stop = true;
-      window.clearInterval(id);
-    };
-  }, []);
-
-  async function send() {
-    const body = text.trim();
-    if (!body) return;
-    setErr("");
-    try {
-      await postChat(channel, body);
-      setText("");
-      setLines(await listChat());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : "The veil refused that.");
-    }
-  }
-
-  return (
-    <div className={bare ? "" : `veil-chat px-panel ${playing ? "veil-chat-play" : ""}`}>
-      <button className="px-btn w-full" type="button" onClick={() => setOpen((v) => !v)}>
-        {open ? "Hide veil chat" : "Veil chat"}
-      </button>
-      {open && (
-        <>
-          <div className="mt-2 grid grid-cols-2 gap-1">
-            <button className={`px-btn ${channel === "global" ? "px-btn-kyo" : ""}`} type="button" onClick={() => setChannel("global")}>
-              Global
-            </button>
-            <button className={`px-btn ${channel === "friends" ? "px-btn-kyo" : ""}`} type="button" onClick={() => setChannel("friends")}>
-              Friends
-            </button>
-          </div>
-          <div className="veil-log mt-2">
-            {lines.filter((line) => channel === "global" || line.channel === "friends").length === 0 && (
-              <p className="text-dim">The channel is quiet.</p>
-            )}
-            {lines
-              .filter((line) => (channel === "global" ? line.channel === "global" : line.channel === "friends"))
-              .slice(-12)
-              .map((line) => (
-                <p key={line.id}>
-                  <span className={line.mine ? "text-kyo" : "text-blood"}>{line.username}</span>
-                  <span className="text-dim"> · </span>
-                  {line.body}
-                </p>
-              ))}
-          </div>
-          <form
-            className="mt-2 grid grid-cols-[1fr_auto] gap-1"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send();
-            }}
-          >
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value.slice(0, 160))}
-              placeholder={channel === "global" ? "Speak to every witch" : "Friends only"}
-              aria-label="Veil chat"
-              className="w-full border-2 border-bone bg-ink px-2 py-1 text-bone outline-none"
-            />
-            <button className="px-btn px-btn-kyo" type="submit">
-              Send
-            </button>
-          </form>
-          {err && <p className="text-blood">{err}</p>}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** Static build: who is signed in, plus a sign-out button. */
 export function AccountChip() {
   const { user } = useStaticAccount();
   const [busy, setBusy] = useState(false);

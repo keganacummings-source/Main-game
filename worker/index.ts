@@ -5,25 +5,20 @@
  *    script (see `run_worker_first` in wrangler.toml), so asset traffic is free.
  *  - /api/account/* + /api/save: username/password accounts and one cloud save
  *    per account, each account being its own SQLite-backed Durable Object.
- *  - /api/rtc: WebRTC signaling for player-hosted lobbies (same wire contract as
- *    src/lib/multiplayer/signaling.server.ts, plus a host/guest role).
+ *  - No live multiplayer: lobbies and WebRTC signaling were removed. Leaderboards (graves),
+ *    the Shiny collection and the Discord bot are the only shared parts.
  */
 import type { Env } from "./env.ts";
 import {
   MAX_ACCOUNT_BODY_BYTES,
-  MAX_BODY_BYTES,
   MAX_SAVE_BODY_BYTES,
   parseCredentials,
-  parsePoll,
-  parsePost,
   parseSave,
   parseSessionCookie,
 } from "./validate.ts";
 import { MAX_SAVE_BYTES, MAX_SHINY_GIF_B64, MAX_SHINY_LIST_BYTES } from "./account-store.ts";
-import { isJoinError } from "./signaling-core.ts";
 import { decodeGif, handleInteraction, postDeath, postShinySeen, type DeathPost, type ShinyCard } from "./discord.ts";
 
-export { SignalingRoom } from "./room.ts";
 export { UserAccount } from "./account.ts";
 export { GravesBoard } from "./graves.ts";
 
@@ -58,38 +53,6 @@ async function readJson(request: Request, limit: number): Promise<unknown | Resp
     return JSON.parse(text);
   } catch {
     return json({ error: "invalid JSON" }, 400);
-  }
-}
-
-// ── signaling ───────────────────────────────────────────────────────────────
-
-async function handleRtc(request: Request, env: Env, url: URL): Promise<Response> {
-  try {
-    if (request.method === "GET") {
-      const q = parsePoll(url.searchParams);
-      if (!q) return json({ error: "invalid query" }, 400);
-      const stub = env.ROOMS.get(env.ROOMS.idFromName(q.room));
-      const result = await stub.poll(q.peer, q.name, q.since, q.role);
-      if (isJoinError(result)) return json({ error: result.error }, result.error === "no-lobby" ? 404 : 409);
-      return json(result);
-    }
-
-    if (request.method === "POST") {
-      if (crossOrigin(request, url)) return json({ error: "forbidden" }, 403);
-      const raw = await readJson(request, MAX_BODY_BYTES);
-      if (raw instanceof Response) return raw;
-      const msg = parsePost(raw);
-      if (!msg) return json({ error: "invalid request" }, 400);
-      const stub = env.ROOMS.get(env.ROOMS.idFromName(msg.room));
-      if (msg.op === "signal") await stub.signal(msg.from, msg.to, msg.kind, msg.payload);
-      else await stub.leave(msg.peer);
-      return json({ ok: true });
-    }
-
-    return json({ error: "method not allowed" }, 405);
-  } catch (error) {
-    console.error("[rtc] signaling error:", error);
-    return json({ error: "signaling failed" }, 500);
   }
 }
 
@@ -375,7 +338,6 @@ export default {
       const stub = gravesStub(env);
       return handleInteraction(request, env, { setChannel: (g, c, by) => stub.setChannel(g, c, by), shinies: (name) => shinyCard(env, name) });
     }
-    if (url.pathname === "/api/rtc") return handleRtc(request, env, url);
     if (url.pathname.startsWith("/api/account/")) return handleAccount(request, env, url);
     if (url.pathname === "/api/save") return handleSave(request, env, url);
     if (url.pathname === "/api/shinies") return handleShinies(request, env, url);

@@ -30,12 +30,7 @@ run_worker_first = ["/api/*"]
 # they're absent. An SPA fallback would answer 200 + index.html and break that.
 not_found_handling = "none"
 
-# Player-hosted lobby signaling (one Durable Object per lobby code) and
-# accounts + cloud saves (one SQLite-backed Durable Object per username).
-[[durable_objects.bindings]]
-name = "ROOMS"
-class_name = "SignalingRoom"
-
+# Accounts + cloud saves (one SQLite-backed Durable Object per username).
 [[durable_objects.bindings]]
 name = "ACCOUNTS"
 class_name = "UserAccount"
@@ -58,6 +53,11 @@ new_sqlite_classes = ["UserAccount"]
 [[migrations]]
 tag = "v3"
 new_sqlite_classes = ["GravesBoard"]
+
+# v4: live multiplayer is gone (no lobbies); the signaling rooms are deleted.
+[[migrations]]
+tag = "v4"
+deleted_classes = ["SignalingRoom"]
 
 # Discord bot (the TURBZ death feed). These two are public; the bot token is a secret that the
 # deploy workflow uploads from the DISCORD_BOT_TOKEN repository secret.

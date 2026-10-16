@@ -21,7 +21,7 @@ import { blankTile, floodIndices, resizeMap, validateMap, type Issue } from "@/g
 import { drawAtlasTile, findAtlasTile, loadTileCatalog, tileImage, tileImageRevision } from "@/game/tile-atlas";
 import { REGION_KINDS, type MapRegion } from "@/game/map-format";
 import { generateWorld, mainWorldOptions, type WorldGenOptions } from "@/game/map-gen";
-import { mainWorldChoice, setMainWorldChoice } from "@/game/main-world";
+import { nextWorldChoice, setNextWorldChoice } from "@/game/life-world";
 import { questIssues, repairQuests } from "@/game/quest-check";
 import { PLAYABLE_WORLDS, loadPlayableWorlds, playableWorlds } from "@/game/builtin-maps";
 import { DEFAULT_OPTS, Inspector, PlaceSettings, type PlaceOpts, type Sel } from "@/components/map-builder-entities";
@@ -813,25 +813,25 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       ? `Quests fixed: ${r.fixed} step${r.fixed === 1 ? "" : "s"} repaired, ${r.nodesAdded} resource node${r.nodesAdded === 1 ? "" : "s"} added${r.removed.length ? `, removed ${r.removed.length} impossible quest${r.removed.length === 1 ? "" : "s"} (${r.removed.slice(0, 3).join(", ")}${r.removed.length > 3 ? "…" : ""})` : ""}.${r.notes.length ? ` Still stuck: ${r.notes[0]}` : ""}`
       : "Every quest can already be finished.");
   };
-  const [mainChoice, setMainChoice] = useState(() => mainWorldChoice());
+  const [mainChoice, setMainChoice] = useState(() => nextWorldChoice());
   const playAsMain = () => {
     const m = mapRef.current;
     if ((m.kind ?? "world") !== "world" || !m.spawn) return setStatus("Only a world map with a start tile can be the main world.");
     if (m.id === "veilreach") return setStatus("Give this world its own File ID (Map tab) first, so Veilreach stays safe.");
-    if (!window.confirm(`Play "${m.name}" as the main world on this device?\n\nTurboHunt and Hardcore will wake there instead of Veilreach. Quest progress is kept per world, and you can switch back to Veilreach at any time. Everyone in a lobby should use the same main world.`)) return;
+    if (!window.confirm(`Use "${m.name}" for your next new life?\n\nNormally every new character (or new life after a death) wakes in a freshly rolled world. Your next one will wake in this map instead.`)) return;
     repairQuests(m);
     const err = saveDesignerMap(m);
     if (err) return setStatus(err);
     setSaved(savedMaps());
     setDirty(false);
-    setMainWorldChoice(m.id);
+    setNextWorldChoice(m.id);
     setMainChoice(m.id);
-    setStatus(`"${m.name}" is now the main world. Start TurboHunt or Hardcore to wake in it.`);
+    setStatus(`"${m.name}" is queued: your next new character (or next life after a death) wakes in it.`);
   };
   const restoreVeilreach = () => {
-    setMainWorldChoice("");
+    setNextWorldChoice("");
     setMainChoice("");
-    setStatus("Veilreach is the main world again.");
+    setStatus("Your next life rolls a random world again.");
   };
 
   const openWorldCopy = async (id: string) => {
@@ -1109,10 +1109,10 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                 <p className="text-dim">One click: a fresh 500×500 world with 5–8 lands, every kind of settlement, a story across the sea, and quests that are all checked to be finishable. Every seed is a different world.</p>
                 <div className="flex flex-wrap gap-1">
                   <button type="button" className="px-btn px-btn-kyo" data-testid="new-main-world-btn" onClick={newMainWorld}>New main world</button>
-                  <button type="button" className="px-btn" data-testid="play-as-main-btn" onClick={playAsMain} title="Save this map and play it as the overworld">Play this map as main world</button>
-                  {mainChoice && <button type="button" className="px-btn" onClick={restoreVeilreach}>Back to Veilreach</button>}
+                  <button type="button" className="px-btn" data-testid="play-as-main-btn" onClick={playAsMain} title="Save this map; your next new life wakes in it instead of a random world">Use for my next life</button>
+                  {mainChoice && <button type="button" className="px-btn" onClick={restoreVeilreach}>Roll a random world instead</button>}
                 </div>
-                <p className="text-dim">Main world now: <span className="text-kyo">{mainChoice ? (saved.find((x) => x.id === mainChoice)?.name ?? mainChoice) : "Veilreach"}</span></p>
+                <p className="text-dim">Every new life rolls its own world. Next life: <span className="text-kyo">{mainChoice ? (saved.find((x) => x.id === mainChoice)?.name ?? mainChoice) : "a random world"}</span></p>
                 <p className="font-display text-xs text-kyo">OPEN A FILE</p>
                 <input type="file" accept=".json,application/json" className="text-dim" onChange={async (e) => { const f = e.target.files?.[0]; if (f) importJson(await f.text()); e.target.value = ""; }} />
                 <textarea className="min-h-16 border-2 border-bone bg-ink px-1" placeholder="…or paste map JSON here" value={importText} onChange={(e) => setImportText(e.target.value)} />

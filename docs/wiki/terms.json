@@ -87,8 +87,6 @@
   {"term": "Campfire", "def": "Hardcore safe zone, kitchen and bed. 3 logs.", "page": "Hardcore-Survival", "anchor": "Campfires", "aliases": ["campfires", "safe zone"]},
   {"term": "Night", "def": "Hardcore: 15 minutes where foes have 2× health and damage, and give 3× experience.", "page": "Hardcore-Survival", "anchor": "Day and night", "aliases": ["nights"]},
   {"term": "Build mode", "def": "Hardcore: place and pick up log walls (F).", "page": "Hardcore-Survival", "anchor": "Building", "aliases": ["log wall"]},
-  {"term": "Lobby", "def": "A multiplayer group of up to 3 witches.", "page": "Multiplayer", "anchor": "Lobbies"},
-  {"term": "Host", "def": "The player whose game runs the world in a lobby.", "page": "Multiplayer", "anchor": "How it works"},
   {"term": "Map Builder", "def": "Designer tool for making maps with zones, NPCs and quests.", "page": "Designer-Mode", "anchor": "Map Builder"},
   {"term": "Enemy Designer", "def": "Designer tool for making or replacing enemies.", "page": "Designer-Mode", "anchor": "Enemy Designer"},
   {"term": "Leaderboards", "def": "The grave ledger of fallen witches, ranked by Account Score.", "page": "Game-Modes", "aliases": ["grave ledger"]},

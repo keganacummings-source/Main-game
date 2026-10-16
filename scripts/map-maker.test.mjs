@@ -317,3 +317,9 @@ test("repairQuests fixes a broken hand-made quest instead of leaving it impossib
   assert.ok(!m.quests.some((q) => q.id === "q2"), "a quest whose giver is walled in is removed");
   assert.equal(m.quests.find((q) => q.id === "q3").requires, undefined, "its follow-up no longer waits on it");
 });
+
+test("a life world's seed always rebuilds the very same world (so worlds persist by seed)", () => {
+  const a = gen.generateWorld(gen.mainWorldOptions(424242, "L", "life-a"));
+  const b = gen.generateWorld(gen.mainWorldOptions(424242, "L", "life-a"));
+  assert.equal(JSON.stringify(maps.packMap(a)), JSON.stringify(maps.packMap(b)));
+});

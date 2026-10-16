@@ -5,7 +5,6 @@ import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, buildProceduralDungeon, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonState } from "./procedural-dungeon";
-import { P2PRoom } from "@/lib/multiplayer";
 import {
   CLASS_BY_ID,
   LEGACY_CLASS,
@@ -109,7 +108,8 @@ import { bend, bendChance, bendDown, bendSigned, procs, rateMult, ratingChance }
 import { respawnSeconds } from "./respawn";
 import { FLOOR_COLOR, expandZones, mapToWorld, regionAt, savedMaps } from "./map-format";
 import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./builtin-maps";
-import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth } from "./main-world";
+import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
+import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
 import { tileImage, tileImageRevision } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
@@ -149,6 +149,7 @@ import {
 } from "./world";
 
 export type DeathReport = {
+  world: string; seed: number;
   name: string; className: string; focus: string; level: number; mode: string; cause: string; kills: number; survived: string;
   kyo: number; score: number; accountScore: number; spirits: number; shinies: number; gear: string[]; skills: { name: string; level: number }[];
 };
@@ -166,6 +167,8 @@ export type Snap = {
   mode: "title" | "create" | "play";
   /** The You Died report while the death screen is up. */
   died: DeathReport | null;
+  /** Death screen: keep this world for the next life. */
+  keepWorld: boolean;
   hasSave: boolean;
   panel: Panel;
   name: string;
@@ -343,6 +346,8 @@ type Save = {
   pendingLoot?: PendingLoot | null;
   /** Gear uids protected from Sell All. */
   locked?: string[];
+  /** The world rolled for this life (absent: an older character still on Veilreach). */
+  world?: LifeWorld;
   /** Id of the overworld this hunter last played on (changes when a new main world is chosen). */
   mainWorld?: string;
   /** This life: foes defeated and seconds survived (for the death screen). */
@@ -378,6 +383,8 @@ type TurnStep = { side: "you" | "foe" | "spirit"; id: string };
 const SAVE_KEY = "turbz-v3";
 /** Chance an overworld foe rolls a random kind instead of its camp's set kind. */
 const OVERWORLD_RANDOM_FOE = 0.45;
+/** Chance an overworld foe rolls a random element (its moves and its ghost follow it). */
+const OVERWORLD_RANDOM_ELEMENT = 0.5;
 /** Tagged Ghost Box ghosts: how many may follow, and how small they are drawn. */
 const TINY_MAX = 20;
 const TINY_SCALE = 0.25;
@@ -431,6 +438,7 @@ const HC_KEY = "turbz-hardcore-v1";
 const emptySnap = (): Snap => ({
 	mode: "title",
 	died: null,
+	keepWorld: false,
 	hasSave: false,
 	panel: null,
 	name: "",
@@ -798,7 +806,6 @@ export class TurbzGame {
 			if (e.code === "KeyX") this.toggle("craft");
 			if (e.code === "KeyV") this.toggle("moves");
 			if (e.code === "KeyC") this.toggle("sheet");
-			if (e.code === "KeyL") this.toggle("lobby");
 			if (e.code === "KeyH" && this.rules === "hardcore") this.toggle("survival");
 			if (e.code === "KeyF" && this.rules === "hardcore") this.toggleBuild();
 			if (e.code === "KeyT") this.toggleTrade();
@@ -1015,9 +1022,13 @@ export class TurbzGame {
 			raceBias: race
 		});
 		const known = [...CLASS_BY_ID[classId].starterMoves];
+		// Every new character wakes in a world rolled just for it.
+		const world = rollLifeWorld();
+		this.enterLifeWorld(world);
 		const home = hearthXY();
 		const save = {
 			v: 3,
+			world,
 			worldVer: mainWorldFile() ? 2 : 1,
 			mainWorld: this.mainWorldSig(),
 			name: (name || "Huntress").slice(0, 16),
@@ -1074,10 +1085,9 @@ export class TurbzGame {
 		this.boot(save);
 		save.hp = this.maxHp();
 		this.say(this.rules === "hardcore" ? `${save.name} wakes in the frontier. Hunt, gather water, and build a fire. Healing spells mend lasting wounds.` : `${save.name} wakes at the Crownfall hearth.`);
-		if (as) this.openRoom(as.role, as.code);
 		this.tone(220, .12);
 	}
-	continueGame(as?: { role: "host" | "guest"; code: string }) {
+	continueGame() {
 		const cached = this.rules === "hardcore" ? this.cloudHard : this.cloudCache;
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
 		const raw = cached ? JSON.stringify(cached) : localStorage.getItem(key);
@@ -1085,7 +1095,6 @@ export class TurbzGame {
 		try {
 			this.boot(JSON.parse(raw));
 			this.say("The hearth kept your skills.");
-			if (as) this.openRoom(as.role, as.code);
 			return true;
 		} catch {
 			return false;
@@ -1133,6 +1142,8 @@ export class TurbzGame {
 		this.nodeSeq = this.nodeSeq ?? 0;
 		this.keys = this.keys ?? new Set();
 		this.qa = this.qa ?? new Set();
+		// This character's own world (characters from before life worlds keep Veilreach until they die).
+		this.enterLifeWorld(save.world ?? null);
 		this.migrateMainWorld(save);
 		this.loadMap(save.map, false);
 		if (blocked(this.world, save.x, save.y)) {
@@ -1162,6 +1173,21 @@ export class TurbzGame {
 	 * old generated world no longer line up, so the hunter wakes at the new hearth. Veilreach progress
 	 * (played as a separate map) carries straight over.
 	 */
+	/** Makes `world` the overworld (null: Veilreach). Rebuilds the overworld the next time it loads. */
+	enterLifeWorld(world: LifeWorld | null) {
+		let file = null;
+		if (world) {
+			try { file = lifeWorldFile(world); } catch { file = null; }
+			touchLifeWorld(world.id);
+		}
+		setLifeWorld(file);
+		if (this.overworldFile !== mainWorldFile()) { this.overworld = null; this.overworldFile = null; this.populationMap = ""; }
+	}
+	/** Death screen: keep this world for the next life instead of rolling a new one. */
+	setKeepWorld(on) {
+		this.keepWorld = !!on;
+		publish({ keepWorld: this.keepWorld });
+	}
 	/** The main world's id plus a fingerprint, so a rebuilt Veilreach counts as a new world too. */
 	mainWorldSig() {
 		const mf = mainWorldFile();
@@ -1268,14 +1294,24 @@ export class TurbzGame {
 		const map = this.save?.map ?? "";
 		const file = map.startsWith("custom-") ? this.customFile : null;
 		if (map !== "world" && !(file && (file.kind ?? "world") === "world")) return spec;
-		// The camp's own kind, even if the last body here was a random roll.
+		// Start from the camp's own kind and element, even if the last body here was a random roll.
 		const base = spec.baseSpecies ?? spec.species;
-		const own = spec.rolled ? { ...spec, species: base, type: undefined, template: undefined, animal: undefined, rolled: false, baseSpecies: base } : { ...spec, baseSpecies: base };
-		if (Math.random() >= OVERWORLD_RANDOM_FOE) return own;
-		const pool = MONSTERS.filter((d) => d.id !== base);
-		const def = pool[Math.floor(Math.random() * pool.length)];
-		if (!def) return own;
-		return { ...spec, species: def.id, type: undefined, template: undefined, animal: !!def.animal, rolled: true, baseSpecies: base };
+		const reset = spec.rolled || spec.typeRolled;
+		const out = { ...spec, species: base, baseSpecies: base, rolled: false, typeRolled: false, type: reset ? undefined : spec.type, template: spec.rolled ? undefined : spec.template, animal: spec.rolled ? undefined : spec.animal };
+		// 45%: a random kind of foe instead of the camp's set kind.
+		if (Math.random() < OVERWORLD_RANDOM_FOE) {
+			const pool = MONSTERS.filter((d) => d.id !== base);
+			const def = pool[Math.floor(Math.random() * pool.length)];
+			if (def) Object.assign(out, { species: def.id, type: undefined, template: undefined, animal: !!def.animal, rolled: true });
+		}
+		// 50%: a random element too. Its moves, its colours and the ghost it leaves all follow the new element.
+		const def = MONSTER_BY_ID[out.species];
+		if (def && !def.animal && !out.animal && Math.random() < OVERWORLD_RANDOM_ELEMENT) {
+			const types = (Object.keys(TYPES) as TypeId[]).filter((t) => t !== def.type);
+			const t = types[Math.floor(Math.random() * types.length)];
+			if (t) Object.assign(out, { type: t, typeRolled: true });
+		}
+		return out;
 	}
 	makeMob(s) {
 		let species = s.species ?? "onibi";
@@ -1312,7 +1348,7 @@ export class TurbzGame {
 		const mob = {
 			id: s.id,
 			species,
-			name: s.name ?? (s.bossId ? bossName(s.bossId) : def.name),
+			name: s.name ?? (s.bossId ? bossName(s.bossId) : s.typeRolled && TYPES[type] ? `${TYPES[type].name} ${def.name}` : def.name),
 			type,
 			template: s.template ?? def.template,
 			x: s.x,
@@ -1351,6 +1387,7 @@ export class TurbzGame {
 			aggro: look?.aggression === "hunt",
 			zone: s.zone ?? null,
 			rolled: !!s.rolled,
+			typeRolled: !!s.typeRolled,
 			baseSpecies: s.baseSpecies,
 			nightScaled: false,
 			spawnLevel: level,
@@ -1502,16 +1539,6 @@ export class TurbzGame {
 		this.tickWildGhosts(dt);
 		this.tickLater(dt);
 		this.tickFx(dt);
-		this.netAcc += dt;
-		if (this.netAcc > .1) {
-			this.netAcc = 0;
-			this.broadcastPos();
-		}
-		this.mobAcc += dt;
-		if (this.role === "host" && this.mobAcc > .25) {
-			this.mobAcc = 0;
-			this.broadcastMobs();
-		}
 		this.syncHud(false);
 	}
 	tickDungeons(dt) {
@@ -4191,7 +4218,7 @@ export class TurbzGame {
 		const born = this.makeMob(this.rollOverworld(m.zone ? {
 			id: spec.id, species: spec.species, x: spec.x, y: spec.y, level: spec.level, boss: false, fixedLevel: true, zone: m.zone
 		} : {
-			...spec, boss: m.boss, bossId: m.bossId, template: m.rolled ? undefined : m.template, type: m.rolled ? undefined : m.type, animal: m.animal, fixedLevel: false, zone: null
+			...spec, boss: m.boss, bossId: m.bossId, template: m.rolled ? undefined : m.template, type: m.rolled || m.typeRolled ? undefined : m.type, typeRolled: m.typeRolled, animal: m.animal, fixedLevel: false, zone: null
 		}));
 		if (m.fromSpawn || m.zone) born.fromSpawn = true;
 		if (m.zone) born.zone = m.zone;
@@ -4618,6 +4645,7 @@ export class TurbzGame {
 		const skills = SKILLS.map((k) => ({ name: k.name, level: save.skills?.[k.id]?.level ?? 1 })).filter((k) => k.level > 1).sort((a, b) => b.level - a.level).slice(0, 3);
 		const t = Math.floor(save.lifeT ?? 0);
 		return {
+			world: save.world?.name || mainWorldFile()?.name || "Veilreach", seed: save.world?.seed ?? 0,
 			name: save.name, className: c?.name ?? "Witch", focus: c?.focus ?? "", level: save.level, mode: this.rules,
 			cause: this.causeOfDeath?.() ?? "", kills: save.lifeKills ?? 0, survived: t >= 3600 ? `${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m` : `${Math.floor(t / 60)}m ${t % 60}s`,
 			kyo, score: scored, accountScore: save.accountScore ?? 0, spirits: (save.spirits ?? []).length, shinies: [...(save.spirits ?? []), ...(save.ghostStore ?? [])].filter((x) => x?.shiny).length,
@@ -4733,6 +4761,28 @@ export class TurbzGame {
 			save.gear = [weapon];
 			save.equipped = { weapon: weapon.uid };
 		}
+		// A new life rolls a new world, unless "Keep Current World" was chosen on the death screen.
+		if (!this.keepWorld || !save.world) {
+			const oldId = mainWorldFile()?.id ?? "";
+			save.world = rollLifeWorld();
+			this.enterLifeWorld(save.world);
+			save.mainWorld = this.mainWorldSig();
+			// Anything pinned to the old world's ground goes with it.
+			if (save.survival?.campfires) save.survival.campfires = save.survival.campfires.filter((f) => f.map !== "world");
+			if (save.survival?.logs) save.survival.logs = save.survival.logs.filter((l) => l.map !== "world");
+			if (save.dungeons?.portals) save.dungeons.portals = [];
+			save.nodesTaken = {};
+			save.wildGhosts = [];
+			save.regions = [];
+			if (save.mapQuests && oldId) for (const k of Object.keys(save.mapQuests)) if (k.startsWith(`${oldId}:`)) delete save.mapQuests[k];
+			if (save.ghostBox && save.ghostBox.map === "world") {
+				if (this.rules !== "hardcore") for (const [id, n] of Object.entries(BUILD_PIECES.ghostbox.cost)) this.giveItem(id, n);
+				save.ghostBox = null;
+			}
+			this.syncSolids("world");
+		}
+		this.keepWorld = false;
+		publish({ keepWorld: false });
 		// TurboHunt wakes you at a random tavern. Hardcore always starts over at the world's starting point
 		// and you fast travel back to towns you have already seen (see fastTravelTo).
 		const hardcoreWake = this.rules === "hardcore";
@@ -4766,6 +4816,7 @@ export class TurbzGame {
 			death: []
 		});
 		const dressed = wear ? SET_BY_ID[wear].name : "the default robes";
+		if (save.world?.name) this.say(`A new life in ${save.world.name}${save.world.seed ? ` (seed ${save.world.seed})` : ""}.`);
 		if (tavern) this.say(`${save.name} wakes at ${tavern.name} in ${dressed}. Skills stayed with the account. The board is by the door.`);
 		else this.say(`${save.name} wakes at the world's starting point in ${dressed}. Skills stayed with the account. Open the map (M) and click a town you have visited to fast travel.`);
 		this.persist();
@@ -7821,354 +7872,6 @@ export class TurbzGame {
 	openShell(sx, sy) {
 		this.openInspect(-9999, -9999, sx, sy);
 	}
-	openRoom(role, code) {
-		this.room?.close();
-		this.role = role;
-		const room = `tz${code.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 8)}`;
-		publish({
-			roomCode: code.toUpperCase(),
-			net: "Seeking the veil..."
-		});
-		const opened: P2PRoom = new P2PRoom({
-			room,
-			selfId: this.selfId,
-			name: this.save?.name ?? "Huntress",
-			role: role === "host" ? "host" : "guest",
-			onRejected: (reason) => {
-				if (this.room !== opened) return;
-				this.room = null;
-				this.role = "solo";
-				this.peers = [];
-				this.remotes.clear();
-				publish({ roomCode: "", net: "", peers: [] });
-				this.say(
-					reason === "no-lobby"
-						? "No lobby with that code. The host has to create it first."
-						: reason === "full"
-							? "That lobby is full (3 witches max)."
-							: "Someone is already hosting that code. Pick another."
-				);
-				this.syncHud(true);
-			},
-			onPeersChanged: (peers) => {
-				this.peers = peers.map((p) => ({
-					id: p.id,
-					name: p.name,
-					state: p.connectionState
-				}));
-				for (const id of [...this.remotes.keys()]) if (!peers.some((p) => p.id === id && p.connectionState !== "closed" && p.connectionState !== "failed")) this.remotes.delete(id);
-				this.syncHud(true);
-				publish({
-					peers: peers.map((p) => p.name || p.id.slice(0, 4)),
-					net: peers.length ? `${peers.length} linked` : "Lobby open"
-				});
-				if (this.role === "host") {
-					this.room?.send({
-						t: "world",
-						dungeons: this.save?.dungeons,
-						seed: this.save?.seed,
-						map: this.save?.map,
-						x: this.save?.x,
-						y: this.save?.y
-					});
-					this.broadcastMobs();
-				}
-			},
-			onMessage: (from, data) => this.onNet(from, data)
-		});
-		this.room = opened;
-		opened.join();
-	}
-	onNet(from, data) {
-		const msg = data;
-		if (!msg || typeof msg.t !== "string") return;
-		const save = this.save;
-		if (msg.t === "p") this.remotes.set(from, {
-			name: String(msg.name ?? "Hunter"),
-			x: Number(msg.x),
-			y: Number(msg.y),
-			hp: Number(msg.hp),
-			max: Number(msg.max),
-			race: msg.race || "vesper",
-			classId: Object.hasOwn(CLASS_BY_ID, msg.classId) ? msg.classId : undefined,
-			host: !!msg.host,
-			female: msg.female !== false,
-			level: Number(msg.level) || 1,
-			direction: ["up", "right", "down", "left"].includes(msg.direction) ? msg.direction : "down",
-			facing: Number(msg.facing) || 1,
-			map: msg.map || "world",
-			pieces: Array.isArray(msg.pieces) ? msg.pieces : []
-		});
-		else if (msg.t === "dungeons" && this.role === "guest" && save) save.dungeons = normalizeDungeonState(msg.dungeons);
-		else if (msg.t === "world" && this.role === "guest" && save) {
-			save.dungeons = normalizeDungeonState(msg.dungeons);
-			const seed = Number(msg.seed);
-			if (Number.isFinite(seed) && (seed !== save.seed || msg.map !== save.map)) {
-				save.seed = seed;
-				this.overworld = null;
-				this.switchTo(msg.map || "world", {
-					x: Number(msg.x) || save.x,
-					y: Number(msg.y) || save.y
-				});
-			}
-		} else if (msg.t === "mobs" && this.role === "guest" && Array.isArray(msg.list)) this.applyMobSnap(msg.list);
-		else if (msg.t === "dmg" && this.role === "host") {
-			const mob = this.mobs.find((m) => m.id === msg.id && m.alive);
-			if (mob) this.applyMobDamage(mob, Number(msg.amount) || 0);
-		} else if (msg.t === "dead") {
-			const mob = this.mobs.find((m) => m.id === msg.id);
-			if (mob && mob.alive && this.role === "guest") {
-				mob.alive = false;
-				mob.hp = 0;
-				this.say(`${mob.name} falls.`);
-				const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
-					level: save?.level ?? 1,
-					bonus: mob.boss ? SOURCE_BONUS.boss : 0,
-					raceBias: save?.race,
-					luck: 10,
-					floor: mob.boss ? "rare" : null
-				});
-				save?.gear && this.receiveGear(piece);
-				this.say(`Your roll: ${piece.name}.`);
-			}
-		} else if (msg.t === "go" && save) {
-			if (msg.dungeons) save.dungeons = normalizeDungeonState(msg.dungeons);
-			this.switchTo(msg.map, { x: Number(msg.x), y: Number(msg.y) });
-		}
-		else if (msg.t === "chat") {
-			this.chat.push({
-				name: String(msg.name ?? "?"),
-				text: String(msg.text ?? "").slice(0, 140)
-			});
-			this.chat = this.chat.slice(-8);
-			publish({ chat: this.chat });
-		} else if (msg.t === "trade") this.onTrade(from, msg);
-	}
-	applyMobSnap(list) {
-		for (const row of list) {
-			let mob = this.mobs.find((m) => m.id === row.id);
-			if (!mob) continue;
-			const prev = this.seenSwing.get(row.id) ?? 0;
-			mob.x = row.x;
-			mob.y = row.y;
-			mob.hp = row.hp;
-			mob.alive = row.alive;
-			mob.move = row.move;
-			if (row.swing > prev) {
-				this.seenSwing.set(row.id, row.swing);
-				const move = MOVE_BY_ID[row.move] ?? MOVES[0];
-				const save = this.save;
-				this.playMoveFx(move, mob.x, mob.y - 12, save.x, save.y - 18);
-				if (Math.hypot(mob.x - save.x, mob.y - save.y) < attackRange(move) + 16) this.queueStrike(mob, move);
-			}
-		}
-	}
-	broadcastPos() {
-		const save = this.save;
-		if (!save || !this.room) return;
-		const pieces = [
-			"weapon",
-			"head",
-			"chest",
-			"legs",
-			"feet",
-			"relic"
-		].map((s) => this.piece(s)).filter((g) => !!g);
-		this.room.broadcast({
-			t: "p",
-			name: save.name,
-			x: save.x,
-			y: save.y,
-			hp: save.hp,
-			max: this.maxHp(),
-			race: save.race,
-			classId: save.classId,
-			female: save.female !== false,
-			level: save.level,
-			host: this.role === "host",
-			direction: this.direction,
-			facing: this.facing,
-			map: save.map,
-			pieces
-		});
-	}
-	broadcastMobs() {
-		if (!this.room) return;
-		this.room.broadcast({
-			t: "mobs",
-			list: this.mobs.map((m) => ({
-				id: m.id,
-				x: m.x,
-				y: m.y,
-				hp: m.hp,
-				alive: m.alive,
-				swing: m.swing,
-				move: m.move
-			}))
-		});
-	}
-	sendChat(text) {
-		const save = this.save;
-		if (!save) return;
-		const line = text.trim().slice(0, 140);
-		if (!line) return;
-		this.chat.push({
-			name: save.name,
-			text: line
-		});
-		this.chat = this.chat.slice(-8);
-		this.room?.send({
-			t: "chat",
-			name: save.name,
-			text: line
-		});
-		publish({ chat: this.chat });
-	}
-	toggleTrade() {
-		if (!this.save || this.dead) return;
-		const near = this.nearestRemote();
-		if (!near) return this.say("No hunter close enough to trade.");
-		this.trade = {
-			peer: near.id,
-			mine: [],
-			items: {},
-			theirsGear: [],
-			theirsItems: {},
-			me: false,
-			them: false,
-			nonce: nextUid()
-		};
-		this.room?.send({
-			t: "trade",
-			op: "open",
-			nonce: this.trade.nonce
-		}, near.id);
-		publish({ panel: "trade" });
-		this.syncHud(true);
-	}
-	offerSelected() {
-		if (!this.trade || !this.selected) return;
-		if (!this.trade.mine.includes(this.selected)) this.trade.mine.push(this.selected);
-		this.pushOffer();
-	}
-	offerItem(id) {
-		if (!this.trade) return;
-		this.trade.items[id] = (this.trade.items[id] ?? 0) + 1;
-		this.pushOffer();
-	}
-	lockTrade() {
-		if (!this.trade) return;
-		this.trade.me = !this.trade.me;
-		this.pushOffer();
-		this.tryCommit();
-	}
-	pushOffer() {
-		if (!this.trade || !this.save) return;
-		const gear = this.trade.mine.map((id) => this.save.gear.find((g) => g.uid === id)).filter((g) => !!g);
-		this.room?.send({
-			t: "trade",
-			op: "offer",
-			gear,
-			items: this.trade.items,
-			lock: this.trade.me,
-			nonce: this.trade.nonce
-		}, this.trade.peer);
-		this.syncHud(true);
-	}
-	onTrade(from, msg) {
-		if (!this.save || this.dead) return;
-		if (msg.op === "open") {
-			this.trade = {
-				peer: from,
-				mine: [],
-				items: {},
-				theirsGear: [],
-				theirsItems: {},
-				me: false,
-				them: false,
-				nonce: String(msg.nonce ?? nextUid())
-			};
-			publish({ panel: "trade" });
-		}
-		if (!this.trade || this.trade.peer !== from) return;
-		if (msg.op === "offer") {
-			this.trade.theirsGear = msg.gear ?? [];
-			this.trade.theirsItems = msg.items ?? {};
-			this.trade.them = !!msg.lock;
-			this.tryCommit();
-		}
-		this.syncHud(true);
-	}
-	tryCommit() {
-		const tr = this.trade;
-		const save = this.save;
-		if (!tr || !save || !tr.me || !tr.them) return;
-		for (const uid of tr.mine) {
-			save.gear = save.gear.filter((g) => g.uid !== uid);
-			for (const k of Object.keys(save.equipped)) if (save.equipped[k] === uid) delete save.equipped[k];
-		}
-		for (const [id, n] of Object.entries(tr.items)) save.bag[id] = Math.max(0, (save.bag[id] ?? 0) - n);
-		for (const g of tr.theirsGear) this.receiveGear({
-			...g,
-			uid: nextUid()
-		});
-		for (const [id, n] of Object.entries(tr.theirsItems)) this.giveItem(id, n);
-		this.trade = null;
-		this.say("Trade sealed.");
-		publish({
-			panel: null,
-			trade: null
-		});
-		this.persist();
-	}
-	nearestRemote() {
-		const save = this.save;
-		if (!save) return null;
-		let best = null;
-		let bd = 90;
-		for (const [id, r] of this.remotes) {
-			if (r.map !== save.map) continue;
-			const d = Math.hypot(r.x - save.x, r.y - save.y);
-			if (d < bd) {
-				bd = d;
-				best = {
-					id,
-					name: r.name
-				};
-			}
-		}
-		return best;
-	}
-	lobbyInfo() {
-		const save = this.save;
-		const members = [];
-		if (save && this.room) members.push({ id: this.selfId, name: save.name, classId: save.classId, className: CLASS_BY_ID[save.classId]?.name ?? "", level: save.level, hp: Math.ceil(save.hp), max: this.maxHp(), map: save.map, self: true, host: this.role === "host" });
-		for (const p of this.peers ?? []) {
-			const r = this.remotes.get(p.id);
-			members.push({ id: p.id, name: r?.name || p.name || p.id.slice(0, 4), classId: r?.classId ?? "", className: r?.classId ? CLASS_BY_ID[r.classId]?.name ?? "" : p.state === "connected" ? "Linked" : "Connecting", level: r?.level ?? 0, hp: Math.ceil(r?.hp ?? 0), max: r?.max ?? 0, map: r?.map ?? "", self: false, host: !!r?.host });
-		}
-		return { code: snap.roomCode || "", role: this.room ? this.role : "solo", net: snap.net || "", members };
-	}
-	hostLobby(code) {
-		if (!this.save) return;
-		this.openRoom("host", code);
-		this.say(`Lobby ${code.toUpperCase()} is open. Share the code.`);
-	}
-	joinLobby(code) {
-		if (!this.save || String(code).trim().length < 3) return;
-		this.openRoom("guest", code);
-		this.say(`Joining lobby ${code.toUpperCase()}...`);
-	}
-	leaveLobby() {
-		this.room?.close();
-		this.room = null;
-		this.role = "solo";
-		this.peers = [];
-		this.remotes.clear();
-		publish({ roomCode: "", net: "", peers: [] });
-		this.say("You left the lobby.");
-		this.syncHud(true);
-	}
 	buildSheet() {
 		const base = this.buildSheetBase();
 		if (snap.panel === "sheet" || !this.sheetExtraCache) this.sheetExtraCache = this.sheetExtras(base);
@@ -8463,7 +8166,6 @@ export class TurbzGame {
 			className: CLASS_BY_ID[save.classId]?.name ?? "",
 			clock: this.clockInfo(),
 			build: this.buildInfo(),
-			lobby: !slow ? snap.lobby : this.lobbyInfo(),
 			race: !slow ? snap.race : save.race,
 			level: save.level,
 			dungeonCountdown: Math.ceil(DUNGEON_INTERVAL - (save.dungeons?.elapsed ?? 0)),

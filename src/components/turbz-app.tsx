@@ -12,7 +12,7 @@ import { postGrave } from "@/game/social-client";
 import type { GraveBody } from "@/game/social-types";
 import { DesignerMode } from "@/components/designer-mode";
 import { ArenaScreen } from "@/components/arena-ui";
-import { Boards, ChatDock, DuelBanner, Hub, Options, ShiniesScreen } from "@/components/hub-ui";
+import { Boards, DuelBanner, Hub, Options, ShiniesScreen } from "@/components/hub-ui";
 import { readShinies } from "@/game/account-save";
 import { captureShinyGif, captureShinySeenGif } from "@/game/shiny-gif";
 import { postShinySeen, writeShinies } from "@/game/cloud-client";
@@ -20,7 +20,7 @@ import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, LootPicker } from "@/components/inventory-ui";
-import { ContextMenu, CraftPanel, DiedOverlay, GameChat, LobbyPanel, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
+import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
 
@@ -117,8 +117,6 @@ function Hunt() {
   const [name, setName] = useState("Mira");
   const [pick, setPick] = useState<Pick>({ classId: "warden", traitId: null, female: true });
   const race = CLASS_RACE[pick.classId];
-  const [code, setCode] = useState("");
-  const [intent, setIntent] = useState<"solo" | "host" | "join">("solo");
   const [screen, setScreen] = useState<ScreenId>("hub");
   const [arenaSeed, setArenaSeed] = useState<unknown>(null);
   const [booted, setBooted] = useState(false);
@@ -184,20 +182,12 @@ function Hunt() {
   }, []);
 
   const g = () => gameRef.current;
-  const joinCode = (c: string) => {
-    if (c.length < 3) return;
-    setCode(c);
-    setIntent("join");
-    if (hasSave) g()?.continueGame({ role: "guest", code: c });
-    else setCreate(true);
-  };
   const playing = mode === "play";
 
   return (
     <main className="game-root">
       <canvas ref={canvasRef} className="game-canvas" aria-label="TURBZ wilds" />
       <div className="overlay">
-        {!create && screen !== "designer" && !playing && <ChatDock username={username} playing={false} />}
         {screen === "hub" && !playing && (
           <Hub
             username={username}
@@ -222,19 +212,9 @@ function Hunt() {
           <Title
             kind={screen === "hard" ? "hard" : "hunt"}
             hasSave={hasSave}
-            code={code}
-            setCode={setCode}
             onBack={() => setScreen("hub")}
-            onNew={() => { setIntent("solo"); setCreate(true); }}
+            onNew={() => setCreate(true)}
             onContinue={() => g()?.continueGame()}
-            onHost={() => {
-              const c = code.trim() || makeCode();
-              setCode(c);
-              setIntent("host");
-              if (hasSave) g()?.continueGame({ role: "host", code: c });
-              else setCreate(true);
-            }}
-            onJoin={() => joinCode(code.trim())}
             circleReady={booted}
             onCircle={() => setScreen("circle")}
           />
@@ -249,8 +229,7 @@ function Hunt() {
             hard={screen === "hard"}
             onBack={() => setCreate(false)}
             onGo={() => {
-              const lobby = intent === "solo" ? undefined : { role: intent === "host" ? ("host" as const) : ("guest" as const), code: code.trim() || makeCode() };
-              g()?.begin(name, race, lobby, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true);
+              g()?.begin(name, race, undefined, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true);
               setCreate(false);
             }}
           />
@@ -282,21 +261,12 @@ function Hunt() {
   );
 }
 
-function makeCode(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: 6 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
-}
-
 function Title(props: {
   kind: "hunt" | "hard";
   hasSave: boolean;
-  code: string;
-  setCode: (v: string) => void;
   onBack: () => void;
   onNew: () => void;
   onContinue: () => void;
-  onHost: () => void;
-  onJoin: () => void;
   circleReady: boolean;
   onCircle: () => void;
 }) {
@@ -314,17 +284,6 @@ function Title(props: {
         {!hard && <Tile title="TurboCircle" about="Battle simulator." onClick={props.onCircle} disabled={!props.circleReady} />}
         <Tile title="Back" about="Return to the veil." onClick={props.onBack} />
       </div>
-      {!hard && (
-        <div className="ui-card ui-stack-sm">
-          <span className="ui-section-title">PLAY TOGETHER</span>
-          <p className="text-dim">Create a lobby and share its code. A lobby only exists while its host is online.</p>
-          <div className="lobby-join">
-            <input value={props.code} onChange={(e) => props.setCode(e.target.value.toUpperCase().slice(0, 6))} placeholder="CODE" aria-label="Lobby code" autoComplete="off" className="px-input font-display text-xs" />
-            <button className="px-btn" data-testid="title-create-btn" onClick={props.onHost}>Create</button>
-            <button className="px-btn" data-testid="title-join-btn" onClick={props.onJoin}>Join</button>
-          </div>
-        </div>
-      )}
       <p className="text-dim">
         {hard
           ? "Counters, steps and rolls can slip. A long roll can clear a blow. Strike when it is your verse."
@@ -357,15 +316,15 @@ function Create(props: { name: string; setName: (v: string) => void; pick: Pick;
 // In game
 // ---------------------------------------------------------------------------
 
-const PANEL_IDS = ["sheet", "lobby", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost"] as const;
+const PANEL_IDS = ["sheet", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost"] as const;
 type PanelId = (typeof PANEL_IDS)[number];
 const PANEL_TITLE: Record<PanelId, string> = {
-  sheet: "Character Sheet", lobby: "Multiplayer Lobby", bag: "Bag", skills: "Skills & Perks", moves: "Verses", quests: "Quests",
+  sheet: "Character Sheet", bag: "Bag", skills: "Skills & Perks", moves: "Verses", quests: "Quests",
   map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest", wildghost: "Lingering Ghost",
 };
 /** Default window widths. Rebuilt windows use new layout keys so an old, cramped saved size does not carry over. */
-const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560, lobby: 440 };
-const REBUILT = new Set<PanelId>(["bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause", "lobby"]);
+const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, bag: 900, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560 };
+const REBUILT = new Set<PanelId>(["bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause"]);
 
 function winId(panel: PanelId): string {
   if (panel === "map") return "panel-map-v3";
@@ -416,7 +375,6 @@ const LootWin = memo(function LootWin({ game }: GameProp) {
 function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) {
   switch (panel) {
     case "sheet": return <SheetWin />;
-    case "lobby": return <LobbyPanel game={game} />;
     case "bag": return <BagWin game={game} />;
     case "skills": return <SkillsPanel game={game} />;
     case "moves": return <VersesPanel game={game} />;
@@ -508,9 +466,6 @@ function Play({ game, username: _username }: { game: TurbzGame | null; username:
       <HudVitals game={game} />
       <HudTarget />
       <HudTracker game={game} />
-      <FloatWin id="chat-v2" title="Chat" compact def={() => (narrow() ? { x: 8, y: 132, w: vw() - 16, collapsed: true } : { x: Math.max(8, vw() - 300), y: 8, w: 290, collapsed: true })}>
-        <GameChat game={game} />
-      </FloatWin>
       <HudDock game={game} />
       <HudFabs game={game} />
       <Stick on={(x, y) => game?.setStick(x, y)} />

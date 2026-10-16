@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Backpack, Compass, FlaskConical, Ghost, Map as MapIcon, Menu, ScrollText, Store, Swords, Tent, User, Users } from "lucide-react";
+import { Backpack, Compass, FlaskConical, Ghost, Map as MapIcon, Menu, ScrollText, Store, Swords, Tent, User } from "lucide-react";
 import { TYPES } from "@/game/content";
 import type { TurbzGame } from "@/game/engine";
 import { useSnapPick } from "./use-snap";
@@ -133,7 +133,7 @@ const TRACK_KEY = "turbz-hud-tracker-open";
 
 /** Top-right: everything you are tracking. Folds to one line. */
 export const HudTracker = memo(function HudTracker({ game }: GameProp) {
-  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "mapQuests", "shrine", "roomCode", "lobby", "jarLeft", "autoplay", "grind", "rules", "unstuck"] as const);
+  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "mapQuests", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck"] as const);
   const [open, setOpen] = useState(() => {
     try {
       const saved = localStorage.getItem(TRACK_KEY);
@@ -170,7 +170,6 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   if (s.shrine) rows.push(<p key="shrine" className="text-kyo">{s.shrine}</p>);
   if (s.jarLeft > 0) rows.push(<p key="jar" className="text-kyo">Ghost jar · {s.jarLeft}s</p>);
   if (s.autoplay) rows.push(<p key="auto" className="text-kyo">{s.rules === "hardcore" ? "Grinding" : "Autoplay"} · {s.grind || "looking"}</p>);
-  if (s.roomCode) rows.push(<p key="lobby" className="text-kyo" data-testid="vitals-lobby">Lobby {s.roomCode} · {s.lobby.members.length} in party</p>);
   if (s.unstuck) rows.push(<p key="unstuck" className="text-kyo">Unstuck in {s.unstuck}</p>);
   if (!rows.length) return null;
   return (
@@ -195,7 +194,6 @@ const MENUS = [
   { id: "trade", label: "Market", key: "T", Icon: Store, testid: "hud-market-btn" },
   { id: "survival", label: "Camp", key: "H", Icon: Tent, testid: "hud-survival-btn", hardcore: true },
   { id: "map", label: "Map", key: "M", Icon: MapIcon, testid: "hud-map-btn" },
-  { id: "lobby", label: "Lobby", key: "L", Icon: Users, testid: "hud-lobby-btn" },
 ] as const;
 
 /** Bottom-centre: verses and every menu, in one place. */
