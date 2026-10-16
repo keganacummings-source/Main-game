@@ -79,3 +79,36 @@ test("the new season wipes every old grave once, and death channels are kept per
   s2.dropChannel("c2");
   assert.deepEqual(s2.channels(), []);
 });
+
+test("/shiny username answers with the collection GIF, or says who has none", async () => {
+  const { pub, sign } = await keys();
+  const env = { DISCORD_PUBLIC_KEY: pub } as any;
+  const gif = new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 1, 2, 3]);
+  const store = {
+    setChannel: () => {},
+    shinies: (name: string) => (name === "kegan" ? { display: "Kegan", count: 2, names: ["Onibi Lv 4", "Yuki Lv 9"], gif } : name === "empty" ? { display: "Empty", count: 0, names: [], gif: null } : null),
+  };
+  const ask = async (username: string) => {
+    const body = JSON.stringify({ type: 2, data: { name: "shiny", options: [{ name: "username", type: 3, value: username }] } });
+    return handleInteraction(new Request("https://x/api/discord/interactions", { method: "POST", body, headers: { "x-signature-ed25519": await sign("7", body), "x-signature-timestamp": "7" } }), env, store);
+  };
+  const ok = await ask("kegan");
+  const form = await ok.formData();
+  const payload = JSON.parse(String(form.get("payload_json")));
+  assert.equal(payload.type, 4);
+  assert.match(payload.data.embeds[0].title, /Kegan/);
+  assert.equal(payload.data.embeds[0].image.url, "attachment://shinies.gif");
+  const file = form.get("files[0]") as Blob;
+  assert.equal(new Uint8Array(await file.arrayBuffer())[0], 0x47);
+  assert.match(((await (await ask("empty")).json()) as any).data.content, /not caught a shiny/);
+  assert.match(((await (await ask("nobody")).json()) as any).data.content, /No TURBZ account/);
+});
+
+test("a shiny sighting embed says who saw which ghost, with its GIF", async () => {
+  const { shinySeenEmbed } = await import("./discord.ts");
+  const e = shinySeenEmbed({ username: "kegan", witch: "Mira", name: "Onibi", species: "onibi", level: 12, type: "fire", place: "Hearthmere", mode: "hunt" }, true) as any;
+  assert.match(e.title, /Shiny Ghost Seen: Onibi/);
+  assert.match(e.description, /Mira/);
+  assert.match(e.description, /kegan/);
+  assert.equal(e.image.url, "attachment://shiny.gif");
+});

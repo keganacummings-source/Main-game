@@ -61,10 +61,16 @@ export function readAccountMeta(): Record<string, unknown> | null {
   return meta && typeof meta === "object" ? (meta as Record<string, unknown>) : null;
 }
 
+/** Account records that live beside the progress fields and must survive every progress write. */
+const KEEP = ["ascensions", "shinies"] as const;
+
 export function writeAccountMeta(value: Record<string, unknown>): void {
-  meta = value;
+  const prev = readAccountMeta();
+  const kept: Record<string, unknown> = {};
+  for (const k of KEEP) if (prev && prev[k] !== undefined && value[k] === undefined) kept[k] = prev[k];
+  meta = { ...kept, ...value };
   try {
-    localStorage.setItem(META_KEY, JSON.stringify(value));
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
   } catch {
     /* private mode */
   }
@@ -124,4 +130,75 @@ function flush(): void {
     meta: meta ?? readAccountMeta(),
   } satisfies Bundle);
   writer(json);
+}
+
+/**
+ * Ascension: wipes every bit of account progress — the TurboHunt witch, the Hardcore witch, TurboCircle,
+ * account level, perks, skills and Account Score — here and in the cloud. Only the number of times you
+ * have ascended (and the Shiny collection, which is a record rather than power) carries over.
+ */
+export function wipeAccountProgress(): number {
+  const prev = readAccountMeta();
+  const ascensions = Math.max(0, Math.floor(Number(prev?.ascensions) || 0)) + 1;
+  const shinies = prev?.shinies;
+  hunt = null;
+  arena = null;
+  hardcore = null;
+  meta = { ascensions, ...(shinies ? { shinies } : {}) };
+  try {
+    localStorage.removeItem(ARENA_KEY);
+    localStorage.removeItem(HARD_KEY);
+    localStorage.removeItem("turbz-v3");
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  } catch {
+    /* private mode */
+  }
+  flush();
+  return ascensions;
+}
+
+/** How many times this account has ascended. */
+export function ascensionCount(): number {
+  return Math.max(0, Math.floor(Number(readAccountMeta()?.ascensions) || 0));
+}
+
+// ── Shiny collection ────────────────────────────────────────────────────────
+
+/** One shiny ghost this account has picked up. Kept forever (Ascension included): it is a record, not power. */
+export type ShinyEntry = {
+  uid: string;
+  species: string;
+  name: string;
+  type: string;
+  template: number;
+  rarity: number;
+  level: number;
+  speed: number;
+  max: number;
+  look: unknown;
+  at: number;
+  mode: string;
+  by: string;
+};
+export const SHINY_MAX = 400;
+
+export function readShinies(): ShinyEntry[] {
+  const list = readAccountMeta()?.shinies;
+  return Array.isArray(list) ? (list.filter((s) => s && typeof s === "object" && typeof (s as ShinyEntry).uid === "string") as ShinyEntry[]) : [];
+}
+
+/** Adds a shiny to the account's collection. Returns false if it was already there. */
+export function noteShiny(entry: ShinyEntry): boolean {
+  const list = readShinies();
+  if (list.some((s) => s.uid === entry.uid)) return false;
+  list.push(entry);
+  if (list.length > SHINY_MAX) list.splice(0, list.length - SHINY_MAX);
+  meta = { ...(readAccountMeta() ?? {}), shinies: list };
+  try {
+    localStorage.setItem(META_KEY, JSON.stringify(meta));
+  } catch {
+    /* private mode */
+  }
+  flush();
+  return true;
 }

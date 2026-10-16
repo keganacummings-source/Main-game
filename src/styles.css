@@ -98,6 +98,15 @@
   border-color: var(--color-ink);
 }
 
+.px-btn-blood {
+  background: var(--color-blood);
+  color: var(--color-bone);
+  border-color: var(--color-ink);
+}
+.px-btn-blood:disabled {
+  opacity: 0.45;
+}
+
 .vitals-dock {
   position: absolute;
   top: 8px;
@@ -1197,3 +1206,34 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .verse-next { font-size: 0.85em; color: #e6c15a; }
 .text-bad { color: #e0605a; }
 .wild-rename { margin-left: 8px; vertical-align: middle; }
+
+/* You Died */
+.died-overlay {
+  background: radial-gradient(ellipse at center, rgba(20, 0, 0, 0.55), rgba(0, 0, 0, 0.92));
+  animation: died-fade 1.4s ease-out both;
+}
+.died-panel {
+  display: grid;
+  gap: 10px;
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  text-align: center;
+  padding: 8px;
+}
+.died-title {
+  font-family: "Press Start 2P", monospace;
+  font-size: clamp(28px, 8vw, 56px);
+  color: var(--color-blood);
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 18px rgba(196, 71, 58, 0.7), 4px 4px 0 #000;
+  animation: died-title 2.2s ease-out both;
+}
+.died-sub { color: var(--color-bone); }
+.died-stats { text-align: left; padding: 10px 12px; animation: died-fade 1s 1.2s ease-out both; }
+@keyframes died-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes died-title {
+  0% { opacity: 0; transform: scale(1.35); filter: blur(6px); }
+  60% { opacity: 1; transform: scale(1); filter: blur(0); }
+  100% { opacity: 1; transform: scale(1); }
+}

@@ -308,7 +308,7 @@ export function installLms(game: any): void {
     this.dead = true;
     this.dest = null;
     this.say(`You fell. Place #${match.place} of ${match.total}.`);
-    this.tone(70, 0.3, "sawtooth");
+    this.playYouDied?.();
     this.syncHud(true);
   };
 

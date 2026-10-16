@@ -85,7 +85,7 @@ import {
   type FxId,
 } from "./content";
 import type { GraveBody } from "./social-types";
-import { readAccountMeta, writeAccountMeta } from "./account-save";
+import { noteShiny, readAccountMeta, wipeAccountProgress, writeAccountMeta } from "./account-save";
 import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
@@ -148,7 +148,11 @@ import {
   type WorldData,
 } from "./world";
 
-export type Panel = null | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost";
+export type DeathReport = {
+  name: string; className: string; focus: string; level: number; mode: string; cause: string; kills: number; survived: string;
+  kyo: number; score: number; accountScore: number; spirits: number; shinies: number; gear: string[]; skills: { name: string; level: number }[];
+};
+export type Panel = null | "died" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost";
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
 export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
@@ -160,6 +164,8 @@ export type WildGhostView = {
 };
 export type Snap = {
   mode: "title" | "create" | "play";
+  /** The You Died report while the death screen is up. */
+  died: DeathReport | null;
   hasSave: boolean;
   panel: Panel;
   name: string;
@@ -206,7 +212,7 @@ export type Snap = {
   spiritSlots: number;
   spiritCap: number;
   /** Ghosts kept in the Ghost Box. */
-  ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean }[];
+  ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean; tagged: boolean }[];
   ghostBox: { placed: boolean; near: boolean; max: number };
   /** The loot chest you have open (Hardcore). */
   chest: ChestView | null;
@@ -337,6 +343,13 @@ type Save = {
   pendingLoot?: PendingLoot | null;
   /** Gear uids protected from Sell All. */
   locked?: string[];
+  /** Id of the overworld this hunter last played on (changes when a new main world is chosen). */
+  mainWorld?: string;
+  /** This life: foes defeated and seconds survived (for the death screen). */
+  lifeKills?: number;
+  lifeT?: number;
+  /** The last death, shown on the You Died screen until a new witch wakes. */
+  lastDeath?: DeathReport | null;
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -363,6 +376,39 @@ type Flo = { x: number; y: number; text: string; life: number; color: string };
 type TurnStep = { side: "you" | "foe" | "spirit"; id: string };
 
 const SAVE_KEY = "turbz-v3";
+/** Chance an overworld foe rolls a random kind instead of its camp's set kind. */
+const OVERWORLD_RANDOM_FOE = 0.45;
+/** Tagged Ghost Box ghosts: how many may follow, and how small they are drawn. */
+const TINY_MAX = 20;
+const TINY_SCALE = 0.25;
+/**
+ * Ghost float tuning. near/far: how close the wander spots are; hold: seconds at a spot; spring/drag/max:
+ * how they move there; trail: how far they lag when you walk; jitter/kick: random darts (shinies).
+ */
+const GHOST_DRIFT = {
+	normal: { near: 24, far: 62, flat: 0.55, lift: -4, hold: [1.6, 3.8], arrive: 6, restless: 0.4, spring: 7, drag: 2.6, max: 150, trail: 26, bob: 3, bobRate: 2.1, jitter: 0, kick: 0 },
+	shiny: { near: 14, far: 44, flat: 0.6, lift: -10, hold: [0.25, 0.9], arrive: 5, restless: 3, spring: 22, drag: 3.4, max: 290, trail: 12, bob: 4, bobRate: 5.3, jitter: 2.2, kick: 120 },
+	tiny: { near: 3, far: 15, flat: 0.5, lift: 0, hold: [0.8, 2.2], arrive: 2, restless: 1, spring: 14, drag: 3.2, max: 140, trail: 6, bob: 1.5, bobRate: 2.6, jitter: 0, kick: 0 },
+	tinyShiny: { near: 2, far: 18, flat: 0.55, lift: 0, hold: [0.2, 0.7], arrive: 2, restless: 4, spring: 30, drag: 4, max: 220, trail: 4, bob: 2, bobRate: 6, jitter: 3, kick: 70 },
+	perch: { near: 0, far: 2.5, flat: 0.6, lift: 0, hold: [1, 3], arrive: 1, restless: 1, spring: 40, drag: 7, max: 200, trail: 2, bob: 0.6, bobRate: 3, jitter: 0, kick: 0 },
+};
+/** The sound effect sample sits near this pitch; tone(freq) plays it at freq / SFX_BASE_HZ speed. */
+const SFX_BASE_HZ = 330;
+const SFX_VOL: Record<string, number> = { square: 0.32, sawtooth: 0.3, triangle: 0.3, sine: 0.26 };
+function sfxFile(name: string): string {
+	let ogg = true;
+	try { ogg = typeof Audio !== "undefined" && new Audio().canPlayType("audio/ogg; codecs=vorbis") !== ""; } catch { ogg = true; }
+	return `/sfx/${name}.${ogg ? "ogg" : "mp3"}`;
+}
+function gritCurve(): Float32Array {
+	const n = 256, c = new Float32Array(n);
+	for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(x * 2.4); }
+	return c;
+}
+/** Quest XP: written rewards are multiplied, plus a share of the current level's XP bar. */
+const QUEST_XP_MULT = 2;
+const QUEST_XP_SHARE = 0.15;
+const BOARD_XP_SHARE = { easy: 0.2, normal: 0.3, hard: 0.45, elite: 0.7 };
 /** Ghosts out with you at once, ghosts in the party, and ghosts the Ghost Box can hold. */
 const OUT_MAX = 3;
 const PARTY_MAX = 6;
@@ -384,6 +430,7 @@ const BED_REST = 1.5;
 const HC_KEY = "turbz-hardcore-v1";
 const emptySnap = (): Snap => ({
 	mode: "title",
+	died: null,
 	hasSave: false,
 	panel: null,
 	name: "",
@@ -825,6 +872,7 @@ export class TurbzGame {
 			if (AC) this.audio = new AC();
 		}
 		this.audio?.resume();
+		this.loadSfx();
 		if (!this.musicTried) {
 			this.musicTried = true;
 			this.playMusic("veil.ogg");
@@ -846,7 +894,76 @@ export class TurbzGame {
 			await audio.play();
 		} catch {}
 	}
+	/** Loads the game's sound effect sample once (Ogg where the browser plays it, MP3 elsewhere). */
+	loadSfx() {
+		if (!this.audio || this.sfxBuf || this.sfxLoading) return;
+		this.sfxLoading = true;
+		const file = sfxFile("sound-fx1");
+		fetch(file).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error("no sfx")))).then((b) => this.audio.decodeAudioData(b)).then((buf) => { this.sfxBuf = buf; }).catch(() => { this.sfxFailed = true; });
+	}
+	/**
+	 * Every game sound is the one sample, played at a pitch, length and colour that fit the moment: high
+	 * and short for pickups and level-ups, low and long for hits and deaths. `type` picks the colour the
+	 * old synth wave had (sine soft, triangle mellow, square plain, sawtooth gritty). Falls back to the
+	 * old synth until the sample has loaded.
+	 */
 	tone(freq, dur, type = "square") {
+		if (!this.audio) return;
+		if (!this.sfxBuf && !this.sfxFailed) this.loadSfx();
+		if (this.sfxBuf) return this.playSample(freq, dur, type);
+		this.synth(freq, dur, type);
+	}
+	playSample(freq, dur, type) {
+		const ac = this.audio;
+		if ((this.sfxVoices ?? 0) >= 12) return;
+		const now = ac.currentTime;
+		const rate = Math.max(0.25, Math.min(4, freq / SFX_BASE_HZ));
+		const len = Math.min(this.sfxBuf.duration / rate, Math.max(0.08, dur * 2.4));
+		const src = ac.createBufferSource();
+		src.buffer = this.sfxBuf;
+		src.playbackRate.value = rate;
+		const vol = SFX_VOL[type] ?? 0.3;
+		const gain = ac.createGain();
+		gain.gain.setValueAtTime(vol, now);
+		gain.gain.setValueAtTime(vol, now + len * 0.55);
+		gain.gain.linearRampToValueAtTime(0.0001, now + len);
+		let head = src;
+		if (type === "sine" || type === "triangle") {
+			const f = ac.createBiquadFilter();
+			f.type = "lowpass";
+			f.frequency.value = type === "sine" ? 1400 : 3200;
+			head.connect(f);
+			head = f;
+		} else if (type === "sawtooth") {
+			const shaper = ac.createWaveShaper();
+			shaper.curve = this.grit ?? (this.grit = gritCurve());
+			const f = ac.createBiquadFilter();
+			f.type = "highpass";
+			f.frequency.value = 90;
+			head.connect(shaper);
+			shaper.connect(f);
+			head = f;
+		}
+		head.connect(gain);
+		gain.connect(ac.destination);
+		this.sfxVoices = (this.sfxVoices ?? 0) + 1;
+		src.onended = () => { this.sfxVoices = Math.max(0, (this.sfxVoices ?? 1) - 1); };
+		src.start(now);
+		src.stop(now + len + 0.02);
+	}
+	/** The You Died sting (also used by Last Man Standing). Music ducks under it. */
+	playYouDied() {
+		try {
+			const a = new Audio(sfxFile("you-died"));
+			a.volume = 0.85;
+			const music = this.music;
+			if (music) { const was = music.volume; music.volume = Math.min(was, 0.08); setTimeout(() => { if (this.music === music) music.volume = was; }, 6200); }
+			void a.play().catch(() => this.synth(70, .3, "sawtooth"));
+		} catch {
+			this.synth(70, .3, "sawtooth");
+		}
+	}
+	synth(freq, dur, type = "square") {
 		if (!this.audio) return;
 		const o = this.audio.createOscillator();
 		const g = this.audio.createGain();
@@ -902,6 +1019,7 @@ export class TurbzGame {
 		const save = {
 			v: 3,
 			worldVer: mainWorldFile() ? 2 : 1,
+			mainWorld: this.mainWorldSig(),
 			name: (name || "Huntress").slice(0, 16),
 			race,
 			classId,
@@ -980,6 +1098,8 @@ export class TurbzGame {
 		this.lastHit = null;
 		this.normalize(save);
 		this.save = save;
+		// Shinies caught before the collection existed join it now.
+		if (!this.lms) for (const sp of [...(save.spirits ?? []), ...(save.ghostStore ?? [])]) if (sp?.shiny) this.recordShiny(sp);
 		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
 		// Enemy Designer creations join (or replace) the monster tables before the world is built.
 		try { installEnemyDesigns(); } catch { /* a broken design must not stop the game */ }
@@ -1027,7 +1147,8 @@ export class TurbzGame {
 		this.cam.y = save.y;
 		publish({
 			mode: "play",
-			panel: this.dead ? "rebirth" : null,
+			panel: this.dead ? (save.lastDeath ? "died" : "rebirth") : null,
+			died: this.dead ? save.lastDeath ?? null : null,
 			hasSave: true
 		});
 		this.ensureHunt();
@@ -1041,7 +1162,24 @@ export class TurbzGame {
 	 * old generated world no longer line up, so the hunter wakes at the new hearth. Veilreach progress
 	 * (played as a separate map) carries straight over.
 	 */
+	/** The main world's id plus a fingerprint, so a rebuilt Veilreach counts as a new world too. */
+	mainWorldSig() {
+		const mf = mainWorldFile();
+		return mf ? `${mf.id}:${mf.w}x${mf.h}:${(mf.npcs ?? []).length}:${(mf.quests ?? []).length}:${(mf.regions ?? []).length}` : "";
+	}
 	migrateMainWorld(save) {
+		// A different main world was chosen in the Map Builder since this hunter last played: positions,
+		// campfires, logs and rifts on the old overworld no longer line up, so wake at the new start.
+		const mainId = this.mainWorldSig();
+		if (save.mainWorld !== mainId && (save.mainWorld !== undefined || (save.worldVer ?? 1) >= 2)) {
+			if (save.map === "world" || save.map.startsWith("rift-")) { save.map = "world"; Object.assign(save, hearthXY()); }
+			if (save.survival?.campfires) save.survival.campfires = save.survival.campfires.filter((f) => f.map !== "world");
+			if (save.survival?.logs) save.survival.logs = save.survival.logs.filter((l) => l.map !== "world");
+			if (save.dungeons?.portals) save.dungeons.portals = save.dungeons.portals.filter((p) => p.cleared);
+			save.nodesTaken = {};
+			setTimeout(() => this.say("The world has changed. You wake somewhere new."), 1200);
+		}
+		save.mainWorld = mainId;
 		if (!mainWorldFile() || (save.worldVer ?? 1) >= 2) return;
 		save.worldVer = 2;
 		if (save.map === `custom-${MAIN_WORLD_ID}`) save.map = "world";
@@ -1120,6 +1258,25 @@ export class TurbzGame {
 		save.map = map;
 		this.syncSolids(map);
 	}
+	/**
+	 * Overworld foes from spawn points and camps: 45% of the time one rolls a random kind of foe instead of
+	 * the one its camp is set to, so the same few enemies do not repeat forever. Bosses, dungeons, rifts and
+	 * Last Man Standing keep their set foes.
+	 */
+	rollOverworld(spec) {
+		if (!spec || this.lms || spec.boss || spec.dungeonBoss || spec.bossId || spec.witch || spec.name) return spec;
+		const map = this.save?.map ?? "";
+		const file = map.startsWith("custom-") ? this.customFile : null;
+		if (map !== "world" && !(file && (file.kind ?? "world") === "world")) return spec;
+		// The camp's own kind, even if the last body here was a random roll.
+		const base = spec.baseSpecies ?? spec.species;
+		const own = spec.rolled ? { ...spec, species: base, type: undefined, template: undefined, animal: undefined, rolled: false, baseSpecies: base } : { ...spec, baseSpecies: base };
+		if (Math.random() >= OVERWORLD_RANDOM_FOE) return own;
+		const pool = MONSTERS.filter((d) => d.id !== base);
+		const def = pool[Math.floor(Math.random() * pool.length)];
+		if (!def) return own;
+		return { ...spec, species: def.id, type: undefined, template: undefined, animal: !!def.animal, rolled: true, baseSpecies: base };
+	}
 	makeMob(s) {
 		let species = s.species ?? "onibi";
 		// Last Man Standing: only ghosts walk. Beasts are swapped for a ghost of the same element.
@@ -1193,6 +1350,8 @@ export class TurbzGame {
 			master: "",
 			aggro: look?.aggression === "hunt",
 			zone: s.zone ?? null,
+			rolled: !!s.rolled,
+			baseSpecies: s.baseSpecies,
 			nightScaled: false,
 			spawnLevel: level,
 			kit: kit.moves,
@@ -1327,6 +1486,7 @@ export class TurbzGame {
 		if (this.role !== "guest" && !this.lms) this.tickDungeons(dt);
 		this.tickPlayer(dt);
 		if (this.dead) return;
+		if (this.save) this.save.lifeT = (this.save.lifeT ?? 0) + dt;
 		this.tickDayNight(dt);
 		this.tickMapQuests(dt);
 		if (this.role !== "guest") {
@@ -3116,6 +3276,7 @@ export class TurbzGame {
 		if (mob.rival) this.lmsEliminate(mob, "you");
 		mob.alive = false;
 		mob.hp = 0;
+		save.lifeKills = (save.lifeKills ?? 0) + 1;
 		this.mapQuestEvent({ t: "kill", species: mob.species });
 		const delay = this.respawnSecondsFor(mob);
 		mob.respawn = delay == null ? 1e9 : delay;
@@ -3247,6 +3408,7 @@ export class TurbzGame {
 		}
 		// Autoplay keeps the old behaviour: the ghost joins on the spot.
 		if (this.autoplay) {
+			if (spirit.shiny) this.announceShiny(spirit);
 			if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
 			this.creditCatch(mob.type);
 			return;
@@ -3268,7 +3430,7 @@ export class TurbzGame {
 		const g = { id: `wg-${nextUid()}`, map: save.map, x: mob.x + 18, y: mob.y - 4, t: WILD_GHOST_LIFE, spirit, catchType: mob.type };
 		save.wildGhosts.push(g);
 		if (save.wildGhosts.length > 30) save.wildGhosts.splice(0, save.wildGhosts.length - 30);
-		if (spirit.shiny) { this.float(g.x, g.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.tone(980, .25, "triangle"); }
+		if (spirit.shiny) { this.float(g.x, g.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.tone(980, .25, "triangle"); this.announceShiny(spirit); }
 		this.float(g.x, g.y - 50, "A GHOST LINGERS", "#c9a6e8");
 		this.say(`${spirit.name}'s ghost lingers${spirit.shiny ? " ✦ SHINY ✦" : ""}. Press E or click it to look (5 min).`);
 		this.tone(660, .12, "sine");
@@ -3432,13 +3594,41 @@ export class TurbzGame {
 			}
 			spirit.active = false;
 			save.ghostStore.push(spirit);
+			this.recordShiny(spirit);
 			this.say(`${spirit.name}${shine} stays. Your party is full, so it waits in your Ghost Box.`);
 			return true;
 		}
 		spirit.active = save.spirits.filter((s) => s.active).length < this.spiritCap();
 		save.spirits.push(spirit);
+		this.recordShiny(spirit);
 		this.say(spirit.active ? `${spirit.name}${shine} stays, and follows.` : `${spirit.name}${shine} stays in the party. Send it out from Spirits.`);
 		return true;
+	}
+	/** Every shiny you pick up goes into the account's Shiny collection (kept forever, shown on the main menu). */
+	recordShiny(spirit) {
+		if (!spirit?.shiny || this.lms || !this.save) return;
+		const added = noteShiny({
+			uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"),
+			template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10,
+			look: spirit.look ?? null, at: Date.now(), mode: this.rules, by: this.save.name,
+		});
+		if (added) { this.say(`✦ ${spirit.name} joins your Shiny collection.`); this.shinyFn?.(); }
+	}
+	/** A shiny just dropped in the world for this player: the app posts a "Shiny Ghost Seen" GIF to Discord. */
+	announceShiny(spirit) {
+		if (!spirit?.shiny || this.lms || !this.save) return;
+		this.shinySeenFn?.({
+			entry: { uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"), template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10, look: spirit.look ?? null, at: Date.now(), mode: this.rules, by: this.save.name },
+			witch: this.save.name,
+			place: this.mapRegion?.name ?? (this.save.map === "world" ? this.customFile?.name ?? "the wilds" : this.customFile?.name ?? "a dungeon"),
+		});
+	}
+	attachShinySeen(fn) {
+		this.shinySeenFn = fn;
+	}
+	/** Called whenever the Shiny collection grows (the app re-renders and uploads its GIF). */
+	attachShiny(fn: () => void) {
+		this.shinyFn = fn;
 	}
 	nearGhostBox() {
 		const save = this.save;
@@ -3607,7 +3797,9 @@ export class TurbzGame {
 		save.kyo += kyo;
 		this.gainSkill("adventuring", TIER_XP[hit.quest.tier]);
 		this.gainSkill("social", 8);
-		this.say(`Contract complete: ${hit.quest.name}. +${kyo} kyo`);
+		const xp = this.questXp(TIER_XP[hit.quest.tier], BOARD_XP_SHARE[hit.quest.tier] ?? 0.25);
+		this.gainXp(xp);
+		this.say(`Contract complete: ${hit.quest.name}. +${kyo} kyo, +${xp} xp`);
 		this.persist(); this.syncHud(true);
 	}
 	questKill(mob) {
@@ -3623,6 +3815,16 @@ export class TurbzGame {
 		}
 		if (mob.bossId === "bone_king" && !q.bone_king.done) this.completeQuest("bone_king");
 	}
+	/**
+	 * Quest experience. A quest's written XP is doubled, and every quest also pays a share of the level you
+	 * are working on, so questing keeps pace with grinding at every level.
+	 */
+	questXp(base, share = QUEST_XP_SHARE) {
+		const lv = this.save?.level ?? 1;
+		const b = Math.max(0, Number(base) || 0);
+		if (!b && !share) return 0;
+		return Math.round(b * QUEST_XP_MULT + xpNeed(lv) * share);
+	}
 	completeQuest(id) {
 		const save = this.save;
 		const st = save.quests[id];
@@ -3635,7 +3837,9 @@ export class TurbzGame {
 		}
 		this.gainSkill("adventuring", 24);
 		this.gainSkill("social", 12);
-		this.say(`Quest complete: ${def.name}.`);
+		const xp = this.questXp(40, 0.35);
+		this.gainXp(xp);
+		this.say(`Quest complete: ${def.name}. +${xp} xp`);
 		this.tone(660, .15, "triangle");
 	}
 	giveItem(id, n) {
@@ -3984,11 +4188,11 @@ export class TurbzGame {
 			const level = lo + Math.floor(Math.random() * (Math.max(0, hi - lo) + 1));
 			spec = { id: m.id, species, level, x: spot?.x ?? m.homeX, y: spot?.y ?? m.homeY, fixedLevel: true, zone: m.zone, boss: false };
 		}
-		const born = this.makeMob(m.zone ? {
+		const born = this.makeMob(this.rollOverworld(m.zone ? {
 			id: spec.id, species: spec.species, x: spec.x, y: spec.y, level: spec.level, boss: false, fixedLevel: true, zone: m.zone
 		} : {
-			...spec, boss: m.boss, bossId: m.bossId, template: m.template, type: m.type, animal: m.animal, fixedLevel: false, zone: null
-		});
+			...spec, boss: m.boss, bossId: m.bossId, template: m.rolled ? undefined : m.template, type: m.rolled ? undefined : m.type, animal: m.animal, fixedLevel: false, zone: null
+		}));
 		if (m.fromSpawn || m.zone) born.fromSpawn = true;
 		if (m.zone) born.zone = m.zone;
 		born.alive = true;
@@ -4030,7 +4234,7 @@ export class TurbzGame {
 		for (const d of this.dormant) {
 			if (Math.abs(d.x - px) > on || Math.abs(d.y - py) > on || Math.hypot(d.x - px, d.y - py) > on) { keep.push(d); continue; }
 			let m = d.mob;
-			if (!m) { m = this.makeMob(d.spec); m.fromSpawn = true; }
+			if (!m) { m = this.makeMob(this.rollOverworld(d.spec)); m.fromSpawn = true; }
 			this.mobs.push(m);
 		}
 		this.dormant = keep;
@@ -4396,15 +4600,34 @@ export class TurbzGame {
 			return;
 		}
 		for (const g of save.gear) this.noteFound(g);
+		const kyoAtDeath = save.kyo;
 		const scored = this.bankAccount(save);
 		this.emitGrave(save, scored);
 		this.dead = true;
 		this.dest = null;
-		publish({ panel: "rebirth" });
+		save.lastDeath = this.deathReport(save, scored, kyoAtDeath);
+		publish({ panel: "died", died: save.lastDeath });
 		this.persist();
 		this.say("This witch is gone. Her levels and kit became Account Score. Skills, account level, and permanent bonuses stay.");
-		this.tone(70, .3, "sawtooth");
+		this.playYouDied();
 		this.syncHud(true);
+	}
+	/** What the You Died screen shows. */
+	deathReport(save, scored, kyo): DeathReport {
+		const c = CLASS_BY_ID[save.classId];
+		const skills = SKILLS.map((k) => ({ name: k.name, level: save.skills?.[k.id]?.level ?? 1 })).filter((k) => k.level > 1).sort((a, b) => b.level - a.level).slice(0, 3);
+		const t = Math.floor(save.lifeT ?? 0);
+		return {
+			name: save.name, className: c?.name ?? "Witch", focus: c?.focus ?? "", level: save.level, mode: this.rules,
+			cause: this.causeOfDeath?.() ?? "", kills: save.lifeKills ?? 0, survived: t >= 3600 ? `${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m` : `${Math.floor(t / 60)}m ${t % 60}s`,
+			kyo, score: scored, accountScore: save.accountScore ?? 0, spirits: (save.spirits ?? []).length, shinies: [...(save.spirits ?? []), ...(save.ghostStore ?? [])].filter((x) => x?.shiny).length,
+			gear: (save.gear ?? []).filter((g) => Object.values(save.equipped ?? {}).includes(g.uid)).map((g) => g.name).slice(0, 6), skills,
+		};
+	}
+	/** You Died → choose the next witch. */
+	toRebirth() {
+		if (!this.dead) return;
+		publish({ panel: "rebirth" });
 	}
 	knockOut() {
 		const save = this.save;
@@ -4478,6 +4701,9 @@ export class TurbzGame {
 		save.companion = null;
 		save.jarLeft = 0;
 		save.deathBanked = false;
+		save.lifeKills = 0;
+		save.lifeT = 0;
+		save.lastDeath = null;
 		save.pendingLoot = null;
 		save.locked = [];
 		// A new witch has no name yet: fresh bounty board, no stars, no price on her head.
@@ -4801,45 +5027,150 @@ export class TurbzGame {
 		return true;
 	}
 	/**
-	 * How a ghost moves. Normal ghosts trail you and circle what they fight at a range their verses
-	 * reach. Shiny ghosts loop around you the whole time, bobbing and weaving, and dart out to strike.
+	 * How a ghost moves. Out of a fight every ghost has a will of its own: it picks a spot somewhere around
+	 * you, floats there on its own momentum (a soft spring, so it overshoots and drifts), lingers, then
+	 * picks another. When you walk off it lags behind and catches up. Normal ghosts drift lazily at a
+	 * comfortable distance; shiny ghosts are little sparks — they pick new spots constantly, zip and loop,
+	 * but never stray far from you. In a fight, normal ghosts circle the foe at their verses' reach.
 	 */
 	moveGhost(spirit, at, i, dt) {
 		const save = this.save;
 		at.t = (at.t ?? Math.random() * 10) + dt;
-		if (Math.hypot(at.x - save.x, at.y - save.y) > 640) { at.x = save.x; at.y = save.y; }
-		const foe = this.fightTarget();
-		let tx, ty, k = 5;
-		if (spirit.shiny) {
-			const ang = this.clock * 1.9 + i * 2.09 + Math.sin(at.t * .7 + i) * .7;
-			const r = 30 + Math.sin(at.t * 2.6 + i) * 9 + (Math.sin(at.t * .45) > .92 ? 14 : 0);
-			tx = save.x + Math.cos(ang) * r;
-			ty = save.y - 8 + Math.sin(ang) * r * .55 + Math.sin(at.t * 5.3 + i) * 3.5;
-			k = 9;
-		} else if (foe) {
-			const reach = Math.max(40, Math.min(150, ...((spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && !spiritAidsPlayer(m)).map((m) => (attackForm(m) === "melee" ? 50 : attackRange(m) * .6)))));
-			const ang = this.clock * 1.3 + i * 2.05;
-			const rad = Number.isFinite(reach) ? reach : 60;
-			tx = foe.x + Math.cos(ang) * rad;
-			ty = foe.y + Math.sin(ang) * rad * .5 + Math.sin(at.t * 3 + i) * 3;
-		} else {
-			const wander = Math.sin(at.t * 1.3 + i * 2) * 7;
-			tx = save.x - this.facing * (26 + i * 16) + wander;
-			ty = save.y + 6 + i * 6 + Math.cos(at.t * 1.7 + i) * 4;
+		if (Math.hypot(at.x - save.x, at.y - save.y) > 640) { at.x = save.x; at.y = save.y; at.vx = 0; at.vy = 0; }
+		const foe = spirit.shiny ? null : this.fightTarget();
+		if (foe || at.dashT > 0) {
+			let tx, ty, k = 5;
+			if (foe) {
+				const reach = Math.max(40, Math.min(150, ...((spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && !spiritAidsPlayer(m)).map((m) => (attackForm(m) === "melee" ? 50 : attackRange(m) * .6)))));
+				const ang = this.clock * 1.3 + i * 2.05;
+				const rad = Number.isFinite(reach) ? reach : 60;
+				tx = foe.x + Math.cos(ang) * rad;
+				ty = foe.y + Math.sin(ang) * rad * .5 + Math.sin(at.t * 3 + i) * 3;
+			} else { tx = at.x; ty = at.y; }
+			if (at.dashT > 0) {
+				at.dashT -= dt;
+				const p = Math.max(0, at.dashT / .38);
+				const out = Math.sin(p * Math.PI);
+				tx = tx + (at.dashX - tx) * out;
+				ty = ty + (at.dashY - ty) * out;
+				k = 14;
+			}
+			const px = at.x, py = at.y;
+			at.x += (tx - at.x) * Math.min(1, dt * k);
+			at.y += (ty - at.y) * Math.min(1, dt * k);
+			at.vx = (at.x - px) / Math.max(dt, 1e-3);
+			at.vy = (at.y - py) / Math.max(dt, 1e-3);
+			if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
+			at.spin = 0;
+			return;
 		}
-		if (at.dashT > 0) {
-			at.dashT -= dt;
-			const p = Math.max(0, at.dashT / .38);
-			const out = Math.sin(p * Math.PI);
-			tx = tx + (at.dashX - tx) * out;
-			ty = ty + (at.dashY - ty) * out;
-			k = 14;
+		this.driftGhost(at, i, dt, spirit.shiny ? GHOST_DRIFT.shiny : GHOST_DRIFT.normal, save.x, save.y);
+		at.spin = spirit.shiny && Math.sin(at.t * .45) > .9 ? (at.spin ?? 0) + dt * 12 : 0;
+	}
+	/**
+	 * Free-floating pet motion around (cx, cy): wander targets, spring + drag, a speed cap, a lag when the
+	 * hunter walks, and a gentle bob. `d` tunes how lazy or wild it is (see GHOST_DRIFT).
+	 */
+	driftGhost(at, i, dt, d, cx, cy) {
+		at.t = (at.t ?? Math.random() * 10) + dt;
+		at.wt = (at.wt ?? 0) - dt;
+		const dist = Math.hypot(at.x - cx, at.y - cy);
+		const arrived = at.wx !== undefined && Math.hypot(cx + at.wx - at.x, cy + at.wy - at.y) < d.arrive;
+		if (at.wt <= 0 || at.wx === undefined || (arrived && Math.random() < dt * d.restless)) {
+			const a = Math.random() * Math.PI * 2;
+			const r = d.near + Math.random() * (d.far - d.near);
+			at.wx = Math.cos(a) * r;
+			at.wy = Math.sin(a) * r * d.flat + d.lift;
+			at.wt = d.hold[0] + Math.random() * (d.hold[1] - d.hold[0]);
 		}
+		// Walking drags the spot behind you, so pets trail and then catch up.
+		const trail = this.moving ? -this.facing * d.trail : 0;
+		const tx = cx + at.wx + trail;
+		const ty = cy + at.wy + Math.sin(at.t * d.bobRate + i * 1.7) * d.bob;
+		const pull = dist > d.far * 2.2 ? d.spring * 2.5 : d.spring;
+		at.vx = (at.vx ?? 0) + (tx - at.x) * pull * dt;
+		at.vy = (at.vy ?? 0) + (ty - at.y) * pull * dt;
+		// Shiny sparks get random kicks: little darts and loops.
+		if (d.jitter && Math.random() < dt * d.jitter) { const a = Math.random() * Math.PI * 2; at.vx += Math.cos(a) * d.kick; at.vy += Math.sin(a) * d.kick * .7; }
+		const drag = Math.exp(-dt * d.drag);
+		at.vx *= drag;
+		at.vy *= drag;
+		const cap = d.max * (dist > d.far * 2 ? 2 : 1);
+		const sp = Math.hypot(at.vx, at.vy);
+		if (sp > cap) { at.vx *= cap / sp; at.vy *= cap / sp; }
 		const px = at.x;
-		at.x += (tx - at.x) * Math.min(1, dt * k);
-		at.y += (ty - at.y) * Math.min(1, dt * k);
-		if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
-		at.spin = spirit.shiny && Math.sin(at.t * .45) > .92 ? (at.spin ?? 0) + dt * 12 : 0;
+		at.x += at.vx * dt;
+		at.y += at.vy * dt;
+		if (Math.abs(at.vx) > 4) at.facing = at.vx > 0 ? 1 : -1;
+		else if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
+	}
+	/** Keeps ghosts from piling onto the same spot. */
+	spreadGhosts(list, gap) {
+		for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
+			const p = list[a], q = list[b];
+			if (!p || !q) continue;
+			const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
+			if (d >= gap || d < .01) continue;
+			const push = (gap - d) * .5;
+			p.x -= (dx / d) * push * .5; p.y -= (dy / d) * push * .5;
+			q.x += (dx / d) * push * .5; q.y += (dy / d) * push * .5;
+		}
+	}
+	// ---------- Tagged mini ghosts (cosmetic) ----------
+	/** Ghost Box ghosts tagged to follow you as tiny show-off pets (no stats, no attacks). */
+	taggedGhosts() {
+		const save = this.save;
+		if (!save) return [];
+		return (save.ghostStore ?? []).filter((s) => s.tagged).slice(0, TINY_MAX);
+	}
+	/** Tag or untag a Ghost Box ghost. At most TINY_MAX follow at once. */
+	tagGhost(uid) {
+		const save = this.save;
+		if (!save) return;
+		const g = (save.ghostStore ?? []).find((x) => x.uid === uid);
+		if (!g) return;
+		if (!g.tagged && this.taggedGhosts().length >= TINY_MAX) return this.say(`Only ${TINY_MAX} tiny ghosts can follow you at once. Untag one first.`);
+		g.tagged = !g.tagged;
+		this.say(g.tagged ? `${g.shiny ? "✦ " : ""}${g.name} shrinks down and floats along with you.` : `${g.name} goes back to the Ghost Box.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	tickTinies(dt) {
+		const save = this.save;
+		if (!save) return;
+		const list = this.taggedGhosts();
+		this.tinies = this.tinies ?? [];
+		while (this.tinies.length < list.length) this.tinies.push({ x: save.x, y: save.y - 30, vx: 0, vy: 0 });
+		this.tinies.length = list.length;
+		list.forEach((g, i) => {
+			const at = this.tinies[i];
+			if (Math.hypot(at.x - save.x, at.y - save.y) > 400) { at.x = save.x; at.y = save.y - 30; at.vx = 0; at.vy = 0; }
+			// Some perch on a shoulder, the rest bob in a little cloud over your head.
+			const perch = i < 2 && !g.shiny;
+			if (perch) {
+				const side = i === 0 ? -1 : 1;
+				this.driftGhost(at, i, dt, GHOST_DRIFT.perch, save.x + side * 11, save.y - 24);
+			} else this.driftGhost(at, i, dt, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x, save.y - 44);
+		});
+		this.spreadGhosts(this.tinies, 7);
+	}
+	drawTinies(ctx) {
+		const save = this.save;
+		if (!save || !this.tinies?.length) return;
+		const list = this.taggedGhosts();
+		list.forEach((g, i) => {
+			const at = this.tinies[i];
+			if (!at) return;
+			ctx.save();
+			ctx.translate(at.x, at.y);
+			ctx.scale(TINY_SCALE, TINY_SCALE);
+			drawMonster(ctx, { x: 0, y: 0, template: g.template, type: g.type, facing: at.facing ?? 1, walk: this.walk + i, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: !!g.shiny, spin: 0, look: g.look, time: this.clock + i });
+			ctx.restore();
+			if (g.shiny && Math.floor(this.clock * 4 + i) % 3 === 0) {
+				ctx.fillStyle = `hsl(${(this.clock * 160 + i * 40) % 360},95%,75%)`;
+				ctx.fillRect(Math.round(at.x + Math.sin(this.clock * 7 + i) * 5), Math.round(at.y - 6 + Math.cos(this.clock * 6 + i) * 4), 1, 1);
+			}
+		});
 	}
 	applySpiritAid(spirit, move) {
 		const save = this.save;
@@ -5058,6 +5389,8 @@ export class TurbzGame {
 			}
 			this.moveGhost(spirit, at, i, dt);
 		});
+		if (!this.fightTarget()) this.spreadGhosts(this.mates, 16);
+		this.tickTinies(dt);
 	}
 	tickParty(dt) {
 		const save = this.save;
@@ -5428,7 +5761,7 @@ export class TurbzGame {
 		const states = save.mapQuests ?? {};
 		const offers = offerableQuests(file, n.id, states).map((q) => ({
 			id: q.id, name: q.name, about: q.offer || q.about, steps: q.steps.map((s) => stepText(s, q, c)),
-			reward: [q.reward?.kyo ? `${q.reward.kyo} kyo` : "", q.reward?.xp ? `${q.reward.xp} xp` : "", ...(q.reward?.items ?? []).map((i) => `${i.count} ${c.itemName(i.itemId)}`)].filter(Boolean).join(", ")
+			reward: [q.reward?.kyo ? `${q.reward.kyo} kyo` : "", q.reward?.xp ? `${this.questXp(q.reward.xp)} xp` : "", ...(q.reward?.items ?? []).map((i) => `${i.count} ${c.itemName(i.itemId)}`)].filter(Boolean).join(", ")
 		}));
 		const active = openQuests(file, states, n.id).map((q) => ({ id: q.id, name: q.name, lines: progressLines(q, states[qkey(file.id, q.id)], c), ready: states[qkey(file.id, q.id)].status === "ready", say: q.progress }));
 		const lines = this.talkLines(n);
@@ -6939,6 +7272,29 @@ export class TurbzGame {
 		if (snap.panel === "wildghost") this.wildOpen = null;
 		publish({ panel: null });
 	}
+	/**
+	 * Ascension: every witch, both modes, account level, perks, skills and score are wiped, locally and in
+	 * the cloud. Returns how many times this account has now ascended.
+	 */
+	ascend() {
+		window.clearTimeout(this.cloudTimer);
+		this.endLms?.();
+		this.room?.close();
+		this.room = null;
+		this.role = "solo";
+		this.save = null;
+		this.dead = false;
+		this.cloudCache = null;
+		this.cloudHard = null;
+		this.mobs = [];
+		this.dormant = [];
+		this.populationMap = "";
+		this.contract = [];
+		const n = wipeAccountProgress();
+		try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(HC_KEY); } catch { /* private mode */ }
+		publish({ ...emptySnap(), rules: this.rules, hasSave: false, mode: "title" });
+		return n;
+	}
 	toTitle() {
 		this.persist();
 		this.endLms?.();
@@ -8212,7 +8568,7 @@ export class TurbzGame {
 			})),
 			spiritSlots: this.spiritCap(),
 			spiritCap: PARTY_MAX,
-			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny })),
+			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: !!g.shiny, tagged: !!g.tagged })),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
 			chest: this.chestView(),
 			wildGhost: this.wildView(),
@@ -8468,8 +8824,8 @@ export class TurbzGame {
 		this.drawExtras(ctx, w, h);
 		for (const node of this.world.spawns) if (node.kind === "node") {
 			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
+			// No label: you find out what a node is by walking up to it (the "E  Chop / Mine / Forage" prompt).
 			paintNode(ctx, node.node, node.x, node.y + 2);
-			drawShadowName(ctx, node.node === "tree" ? "LOGS" : node.node === "ore" ? "ORE" : "SHROOMS", node.x, node.y - (node.node === "tree" ? 66 : 22), node.node === "ore" ? "#e6c15a" : "#9ad8c8");
 		}
 		for (const m of this.mobs) {
 			if (!m.alive) continue;
@@ -8699,6 +9055,7 @@ export class TurbzGame {
 			ctx.fillStyle = "#6e2c2c"; for (let i = 0; i < 3; i++) ctx.fillRect(bx + 8 + i * 7, by + 20, 3, 1);
 			ctx.fillStyle = "#5a3820"; ctx.fillRect(bx + 3, by + 26, 26, 3);
 		}
+		if (!this.dead && !this.sleeping) this.drawTinies(ctx);
 		const barOn = this.combat > 0 || this.wardT > 0;
 		drawShadowName(ctx, save.name, save.x, save.y - (barOn ? 54 : 44), "#fff6e8");
 		if (this.unstuckT > 0 && this.mouseWorld) {

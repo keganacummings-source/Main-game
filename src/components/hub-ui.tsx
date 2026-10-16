@@ -9,6 +9,8 @@ import { drawMonster } from "@/game/sprites";
 import { drawGhostFx } from "@/game/ghost-fx";
 import type { ActorDraw } from "@/game/sprites";
 import { Chips, Screen, Tabs, Tile } from "./ui-kit";
+import { ascensionCount, readShinies, type ShinyEntry } from "@/game/account-save";
+import { drawShiny } from "@/game/shiny-gif";
 
 const Q_NUM: Record<string, number> = {
   worn: 1,
@@ -286,11 +288,49 @@ export function Hub(props: {
   onBoards: () => void;
   onOptions: () => void;
   onDesigner: () => void;
+  onShinies: () => void;
+  onAscend: () => number;
 }) {
   const [busy, setBusy] = useState(false);
+  const [ascend, setAscend] = useState<0 | 1 | 2>(0);
+  const [typed, setTyped] = useState("");
+  const [asc, setAsc] = useState(() => ascensionCount());
+  const shinyCount = readShinies().length;
   return (
-    <Screen kicker={`SIGNED IN · ${props.username}`} title="Pick a veil">
+    <Screen kicker={`SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="Pick a veil">
       <p className="text-dim">The dead keep the score.</p>
+      {ascend > 0 && (
+        <div className="loot-overlay" role="dialog" aria-label="Ascension" data-testid="ascend-dialog">
+          <div className="px-panel loot-panel ui-stack">
+            <p className="font-display text-sm text-blood">⚠ ASCENSION</p>
+            {ascend === 1 ? (
+              <>
+                <p>Ascending <span className="text-blood">wipes ALL of your account progress</span>, here and in the cloud:</p>
+                <ul className="text-dim">
+                  <li>· Your TurboHunt witch and your Hardcore witch</li>
+                  <li>· Account level, perks, perk points and Account Score</li>
+                  <li>· Every skill level, unlocked sets, gear, spirits and the Ghost Box</li>
+                  <li>· Quest progress on every world, and your TurboCircle record</li>
+                </ul>
+                <p className="text-dim">Kept: your account, friends, maps you made, your Shiny collection, and the count of times you have ascended. This cannot be undone.</p>
+                <div className="screen-actions">
+                  <button className="px-btn" data-testid="ascend-cancel" onClick={() => setAscend(0)}>Keep my progress</button>
+                  <button className="px-btn px-btn-blood" data-testid="ascend-next" onClick={() => { setTyped(""); setAscend(2); }}>I understand, continue</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p>Last warning. Type <span className="font-display text-blood">ASCEND</span> to wipe everything and start over.</p>
+                <input className="px-input font-display" value={typed} onChange={(e) => setTyped(e.target.value.toUpperCase().slice(0, 10))} placeholder="ASCEND" aria-label="Type ASCEND" data-testid="ascend-input" autoFocus />
+                <div className="screen-actions">
+                  <button className="px-btn" onClick={() => setAscend(0)}>Cancel</button>
+                  <button className="px-btn px-btn-blood" data-testid="ascend-go" disabled={typed !== "ASCEND"} onClick={() => { setAsc(props.onAscend()); setAscend(0); }}>Ascend</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
       <div className="tile-grid">
         <Tile primary title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
@@ -298,7 +338,9 @@ export function Hub(props: {
         <Tile title="TurboCircle" about="Battle simulator: Classic 6v6, or War up to 100 vs 100." onClick={props.onCircle} />
         <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
         <Tile title="Designer Mode" about="Map Builder and Enemy Designer." onClick={props.onDesigner} />
+        <Tile title="Shinys Seen" about={shinyCount ? `Your collection: ${shinyCount} shiny ghost${shinyCount === 1 ? "" : "s"}.` : "Every shiny you pick up is kept here."} onClick={props.onShinies} testid="shinies-tile" badge={shinyCount ? `✦ ${shinyCount}` : undefined} />
         <Tile title="Options" about="Account and friends." onClick={props.onOptions} />
+        <Tile title="Ascension" about="Wipe all account progress and begin again. You will be warned first." onClick={() => setAscend(1)} testid="ascend-tile" badge={asc ? roman(asc) : undefined} />
       </div>
       <div className="screen-actions">
         <button
@@ -311,6 +353,72 @@ export function Hub(props: {
         >
           {busy ? "Signing out…" : "Logout"}
         </button>
+      </div>
+    </Screen>
+  );
+}
+
+function roman(n: number): string {
+  const r: [number, string][] = [[1000, "M"], [900, "CM"], [500, "D"], [400, "CD"], [100, "C"], [90, "XC"], [50, "L"], [40, "XL"], [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"]];
+  let out = "";
+  for (const [v, s] of r) while (n >= v) { out += s; n -= v; }
+  return out || "0";
+}
+
+/** One shiny, animated. */
+function ShinyCanvas({ s }: { s: ShinyEntry }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    const ctx = c?.getContext("2d");
+    if (!c || !ctx) return;
+    let raf = 0;
+    const t0 = performance.now();
+    const draw = (now: number) => {
+      const t = (now - t0) / 1000;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.setTransform(2, 0, 0, 2, 0, 0);
+      ctx.fillStyle = "#241814";
+      ctx.beginPath();
+      ctx.ellipse(32, 52, 14, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      drawShiny(ctx, s, 32, 42 + Math.sin(t * 2) * 2.5, t);
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [s]);
+  return <canvas ref={ref} width={128} height={120} className="w-full bg-ink" style={{ imageRendering: "pixelated" }} />;
+}
+
+/** Main menu: every shiny ghost this account has ever picked up. */
+export function ShiniesScreen({ onBack, username }: { onBack: () => void; username: string }) {
+  const [sort, setSort] = useState<"new" | "old" | "level" | "name">("new");
+  const list = readShinies().slice().sort((a, b) => (sort === "new" ? b.at - a.at : sort === "old" ? a.at - b.at : sort === "level" ? b.level - a.level : a.name.localeCompare(b.name)));
+  const species = new Set(list.map((s) => s.species)).size;
+  return (
+    <Screen kicker={`SHINYS SEEN · ${username}`} title={`✦ ${list.length} shiny ghost${list.length === 1 ? "" : "s"}`} wide>
+      <p className="text-dim">Every shiny you have picked up on this account, in any mode. {list.length ? `${species} different kind${species === 1 ? "" : "s"}.` : ""} On Discord, <span className="text-kyo">/shiny {username}</span> shows this collection as a GIF.</p>
+      <div className="flex flex-wrap gap-1">
+        {(["new", "old", "level", "name"] as const).map((k) => (
+          <button key={k} type="button" className={`px-btn ui-btn-sm ${sort === k ? "px-btn-kyo" : ""}`} onClick={() => setSort(k)}>{k === "new" ? "Newest" : k === "old" ? "Oldest" : k === "level" ? "Level" : "Name"}</button>
+        ))}
+      </div>
+      {!list.length && <p className="text-dim">No shinies yet. Shiny ghosts are rare: catching skill, ghost jars and luck all raise the odds.</p>}
+      <div className="ui-grid" style={{ "--min": "140px" } as React.CSSProperties} data-testid="shiny-grid">
+        {list.slice(0, 200).map((s) => (
+          <div key={s.uid} className="ui-card" title={`${s.name} · ${s.species}`}>
+            <ShinyCanvas s={s} />
+            <p className="text-kyo">✦ {s.name}</p>
+            <p className="text-dim">Lv {s.level} · {s.type}{s.mode === "hardcore" ? " · Hardcore" : ""}</p>
+            <p className="text-dim">{s.by ? `${s.by}, ` : ""}{new Date(s.at).toLocaleDateString()}</p>
+          </div>
+        ))}
+      </div>
+      <div className="screen-actions">
+        <button className="px-btn" data-testid="shinies-back" onClick={onBack}>Back</button>
       </div>
     </Screen>
   );

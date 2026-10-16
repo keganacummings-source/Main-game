@@ -20,7 +20,9 @@ import {
 import { blankTile, floodIndices, resizeMap, validateMap, type Issue } from "@/game/map-tools";
 import { drawAtlasTile, findAtlasTile, loadTileCatalog, tileImage, tileImageRevision } from "@/game/tile-atlas";
 import { REGION_KINDS, type MapRegion } from "@/game/map-format";
-import { generateWorld } from "@/game/map-gen";
+import { generateWorld, mainWorldOptions, type WorldGenOptions } from "@/game/map-gen";
+import { mainWorldChoice, setMainWorldChoice } from "@/game/main-world";
+import { questIssues, repairQuests } from "@/game/quest-check";
 import { PLAYABLE_WORLDS, loadPlayableWorlds, playableWorlds } from "@/game/builtin-maps";
 import { DEFAULT_OPTS, Inspector, PlaceSettings, type PlaceOpts, type Sel } from "@/components/map-builder-entities";
 import { QuestEditor } from "@/components/map-builder-quests";
@@ -737,6 +739,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
 
   const check = () => {
     const found = validateMap(mapRef.current, new Set(ITEMS.map((i) => i.id)), knownMaps);
+    for (const q of questIssues(mapRef.current)) if (q.fatal) found.push({ level: "error", text: `Quest "${q.quest}"${q.step >= 0 ? `, step ${q.step + 1}` : ""} cannot be finished: ${q.text}. Use Fix quests on the Quests tab.` });
     setIssues(found);
     setTab("map");
     setStatus(found.some((f) => f.level === "error") ? "Problems found." : found.length ? "No errors, a few things to look at." : "All clear.");
@@ -763,7 +766,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     jump(((e.clientX - r.left) * (mc.width / r.width)) / sc, ((e.clientY - r.top) * (mc.height / r.height)) / sc);
   };
 
-  const generate = () => {
+  const generate = (preset?: WorldGenOptions) => {
     if (dirty && !window.confirm("Generate a new world? Unsaved changes to the current map will be lost.")) return;
     const f = genForm;
     setStatus("Generating… big worlds take a few seconds.");
@@ -771,18 +774,64 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       try {
         const n = Math.max(2, Math.min(8, Math.floor(f.continents) || 4));
         const w = Math.max(96, Math.min(512, Math.floor(f.w) || 300)), h = Math.max(96, Math.min(512, Math.floor(f.h) || 300));
-        const m = generateWorld({
+        const m = generateWorld(preset ?? {
           id: slug(f.id || f.name), name: f.name.trim() || "New World", w, h, seed: Math.floor(f.seed) || 1,
           continentCount: n,
           citiesPerContinent: Math.max(1, Math.min(5, Math.floor(f.cities) || 3)), islands: Math.max(0, Math.min(40, Math.floor(f.islands) || 0)), story: f.story,
         });
         load(m);
         setDirty(true);
-        setStatus(`Generated "${m.name}": ${(m.regions ?? []).length} areas, ${(m.npcs ?? []).length} NPCs, ${(m.quests ?? []).length} quests. Rename the lands on the Areas tab, then Save.`);
+        const towns = (m.regions ?? []).filter((r) => r.kind === "city").length;
+        const nodes = (m.interactables ?? []).filter((i) => i.kind === "node").length;
+        setStatus(`Generated "${m.name}": ${(m.regions ?? []).filter((r) => r.kind === "region").length} lands, ${towns} settlements, ${nodes} resource nodes, ${(m.npcs ?? []).length} NPCs, ${(m.quests ?? []).length} quests (all checked finishable). Save it, or Play as main world.`);
       } catch (err) {
         setStatus(err instanceof Error ? `Generation failed: ${err.message}` : "Generation failed.");
       }
     }, 30);
+  };
+
+  /** Random everything: size, lands, towns, islands, seed. */
+  const surprise = () => {
+    const r = (a: number, b: number) => a + Math.floor(Math.random() * (b - a + 1));
+    const side = r(220, 512);
+    setGenForm({ ...genForm, w: side, h: Math.max(160, Math.min(512, side + r(-60, 60))), continents: r(3, 8), cities: r(2, 5), islands: r(0, 24), seed: Math.floor(Math.random() * 999999), story: Math.random() < 0.7 });
+  };
+  /** A full-size world with a story, ready to replace Veilreach. */
+  const newMainWorld = () => {
+    const seed = Math.floor(Math.random() * 999999);
+    const name = genForm.name.trim() && genForm.name !== "New World" ? genForm.name.trim() : `World ${seed}`;
+    setGenForm({ ...genForm, seed, w: 500, h: 500, story: true });
+    generate(mainWorldOptions(seed, name, slug(genForm.id && genForm.id !== "new-world" ? genForm.id : name)));
+  };
+  const fixQuests = () => {
+    let report: ReturnType<typeof repairQuests> | null = null;
+    edit((m) => { report = repairQuests(m); });
+    setDirty(true);
+    const r = report as ReturnType<typeof repairQuests> | null;
+    if (!r) return;
+    setStatus(r.fixed || r.removed.length || r.nodesAdded
+      ? `Quests fixed: ${r.fixed} step${r.fixed === 1 ? "" : "s"} repaired, ${r.nodesAdded} resource node${r.nodesAdded === 1 ? "" : "s"} added${r.removed.length ? `, removed ${r.removed.length} impossible quest${r.removed.length === 1 ? "" : "s"} (${r.removed.slice(0, 3).join(", ")}${r.removed.length > 3 ? "…" : ""})` : ""}.${r.notes.length ? ` Still stuck: ${r.notes[0]}` : ""}`
+      : "Every quest can already be finished.");
+  };
+  const [mainChoice, setMainChoice] = useState(() => mainWorldChoice());
+  const playAsMain = () => {
+    const m = mapRef.current;
+    if ((m.kind ?? "world") !== "world" || !m.spawn) return setStatus("Only a world map with a start tile can be the main world.");
+    if (m.id === "veilreach") return setStatus("Give this world its own File ID (Map tab) first, so Veilreach stays safe.");
+    if (!window.confirm(`Play "${m.name}" as the main world on this device?\n\nTurboHunt and Hardcore will wake there instead of Veilreach. Quest progress is kept per world, and you can switch back to Veilreach at any time. Everyone in a lobby should use the same main world.`)) return;
+    repairQuests(m);
+    const err = saveDesignerMap(m);
+    if (err) return setStatus(err);
+    setSaved(savedMaps());
+    setDirty(false);
+    setMainWorldChoice(m.id);
+    setMainChoice(m.id);
+    setStatus(`"${m.name}" is now the main world. Start TurboHunt or Hardcore to wake in it.`);
+  };
+  const restoreVeilreach = () => {
+    setMainWorldChoice("");
+    setMainChoice("");
+    setStatus("Veilreach is the main world again.");
   };
 
   const openWorldCopy = async (id: string) => {
@@ -981,7 +1030,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                 onShow={setShowAreas}
               />
             )}
-            {tab === "quests" && <QuestEditor map={map} selected={questId} onSelect={setQuestId} onChange={setQuests} onPickTile={(cb) => { setPick(() => cb); setStatus("Click the map to choose the tile."); }} />}
+            {tab === "quests" && <QuestEditor map={map} selected={questId} onSelect={setQuestId} onChange={setQuests} onFix={fixQuests} onPickTile={(cb) => { setPick(() => cb); setStatus("Click the map to choose the tile."); }} />}
             {tab === "map" && (
               <div className="grid gap-2">
                 <p className="font-display text-xs text-kyo">ABOUT THIS MAP</p>
@@ -1051,10 +1100,19 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                   <label className="grid text-dim">Seed<input className="border-2 border-bone bg-ink px-1" type="number" value={genForm.seed} onChange={(e) => setGenForm({ ...genForm, seed: Number(e.target.value) })} /></label>
                 </div>
                 <label className="flex items-center gap-1 text-dim"><input type="checkbox" checked={genForm.story} onChange={(e) => setGenForm({ ...genForm, story: e.target.checked })} /> Add a main story that visits every continent</label>
-                <div className="flex gap-1">
-                  <button type="button" className="px-btn px-btn-kyo" data-testid="generate-world-btn" onClick={generate}>Generate</button>
+                <div className="flex flex-wrap gap-1">
+                  <button type="button" className="px-btn px-btn-kyo" data-testid="generate-world-btn" onClick={() => generate()}>Generate</button>
                   <button type="button" className="px-btn" onClick={() => setGenForm({ ...genForm, seed: Math.floor(Math.random() * 99999) })}>New seed</button>
+                  <button type="button" className="px-btn" data-testid="surprise-world-btn" onClick={surprise}>Surprise me</button>
                 </div>
+                <p className="font-display text-xs text-kyo">A NEW MAIN WORLD</p>
+                <p className="text-dim">One click: a fresh 500×500 world with 5–8 lands, every kind of settlement, a story across the sea, and quests that are all checked to be finishable. Every seed is a different world.</p>
+                <div className="flex flex-wrap gap-1">
+                  <button type="button" className="px-btn px-btn-kyo" data-testid="new-main-world-btn" onClick={newMainWorld}>New main world</button>
+                  <button type="button" className="px-btn" data-testid="play-as-main-btn" onClick={playAsMain} title="Save this map and play it as the overworld">Play this map as main world</button>
+                  {mainChoice && <button type="button" className="px-btn" onClick={restoreVeilreach}>Back to Veilreach</button>}
+                </div>
+                <p className="text-dim">Main world now: <span className="text-kyo">{mainChoice ? (saved.find((x) => x.id === mainChoice)?.name ?? mainChoice) : "Veilreach"}</span></p>
                 <p className="font-display text-xs text-kyo">OPEN A FILE</p>
                 <input type="file" accept=".json,application/json" className="text-dim" onChange={async (e) => { const f = e.target.files?.[0]; if (f) importJson(await f.text()); e.target.value = ""; }} />
                 <textarea className="min-h-16 border-2 border-bone bg-ink px-1" placeholder="…or paste map JSON here" value={importText} onChange={(e) => setImportText(e.target.value)} />

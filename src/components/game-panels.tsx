@@ -707,6 +707,18 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
           </div>
         )}
       </Section>
+      {s.ghostStore.length > 0 && (
+        <Section title="TINY FOLLOWERS" right={<span className="text-kyo">{s.ghostStore.filter((g) => g.tagged).length}/20</span>}>
+          <p className="text-dim">Tag Ghost Box ghosts to have them float along with you at a quarter of their size, on your shoulders or over your head. Just for show: they give no stats and never fight. Works from anywhere.</p>
+          <div className="flex flex-wrap gap-1" data-testid="tiny-tags">
+            {s.ghostStore.slice().sort((a, b) => Number(b.shiny) - Number(a.shiny)).map((g) => (
+              <button key={g.uid} type="button" data-testid={`tag-${g.uid}`} className={`px-btn ui-btn-sm ${g.tagged ? "px-btn-kyo" : ""}`} onClick={() => game?.tagGhost(g.uid)} title={g.tagged ? "Untag" : "Tag to follow"}>
+                {g.tagged ? "★ " : "☆ "}{g.shiny ? "✦ " : ""}{g.name}
+              </button>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 });
@@ -1022,6 +1034,43 @@ export const ContextMenu = memo(function ContextMenu({ game }: GameProp) {
     </div>
   );
 });
+
+// ---------------------------------------------------------------------------
+// You Died
+// ---------------------------------------------------------------------------
+
+export function DiedOverlay({ game }: GameProp) {
+  const { died } = useSnapPick(["died"] as const);
+  if (!died) return null;
+  const row = (label: string, value: React.ReactNode) => (
+    <div className="flex justify-between gap-3 border-b border-bone/20 py-0.5"><span className="text-dim">{label}</span><span>{value}</span></div>
+  );
+  return (
+    <div className="loot-overlay died-overlay" role="dialog" aria-label="You died" data-testid="died-screen">
+      <div className="died-panel">
+        <h2 className="died-title">YOU DIED</h2>
+        <p className="died-sub">{died.name} · {died.className}{died.focus ? ` (${died.focus})` : ""} · Level {died.level}{died.mode === "hardcore" ? " · Hardcore" : ""}</p>
+        {died.cause && <p className="text-blood">{died.cause}</p>}
+        <div className="px-panel died-stats">
+          {row("Level reached", died.level)}
+          {row("Foes defeated", died.kills.toLocaleString())}
+          {row("Survived", died.survived)}
+          {row("Kyo carried", died.kyo.toLocaleString())}
+          {row("Spirits in party", `${died.spirits}${died.shinies ? ` (✦ ${died.shinies} shiny)` : ""}`)}
+          {row("Account Score gained", <span className="text-kyo">+{died.score.toLocaleString()}</span>)}
+          {row("Account Score total", died.accountScore.toLocaleString())}
+          {died.skills.length > 0 && row("Best skills", died.skills.map((k) => `${k.name} ${k.level}`).join(" · "))}
+          {died.gear.length > 0 && row("Wore", died.gear.join(", "))}
+        </div>
+        <p className="text-dim">Skills, account level and permanent bonuses stay with you.</p>
+        <div className="screen-actions">
+          <button type="button" className="px-btn" data-testid="died-menu-btn" onClick={() => game?.toTitle()}>Go to menu</button>
+          <button type="button" className="px-btn px-btn-kyo" data-testid="died-again-btn" onClick={() => game?.toRebirth()}>Play again</button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // The veil: choose the next witch

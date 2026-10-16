@@ -17,7 +17,8 @@ const formatUrl = moduleUrl("../src/game/map-format.ts", { "./content": contentU
 const maps = await import(formatUrl);
 const quests = await import(moduleUrl("../src/game/map-quests.ts"));
 const tools = await import(moduleUrl("../src/game/map-tools.ts", { "./content": contentUrl, "./map-format": formatUrl }));
-const gen = await import(moduleUrl("../src/game/map-gen.ts", { "./content": contentUrl, "./map-format": formatUrl }));
+const questCheckUrl = moduleUrl("../src/game/quest-check.ts", { "./content": contentUrl, "./map-format": formatUrl });
+const gen = await import(moduleUrl("../src/game/map-gen.ts", { "./content": contentUrl, "./map-format": formatUrl, "./quest-check": questCheckUrl }));
 
 function village() {
   const m = maps.emptyMap("village", "Village", 24, 16, 0);
@@ -234,7 +235,7 @@ for (const [seed, cont] of [[1, 4], [77, 5], [2024, 6]]) {
     const m = gen.generateWorld({ id: `g${seed}`, name: "G", w: 300, h: 300, seed, continentCount: cont, citiesPerContinent: 3, islands: 4, story: true });
     const areas = m.regions.filter((r) => ["city", "resource", "landmark"].includes(r.kind) && !/Docks|Ferry/.test(r.name));
     for (let i = 0; i < areas.length; i++) for (let j = i + 1; j < areas.length; j++) assert.equal(rectsHit(areas[i], areas[j]), false, `${areas[i].name} overlaps ${areas[j].name}`);
-    for (const z of m.zones) for (const a of areas) assert.equal(rectsHit(z, a), false, `camp ${z.id} overlaps ${a.name}`);
+    for (const z of m.zones) for (const a of areas) if (!(z.id.startsWith("ruin-") && a.id.startsWith("ruin-"))) assert.equal(rectsHit(z, a), false, `camp ${z.id} overlaps ${a.name}`);
     // resource areas and landmarks never have wall/mountain tiles inside them
     for (const r of areas.filter((a) => a.kind !== "city")) {
       let walls = 0;
@@ -255,4 +256,64 @@ test("a generated world's quests and NPCs are all valid, with chains, deliveries
   assert.ok(parsed.npcs.some((n) => /^(Hermit|Prospector|Angler)/.test(n.name)), "there are wilderness quest givers");
   const spots = new Set(parsed.npcs.map((n) => `${n.tx},${n.ty}`));
   assert.equal(spots.size, parsed.npcs.length, "no two NPCs share a tile");
+});
+
+// ---------------------------------------------------------------------------
+// World generator: art exists, worlds vary, every quest can be finished, nodes stand alone
+// ---------------------------------------------------------------------------
+const questCheck = await import(questCheckUrl);
+
+test("every sprite the world generator can paint exists in public/MapAssets", async () => {
+  const { existsSync } = await import("node:fs");
+  const all = [];
+  const walk = (v) => { if (typeof v === "string") all.push(v); else if (Array.isArray(v)) v.forEach(walk); else if (v && typeof v === "object") Object.values(v).forEach(walk); };
+  walk(gen.ART);
+  assert.ok(all.length > 200);
+  const missing = all.filter((p) => !existsSync(new URL(`../public${p}`, import.meta.url)));
+  assert.deepEqual(missing, []);
+});
+
+for (const seed of [11, 404, 9001]) {
+  test(`a random main world (seed ${seed}) has every kind of place, playable quests and lone nodes`, () => {
+    const m = gen.generateWorld(gen.mainWorldOptions(seed, "M", `m${seed}`));
+    const parsed = maps.parseMapJson(JSON.parse(JSON.stringify(maps.packMap(m))));
+    assert.deepEqual(questCheck.questIssues(parsed).filter((i) => i.fatal), [], "every quest can be finished");
+    const kinds = new Set(m.regions.filter((r) => r.kind === "city").map((r) => r.about.split(" ").slice(0, 3).join(" ")));
+    assert.ok(kinds.size >= 6, `settlements vary (${[...kinds].join(" | ")})`);
+    assert.ok(m.regions.filter((r) => r.kind === "landmark").length >= 15, "plenty of landmarks");
+    const nodes = m.interactables.filter((i) => i.kind === "node");
+    assert.ok(nodes.length > 400, "the land is full of resources");
+    const at = new Set(nodes.map((n) => `${n.tx},${n.ty}`));
+    let touching = 0;
+    for (const n of nodes) for (const [dx, dy] of [[1, 0], [0, 1], [1, 1], [1, -1]]) if (at.has(`${n.tx + dx},${n.ty + dy}`)) touching++;
+    assert.equal(touching, 0, "no two nodes touch: every node is placed on its own");
+    const reach = tools.reachable(parsed);
+    for (const n of parsed.npcs) assert.ok(reach[n.ty * parsed.w + n.tx], `${n.name} can be reached`);
+  });
+}
+
+test("two seeds make two different worlds", () => {
+  const a = gen.generateWorld({ id: "a", name: "A", seed: 1, w: 200, h: 200 });
+  const b = gen.generateWorld({ id: "b", name: "B", seed: 2, w: 200, h: 200 });
+  assert.notEqual(a.regions.filter((r) => r.kind === "region").map((r) => r.name).join(), b.regions.filter((r) => r.kind === "region").map((r) => r.name).join());
+});
+
+test("repairQuests fixes a broken hand-made quest instead of leaving it impossible", () => {
+  const m = maps.emptyMap("fix", "Fix", 30, 20, 0);
+  m.spawn = { tx: 3, ty: 3 };
+  m.npcs = [{ id: "a", name: "A", tx: 5, ty: 5, lines: ["Hi."] }, { id: "walled", name: "Walled", tx: 25, ty: 15, lines: ["Help."] }];
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) m.tiles[(15 + dy) * 30 + 25 + dx] = { ...m.tiles[0], block: 1 };
+  m.zones = [{ id: "z", tx: 10, ty: 10, tw: 5, th: 5, levelMin: 1, levelMax: 2, species: ["kusa"], count: 2, respawn: 30 }];
+  m.quests = [
+    { id: "q1", name: "Q1", about: "", giver: "a", steps: [{ type: "gather", node: "ore", count: 3 }, { type: "kill", count: 2, species: "yuki" }, { type: "goto", tx: 25, ty: 15, radius: 1 }] },
+    { id: "q2", name: "Q2", about: "", giver: "walled", steps: [{ type: "talk", npcId: "a" }] },
+    { id: "q3", name: "Q3", about: "", giver: "a", requires: "q2", steps: [{ type: "talk", npcId: "walled" }, { type: "kill", count: 1 }] },
+  ];
+  assert.ok(questCheck.questIssues(m).some((i) => i.fatal));
+  const r = questCheck.repairQuests(m);
+  assert.deepEqual(questCheck.questIssues(m).filter((i) => i.fatal), []);
+  assert.ok(r.nodesAdded >= 3, "ore nodes were planted for the gather step");
+  assert.equal(m.quests.find((q) => q.id === "q1").steps.find((s) => s.type === "kill").species, "kusa");
+  assert.ok(!m.quests.some((q) => q.id === "q2"), "a quest whose giver is walled in is removed");
+  assert.equal(m.quests.find((q) => q.id === "q3").requires, undefined, "its follow-up no longer waits on it");
 });

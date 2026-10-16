@@ -22,7 +22,8 @@ const idbUrl = moduleUrl("../src/game/idb-store.ts");
 const formatUrl = moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": atlasStub, "./idb-store": idbUrl });
 const tools = await import(moduleUrl("../src/game/map-tools.ts", { "./content": contentUrl, "./map-format": formatUrl }));
 const content = await import(contentUrl);
-const gen = await import(moduleUrl("../src/game/map-gen.ts", { "./content": contentUrl, "./map-format": formatUrl }));
+const questCheckUrl = moduleUrl("../src/game/quest-check.ts", { "./content": contentUrl, "./map-format": formatUrl });
+const gen = await import(moduleUrl("../src/game/map-gen.ts", { "./content": contentUrl, "./map-format": formatUrl, "./quest-check": questCheckUrl }));
 const format = await import(formatUrl);
 
 const FL_WATER = 2, FL_LAVA = 11;
@@ -47,7 +48,7 @@ export function audit(map) {
       if (x < 0 || y < 0 || x >= map.w || y >= map.h) continue;
       const edge = x < r.tx || y < r.ty || x >= r.tx + r.tw || y >= r.ty + r.th;
       const t = T(x, y);
-      const shore = /Fishery/.test(r.name); // fisheries are meant to touch water
+      const shore = /Fishery|Fishing Hole|Weir/.test(r.name); // fisheries are meant to touch water
       if (edge) { ring++; if (blockedStone(t) || (!shore && t.floor === FL_WATER)) bad++; }
       else if (blockedStone(t) || (!shore && t.floor === FL_WATER) || t.floor === FL_LAVA) inner++;
     }
@@ -57,7 +58,7 @@ export function audit(map) {
   // 3. camps: not on towns, mines or each other, and mostly open ground
   const zones = map.zones ?? [];
   for (const z of zones) {
-    for (const a of named) if (rectsOverlap(z, a)) P.push({ kind: "camp-on-area", text: `camp ${z.id} overlaps ${a.name}` });
+    for (const a of named) if (!(z.id.startsWith("ruin-") && a.id.startsWith("ruin-")) && rectsOverlap(z, a)) P.push({ kind: "camp-on-area", text: `camp ${z.id} overlaps ${a.name}` });
     let open = 0;
     for (let y = z.ty; y < z.ty + z.th; y++) for (let x = z.tx; x < z.tx + z.tw; x++) { const t = T(x, y); if (t && !t.block && t.floor !== FL_WATER && t.floor !== FL_LAVA) open++; }
     if (open < z.tw * z.th * 0.6) P.push({ kind: "camp-on-hazard", text: `camp ${z.id} is only ${Math.round((open / (z.tw * z.th)) * 100)}% open ground` });

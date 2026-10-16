@@ -12,12 +12,15 @@ import { postGrave } from "@/game/social-client";
 import type { GraveBody } from "@/game/social-types";
 import { DesignerMode } from "@/components/designer-mode";
 import { ArenaScreen } from "@/components/arena-ui";
-import { Boards, ChatDock, DuelBanner, Hub, Options } from "@/components/hub-ui";
+import { Boards, ChatDock, DuelBanner, Hub, Options, ShiniesScreen } from "@/components/hub-ui";
+import { readShinies } from "@/game/account-save";
+import { captureShinyGif, captureShinySeenGif } from "@/game/shiny-gif";
+import { postShinySeen, writeShinies } from "@/game/cloud-client";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, LootPicker } from "@/components/inventory-ui";
-import { ContextMenu, CraftPanel, GameChat, LobbyPanel, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
+import { ContextMenu, CraftPanel, DiedOverlay, GameChat, LobbyPanel, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
 
@@ -90,7 +93,18 @@ function veilName(user: { id: string; displayName?: string | null; primaryEmail?
   return `w${tail}`.slice(0, 16);
 }
 
-type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms";
+type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "shinies";
+
+/** Re-renders the Shiny collection GIF and uploads it (for the Discord bot's /shiny). */
+function uploadShinies(): void {
+  const list = readShinies();
+  if (!list.length) return;
+  setTimeout(() => {
+    let gif: string | null = null;
+    try { gif = captureShinyGif(list); } catch { gif = null; }
+    void writeShinies(list, gif);
+  }, 50);
+}
 
 function Hunt() {
   const acct = useStaticAccount();
@@ -134,6 +148,14 @@ function Hunt() {
     game.attachGrave((body: GraveBody) => {
       void postGrave(body).catch(() => {});
     });
+    game.attachShiny(() => uploadShinies());
+    game.attachShinySeen((seen: { entry: import("@/game/account-save").ShinyEntry; witch: string; place: string }) => {
+      setTimeout(() => {
+        let gif: string | null = null;
+        try { gif = captureShinySeenGif(seen.entry); } catch { gif = null; }
+        void postShinySeen({ name: seen.entry.name, species: seen.entry.species, level: seen.entry.level, type: seen.entry.type, witch: seen.witch, place: seen.place, mode: seen.entry.mode, gif });
+      }, 30);
+    });
     game.start();
     bindCloud((json) => {
       void writeCloudSave({ data: json }).catch(() => {});
@@ -155,6 +177,8 @@ function Hunt() {
       .finally(() => {
         cloudReady();
         setBooted(true);
+        // Keep the server's copy (and the /shiny GIF) in step with this device.
+        uploadShinies();
       });
     return () => game.stop();
   }, []);
@@ -184,8 +208,16 @@ function Hunt() {
             onBoards={() => setScreen("boards")}
             onOptions={() => setScreen("options")}
             onDesigner={() => setScreen("designer")}
+            onShinies={() => setScreen("shinies")}
+            onAscend={() => {
+              const n = g()?.ascend() ?? 0;
+              setArenaSeed(null);
+              setCreate(false);
+              return n;
+            }}
           />
         )}
+        {screen === "shinies" && !playing && <ShiniesScreen username={username} onBack={() => setScreen("hub")} />}
         {(screen === "hunt" || screen === "hard") && !playing && !create && (
           <Title
             kind={screen === "hard" ? "hard" : "hunt"}
@@ -434,6 +466,7 @@ const Overlays = memo(function Overlays({ game }: GameProp) {
       <HudHover />
       {duel && <DuelBanner duel={duel} />}
       <ContextMenu game={game} />
+      {panel === "died" && <DiedOverlay game={game} />}
       {panel === "rebirth" && <RebirthOverlay game={game} />}
       {panel === "loot" && <LootWin game={game} />}
       <LmsHud game={game} />

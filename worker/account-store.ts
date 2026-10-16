@@ -20,6 +20,9 @@ export const MAX_FAILS = 5;
 export const LOCK_MS = 60_000;
 /** SQLite rows top out at 2 MB; leave headroom for the other columns. */
 export const MAX_SAVE_BYTES = 1_900_000;
+/** Shiny collection: the list as JSON plus a base64 GIF, under the same row limit. */
+export const MAX_SHINY_LIST_BYTES = 300_000;
+export const MAX_SHINY_GIF_B64 = 1_500_000;
 
 export type SignupResult = { ok: true; token: string; display: string } | { ok: false; error: "taken" };
 export type SigninResult =
@@ -54,6 +57,40 @@ export class AccountStore {
       `CREATE TABLE IF NOT EXISTS save (
          id INTEGER PRIMARY KEY CHECK (id = 1),
          payload TEXT NOT NULL,
+         updated_at INTEGER NOT NULL
+       )`,
+    );
+  }
+
+  /** The account's Shiny collection (list as JSON) and its GIF (base64), for the Discord /shiny command. */
+  getShinies(): { list: string; gif: string | null; updatedAt: number } | null {
+    this.ensureShinies();
+    const row = this.sql.exec(`SELECT list, gif, updated_at FROM shinies WHERE id = 1`).toArray()[0];
+    return row ? { list: row.list, gif: row.gif ?? null, updatedAt: row.updated_at } : null;
+  }
+
+  putShinies(list: string, gif: string | null, now: number): void {
+    this.ensureShinies();
+    this.sql.exec(
+      `INSERT INTO shinies (id, list, gif, updated_at) VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET list = excluded.list, gif = COALESCE(excluded.gif, shinies.gif), updated_at = excluded.updated_at`,
+      list,
+      gif,
+      now,
+    );
+  }
+
+  /** Display name of the account, or null when nobody has that name. */
+  displayName(): string | null {
+    return this.account()?.display ?? null;
+  }
+
+  private ensureShinies(): void {
+    this.sql.exec(
+      `CREATE TABLE IF NOT EXISTS shinies (
+         id INTEGER PRIMARY KEY CHECK (id = 1),
+         list TEXT NOT NULL,
+         gif TEXT,
          updated_at INTEGER NOT NULL
        )`,
     );

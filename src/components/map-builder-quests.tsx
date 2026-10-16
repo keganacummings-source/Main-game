@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ANIMALS, ITEMS, MONSTERS } from "@/game/content";
 import type { MapFile, MapQuest, MapQuestStep } from "@/game/map-format";
+import { questIssues } from "@/game/quest-check";
 
 const NODES = ["ore", "tree", "shroom", "fish"] as const;
 const input = "border-2 border-bone bg-ink px-1";
@@ -22,17 +23,20 @@ export function QuestEditor({
   onSelect,
   onChange,
   onPickTile,
+  onFix,
 }: {
   map: MapFile;
   selected: string | null;
   onSelect: (id: string | null) => void;
   onChange: (quests: MapQuest[]) => void;
   onPickTile: (cb: (tx: number, ty: number) => void) => void;
+  onFix?: () => void;
 }) {
   const quests = map.quests ?? [];
   const npcs = map.npcs ?? [];
   const q = quests.find((x) => x.id === selected) ?? null;
   const [openStep, setOpenStep] = useState<number | null>(null);
+  const [checked, setChecked] = useState<ReturnType<typeof questIssues> | null>(null);
   const patch = (id: string, p: Partial<MapQuest>) => onChange(quests.map((x) => (x.id === id ? { ...x, ...p } : x)));
   const setStep = (qq: MapQuest, i: number, s: MapQuestStep) => patch(qq.id, { steps: qq.steps.map((x, j) => (j === i ? s : x)) });
   const add = () => {
@@ -63,11 +67,23 @@ export function QuestEditor({
       <p className="text-dim">Place NPCs first (the NPC tool), then make quests here. Each quest has a giver, steps done in order, and a reward. Use "Needs quest" to chain quests into a storyline.</p>
       <div className="flex flex-wrap gap-1">
         <button type="button" className="px-btn px-btn-kyo !min-h-8 !py-0" data-testid="add-quest-btn" onClick={add} disabled={!npcs.length} title={npcs.length ? "" : "Place an NPC first"}>+ New quest</button>
+        <button type="button" className="px-btn !min-h-8 !py-0" data-testid="check-quests-btn" onClick={() => setChecked(questIssues(map))} disabled={!quests.length}>Check quests</button>
+        {onFix && <button type="button" className="px-btn !min-h-8 !py-0" data-testid="fix-quests-btn" onClick={() => { onFix(); setChecked(null); }} disabled={!quests.length} title="Snap trips to reachable ground, retarget foes that never spawn, add nodes for gather steps, and remove quests that can never be done">Fix quests</button>}
         {quests.map((x) => (
           <button key={x.id} type="button" className={`px-btn !min-h-8 !py-0 ${selected === x.id ? "px-btn-kyo" : ""}`} onClick={() => { onSelect(x.id); setOpenStep(null); }}>{x.name}</button>
         ))}
       </div>
       {!npcs.length && <p className="text-blood">No NPCs yet. Pick the NPC tool and click the map.</p>}
+      {checked && (
+        <div className="grid max-h-40 gap-0.5 overflow-auto border border-bone/40 p-1" data-testid="quest-check">
+          {!checked.length && <p className="text-kyo">Every quest can be finished.</p>}
+          {checked.map((i, k) => (
+            <button key={k} type="button" className={`text-left ${i.fatal ? "text-blood" : "text-dim"}`} onClick={() => onSelect(i.questId)}>
+              {i.quest}{i.step >= 0 ? ` · step ${i.step + 1}` : ""}: {i.text}
+            </button>
+          ))}
+        </div>
+      )}
       {q && (
         <div className="grid gap-1 border-2 border-bone p-2">
           <label className="grid text-dim">Name<input className={input} value={q.name} maxLength={60} onChange={(e) => patch(q.id, { name: e.target.value })} /></label>

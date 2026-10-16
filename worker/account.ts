@@ -37,4 +37,15 @@ export class UserAccount extends DurableObject<Env> {
   async putSave(payload: string): Promise<void> {
     this.store.putSave(payload, Date.now());
   }
+
+  async getShinies(): Promise<{ display: string; list: string; gif: string | null; updatedAt: number } | null> {
+    const display = this.store.displayName();
+    if (!display) return null;
+    const row = this.store.getShinies();
+    return row ? { display, ...row } : { display, list: "[]", gif: null, updatedAt: 0 };
+  }
+
+  async putShinies(list: string, gif: string | null): Promise<void> {
+    this.store.putShinies(list, gif, Date.now());
+  }
 }

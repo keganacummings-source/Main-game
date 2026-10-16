@@ -19,9 +19,9 @@ import {
   parseSave,
   parseSessionCookie,
 } from "./validate.ts";
-import { MAX_SAVE_BYTES } from "./account-store.ts";
+import { MAX_SAVE_BYTES, MAX_SHINY_GIF_B64, MAX_SHINY_LIST_BYTES } from "./account-store.ts";
 import { isJoinError } from "./signaling-core.ts";
-import { decodeGif, handleInteraction, postDeath, type DeathPost } from "./discord.ts";
+import { decodeGif, handleInteraction, postDeath, postShinySeen, type DeathPost, type ShinyCard } from "./discord.ts";
 
 export { SignalingRoom } from "./room.ts";
 export { UserAccount } from "./account.ts";
@@ -199,6 +199,94 @@ async function handleSave(request: Request, env: Env, url: URL): Promise<Respons
   }
 }
 
+/** Cleans one uploaded shiny entry down to what the bot and the menu show. */
+function cleanShiny(v: unknown) {
+  if (!v || typeof v !== "object") return null;
+  const s = v as Record<string, unknown>;
+  const uid = str(s.uid, 40);
+  if (!uid) return null;
+  return {
+    uid, species: str(s.species, 32), name: str(s.name, 32) || "Ghost", type: str(s.type, 16), template: Math.floor(Number(s.template) || 0),
+    rarity: Math.max(0, Math.min(4, Math.floor(Number(s.rarity) || 0))), level: Math.max(1, Math.min(100000, Math.floor(Number(s.level) || 1))),
+    speed: Number(s.speed) || 10, max: Number(s.max) || 10, look: s.look && typeof s.look === "object" && JSON.stringify(s.look).length < 3000 ? s.look : null,
+    at: Math.max(0, Math.floor(Number(s.at) || 0)), mode: str(s.mode, 12), by: str(s.by, 24),
+  };
+}
+
+/** GET: your Shiny collection. PUT: replace it (and its GIF) — the game does this whenever a shiny joins. */
+async function handleShinies(request: Request, env: Env, url: URL): Promise<Response> {
+  try {
+    const me = await currentUser(request, env);
+    if (!me) return json({ error: "sign in required" }, 401);
+    const stub = accountStub(env, me.id);
+    if (request.method === "GET") {
+      const row = await stub.getShinies();
+      let list: unknown = [];
+      try { list = JSON.parse(row?.list ?? "[]"); } catch { list = []; }
+      return json({ list });
+    }
+    if (request.method === "PUT") {
+      if (crossOrigin(request, url)) return json({ error: "forbidden" }, 403);
+      const raw = await readJson(request, MAX_SHINY_LIST_BYTES + MAX_SHINY_GIF_B64 + 10_000);
+      if (raw instanceof Response) return raw;
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const list = (Array.isArray(body.list) ? body.list.slice(-400) : []).map(cleanShiny).filter(Boolean);
+      const listJson = JSON.stringify(list);
+      if (listJson.length > MAX_SHINY_LIST_BYTES) return json({ error: "too many shinies" }, 413);
+      const gifText = typeof body.gif === "string" && body.gif.length <= MAX_SHINY_GIF_B64 ? body.gif.replace(/^data:image\/gif;base64,/, "") : null;
+      const gif = gifText && decodeGif(gifText) ? gifText : null;
+      await stub.putShinies(listJson, gif);
+      return json({ ok: true, count: list.length });
+    }
+    return json({ error: "method not allowed" }, 405);
+  } catch (error) {
+    console.error("[shinies] error:", error);
+    return json({ error: "Shiny collection failed. Try again." }, 500);
+  }
+}
+
+/** A shiny dropped for this player: post its GIF to the Discord channels, saying who saw it. */
+async function handleShinySeen(request: Request, env: Env, url: URL, ctx?: ExecutionContext): Promise<Response> {
+  try {
+    if (request.method !== "POST") return json({ error: "method not allowed" }, 405);
+    if (crossOrigin(request, url)) return json({ error: "forbidden" }, 403);
+    const me = await currentUser(request, env);
+    if (!me) return json({ error: "sign in required" }, 401);
+    const raw = await readJson(request, 1_200_000);
+    if (raw instanceof Response) return raw;
+    const body = (raw ?? {}) as Record<string, unknown>;
+    const name = str(body.name, 32).trim();
+    if (!name) return json({ error: "nameless ghost" }, 400);
+    const stub = gravesStub(env);
+    const gif = decodeGif(body.gif);
+    const post = {
+      username: me.displayName || me.id, witch: str(body.witch, 24) || "A witch", name, species: str(body.species, 32),
+      level: Math.max(1, Math.min(100000, Math.floor(Number(body.level) || 1))), type: str(body.type, 16), place: str(body.place, 60), mode: str(body.mode, 12),
+    };
+    const send = (async () => {
+      const channels = await stub.channels();
+      await postShinySeen(env, channels, post, gif, (id) => stub.dropChannel(id));
+    })().catch((e) => console.error("[discord]", e));
+    if (ctx) ctx.waitUntil(send);
+    else await send;
+    return json({ ok: true });
+  } catch (error) {
+    console.error("[shiny-seen] error:", error);
+    return json({ error: "Could not post the shiny." }, 500);
+  }
+}
+
+/** What the Discord bot needs to answer /shiny for one username. */
+async function shinyCard(env: Env, username: string): Promise<ShinyCard | null> {
+  const key = username.trim().toLowerCase();
+  if (!/^[a-z0-9_]{3,16}$/.test(key)) return null;
+  const row = await accountStub(env, key).getShinies();
+  if (!row) return null;
+  let list: { name?: string; species?: string; level?: number; at?: number }[] = [];
+  try { list = JSON.parse(row.list); } catch { list = []; }
+  return { display: row.display, count: list.length, names: list.slice().sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).map((s) => `${s.name ?? "Ghost"} Lv ${s.level ?? 1}`), gif: row.gif ? decodeGif(row.gif) : null };
+}
+
 function gravesStub(env: Env) {
   return env.GRAVES.get(env.GRAVES.idFromName("global"));
 }
@@ -285,11 +373,13 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/discord/interactions") {
       const stub = gravesStub(env);
-      return handleInteraction(request, env, { setChannel: (g, c, by) => stub.setChannel(g, c, by) });
+      return handleInteraction(request, env, { setChannel: (g, c, by) => stub.setChannel(g, c, by), shinies: (name) => shinyCard(env, name) });
     }
     if (url.pathname === "/api/rtc") return handleRtc(request, env, url);
     if (url.pathname.startsWith("/api/account/")) return handleAccount(request, env, url);
     if (url.pathname === "/api/save") return handleSave(request, env, url);
+    if (url.pathname === "/api/shinies") return handleShinies(request, env, url);
+    if (url.pathname === "/api/shiny-seen") return handleShinySeen(request, env, url, ctx);
     if (url.pathname === "/api/graves") return handleGraves(request, env, url, ctx);
     if (url.pathname.startsWith("/api/")) return json({ error: "not found" }, 404);
     // Normally unreachable (assets are served before the worker runs), but keeps

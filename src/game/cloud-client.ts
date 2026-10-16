@@ -18,3 +18,27 @@ export async function writeCloudSave(args: { data: string }): Promise<boolean> {
   });
   return res.ok;
 }
+
+/** Uploads the Shiny collection (and its GIF, for the Discord bot's /shiny command). */
+export async function writeShinies(list: unknown[], gif: string | null): Promise<boolean> {
+  try {
+    const res = await fetch("/api/shinies", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ list, gif }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Tells the game server a shiny dropped for this player, so the Discord bot can post it. */
+export async function postShinySeen(body: { name: string; species: string; level: number; type: string; witch: string; place: string; mode: string; gif: string | null }): Promise<boolean> {
+  try {
+    const res = await fetch("/api/shiny-seen", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

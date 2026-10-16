@@ -69,7 +69,8 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
           >
             <ClassCanvas classId={x.id} game={game} active={pick.classId === x.id} female={pick.female} />
             <span className="mt-1 block text-lg leading-tight">{x.name}</span>
-            <span className={`block text-base ${typeClass(x.type)}`}>{TYPES[x.type].name} · {x.role}</span>
+            <span className="block text-base text-kyo">{x.focus} · {x.role}</span>
+            <span className={`block text-sm ${typeClass(x.type)}`}>{TYPES[x.type].name} element</span>
             {badge?.(x.id) && <span className="class-card-badge">{badge(x.id)}</span>}
           </button>
         ))}
@@ -77,8 +78,9 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
       <div className="sheet-box grid gap-2" data-testid="class-details">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="font-display text-xs text-kyo" data-testid="class-details-name">{c.name}</p>
-          <p className={typeClass(c.type)}>{TYPES[c.type].name} · {c.role}</p>
+          <p>{c.role}</p>
         </div>
+        <p data-testid="class-focus"><span className="text-kyo">Focus: {c.focus}.</span> <span className="text-dim">Side element:</span> <span className={typeClass(c.type)}>{TYPES[c.type].name}</span> <span className="text-dim">(+5% Affinity with its verses)</span></p>
         <p>{c.blurb} <span className="text-dim">{c.specialty}.</span></p>
         <p className="text-kyo">Passive: <span className="text-bone">{c.passive}</span></p>
         <Lines buffs={lines.buffs} debuffs={lines.debuffs} />

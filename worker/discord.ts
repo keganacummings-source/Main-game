@@ -6,6 +6,8 @@
  *  - /turbzhere (needs Manage Server) makes the channel it is used in the server's death channel.
  *  - When a witch dies, the game uploads a GIF of her and we post it with her level, class, cause
  *    of death and effects to every registered channel, as the bot (DISCORD_BOT_TOKEN).
+ *  - /shiny username answers with a GIF of every shiny ghost that account has ever picked up.
+ *  - Whenever a shiny ghost drops for a player, a "Shiny Ghost Seen" GIF is posted with who saw it.
  */
 import type { Env } from "./env.ts";
 
@@ -14,11 +16,19 @@ const API = "https://discord.com/api/v10";
 export const TURBZ_COMMANDS = [
   {
     name: "turbzhere",
-    description: "Post TURBZ deaths (with a GIF of the fallen witch) in this channel.",
+    description: "Post TURBZ deaths and shiny ghost sightings (with GIFs) in this channel.",
     default_member_permissions: "32", // Manage Server
     dm_permission: false,
   },
+  {
+    name: "shiny",
+    description: "Show a TURBZ player's Shiny collection as a GIF.",
+    options: [{ type: 3, name: "username", description: "Their TURBZ username", required: true, min_length: 3, max_length: 16 }],
+  },
 ];
+
+/** What /shiny shows for one account. */
+export type ShinyCard = { display: string; count: number; names: string[]; gif: Uint8Array | null };
 
 function hexToBytes(hex: string): Uint8Array {
   const out = new Uint8Array(hex.length / 2);
@@ -45,7 +55,29 @@ function reply(content: string, ephemeral = false): Response {
 
 type ChannelStore = {
   setChannel(guildId: string, channelId: string, by: string): Promise<void> | void;
+  /** Looks up an account's Shiny collection by username (null: no such account). */
+  shinies?(username: string): Promise<ShinyCard | null> | ShinyCard | null;
 };
+
+/** The /shiny answer: an embed with the collection GIF attached (multipart), or a plain line. */
+export function shinyReply(name: string, card: ShinyCard | null): Response {
+  if (!card) return reply(`No TURBZ account called **${name.slice(0, 16)}**.`, true);
+  if (!card.count) return reply(`**${card.display}** has not caught a shiny yet. ✦`);
+  const embed = {
+    title: `✦ ${card.display}'s Shiny collection ✦`,
+    description: `${card.count} shiny ghost${card.count === 1 ? "" : "s"} picked up.`,
+    color: 0xff7ae0,
+    fields: [{ name: "Newest", value: card.names.slice(0, 12).join(" · ").slice(0, 1000) || "—", inline: false }],
+    ...(card.gif ? { image: { url: "attachment://shinies.gif" } } : {}),
+    footer: { text: "TURBZ · dreamdaw.com" },
+  };
+  const data = { embeds: [embed], allowed_mentions: { parse: [] }, ...(card.gif ? { attachments: [{ id: 0, filename: "shinies.gif" }] } : {}) };
+  if (!card.gif) return new Response(JSON.stringify({ type: 4, data }), { headers: { "content-type": "application/json" } });
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({ type: 4, data }));
+  form.append("files[0]", new Blob([card.gif], { type: "image/gif" }), "shinies.gif");
+  return new Response(form);
+}
 
 export async function handleInteraction(request: Request, env: Env, store: ChannelStore): Promise<Response> {
   if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
@@ -65,6 +97,13 @@ export async function handleInteraction(request: Request, env: Env, store: Chann
     await store.setChannel(String(msg.guild_id), String(msg.channel_id), String(by));
     const warn = env.DISCORD_BOT_TOKEN ? "" : "\n(The bot token is not set up on the game server yet, so posts start once it is.)";
     return reply(`🪦 TURBZ deaths will be posted here. Every witch who falls shows up with a GIF, her level and her effects.${warn}`);
+  }
+  if (msg.type === 2 && msg.data?.name === "shiny") {
+    const opt = (msg.data?.options ?? []).find((o: { name?: string }) => o?.name === "username");
+    const name = String(opt?.value ?? "").trim();
+    if (!name) return reply("Usage: /shiny username", true);
+    const card = store.shinies ? await store.shinies(name) : null;
+    return shinyReply(name, card);
   }
   if (msg.type === 2 && msg.data?.name === "tm") return reply("TURBZ global chat is closed right now; live play happens in lobbies inside the game.", true);
   return reply("Unknown command.", true);
@@ -145,4 +184,41 @@ export function decodeGif(b64: unknown): Uint8Array | null {
   } catch {
     return null;
   }
+}
+
+export type ShinySeenPost = { username: string; witch: string; name: string; species: string; level: number; type: string; place: string; mode: string };
+
+export function shinySeenEmbed(d: ShinySeenPost, hasGif: boolean): Record<string, unknown> {
+  return {
+    title: `✦ Shiny Ghost Seen: ${d.name} ✦`,
+    description: `**${d.witch}** (played by **${d.username}**) just saw a shiny ${d.name} drop${d.place ? ` in ${d.place}` : ""}.`,
+    color: 0xff7ae0,
+    fields: [
+      { name: "Level", value: String(d.level), inline: true },
+      ...(d.type ? [{ name: "Element", value: d.type.slice(0, 16), inline: true }] : []),
+      ...(d.mode === "hardcore" ? [{ name: "Mode", value: "Hardcore", inline: true }] : []),
+    ],
+    ...(hasGif ? { image: { url: "attachment://shiny.gif" } } : {}),
+    footer: { text: "TURBZ · dreamdaw.com" },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/** Posts a "Shiny Ghost Seen" card (with the ghost's GIF) to every channel set up with /turbzhere. */
+export async function postShinySeen(env: Env, channels: { channelId: string }[], d: ShinySeenPost, gif: Uint8Array | null, drop: (channelId: string) => Promise<void> | void): Promise<void> {
+  const token = env.DISCORD_BOT_TOKEN;
+  if (!token || !channels.length) return;
+  const embed = shinySeenEmbed(d, !!gif);
+  await Promise.all(channels.map(async ({ channelId }) => {
+    try {
+      const form = new FormData();
+      form.append("payload_json", JSON.stringify({ embeds: [embed], allowed_mentions: { parse: [] }, ...(gif ? { attachments: [{ id: 0, filename: "shiny.gif" }] } : {}) }));
+      if (gif) form.append("files[0]", new Blob([gif], { type: "image/gif" }), "shiny.gif");
+      const res = await fetch(`${API}/channels/${channelId}/messages`, { method: "POST", headers: { authorization: `Bot ${token}` }, body: form });
+      if (res.status === 403 || res.status === 404) await drop(channelId);
+      else if (!res.ok) console.error("[discord] shiny post failed", res.status, (await res.text()).slice(0, 300));
+    } catch (error) {
+      console.error("[discord] shiny post error", error);
+    }
+  }));
 }

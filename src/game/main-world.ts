@@ -8,7 +8,7 @@
  */
 import { baseWorldFile } from "./builtin-maps";
 import { setTileRemap } from "./content";
-import type { MapFile } from "./map-format";
+import { savedMaps, type MapFile } from "./map-format";
 import { reachable } from "./map-tools";
 import { relocateClassicSites } from "./world";
 
@@ -16,9 +16,41 @@ export const MAIN_WORLD_ID = "veilreach";
 
 let installedFor: MapFile | null = null;
 
-/** The map file that is the overworld: the embedded Veilreach. */
+const OVERRIDE_KEY = "turbz-main-world-v1";
+
+/** The id of a saved designer world chosen to replace Veilreach as the overworld on this device, or "". */
+export function mainWorldChoice(): string {
+  try {
+    return localStorage.getItem(OVERRIDE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Plays a saved designer world (a generated one, usually) as the overworld on this device. Pass "" to go
+ * back to Veilreach. Hunters standing in the old overworld wake at the new world's start the next time
+ * they load in.
+ */
+export function setMainWorldChoice(id: string): void {
+  try {
+    if (id) localStorage.setItem(OVERRIDE_KEY, id);
+    else localStorage.removeItem(OVERRIDE_KEY);
+  } catch {
+    /* private mode: the choice lasts until the tab closes */
+  }
+}
+
+function chosenWorld(): MapFile | null {
+  const id = mainWorldChoice();
+  if (!id) return null;
+  const m = savedMaps().find((x) => x.id === id);
+  return m && (m.kind ?? "world") === "world" && m.spawn ? m : null;
+}
+
+/** The map file that is the overworld: a world chosen in the Map Builder, else the embedded Veilreach. */
 export function mainWorldFile(): MapFile | null {
-  const f = baseWorldFile();
+  const f = chosenWorld() ?? baseWorldFile();
   if (f && f !== installedFor) install(f);
   return f;
 }
