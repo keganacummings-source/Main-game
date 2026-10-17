@@ -6,6 +6,7 @@ import {
   commitSpell,
   freshMelee,
   freshWeave,
+  pickRushTargets,
   planMelee,
   planSpell,
   schoolMult,
@@ -75,6 +76,20 @@ test("spells resonate, chord on a third element, and overcast when focus is full
   assert.ok(hymn.mult > 1.4);
   const spent = commitSpell(weave, "light", hymn);
   assert.deepEqual(spent.types, []);
+});
+
+test("a rush picks three foes inside its radius and leaves the far one", () => {
+  const from = { x: 0, y: 0 };
+  const foes = [
+    { id: "a", x: 40, y: 0 },
+    { id: "b", x: 80, y: 30 },
+    { id: "c", x: 20, y: 70 },
+    { id: "far", x: 400, y: 0 },
+  ];
+  const picked = pickRushTargets(from, foes, 120, 3, foes[1]);
+  assert.deepEqual(picked.map((f) => f.id), ["b", "a", "c"]);
+  assert.equal(pickRushTargets(from, foes, 120, 3).length, 3);
+  assert.equal(pickRushTargets(from, [foes[3]], 120, 3).length, 0);
 });
 
 test("a school pays off the status already on the foe, and a falter keeps part of the focus", () => {

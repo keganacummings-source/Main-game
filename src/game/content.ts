@@ -516,6 +516,27 @@ export function rollSpiritKit(type: TypeId, rng: Rng, prefer?: string): { known:
 const MELEE_IDS = new Set(["cinder", "grin", "thorn", "bite", "rattle", "measured", "brine"]);
 const SPELL_IDS = new Set(["dirge", "storm", "howl", "quake", "whiteout", "flash", "hex", "shroud", "dawn", "creep", "marrow", "vine", "ember", "tide"]);
 
+/** Movement-melee verses. A rush runs through several foes. An orbit circles one. A slam charges in. */
+const RUSH_IDS = new Set(["triblitz", "voidprowl", "bloodbound"]);
+const ORBIT_IDS = new Set(["orbitstrike", "gravecircle", "emberspin"]);
+const SLAM_IDS = new Set(["crashdown", "stormcleave", "tidecrasher"]);
+
+export type MovementKind = "rush" | "orbit" | "slam";
+
+export function movementKind(m: Move): MovementKind | null {
+  if (RUSH_IDS.has(m.id)) return "rush";
+  if (ORBIT_IDS.has(m.id)) return "orbit";
+  if (SLAM_IDS.has(m.id)) return "slam";
+  return null;
+}
+
+/** How far a rush or slam can start from. Standing melee stays inside two tiles. */
+export function movementReach(m: Move): number | null {
+  if (RUSH_IDS.has(m.id)) return m.chain?.range ?? m.range;
+  if (SLAM_IDS.has(m.id)) return m.range;
+  return null;
+}
+
 export function attackForm(m: Move): AttackForm {
   if (m.form) return m.form;
   const tactic = moveTactic(m);
@@ -557,6 +578,8 @@ export function isMeleeVerse(m: Move): boolean {
 export function attackRange(m: Move): number {
   const tactic = moveTactic(m);
   if (tactic === "aura") return 0;
+  const travel = movementReach(m);
+  if (travel) return travel;
   const base = baseRange(m, tactic);
   if (attackForm(m) === "melee") return meleeClamp(base);
   // Ranged and spell attacks sit beyond melee. Self-cast verses (heal, ward, roll, dash, surge) keep their own reach.

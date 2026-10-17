@@ -181,3 +181,33 @@ export function schoolMult(type: string, ids: readonly string[]): { mult: number
       return { mult: 1, label: "" };
   }
 }
+
+/** Up to `count` foes inside `radius` of the hunter, walked in order so a rush can hit each one. */
+export function pickRushTargets<T extends { x: number; y: number }>(
+  from: { x: number; y: number },
+  foes: readonly T[],
+  radius: number,
+  count: number,
+  prefer?: T | null,
+): T[] {
+  const left = foes.filter((f) => Math.hypot(f.x - from.x, f.y - from.y) <= radius);
+  const out: T[] = [];
+  let cursor = from;
+  if (prefer && left.includes(prefer)) {
+    left.splice(left.indexOf(prefer), 1);
+    out.push(prefer);
+    cursor = prefer;
+  }
+  while (out.length < count && left.length) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < left.length; i++) {
+      const d = Math.hypot(left[i]!.x - cursor.x, left[i]!.y - cursor.y);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const next = left.splice(best, 1)[0]!;
+    out.push(next);
+    cursor = next;
+  }
+  return out;
+}

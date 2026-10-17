@@ -280,7 +280,9 @@ test("melee works within 2 tiles, ranged and spells stay beyond it, and melee ig
     if (tac === "aura") continue;
     const r = content.attackRange(m);
     if (content.attackForm(m) === "melee") {
-      assert.ok(r >= 32 && r <= 64, `${m.id} melee reach ${r} must be 1-2 tiles`);
+      const travel = content.movementReach(m);
+      if (travel) assert.equal(r, travel, `${m.id} starts from its written travel range`);
+      else assert.ok(r >= 32 && r <= 64, `${m.id} melee reach ${r} must be 1-2 tiles`);
     } else if (!["heal", "ward", "roll", "dash", "surge"].includes(tac)) {
       assert.ok(r > content.MELEE_MAX_REACH && r >= Math.min(content.RANGED_MIN_REACH, m.nova ?? Infinity), `${m.id} ranged/spell reach ${r} must stay beyond melee`);
     }

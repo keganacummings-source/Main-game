@@ -51,6 +51,7 @@ import {
   MAX_AURAS,
   moveCdFactor,
   formTag,
+  movementKind,
   huntMove,
   gearPrice,
   equipmentStats,
@@ -150,7 +151,7 @@ import {
 	expectedHunterPower, gearSellValue, hardcoreGrowth, itemSellValue, killXpAmount, openWorldLevelEdge, rollEnemyKit, standardGrowth,
 } from "./balance";
 import {
-	breakMelee, commitMelee, commitSpell, freshMelee, freshWeave, planMelee, planSpell, schoolMult, shatterWeave, tickMelee, tickWeave,
+	breakMelee, commitMelee, commitSpell, freshMelee, freshWeave, pickRushTargets, planMelee, planSpell, schoolMult, shatterWeave, tickMelee, tickWeave,
 } from "./fight-depth";
 import {
   BIOME_LABEL,
@@ -810,6 +811,8 @@ export class TurbzGame {
 		this.meleeChain = freshMelee();
 		this.weave = freshWeave();
 		this.overcastT = 0;
+		this.rush = null;
+		this.orbit = null;
 		this.rules = "hunt";
 		this.duel = null;
 		this.contract = [];
@@ -2420,6 +2423,8 @@ export class TurbzGame {
 		this.overcastT = Math.max(0, (this.overcastT ?? 0) - dt);
 		if (!this.duel) this.defFatigue = Math.max(0, (this.defFatigue ?? 0) - dt * 0.35);
 		if (this.lunge) this.tickLunge(dt);
+		else if (this.rush) this.tickRush(dt);
+		else if (this.orbit) this.tickOrbit(dt);
 		else if (this.autoplay && !this.typing() && !this.sleeping && !(this.rules === "hardcore" && this.duel)) this.tickAutoplay(dt);
 		else {
 			let ix = 0;
@@ -3255,7 +3260,7 @@ export class TurbzGame {
 	attack() {
 		const save = this.save;
 		if (!save || this.dead || snap.mode !== "play") return false;
-		if (this.castLock > 0 || this.lunge) return false;
+		if (this.castLock > 0 || this.lunge || this.rush || this.orbit) return false;
 		const foe = this.fightTarget();
 		if (foe && this.castOffense(foe)) return true;
 		this.say(foe ? "Moves are still cooling." : "Nothing in range.");
@@ -3351,12 +3356,16 @@ export class TurbzGame {
 	castMoveInner(move, prefer) {
 		const save = this.save;
 		if (!save || this.dead || snap.panel === "death" || !save.abilityRanks?.[move.id]) return false;
-		if (this.castLock > 0 || this.lunge) return false;
+		if (this.castLock > 0 || this.lunge || this.rush || this.orbit) return false;
 		if (this.status.some((s) => s.id === "sleep")) return false;
 		if ((this.cds[move.id] ?? 0) > 0) return false;
 		if (this.status.some((s) => s.id === "silence") && move.priority < 2 && move.effect !== "mend") return false;
 		const tactic = moveTactic(move);
 		if (tactic === "aura") return this.toggleAura(move);
+		const kind = movementKind(move);
+		if (kind === "rush") return this.castRush(move, prefer);
+		if (kind === "orbit") return this.castOrbit(move, prefer);
+		if (kind === "slam") return this.castSlam(move, prefer);
 		const selfCast = tactic === "heal" || tactic === "ward" || tactic === "roll" || tactic === "dash" || tactic === "surge" || move.effect === "mend" || move.effect === "shell";
 		const reach = this.playerReach(move);
 		// Melee is strictly within 2 tiles: no padding. Ranged verses keep a little slack.
@@ -3545,23 +3554,197 @@ export class TurbzGame {
 		else this.gainSkill("physical", 2);
 		return true;
 	}
+	/** Pay the verse's cooldown and grind, once a movement attack has actually started. */
+	spendMove(move, floor = 0) {
+		const cd = Math.max(this.moveCooldown(move), floor);
+		this.cds[move.id] = cd;
+		this.cdMax = this.cdMax ?? {};
+		this.cdMax[move.id] = cd;
+		this.combat = 3;
+		this.gainSkill(masteryOf(move.type), 3);
+		this.gainSkill("physical", 2);
+		this.cue("hit", { rate: Math.max(0.7, 1.35 - move.power / 120) }, [140 + move.priority * 40 + move.power, .06, "square"]);
+	}
+	/**
+	 * Tri Blitz, Void Prowl, Blood Bound: run through up to three foes and hit each one at full strength.
+	 */
+	castRush(move, prefer) {
+		const save = this.save;
+		const radius = move.chain?.range ?? move.range ?? 120;
+		const count = 1 + (move.chain?.jumps ?? 2);
+		const foes = this.mobs.filter((m) => m.alive);
+		const picked = pickRushTargets(save, foes, radius, count, prefer?.alive ? prefer : null);
+		if (!picked.length) return false;
+		this.spendMove(move, 1.1);
+		const first = picked[0];
+		this.facing = first.x < save.x ? -1 : 1;
+		this.rush = { moveId: move.id, ids: picked.map((m) => m.id), i: 0, hop: moveTactic(move) === "blink" };
+		this.float(save.x, save.y - 42, picked.length >= 3 ? "TRIPLE" : "RUSH", "#fff1a8");
+		this.dest = null;
+		return true;
+	}
+	tickRush(dt) {
+		const save = this.save;
+		const rush = this.rush;
+		if (!save || !rush) return;
+		const move = MOVE_BY_ID[rush.moveId];
+		if (!move) { this.rush = null; return; }
+		let mob = null;
+		while (rush.i < rush.ids.length && !mob) {
+			mob = this.mobs.find((m) => m.id === rush.ids[rush.i] && m.alive) ?? null;
+			if (!mob) rush.i++;
+		}
+		if (!mob) { this.rush = null; return; }
+		const dx = mob.x - save.x;
+		const dy = mob.y - save.y;
+		const dist = Math.hypot(dx, dy) || 1;
+		this.facing = dx < 0 ? -1 : 1;
+		this.attackT = 1;
+		if (dist > 28) {
+			const before = dist;
+			const step = Math.min((rush.hop ? 640 : 420) * dt, dist - 22);
+			const dir = { x: dx / dist, y: dy / dist };
+			if (rush.hop) {
+				const to = this.freeTravel(dir, Math.max(8, dist - 22), true);
+				save.x = to.x;
+				save.y = to.y;
+			} else this.tryMove(dir.x * step, dir.y * step);
+			const after = Math.hypot(mob.x - save.x, mob.y - save.y);
+			if (after > 28 && after > before - 1) {
+				rush.stuck = (rush.stuck ?? 0) + 1;
+				if (rush.stuck < 8) return;
+				rush.stuck = 0;
+				rush.i++;
+				if (rush.i >= rush.ids.length) this.rush = null;
+				return;
+			}
+			if (after > 28) return;
+		}
+		const n = rush.i + 1;
+		this.float(mob.x, mob.y - 46, String(n), "#fff1a8");
+		const d = this.playMoveFx(move, save.x, save.y - 16, mob.x, mob.y - 12, { imbue: this.playerImbue() });
+		const id = mob.id;
+		this.later(d, () => {
+			const live = this.mobs.find((m) => m.id === id && m.alive);
+			if (live) this.resolveHit(move, live, false, 1);
+		});
+		rush.i++;
+		if (rush.i >= rush.ids.length) this.rush = null;
+	}
+	/** Orbit Strike, Grave Circle, Ember Spin: circle them. An unbroken loop always crits. */
+	castOrbit(move, prefer) {
+		const save = this.save;
+		const reach = this.playerReach(move);
+		let target = null;
+		if (prefer?.alive && Math.hypot(prefer.x - save.x, prefer.y - save.y) <= reach) target = prefer;
+		else target = this.nearestMob(save.x, save.y, reach);
+		if (!target) return false;
+		if (this.status.some((s) => s.id === "root" && s.t > 0)) {
+			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
+			return false;
+		}
+		this.spendMove(move, 1.4);
+		this.facing = target.x < save.x ? -1 : 1;
+		this.castLockMax = 0.9;
+		this.castLock = 0.9;
+		this.orbit = { moveId: move.id, mobId: target.id, t: 0, dur: 0.9, ang0: Math.atan2(save.y - target.y, save.x - target.x), broken: false };
+		this.playMoveFx(move, save.x, save.y - 16, target.x, target.y - 12, { imbue: this.playerImbue() });
+		this.float(save.x, save.y - 42, "ORBIT", "#e7d9ff");
+		this.dest = null;
+		return true;
+	}
+	tickOrbit(dt) {
+		const save = this.save;
+		const orbit = this.orbit;
+		if (!save || !orbit) return;
+		const move = MOVE_BY_ID[orbit.moveId];
+		const mob = this.mobs.find((m) => m.id === orbit.mobId && m.alive);
+		if (!move || !mob) { this.orbit = null; this.castLock = 0; return; }
+		orbit.t += dt;
+		const u = Math.min(1, orbit.t / orbit.dur);
+		const ang = orbit.ang0 + u * Math.PI * 2;
+		const x = mob.x + Math.cos(ang) * 26;
+		const y = mob.y + Math.sin(ang) * 26;
+		if (!blocked(this.world, x, y)) { save.x = x; save.y = y; }
+		this.facing = mob.x < save.x ? -1 : 1;
+		this.attackT = 1;
+		if (u < 1) return;
+		this.orbit = null;
+		this.castLock = 0;
+		const whole = !orbit.broken;
+		this.float(mob.x, mob.y - 58, whole ? "LOOP" : "BROKEN", whole ? "#fff1a8" : "#c4473a");
+		this.resolveHit(move, mob, false, 1, { forceCrit: whole });
+	}
+	/** Crash Down, Storm Cleave, Tide Crasher: close the gap and land the heavy hit, splash included. */
+	castSlam(move, prefer) {
+		const save = this.save;
+		const reach = move.range ?? 160;
+		let target = null;
+		if (prefer?.alive && Math.hypot(prefer.x - save.x, prefer.y - save.y) <= reach) target = prefer;
+		else target = this.nearestMob(save.x, save.y, reach);
+		if (!target) return false;
+		if (this.status.some((s) => s.id === "root" && s.t > 0)) {
+			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
+			return false;
+		}
+		this.spendMove(move, 1.2);
+		const dx = target.x - save.x;
+		const dy = target.y - save.y;
+		const dist = Math.hypot(dx, dy) || 1;
+		const dir = { x: dx / dist, y: dy / dist };
+		if (dir.x) this.facing = dir.x > 0 ? 1 : -1;
+		const to = this.freeTravel(dir, Math.max(0, dist - 20), false);
+		this.lunge = {
+			t: 0,
+			dur: .36,
+			ox: save.x,
+			oy: save.y,
+			tx: to.x,
+			ty: to.y,
+			mob: target,
+			hit: false,
+			failed: false,
+			power: move.power,
+			moveId: move.id,
+			slam: true
+		};
+		this.evadeT = .3;
+		this.dest = null;
+		return true;
+	}
 	tickLunge(dt) {
 		const save = this.save;
 		const lung = this.lunge;
 		if (!save || !lung) return;
 		lung.t += dt;
 		const u = Math.min(1, lung.t / lung.dur);
-		const back = u < .45 ? u / .45 : 1 - (u - .45) / .55;
-		save.x = lung.ox + (lung.tx - lung.ox) * Math.max(0, back);
-		save.y = lung.oy + (lung.ty - lung.oy) * Math.max(0, back);
+		// A slam stays where it lands. Other lunges spring back.
+		const along = lung.slam ? Math.min(1, u / 0.72) : (u < .45 ? u / .45 : 1 - (u - .45) / .55);
+		save.x = lung.ox + (lung.tx - lung.ox) * Math.max(0, along);
+		save.y = lung.oy + (lung.ty - lung.oy) * Math.max(0, along);
 		this.attackT = 1;
-		if (!lung.hit && u >= .4) {
+		if (!lung.hit && u >= (lung.slam ? 0.72 : 0.4)) {
 			lung.hit = true;
-			const mob = this.nearestMob(save.x, save.y, 64);
 			const move = MOVE_BY_ID[lung.moveId] ?? MOVES.find((m) => moveTactic(m) === "lunge") ?? MOVES[0];
-			const lungeMiss = Math.random() * 100 > move.accuracy;
-			const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
-			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, (lung.failed ? 0.22 : 0.72) * (lung.meleePlan?.mult ?? 1), { missed: lungeMiss, depth: true, meleePlan: lung.meleePlan }); });
+			if (lung.slam) {
+				const mob = lung.mob?.alive && Math.hypot(lung.mob.x - save.x, lung.mob.y - save.y) < 84 ? lung.mob : this.nearestMob(save.x, save.y, 72);
+				const missed = Math.random() * 100 > move.accuracy;
+				const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: missed, imbue: this.playerImbue() });
+				if (mob) this.later(d, () => {
+					if (!mob.alive) return;
+					this.resolveHit(move, mob, false, 1.45, { missed });
+					if (!missed && move.splash) {
+						for (const other of this.foesNear(mob.x, mob.y, move.splash.radius)) {
+							if (other !== mob && other.alive) this.resolveHit(move, other, false, 1.45 * move.splash.mult, { child: true });
+						}
+					}
+				});
+			} else {
+				const mob = this.nearestMob(save.x, save.y, 64);
+				const lungeMiss = Math.random() * 100 > move.accuracy;
+				const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
+				if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, (lung.failed ? 0.22 : 0.72) * (lung.meleePlan?.mult ?? 1), { missed: lungeMiss, depth: true, meleePlan: lung.meleePlan }); });
+			}
 		}
 		if (u >= 1) this.lunge = null;
 	}
@@ -3699,7 +3882,7 @@ export class TurbzGame {
 			this.float(mob.x, mob.y - 36, "DODGE", "#e7d9ff");
 			return;
 		}
-		const crit = Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
+		const crit = !!opts.forceCrit || Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
 		let dmg = this.damageParts(move, mob, { fromPet, mult, crit, pet: opts.pet }).dmg;
 		dmg *= 1 - bend(Math.max(0, pure ? (mob.stats?.spellRes ?? 0) : defenseVs(form, mob.stats?.physRes ?? 0)), 0.55, 0.88);
 		if (pure) {
@@ -5258,7 +5441,8 @@ export class TurbzGame {
 		}
 		if (dmg <= 0) return;
 		this.meleeChain = breakMelee(this.meleeChain ?? freshMelee());
-		if (this.castLock > 0) {
+		if (this.orbit) this.orbit.broken = true;
+		if (this.castLock > 0 && !this.orbit) {
 			this.weave = shatterWeave(this.weave ?? freshWeave());
 			this.float(save.x, save.y - 56, "FALTER", "#c9a6e8");
 		}
@@ -5379,6 +5563,8 @@ export class TurbzGame {
 		this.weave = freshWeave();
 		this.overcastT = 0;
 		this.lunge = null;
+		this.rush = null;
+		this.orbit = null;
 		this.shrine = null;
 		this.mobs = this.mobs.filter((m) => !m.id.startsWith("shrine-"));
 		if (save.map !== "world") {

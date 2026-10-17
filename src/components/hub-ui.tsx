@@ -199,8 +199,8 @@ export function Hub(props: {
   const [asc, setAsc] = useState(() => ascensionCount());
   const shinyCount = readShinies().length;
   return (
-    <Screen kicker={`SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="Pick a veil">
-      <p className="text-dim">The dead keep the score.</p>
+    <Screen kicker={`V.2COMBAT · SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="V.2COMBAT">
+      <p className="text-dim">Pick a veil. The dead keep the score.</p>
       {ascend > 0 && (
         <div className="loot-overlay" role="dialog" aria-label="Ascension" data-testid="ascend-dialog">
           <div className="px-panel loot-panel ui-stack">
