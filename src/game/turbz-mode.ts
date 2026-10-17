@@ -26,6 +26,7 @@ import {
   type Move,
 } from "./content";
 import type { ClassId } from "./classes";
+import { enemyTargets, expectedHunterPower } from "./balance";
 import { generateWorld } from "./map-gen";
 import { lmsSpawns } from "./lms";
 import { DAY_SECONDS } from "./daynight";
@@ -34,6 +35,15 @@ import { combatRate } from "./pools";
 import { ALL_ORDERS, thinkLikePlayer, typeEdge } from "./player-brain";
 
 export const TURBZ_MAP = "custom-turbz";
+/** Where a TURBZ run is saved so leaving and returning resumes the same grind. */
+export const TURBZ_SAVE_KEY = "turbz-run-v1";
+/** The armor you keep forever: every piece from your bag, reset to level 1, enchants intact. */
+export const TURBZ_HEIR_KEY = "turbz-heirloom-v1";
+
+/** Is there a TURBZ run to continue? (Used by the menu to offer Continue.) */
+export function hasTurbzSave(): boolean {
+  try { return !!localStorage.getItem(TURBZ_SAVE_KEY); } catch { return false; }
+}
 export const TURBZ_ORDERS = [
   { id: "combat", label: "Fight" },
   { id: "mining", label: "Mine ore" },
@@ -46,7 +56,12 @@ export const TURBZ_ORDERS = [
 ] as const;
 
 const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
-const NEAR = 1100;
+/** Within this range a witch runs full live AI and hunts you relentlessly. */
+const NEAR = 1900;
+/** Within this range a witch commits to the player, dropping whatever she was doing. */
+const TWITCH_HUNT = 1900;
+/** Once she has locked onto you she chases this far before giving up. */
+const TWITCH_CHASE = 5200;
 const SIM = 2;
 const TEAM_MAX = 3;
 const rand = Math.random;
@@ -105,6 +120,8 @@ export function installTurbz(game: any): void {
     if (save.hunt) { save.hunt.wanted = 0; save.hunt.stars = 0; save.hunt.board = []; save.hunt.waveIn = 0; }
     save.dayNight = { t: DAY_SECONDS * 0.35, nights: 0 };
     const seed = (Math.random() * 1e9) >>> 0 || 7;
+    // Remember the seed so the exact same wild can be rebuilt when you continue the run later.
+    save.turbzSeed = seed;
     const file = generateWorld({
       id: "turbz", name: "TURBZ", seed, w: 450, h: 450,
       continentCount: 5, citiesPerContinent: 1, islands: 4, story: false,
@@ -140,23 +157,97 @@ export function installTurbz(game: any): void {
     save.hp = this.maxHp();
     const caps = this.poolCaps();
     this.pools = { mana: caps.maxMana, maxMana: caps.maxMana, stam: caps.maxStam, maxStam: caps.maxStam, manaSlow: 0, stamSlow: 0 };
-    const used = new Set<string>([save.name]);
-    let r = 0;
-    spots.forEach((p, i) => {
-      if (i === mine) return;
-      let nm = pick(WITCH_NAMES);
-      for (let k = 0; k < 12 && used.has(nm); k++) nm = pick(WITCH_NAMES);
-      if (used.has(nm)) nm = `${nm} ${r + 2}`;
-      used.add(nm);
-      this.mobs.push(this.makeTwitch(r++, p.x, p.y, nm));
-    });
     this.turbzWorld = this.world;
     this.turbzRoster = [];
     this.witchGraves = [];
+    this.spawnTurbzWitches(n, spots.filter((_, i) => i !== mine));
     this.plantTurbzHunts();
-    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are grinding. Spells drink mana, melee drinks stamina. Die and you start over: worn gear and party ghosts come back at level 1, enchants kept. This run's skills do not touch Hunt or Hardcore.`);
+    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
     this.giveTurbzHeirloom();
+    this.persistTurbz();
     this.syncHud(true);
+  };
+
+  /** Spawns `n` rival witches at the given land spots (or fresh ones), away from the player. */
+  game.spawnTurbzWitches = function (n: number, spots?: { x: number; y: number }[]) {
+    const world = this.turbzWorld || this.world;
+    const save = this.save;
+    if (!world || !save) return;
+    const places = spots ?? lmsSpawns(world, n + 3);
+    const used = new Set<string>([save.name]);
+    let made = 0;
+    for (const p of places) {
+      if (made >= n) break;
+      if (Math.hypot(p.x - save.x, p.y - save.y) < 520) continue;
+      let nm = pick(WITCH_NAMES);
+      for (let k = 0; k < 12 && used.has(nm); k++) nm = pick(WITCH_NAMES);
+      if (used.has(nm)) nm = `${nm} ${made + 2}`;
+      used.add(nm);
+      this.mobs.push(this.makeTwitch(made + 1, p.x, p.y, nm));
+      made++;
+    }
+  };
+
+  /** Save the current TURBZ run so it can be resumed after leaving. */
+  game.persistTurbz = function () {
+    const save = this.save;
+    if (!this.turbz || !save || this.dead) return;
+    try { localStorage.setItem(TURBZ_SAVE_KEY, JSON.stringify(save)); } catch { /* private mode */ }
+  };
+
+  /** Forget the resume slot (on death — the next life starts fresh, keeping the armour heirloom). */
+  game.clearTurbzSave = function () {
+    try { localStorage.removeItem(TURBZ_SAVE_KEY); } catch { /* private mode */ }
+  };
+
+  /** Resume a saved TURBZ run: same world (from its seed), same witch, gear, skills and grind. */
+  game.continueTurbz = function (): boolean {
+    let raw: any = null;
+    try { raw = JSON.parse(localStorage.getItem(TURBZ_SAVE_KEY) ?? "null"); } catch { raw = null; }
+    if (!raw || !raw.name) return false;
+    this.turbz = true;
+    this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
+    this.teamSeq = 1;
+    this.swapRules("hardcore");
+    const seed = (raw.turbzSeed as number) || ((Math.random() * 1e9) >>> 0 || 7);
+    raw.turbzSeed = seed;
+    // Rebuild the exact same wild from the saved seed before booting into it.
+    const file = generateWorld({
+      id: "turbz", name: "TURBZ", seed, w: 450, h: 450,
+      continentCount: 5, citiesPerContinent: 1, islands: 4, story: false, intro: "",
+    });
+    file.npcs = [];
+    file.quests = [];
+    file.id = "turbz";
+    this.turbzFile = file;
+    // Always resume on the overworld (never stuck inside a torn-down rift instance).
+    raw.map = TURBZ_MAP;
+    if (raw.deathBanked) raw.deathBanked = false;
+    // boot() does the heavy lifting: normalises the save, installs skins, resets runtime state,
+    // loads the custom-turbz map (from the turbzFile set above) and switches the UI into play.
+    this.boot(raw);
+    const save = this.save;
+    // If the saved tile somehow isn't open, boot falls back to "world" — force back onto the wild.
+    if (save.map !== TURBZ_MAP) {
+      save.map = TURBZ_MAP;
+      const spot = lmsSpawns(this.world, 3)[0];
+      if (spot) { save.x = spot.x; save.y = spot.y; }
+      this.loadMap(TURBZ_MAP, true);
+      this.cam.x = save.x; this.cam.y = save.y;
+    }
+    if (this.world) this.world.swim = true;
+    this.turbzWorld = this.world;
+    const caps = this.poolCaps();
+    this.pools = { mana: caps.maxMana, maxMana: caps.maxMana, stam: caps.maxStam, maxStam: caps.maxStam, manaSlow: 0, stamSlow: 0 };
+    if (!(save.hp > 0)) save.hp = this.maxHp();
+    this.turbzRoster = [];
+    this.witchGraves = [];
+    this.spawnTurbzWitches(10 + Math.floor(rand() * 6));
+    this.plantTurbzHunts();
+    this.say("TURBZ resumed. Your witch, your gear and your grind are right where you left them.");
+    this.persistTurbz();
+    this.syncHud(true);
+    return true;
   };
 
   game.plantTurbzHunts = function () {
@@ -165,11 +256,14 @@ export function installTurbz(game: any): void {
     save.dungeons = save.dungeons ?? { elapsed: 0, sequence: 1, portals: [], day: 0, dayElapsed: 0, stamps: {} };
     const spots = lmsSpawns(this.world, 14);
     const depths = [4, 8, 12, 18, 26, 36];
+    // Idempotent: on resume the rift portals already exist (persisted), so only add missing ones.
     depths.forEach((lv, i) => {
       const p = spots[i];
       if (!p) return;
+      const id = `rift-${101 + i}`;
+      if (save.dungeons.portals.some((q: any) => q.id === id)) return;
       save.dungeons.portals.push({
-        id: `rift-${101 + i}`,
+        id,
         seed: (save.seed ^ (i + 3) * 104729) >>> 0,
         level: lv,
         x: p.x,
@@ -179,7 +273,7 @@ export function installTurbz(game: any): void {
         day: 0,
       });
     });
-    save.dungeons.sequence = 106;
+    save.dungeons.sequence = Math.max(save.dungeons.sequence ?? 1, 106);
     const bosses = [
       { species: "naraku", name: "The Walking Pit", level: 10 },
       { species: "yomi", name: "Door of Yomi", level: 18 },
@@ -222,20 +316,23 @@ export function installTurbz(game: any): void {
     g.price = gearPrice(g);
   };
 
-  /** Copies worn gear and the party, at level 1, without touching enchants. Does not write the shared account. */
+  /**
+   * Keeps your ENTIRE armour bag, not just what you wore: every piece is copied back at level 1 with
+   * its enchantments fully intact (enchants never reset). The party ghosts come back at level 1 too.
+   * This is what lets you grind a full armour set in TURBZ and never lose it to a death.
+   */
   game.stashTurbzKit = function () {
     const save = this.save;
     if (!save) return;
-    const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
     const gear: any[] = [];
-    const equipped: Record<string, string> = {};
     for (const g of save.gear ?? []) {
-      if (!worn.has(g.uid)) continue;
       const copy = { ...g, level: 1, gx: 0, enchants: (g.enchants ?? []).map((e: any) => ({ ...e })), moves: [...(g.moves ?? [])] };
       copy.price = gearPrice(copy);
       gear.push(copy);
-      for (const [slot, uid] of Object.entries(save.equipped ?? {})) if (uid === g.uid) equipped[slot] = g.uid;
     }
+    // Preserve which pieces were worn (by uid) so they are re-equipped on the next life.
+    const equipped: Record<string, string> = {};
+    for (const [slot, uid] of Object.entries(save.equipped ?? {})) if (uid && gear.some((g) => g.uid === uid)) equipped[slot] = uid as string;
     const spirits = (save.spirits ?? []).map((s: any) => ({
       ...s,
       level: 1,
@@ -250,10 +347,13 @@ export function installTurbz(game: any): void {
       slots: [...(s.slots ?? [])],
     }));
     this.turbzHeirloom = { gear, equipped, spirits };
+    // Persist it so your armour survives even if you close the game on the You Died screen.
+    try { localStorage.setItem(TURBZ_HEIR_KEY, JSON.stringify(this.turbzHeirloom)); } catch { /* private mode */ }
   };
 
   game.giveTurbzHeirloom = function () {
-    const kit = this.turbzHeirloom;
+    let kit = this.turbzHeirloom;
+    if (!kit) { try { kit = JSON.parse(localStorage.getItem(TURBZ_HEIR_KEY) ?? "null"); } catch { kit = null; } }
     const save = this.save;
     if (!kit || !save) return;
     if (kit.gear?.length) {
@@ -317,7 +417,9 @@ export function installTurbz(game: any): void {
     const cls = pick(CLASSES);
     const raceId = CLASS_RACE[cls.id] ?? "vesper";
     const rng = mulberry32(((rand() * 1e9) | 0) || 9);
-    const weapon = rollGear(rng, { level, slot: "weapon", floor: "common", typeBias: cls.type, raceBias: raceId });
+    // A TURBZ witch is born at least at your level with gear to match, so she is never a pushover.
+    level = Math.max(level, this.save?.level ?? 1);
+    const weapon = rollGear(rng, { level, slot: "weapon", floor: level >= 8 ? "fine" : "common", typeBias: cls.type, raceBias: raceId });
     const m = this.makeMob({ id: `twitch-${i}-${nextUid()}`, species: "muma", x, y, level, fixedLevel: true, template: 20, type: cls.type, name });
     const brain: Brain = {
       level, xp: 0, sp: Math.max(0, (level - 1) * 3), ranks: {}, known: [...cls.starterMoves].filter((id) => MOVE_BY_ID[id]),
@@ -338,18 +440,67 @@ export function installTurbz(game: any): void {
   game.scaleTwitch = function (m: any, fresh = false) {
     const r: Brain = m.rv;
     if (!r) return;
+    const save = this.save;
+    const playerLv = Math.max(1, save?.level ?? 1);
+    if (!this.powerRef && this.refreshPower) this.refreshPower(0);
     const armor = SLOTS.reduce((n, s) => n + (r.gear[s] ? equipmentStats(r.gear[s]!).armor : 0), 0);
-    const max = Math.round((78 + r.level * 16) * (1 + armor / 280) * (1 + r.spirits * 0.04));
+    // TURBZ witches are scaled to YOU the way the hardest world witches are: their health is measured
+    // in your hits and their damage is a real share of your health (the bent "witch" damage share),
+    // read against the better of your real power and a decent hunter of your level. They are meant to
+    // be among the deadliest fights in the game — never a level-1 chump grinding in a corner.
+    const t = enemyTargets({ kind: "witch", rarity: Math.max(2, m.rarity ?? 2), hardcore: true, growth: this.growth ? this.growth() : 1 });
+    const exp = expectedHunterPower(Math.max(r.level, playerLv));
+    const liveHit = Math.max(1, this.powerRef?.hit ?? exp.hit);
+    const liveHp = Math.max(1, this.powerRef?.maxHp ?? exp.maxHp);
+    const hitRef = Math.max(liveHit, exp.hit);
+    const hpRef = Math.max(liveHp, exp.maxHp);
+    const floorHp = (20 + r.level * 8) * 2.5;
+    const night = this.isNightNow?.() ? 1.2 : 1;
+    const base = Math.max(floorHp, hitRef * t.hits) * (1 + armor / 240) * (1 + r.spirits * 0.03);
+    const max = Math.max(1, Math.floor(base * night));
     const ratio = fresh || !(m.max > 0) ? 1 : Math.max(0, Math.min(1, m.hp / m.max));
     m.level = r.level;
     m.max = max;
+    m.baseMax = Math.floor(base);
     if (m.alive !== false) m.hp = Math.max(1, Math.ceil(max * ratio));
-    m.frac = Math.min(0.14, 0.055 + r.level * 0.0016);
-    m.dmgMult = 1.2 + Math.min(0.3, r.spirits * 0.03);
+    // Fraction of your health one clean hit removes — the dangerous-witch share (≈0.38-0.58, bent).
+    m.frac = (hpRef * t.frac) / liveHp;
+    m.dmgMult = 1.15 + Math.min(0.4, r.spirits * 0.03);
+    m.nightScaled = !!this.isNightNow?.();
+    m.speed = Math.max(1, Math.round(((this.playerSpeed?.() ?? 14) + t.speedOffset)));
     const offense = r.known.map((id) => MOVE_BY_ID[id]).filter((mv): mv is Move => !!mv && isOffense(mv));
     m.kit = offense.sort((a, b) => b.power * (r.ranks[b.id] ?? 1) - a.power * (r.ranks[a.id] ?? 1)).slice(0, 4).map((mv) => mv.id);
     m.move = m.kit[0] ?? "measured";
     m.lootGear = SLOTS.map((s) => r.gear[s]).filter(Boolean);
+  };
+
+  /**
+   * Autoleveling: a TURBZ witch's level, skills, stats and worn gear all track yours. She never
+   * falls behind — the moment you out-level her she catches up (new skill points spent, gear
+   * leveled to match), so a witch you meet at level 60 fights like a level-60 build, not a relic.
+   */
+  game.autoLevelTwitch = function (m: any) {
+    const r: Brain = m?.rv;
+    const save = this.save;
+    if (!r || !save) return;
+    const target = Math.max(r.level, save.level | 0);
+    let touched = false;
+    if (target > r.level) {
+      r.sp += (target - r.level) * 3;
+      r.level = target;
+      this.twitchSpend(m); // learns new verses and ranks the ones she has, to your level
+      touched = true;
+    }
+    for (const slot of SLOTS) {
+      const g = r.gear[slot];
+      if (g) {
+        if ((g.level ?? 1) < r.level) { g.level = r.level; g.gx = 0; g.price = gearPrice(g); touched = true; }
+      } else if (rand() < 0.4) {
+        r.gear[slot] = rollGear(mulberry32(((rand() * 1e9) | 0) || 3), { level: r.level, slot, floor: r.level >= 14 ? "rare" : "fine", typeBias: m.type, raceBias: m.race });
+        touched = true;
+      }
+    }
+    if (touched) this.scaleTwitch(m);
   };
 
   game.twitchSpend = function (m: any) {
@@ -441,6 +592,12 @@ export function installTurbz(game: any): void {
     const onMap = save.map === TURBZ_MAP;
     const pool = onMap ? this.mobs : (this.turbzRoster ?? []);
     let aliveN = pool.filter((m: any) => m.twitch && m.alive).length;
+    // Keep every witch leveled to you. Throttled: a few per frame is plenty and costs nothing.
+    this.twitchLevelCursor = ((this.twitchLevelCursor ?? 0) + 1) % Math.max(1, pool.length);
+    for (let k = 0; k < pool.length; k++) {
+      const m = pool[(this.twitchLevelCursor + k) % pool.length];
+      if (m?.twitch && m.alive && (m.rv?.level ?? 1) < save.level) this.autoLevelTwitch(m);
+    }
     while (graves.length && (graves[0] ?? 1) <= 0) {
       if (aliveN >= 15) break;
       graves.shift();
@@ -563,6 +720,10 @@ export function installTurbz(game: any): void {
     r.simT -= dt;
     if (r.simT > 0) return;
     r.simT = SIM;
+    const save = this.save;
+    const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
+    // Scent range: a witch who catches your trail turns hunter and heads your way from off-screen.
+    if (pd < 3600 && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
     this.witchPlay(m, true);
   };
 
@@ -616,6 +777,21 @@ export function installTurbz(game: any): void {
 
   game.witchPlay = function (m: any, far: boolean) {
     const r: Brain = m.rv;
+    const save = this.save;
+    // AGGRESSION: a TURBZ witch is a hunter, not a farmer. If you are anywhere near (or she has
+    // already locked onto you), she drops crafting/gathering and comes straight for you.
+    const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
+    const lockable = m.hp > m.max * 0.25 || m.turbzHunter;
+    if (lockable && (pd < TWITCH_HUNT || m.turbzHunter || (r.foe === "player" && pd < TWITCH_CHASE))) {
+      r.foe = "player";
+      r.foeT = Math.max(r.foeT, 8);
+      const foe = { player: true, x: save.x, y: save.y, alive: true, level: save.level };
+      if (!far) return this.twitchFight(m, foe, this.witchMoves(m));
+      const s = this.witchLandSpot(save.x, save.y, m.x, m.y);
+      r.goalX = s.x; r.goalY = s.y;
+      this.witchStep(m);
+      return;
+    }
     const act = this.witchAct(m);
     const go = (x: number, y: number) => {
       const s = this.witchLandSpot(x, y, m.x, m.y);
@@ -848,7 +1024,10 @@ export function installTurbz(game: any): void {
     r.goalY = spot.y;
     const d = Math.hypot(r.goalX - m.x, r.goalY - m.y);
     if (d > 10) {
-      const step = Math.min(d, (72 + Math.min(28, r.level)) * dt);
+      // Hunters move fast enough to run you down; idle witches amble.
+      const hunting = r.foe === "player" || m.turbzHunter;
+      const pace = (hunting ? 132 : 76) + Math.min(28, r.level);
+      const step = Math.min(d, pace * dt);
       if (this.witchNudge(m, r.goalX, r.goalY, step)) r.stuck = 0;
       else {
         r.stuck = (r.stuck ?? 0) + dt;

@@ -19,7 +19,7 @@ import { postShinySeen, writeShinies } from "@/game/cloud-client";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
-import { installTurbz } from "@/game/turbz-mode";
+import { installTurbz, hasTurbzSave } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
 import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
@@ -264,13 +264,18 @@ function Hunt() {
         {screen === "turbz" && !playing && (
           <Screen kicker="TURBZ" title="A hard wild. Other witches." wide>
             <div className="ui-stack" data-testid="turbz-screen">
-              <p className="text-dim">You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen witches grind, craft, and catch spirits, and sometimes die. If two meet they team up, never past three. Gear you wear levels up, slower than you do. If you die, that worn gear and the ghosts out with you drop back to level 1 versions instead of vanishing. Everything else is lost. This run is not saved.</p>
+              <p className="text-dim">You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
               <Field label="Name">
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
               </Field>
               <ClassPicker pick={pick} setPick={setPick} game={g()} />
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
+                {hasTurbzSave() && (
+                  <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-continue" onClick={() => (g() as unknown as { continueTurbz?: () => boolean } | null)?.continueTurbz?.()}>
+                    Continue run
+                  </button>
+                )}
                 <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true)}>
                   Wake as {CLASSES.find((c) => c.id === pick.classId)?.name}
                 </button>

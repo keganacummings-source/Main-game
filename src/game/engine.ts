@@ -151,7 +151,8 @@ import {
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { initActorSprites } from "./actor-sprites";
 import { isPinned } from "./ui-layout-store";
-import { enemyDesignFor, installEnemyDesigns } from "./enemy-design";
+import { enemyDesignFor, installEnemyDesigns, localEnemyDesigns } from "./enemy-design";
+import { installEnemySkins, rollEnemySkin, rollEnemyName, rollEnemyTypes, typeChartMulti } from "./enemy-skins";
 import {
 	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_ENRAGE, DEATH_MARK, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
 	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, defenseVs, enemyHitDamage, enemyTargets,
@@ -375,6 +376,8 @@ type Mob = {
   ghost?: boolean; look?: GhostLook | null; speed?: number; master?: string; aggro?: boolean;
   classId?: string; female?: boolean; bounty?: boolean; bountySpirit?: boolean; map?: string;
   power?: number; enraged?: boolean; baseMax?: number; moving?: boolean;
+  /** Random skin key + element list (enemy-skins.ts). */
+  skin?: string | null; types?: TypeId[] | null;
   zone?: { id: string; tx: number; ty: number; tw: number; th: number; levelMin: number; levelMax: number; species: string[]; count: number; respawn: number } | null;
 };
 type Spirit = {
@@ -389,6 +392,9 @@ type Spirit = {
   palette?: string;
   /** Tagged to float along as a tiny follower (Ghost Box ghosts). */
   tagged?: boolean;
+  /** Inherited from the foe it came from: its random skin and element list (ghost "steals the sprite"). */
+  skin?: string | null;
+  types?: TypeId[] | null;
 };
 type GhostPet = { species: string; level: number; rarity: number; look?: GhostLook; move?: string; name?: string; type?: TypeId; template?: number; hp?: number; max?: number; speed?: number };
 type SkillState = Record<SkillId, { level: number; xp: number }>;
@@ -1489,8 +1495,11 @@ export class TurbzGame {
 		// Shinies caught before the collection existed join it now.
 		if (!this.lms) for (const sp of [...(save.spirits ?? []), ...(save.ghostStore ?? [])]) if (sp?.shiny) this.recordShiny(sp);
 		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
-		// Enemy Designer creations join (or replace) the monster tables before the world is built.
-		try { installEnemyDesigns(); } catch { /* a broken design must not stop the game */ }
+		// The shipped pixel sprites become the random skin pool for every foe (greyscale + element tint).
+		try { installEnemySkins(); } catch { /* a bad skin must not stop the game */ }
+		// Only this device's own Enemy Designer creations still fold into the monster tables as species;
+		// the shipped designs are the skin pool now, not individual biome monsters.
+		try { installEnemyDesigns(localEnemyDesigns()); } catch { /* a broken design must not stop the game */ }
 		// The overworld is always the embedded Veilreach. It is rebuilt fresh for every boot (rejoining from
 		// the main menu used to keep the old generated world here).
 		this.overworld = null;
@@ -1737,8 +1746,19 @@ export class TurbzGame {
 		const threat = this.threat();
 		const max0 = animal ? Math.floor(14 + level * 7) : Math.floor((26 + level * 16) * (s.dungeonBoss ? 3.0 : s.boss ? 6.5 : 1) * (1 + rarity * 0.45));
 		const max = Math.floor(max0 * threat.hp);
-		const type = s.type || def.type;
-		const moves = MOVES.filter((m) => m.type === type && m.effect !== "mend" && m.effect !== "shell" && !["dash", "surge", "heal", "ward"].includes(moveTactic(m)));
+		const baseType = s.type || def.type;
+		// A "wild" foe is a generic overworld/dungeon spawn (no fixed name, not a boss/witch/hunter,
+		// no Enemy-Designer design). Those get a random skin, a silly random name, and 1-4 random
+		// elements. Everything else keeps its own identity but still wears a skin so it reads as part
+		// of the same world and its ghost can inherit the look.
+		const designNow = enemyDesignFor(species);
+		const kindNow = animal ? "animal" : s.boss || s.dungeonBoss || designNow?.boss ? "boss" : "normal";
+		const wildFoe = !designNow && (kindNow === "normal" || kindNow === "animal") && !s.name && !s.boss && !s.bossId && !s.fixedLevel;
+		const mobTypes = designNow ? [designNow.type] : wildFoe ? rollEnemyTypes() : [baseType];
+		const type = mobTypes[0] ?? baseType;
+		const mobSkin = designNow ? null : rollEnemySkin();
+		// Moves are drawn from across every element the foe carries, so a multi-element foe fights mixed.
+		const moves = MOVES.filter((m) => mobTypes.includes(m.type) && m.effect !== "mend" && m.effect !== "shell" && !["dash", "surge", "heal", "ward"].includes(moveTactic(m)));
 		const ranged = moves.filter((m) => attackForm(m) !== "melee");
 		const spell = moves.filter((m) => attackForm(m) === "spell");
 		const picked = animal ? "measured" : (ranged[rarity % Math.max(1, ranged.length)] ?? spell[0] ?? moves[0] ?? MOVES[0]).id;
@@ -1746,14 +1766,16 @@ export class TurbzGame {
 		const look = ghost ? rollGhostLook(lookRng, rarity, picked, s.boss ? "hunt" : undefined) : null;
 		const speed = 8 + level + rarity * 4 + (look?.aggression === "hunt" ? 3 : 0) + (s.boss ? 6 : 0);
 		// Every foe rolls its own stat line, enchantments and moves (balance.ts).
-		const design = enemyDesignFor(species);
-		const kind = animal ? "animal" : s.boss || s.dungeonBoss || design?.boss ? "boss" : "normal";
+		const design = designNow;
+		const kind = kindNow;
 		const kit = rollEnemyKit(lookRng, { species, type: design?.type ?? type, kind, rarity, playerLevel: hunter, hardcore: this.rules === "hardcore", signature: animal ? undefined : picked, design: design ?? undefined });
 		const mob = {
 			id: s.id,
 			species,
-			name: s.name ?? (s.bossId ? bossName(s.bossId) : s.typeRolled && TYPES[type] ? `${TYPES[type].name} ${def.name}` : def.name),
+			name: s.name ?? (wildFoe ? rollEnemyName() : s.bossId ? bossName(s.bossId) : s.typeRolled && TYPES[type] ? `${TYPES[type].name} ${def.name}` : def.name),
 			type,
+			types: mobTypes,
+			skin: mobSkin,
 			template: s.template ?? def.template,
 			x: s.x,
 			y: s.y,
@@ -4186,7 +4208,7 @@ export class TurbzGame {
 		// A ghost hits with its own level, not yours.
 		add("level", pet ? "Ghost level" : "Level", 1 + (pet ? Math.min(pet.level ?? 1, save.level + GHOST_LEVEL_LEAD) : save.level) * .045);
 		add("stab", "Matching element gear", pure ? 1 : this.stab(move.type));
-		if (mob) add("tm", "Element vs target", pure ? 1 : typeChart(move.type, mob.type));
+		if (mob) add("tm", "Element vs target", pure ? 1 : typeChartMulti(move.type, mob.types, mob.type));
 		add("might", "Might enchants", 1 + this.chan("might") / 100);
 		add("hunting", "Hunting skill", 1 + this.skillN("hunting") * 0.002);
 		if (form === "ranged") add("form_enchant", "Hunter's Eye", 1 + this.chan("hunter_eye") / 100);
@@ -4295,7 +4317,7 @@ export class TurbzGame {
 		}
 		if (mob.rival && this.rivalDodge(mob)) return;
 		const pure = form === "spell";
-		const tm = pure ? 1 : typeChart(move.type, mob.type);
+		const tm = pure ? 1 : typeChartMulti(move.type, mob.types, mob.type);
 		if (!pure && tm === 0) {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
@@ -4741,7 +4763,7 @@ export class TurbzGame {
 		ctx.beginPath(); ctx.ellipse(g.x, g.y + 2, 18, 6, 0, 0, Math.PI * 2); ctx.fill();
 		const gfx = { x: g.x, y: g.y + bob, type: sp.type, rarity: sp.rarity, level: sp.level, speed: sp.speed, max: sp.max, shiny: !!sp.shiny, seed: sp.uid, palette: sp.palette };
 		drawGhostFx(ctx, gfx, this.clock, "back");
-		drawMonster(ctx, { x: g.x, y: g.y + bob, template: sp.template, type: sp.type, facing: 1, walk: 0, hurt: 0, boss: false, rarity: sp.rarity, ghost: true, shiny: !!sp.shiny, palette: sp.palette, spin: 0, look: sp.look, time: this.clock });
+		drawMonster(ctx, { x: g.x, y: g.y + bob, template: sp.template, type: sp.type, facing: 1, walk: 0, hurt: 0, boss: false, rarity: sp.rarity, ghost: true, shiny: !!sp.shiny, palette: sp.palette, spin: 0, species: sp.species, skin: sp.skin ?? null, types: sp.types ?? null, look: sp.look, time: this.clock });
 		drawGhostFx(ctx, gfx, this.clock, "front");
 		ctx.restore();
 		const near = Math.hypot(g.x - this.save.x, g.y - this.save.y) <= WILD_REACH;
@@ -4978,7 +5000,9 @@ export class TurbzGame {
 		const sp: Spirit = {
 			uid: nextUid(), species: mob.species || "wisp", name: mob.name || "Ghost", type: TYPES[mob.type] ? mob.type : "spirit", template: Number(mob.template) || 0,
 			level: Math.max(1, Math.min(this.ghostLevelCap(), mob.level | 0)), rarity, look, move: kit.slots[0] ?? mob.move, known: kit.known, slots: kit.slots,
-			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false, shiny: isShiny, xp: 0
+			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false, shiny: isShiny, xp: 0,
+			// The ghost steals the foe's skin and elements, so it looks and reads like the thing it came from.
+			skin: mob.skin ?? null, types: mob.types ?? (mob.type ? [mob.type] : null),
 		};
 		this.finishGhost(sp, true);
 		return sp;
@@ -5368,6 +5392,7 @@ export class TurbzGame {
 			tier: m.tier,
 			typeColor: m.witch ? "#c4473a" : TYPES[m.type]?.color ?? "#e8dcc4",
 			typeName: TYPES[m.type]?.name ?? "",
+			typeDots: ((m.types && m.types.length ? m.types : [m.type]) as string[]).map((t) => TYPES[t]?.color ?? "#e8dcc4").slice(0, 4),
 			hp: Math.max(0, m.hp),
 			max: Math.max(1, m.max),
 			ghostHp: m.plateHp,
@@ -5981,6 +6006,8 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save || this.dead) return;
 		this.stashTurbzKit?.();
+		// The run is over — clear its resume slot. Starting over restores the kept armour (level 1, enchants).
+		this.clearTurbzSave?.();
 		let score = save.level * 50 + (save.xp | 0) + Math.floor((save.kyo | 0) / 2);
 		for (const g of save.gear ?? []) score += gearScore(g);
 		for (const sk of Object.values(save.skills ?? {})) score += Math.max(0, ((sk.level ?? 1) - 1) * 8);
@@ -6765,7 +6792,7 @@ export class TurbzGame {
 			ctx.save();
 			ctx.translate(at.x, at.y);
 			ctx.scale(TINY_SCALE, TINY_SCALE);
-			drawMonster(ctx, { x: 0, y: 0, template: g.template, type: g.type, facing: at.facing ?? 1, walk: this.walk + i, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: !!g.shiny, palette: g.palette, spin: 0, look: g.look, time: this.clock + i });
+			drawMonster(ctx, { x: 0, y: 0, template: g.template, type: g.type, facing: at.facing ?? 1, walk: this.walk + i, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: !!g.shiny, palette: g.palette, spin: 0, species: g.species, skin: g.skin ?? null, types: g.types ?? null, look: g.look, time: this.clock + i });
 			ctx.restore();
 			if (g.shiny && Math.floor(this.clock * 4 + i) % 3 === 0) {
 				ctx.fillStyle = `hsl(${(this.clock * 160 + i * 40) % 360},95%,75%)`;
@@ -9717,7 +9744,9 @@ export class TurbzGame {
 	persist() {
 		if (!this.save) return;
 		// Last Man Standing is a match, not a save: nothing is written, so your Hardcore witch is untouched.
-		if (this.lms || this.turbz) return;
+		if (this.lms) return;
+		// TURBZ saves to its own slot so leaving and returning resumes the exact same grind.
+		if (this.turbz) { this.persistTurbz?.(); return; }
 		for (const g of this.save.gear) this.noteFound(g);
 		this.save.savedAt = Date.now();
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
@@ -9735,7 +9764,8 @@ export class TurbzGame {
 	}
 	/** The page is closing: save now and send to the cloud without waiting for the usual pause. */
 	flushCloud() {
-		if (!this.save || this.lms || this.turbz) { flushNow(); return; }
+		if (this.turbz) { this.persistTurbz?.(); flushNow(); return; }
+		if (!this.save || this.lms) { flushNow(); return; }
 		this.persist();
 		window.clearTimeout(this.cloudTimer);
 		const json = JSON.stringify({ slot: this.rules === "hardcore" ? "hardcore" : "hunt", save: this.save });
@@ -10476,39 +10506,10 @@ export class TurbzGame {
 			if (!m.alive) continue;
 			if (Math.abs(m.x - this.cam.x) > w / this.zoom * 0.62 + 140) continue;
 			if (Math.abs(m.y - this.cam.y) > h / this.zoom * 0.62 + 160) continue;
-			if ((m.bounty || m.witch) && (m.classId || m.race)) {
-				const cls = m.classId ? CLASS_BY_ID[m.classId] : null;
-				const raceId = m.race ?? (cls ? CLASS_RACE[cls.id] : null) ?? "vesper";
-				const rr = RACES.find((r) => r.id === raceId) ?? RACES[0];
-				const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
-				drawActor(ctx, {
-					x: m.x,
-					y: m.y,
-					race: raceId,
-					classId: m.classId,
-					direction: m.direction ?? "down",
-					moving: !!m.moving,
-					female: m.female !== false,
-					hair: rr?.hair ?? 0,
-					skin: 2,
-					facing: m.facing,
-					walk: m.walk,
-					attack: m.swing > 0 ? .4 : 0,
-					hurt: m.hurt,
-					tall: rr?.tall ?? 1,
-					time: this.clock,
-					pieces: (m.lootGear ?? []).map((g) => ({
-						slot: g.slot,
-						style: g.style,
-						type: g.type,
-						fxSeed: g.fxSeed,
-						gene: geneSeedOf(g),
-						quality: Math.max(0, qualities.indexOf(g.quality))
-					})),
-					setFx: null,
-					setOn: false
-				});
-			} else {
+			{
+				// Every foe — witches and bounties included — now draws from its random skin, tinted by
+				// its elements. (This retired the old procedural actor body, so no more floating weapons
+				// or broken arms and heads on witches.)
 				const gfx = m.enemyGhost ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
 				if (gfx) drawGhostFx(ctx, gfx, this.clock, "back");
 				drawMonster(ctx, {
@@ -10525,8 +10526,9 @@ export class TurbzGame {
 				shiny: !!m.shiny,
 				palette: m.palette,
 				animal: !!m.animal,
-				// Witch and bounty ghosts wear the same ghost body as yours.
 				species: m.enemyGhost ? undefined : m.species,
+				skin: m.skin ?? null,
+				types: m.types ?? null,
 				look: m.look ?? null,
 				time: this.clock
 				});
@@ -10587,6 +10589,9 @@ export class TurbzGame {
 				shiny: !!spirit.shiny,
 				palette: spirit.palette,
 				spin: at.spin ?? 0,
+				species: spirit.species,
+				skin: spirit.skin ?? null,
+				types: spirit.types ?? null,
 				look: spirit.look,
 				time: this.clock
 			});

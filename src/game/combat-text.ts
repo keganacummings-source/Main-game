@@ -144,6 +144,8 @@ export type Plate = {
   tier?: number;
   typeColor: string;
   typeName: string;
+  /** One colour per element the foe carries (1-4). Shown as a row of dots by the name. */
+  typeDots?: string[];
   hp: number;
   max: number;
   /** Health shown on the lag bar (what it was a moment ago). */
@@ -266,10 +268,15 @@ function drawPlate(ctx: CanvasRenderingContext2D, p: Plate, at: { x: number; y: 
   ctx.font = `${(big ? 17 : 15) * k}px "VT323", monospace`;
   outlineText(ctx, name, cx, ny, big ? r.edge : "#fff6e8", Math.max(1, Math.round(k * 1.2)));
   cx += nameW + 4 * k;
-  ctx.fillStyle = INK;
-  ctx.fillRect(cx - k, ny - 7 * k, 6 * k, 6 * k);
-  ctx.fillStyle = p.typeColor;
-  ctx.fillRect(cx, ny - 6 * k, 4 * k, 4 * k);
+  // Element dots: one per type (up to 4), so a multi-element foe shows every element it carries.
+  const dots = p.typeDots && p.typeDots.length ? p.typeDots : [p.typeColor];
+  dots.forEach((col, i) => {
+    const dx = cx + i * 6 * k;
+    ctx.fillStyle = INK;
+    ctx.fillRect(dx - k, ny - 7 * k, 6 * k, 6 * k);
+    ctx.fillStyle = col;
+    ctx.fillRect(dx, ny - 6 * k, 4 * k, 4 * k);
+  });
   // Rank tag above the name (BOSS / ★3 BOUNTY / HUNTER).
   let top = ny - 12 * k;
   if (r.tag) {

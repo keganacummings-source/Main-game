@@ -53,6 +53,75 @@ export function clearCustomSprites(): void {
 export function customSpriteFor(species: string): CustomSprite | undefined {
   return customSprites.get(species);
 }
+
+/**
+ * Enemy skins: greyscale pixel sprites (enemy-skins.ts) that any foe can wear. Kept apart from
+ * custom designer sprites so the two systems never clash. A skin is tinted at draw time by the
+ * foe's element list, so one grey sprite reads as many different creatures.
+ */
+const skinSprites = new Map<string, CustomSprite>();
+export function setEnemySkin(key: string, sprite: CustomSprite): void {
+  skinSprites.set(key, sprite);
+}
+export function clearEnemySkins(): void {
+  skinSprites.clear();
+  tintCache.clear();
+}
+
+/**
+ * A skin tinted by an element list is a static image (custom sprites don't animate), so we build it
+ * once and reuse it every frame — one cached canvas per skin+elements combo. Keeps the per-frame cost
+ * of hundreds of foes down to a single drawImage each.
+ */
+const tintCache = new Map<string, HTMLCanvasElement>();
+function tintedSkinCanvas(key: string, base: HTMLCanvasElement, w: number, h: number, colors: string[]): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const ck = `${key}|${w}x${h}|${colors.join(",")}`;
+  const hit = tintCache.get(ck);
+  if (hit) return hit;
+  const c = document.createElement("canvas");
+  c.width = Math.max(1, Math.ceil(w));
+  c.height = Math.max(1, Math.ceil(h));
+  const g = c.getContext("2d");
+  if (!g) return null;
+  g.imageSmoothingEnabled = false;
+  g.drawImage(base, 0, 0, w, h);
+  tintSkin(g, w, h, colors, (t) => t.drawImage(base, 0, 0, w, h));
+  if (tintCache.size > 256) tintCache.clear();
+  tintCache.set(ck, c);
+  return c;
+}
+export function enemySkinFor(key: string): CustomSprite | undefined {
+  return skinSprites.get(key);
+}
+
+/**
+ * Tints a greyscale sprite already drawn on `c` by a blend of element colours. One colour fills
+ * flat; several fan across the body as a left-to-right gradient so every element is visible. The
+ * sprite's own light/dark is laid back over the colour so it keeps its shading instead of going flat.
+ */
+function tintSkin(c: CanvasRenderingContext2D, w: number, h: number, colors: string[], redraw: (t: CanvasRenderingContext2D) => void): void {
+  c.globalCompositeOperation = "source-atop";
+  c.globalAlpha = 0.9;
+  if (colors.length <= 1) {
+    c.fillStyle = colors[0] ?? "#c8c0b0";
+    c.fillRect(0, 0, w, h);
+  } else {
+    const grad = c.createLinearGradient(0, 0, w, 0);
+    colors.forEach((col, i) => grad.addColorStop(colors.length === 1 ? 0 : i / (colors.length - 1), col));
+    c.fillStyle = grad;
+    c.fillRect(0, 0, w, h);
+  }
+  // Lay the greyscale shading back over the colour so outlines and highlights survive the tint.
+  c.globalCompositeOperation = "multiply";
+  c.globalAlpha = 0.55;
+  redraw(c);
+  c.globalCompositeOperation = "lighten";
+  c.globalAlpha = 0.25;
+  redraw(c);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = "source-over";
+}
 const fallback = new Map<string, HTMLCanvasElement>();
 function pixelSpirit(type: string): HTMLCanvasElement {
   const cached = fallback.get(type);
@@ -193,10 +262,13 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
     image = new Image();
     image.src = "/sprites/creatures_roguelike.png";
   }
-  const custom = m.species ? customSprites.get(m.species) : undefined;
-  const cell = custom?.cell ?? (m.species ? CREATURE_CELLS[m.species] : undefined);
+  const skin = m.skin ? skinSprites.get(m.skin) : undefined;
+  const custom = skin ?? (m.species ? customSprites.get(m.species) : undefined);
+  const cell = skin ? undefined : custom?.cell ?? (m.species ? CREATURE_CELLS[m.species] : undefined);
   const scale = (m.boss ? BOSS_SPRITE_SCALE : CREATURE_SPRITE_SCALE) * (custom?.scale ?? 1),
     bob = Math.round(Math.sin(m.walk * 5) * 1);
+  // A skinned foe is drawn from its greyscale sprite and tinted by its element list.
+  const tint = skin ? (m.types && m.types.length ? m.types : [m.type]).map((tp) => TYPES[tp as keyof typeof TYPES]?.color ?? "#c8c0b0") : null;
   const t = m.time ?? 0;
   const style = rarityStyle(m.rarity);
   const pal = m.shiny ? shinyPalette(m.palette) : null;
@@ -259,6 +331,16 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
         const sx = Math.round(Math.cos(a) * w * 0.58), sy = Math.round(y0 + h * 0.5 + Math.sin(a * 1.3) * h * 0.5);
         twinkle(ctx, sx, sy, 1 + pulse * 2, paletteColor(pal, t * 2.2, i * 3));
       }
+    } else draw(ctx, x0, y0);
+  } else if (tint && skin?.canvas && m.skin) {
+    // Skinned foe (and non-shiny skinned ghosts): greyscale sprite, tinted by its elements (cached).
+    const tc = tintedSkinCanvas(m.skin, skin.canvas, w, h, tint);
+    if (tc && !washed) {
+      ctx.drawImage(tc, x0, y0, w, h);
+    } else if (tc && washed) {
+      const c = scratchCanvas(w, h);
+      if (c) { c.drawImage(tc, 0, 0); rarityWash(c, w, h, t, style, seed); ctx.drawImage(scratch!, 0, 0, w, h, x0, y0, w, h); }
+      else ctx.drawImage(tc, x0, y0, w, h);
     } else draw(ctx, x0, y0);
   } else if (washed) {
     const c = scratchCanvas(w, h);

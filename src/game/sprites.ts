@@ -1137,6 +1137,10 @@ export type MonsterDraw = {
   spin?: number;
   animal?: boolean;
   species?: string;
+  /** Enemy skin key (enemy-skins.ts). When set, the foe is drawn from its greyscale sprite. */
+  skin?: string | null;
+  /** The foe's element list (1-4). Drives the skin tint. */
+  types?: TypeId[] | null;
   look?: GhostLook | null;
   time?: number;
 };
