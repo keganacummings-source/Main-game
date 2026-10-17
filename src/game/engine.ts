@@ -135,7 +135,7 @@ import { tileImage, tileImageRevision } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
-import { applyStatus, cleanseStatuses, endStatus, HARD_CC, hasStatus, IMMUNE_PREFIX, struggle, tickStatuses } from "./status-rules";
+import { applyStatus, cleanseStatuses, endStatus, HARD_CC, hasStatus, IMMUNE_PREFIX, SOFT_CAP, struggle, tickStatuses } from "./status-rules";
 import {
 	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, rerollBoard, rerollCost, TIER_XP,
 	type BoardEventDetail, type BoardKind,
@@ -149,6 +149,9 @@ import {
 	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, defenseVs, enemyHitDamage, enemyTargets,
 	expectedHunterPower, gearSellValue, hardcoreGrowth, itemSellValue, killXpAmount, openWorldLevelEdge, rollEnemyKit, standardGrowth,
 } from "./balance";
+import {
+	breakMelee, commitMelee, commitSpell, freshMelee, freshWeave, planMelee, planSpell, schoolMult, shatterWeave, tickMelee, tickWeave,
+} from "./fight-depth";
 import {
   BIOME_LABEL,
   TAVERNS,
@@ -804,6 +807,9 @@ export class TurbzGame {
 		this.rollT = 0;
 		this.cfx = new CombatFx();
 		this.castLock = 0;
+		this.meleeChain = freshMelee();
+		this.weave = freshWeave();
+		this.overcastT = 0;
 		this.rules = "hunt";
 		this.duel = null;
 		this.contract = [];
@@ -2242,15 +2248,16 @@ export class TurbzGame {
 	 * lands on it, a miss flies past it. Damage and floaters happen when the FX arrives. If the foe is
 	 * already gone by then, the shot simply lands on empty ground.
 	 */
-	strike(move, ox, oy, mob, { fromPet = false, mult = 1, volley = false, pet = null } = {}) {
+	strike(move, ox, oy, mob, { fromPet = false, mult = 1, volley = false, pet = null, meleePlan = null, spellPlan = null } = {}) {
 		const missed = Math.random() * 100 > move.accuracy;
 		const sx = Math.random() < .5 ? -1 : 1;
 		const off = missed ? { x: sx * (34 + Math.random() * 18), y: (Math.random() - .5) * 28 } : { x: 0, y: 0 };
 		const follow = () => (mob.alive ? [mob.x + off.x, mob.y - 12 + off.y] : null);
 		const delay = this.playMoveFx(move, ox, oy, mob.x + off.x, mob.y - 12 + off.y, { follow, miss: missed, volley });
+		const depth = !fromPet && !!(meleePlan || spellPlan);
 		this.later(delay, () => {
 			const at = { x: mob.x, y: mob.y };
-			if (mob.alive) this.resolveHit(move, mob, fromPet, mult, { missed, stagger: volley ? VOLLEY_GAP : 0, pet });
+			if (mob.alive) this.resolveHit(move, mob, fromPet, mult, { missed, stagger: volley ? VOLLEY_GAP : 0, pet, depth, meleePlan, spellPlan });
 			this.verseExtras(move, mob, at, { x: ox, y: oy + 24 }, { fromPet, mult, pet, missed });
 		});
 		return delay;
@@ -2408,6 +2415,9 @@ export class TurbzGame {
 		this.wardT = Math.max(0, this.wardT - dt);
 		this.rollT = Math.max(0, this.rollT - dt);
 		this.castLock = Math.max(0, this.castLock - dt);
+		this.meleeChain = tickMelee(this.meleeChain ?? freshMelee(), dt);
+		this.weave = tickWeave(this.weave ?? freshWeave(), dt);
+		this.overcastT = Math.max(0, (this.overcastT ?? 0) - dt);
 		if (!this.duel) this.defFatigue = Math.max(0, (this.defFatigue ?? 0) - dt * 0.35);
 		if (this.lunge) this.tickLunge(dt);
 		else if (this.autoplay && !this.typing() && !this.sleeping && !(this.rules === "hardcore" && this.duel)) this.tickAutoplay(dt);
@@ -3474,6 +3484,8 @@ export class TurbzGame {
 			const dir = this.freeDir(prefer ? target : null);
 			if (dir.x) this.facing = dir.x > 0 ? 1 : -1;
 			const to = this.freeTravel(dir, failed ? 40 : 104, false);
+			const dist = target ? Math.hypot(target.x - save.x, target.y - save.y) : reach;
+			const meleePlan = planMelee(this.meleeChain ?? freshMelee(), move.id, tactic, dist, reach);
 			this.lunge = {
 				t: 0,
 				dur: .42,
@@ -3485,7 +3497,8 @@ export class TurbzGame {
 				hit: false,
 				failed,
 				power: move.power,
-				moveId: move.id
+				moveId: move.id,
+				meleePlan
 			};
 			if (!failed) this.evadeT = .42;
 			this.cds[move.id] = Math.max(cd, .9);
@@ -3506,9 +3519,27 @@ export class TurbzGame {
 			this.say("Urn shell.");
 			return true;
 		}
+		let mult = tactic === "heavy" ? 1.7 : tactic === "channel" ? 1.25 : 1;
+		let meleePlan = null;
+		let spellPlan = null;
+		if (target && form === "melee" && (tactic === "strike" || tactic === "heavy")) {
+			const dist = Math.hypot(target.x - save.x, target.y - save.y);
+			meleePlan = planMelee(this.meleeChain ?? freshMelee(), move.id, tactic, dist, reach);
+			mult *= meleePlan.mult;
+		}
+		if (form === "spell" && tactic !== "heal" && tactic !== "ward" && tactic !== "aura" && move.effect !== "mend") {
+			spellPlan = planSpell(this.weave ?? freshWeave(), move.type, tactic, move.priority ?? 1);
+			mult *= spellPlan.mult;
+			this.weave = commitSpell(this.weave ?? freshWeave(), move.type, spellPlan);
+			if (spellPlan.overcast) this.overcastT = 3.4;
+			if (spellPlan.refund > 0) {
+				this.cds[move.id] = Math.max(.2, (this.cds[move.id] ?? 0) * (1 - spellPlan.refund));
+				this.cdMax[move.id] = this.cds[move.id];
+			}
+		}
 		if (target) {
 			const volley = form === "ranged" && rangedStyle(move) === "volley";
-			this.strike(move, save.x, save.y - 24, target, { mult: tactic === "heavy" ? 1.7 : tactic === "channel" ? 1.25 : 1, volley });
+			this.strike(move, save.x, save.y - 24, target, { mult, volley, meleePlan, spellPlan });
 		} else this.playMoveFx(move, save.x, save.y - 24, save.x + this.facing * 30, save.y - 20);
 		if (form === "spell" || tactic === "channel") this.gainSkill("magic", 3);
 		else this.gainSkill("physical", 2);
@@ -3530,7 +3561,7 @@ export class TurbzGame {
 			const move = MOVE_BY_ID[lung.moveId] ?? MOVES.find((m) => moveTactic(m) === "lunge") ?? MOVES[0];
 			const lungeMiss = Math.random() * 100 > move.accuracy;
 			const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
-			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, lung.failed ? 0.22 : 0.72, { missed: lungeMiss }); });
+			if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, (lung.failed ? 0.22 : 0.72) * (lung.meleePlan?.mult ?? 1), { missed: lungeMiss, depth: true, meleePlan: lung.meleePlan }); });
 		}
 		if (u >= 1) this.lunge = null;
 	}
@@ -3671,6 +3702,13 @@ export class TurbzGame {
 		const crit = Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
 		let dmg = this.damageParts(move, mob, { fromPet, mult, crit, pet: opts.pet }).dmg;
 		dmg *= 1 - bend(Math.max(0, pure ? (mob.stats?.spellRes ?? 0) : defenseVs(form, mob.stats?.physRes ?? 0)), 0.55, 0.88);
+		if (pure) {
+			const school = schoolMult(move.type, (mob.status ?? []).map((s) => s.id));
+			if (school.mult !== 1) {
+				dmg *= school.mult;
+				if (!fromPet && !opts.child && school.label) this.float(mob.x, mob.y - 70, school.label, TYPES[move.type]?.color ?? "#c9a6e8");
+			}
+		}
 		// Melee ignores the Warded enchant too: applyMobDamage takes 15% off every hit, so give it back first.
 		if (form === "melee" && mob.enchants?.includes("warded")) dmg /= .85;
 		let hits = !fromPet && Math.random() * 100 < Math.min(100, Math.max(0, this.chan("double_strike"))) ? 2 : 1;
@@ -3686,6 +3724,39 @@ export class TurbzGame {
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
 		if (!fromPet && this.chan("leech_edge") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.chan("leech_edge") / 100);
 		if (move.effect === "leech" && (this.rules !== "hardcore" || attackForm(move) === "spell")) save.hp = Math.min(this.maxHp(), save.hp + dmg * .35);
+		if (!fromPet && !opts.child && opts.depth) this.noteFightDepth(move, mob, opts);
+	}
+	/** A landed melee or spell updates the chain or the weave. Misses, dodges and extra splashes do not. */
+	noteFightDepth(move, mob, opts) {
+		if (this.role === "guest" || !mob) return;
+		const melee = opts.meleePlan;
+		if (melee) {
+			this.meleeChain = commitMelee(this.meleeChain ?? freshMelee(), melee, move.id);
+			if (melee.label) this.float(mob.x, mob.y - 52, melee.label, melee.step >= 3 ? "#fff1a8" : "#e6c15a");
+			if (melee.cleave) {
+				for (const m of this.foesNear(mob.x, mob.y, 46)) if (m !== mob && m.alive) this.resolveHit(move, m, false, 0.45, { child: true });
+			}
+			if (melee.poise > 0) {
+				mob.poise = (mob.poise ?? 0) + melee.poise;
+				if (mob.poise >= 3) {
+					mob.poise = 0;
+					const opened = this.applyMobStatus(mob, "expose", 3.4);
+					if (opened === "applied" || opened === "refreshed") this.float(mob.x, mob.y - 64, "OPEN", "#fff1a8");
+				}
+			}
+		}
+		const spell = opts.spellPlan;
+		if (spell) {
+			if (spell.label) this.float(mob.x, mob.y - 52, spell.label, spell.overcast ? "#fff1a8" : "#c9a6e8");
+			if (spell.splash > 0) {
+				for (const m of this.foesNear(mob.x, mob.y, spell.splash)) if (m !== mob && m.alive) this.resolveHit(move, m, false, spell.splashMult, { child: true });
+			}
+			if (spell.label === "RESONANCE" || spell.overcast) {
+				const id = move.effect === "drain" ? "leech" : move.effect;
+				const st = id && id !== "none" ? mob.status?.find((s) => s.id === id) : null;
+				if (st) st.t = Math.min(SOFT_CAP[st.id] ?? 6, st.t + 1.1);
+			}
+		}
 	}
 	damageMob(mob, dmg, crit) {
 		const amount = Math.floor(dmg);
@@ -5186,6 +5257,12 @@ export class TurbzGame {
 			dmg -= use;
 		}
 		if (dmg <= 0) return;
+		this.meleeChain = breakMelee(this.meleeChain ?? freshMelee());
+		if (this.castLock > 0) {
+			this.weave = shatterWeave(this.weave ?? freshWeave());
+			this.float(save.x, save.y - 56, "FALTER", "#c9a6e8");
+		}
+		if ((this.overcastT ?? 0) > 0) dmg *= 1.12;
 		this.sleeping = false;
 		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60, "AWAKE", "#fff1a8");
 		save.hp -= dmg;
@@ -5298,6 +5375,9 @@ export class TurbzGame {
 		this.shield = 0;
 		this.wardT = 0;
 		this.castLock = 0;
+		this.meleeChain = freshMelee();
+		this.weave = freshWeave();
+		this.overcastT = 0;
 		this.lunge = null;
 		this.shrine = null;
 		this.mobs = this.mobs.filter((m) => !m.id.startsWith("shrine-"));
@@ -9844,6 +9924,27 @@ export class TurbzGame {
 				ctx.strokeStyle = "#fff1a8";
 				ctx.lineWidth = 2;
 				ctx.strokeRect(save.x - 25, save.y - 52, 50, 11);
+			}
+			let markY = save.y - 60;
+			const chain = this.meleeChain;
+			if (chain && (chain.n > 0 || chain.recover > 0)) {
+				for (let i = 0; i < 3; i++) {
+					ctx.fillStyle = chain.recover > 0 ? "#5a4038" : i < chain.n ? "#e6c15a" : "#2a211c";
+					ctx.fillRect(save.x - 16 + i * 12, markY, 8, 4);
+				}
+				markY -= 8;
+			}
+			const weave = this.weave;
+			if (weave && (weave.types.length > 0 || weave.focus > 8 || (this.overcastT ?? 0) > 0)) {
+				weave.types.forEach((t, i) => {
+					ctx.fillStyle = TYPES[t]?.color ?? "#c9a6e8";
+					ctx.fillRect(save.x - 14 + i * 8, markY, 6, 6);
+				});
+				const focus = Math.max(0, Math.min(1, (weave.focus ?? 0) / 100));
+				ctx.fillStyle = "#1a1214";
+				ctx.fillRect(save.x - 14, markY - 3, 28, 2);
+				ctx.fillStyle = (this.overcastT ?? 0) > 0 || focus >= 1 ? "#fff1a8" : "#6a4cff";
+				ctx.fillRect(save.x - 14, markY - 3, Math.round(28 * ((this.overcastT ?? 0) > 0 ? 1 : focus)), 2);
 			}
 		}
 		for (const p of this.parts) {

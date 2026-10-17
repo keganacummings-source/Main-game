@@ -592,8 +592,8 @@ export function rangedStyle(m: Move): "volley" | "reload" | "reach" {
 export function formTag(m: Move): string {
   if (m.aura) return `aura · ${m.aura.label.toLowerCase()} · ${Math.round(m.aura.reserve * 100)}% health`;
   const form = attackForm(m);
-  if (form === "melee") return "melee · within 2 tiles · ignores all armor";
-  if (form === "spell") return "spell · 3+ tiles · pure";
+  if (form === "melee") return "melee · within 2 tiles · ignores all armor · clinch, link, finisher";
+  if (form === "spell") return "spell · 3+ tiles · pure · weave, chord, overcast";
   const style = rangedStyle(m);
   if (style === "volley") return "ranged · 3+ tiles · volley";
   if (style === "reload") return "ranged · 3+ tiles · fast";
