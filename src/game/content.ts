@@ -376,9 +376,38 @@ export const MOVES: Move[] = [
   { id: "ghoulmaw", name: "Ghoul Maw", type: "ghoul", power: 48, accuracy: 90, crit: 16, priority: 1, effect: "leech", anim: ["slash", "orbit"], range: 44, about: "Teeth first, manners never.", tactic: "strike", form: "melee", reach: 44 },
   { id: "carrionrend", name: "Carrion Rend", type: "ghoul", power: 40, accuracy: 94, crit: 20, priority: 2, effect: "leech", anim: ["slash", "burst"], range: 48, about: "Claws that remember the last meal.", tactic: "strike", form: "melee", reach: 48 },
   { id: "doublerake", name: "Double Rake", type: "ghoul", power: 36, accuracy: 98, crit: 12, priority: 2, effect: "leech", anim: ["slash", "slash", "orbit"], range: 44, about: "Two drags of the claws. The second follows a heartbeat later.", tactic: "strike", form: "melee", reach: 44, echo: 0.5 },
+
+  // ── Treatment Update: Movement-Melee Verses ───────────────────────────────
+  // These attacks are built around movement. You go TO the hits, not the other
+  // way around. Three classes: Tri-Lunge (shoot into 3 separate targets),
+  // Orbit Strike (circle an enemy for a crit), Slam-Dash (charge + heavy).
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Tri-Lunge class — fires you into 3 different enemies, one hit per target.
+  // Uses chain with jumps:2 (hits the primary + 2 more), lunge tactic carries
+  // the movement feel. High priority, moderate power per hit.
+  { id: "triblitz", name: "Tri Blitz", type: "normal", power: 34, accuracy: 96, crit: 14, priority: 2, effect: "none", anim: ["slash", "burst", "slash"], range: 130, about: "Shoot into three enemies in a row — one hit apiece, no stopping.", tactic: "lunge", form: "melee", react: "move", fail: 20, chain: { jumps: 2, range: 120, mult: 1.0 } },
+  { id: "voidprowl", name: "Void Prowl", type: "void", power: 30, accuracy: 94, crit: 20, priority: 2, effect: "gloom", anim: ["orbit", "slash", "orbit"], range: 150, about: "Blink between three foes and leave dread in each one. Full damage each time.", tactic: "blink", form: "melee", react: "move", fail: 22, chain: { jumps: 2, range: 130, mult: 1.0 } },
+  { id: "bloodbound", name: "Blood Bound", type: "ghoul", power: 28, accuracy: 96, crit: 12, priority: 2, effect: "leech", anim: ["slash", "orbit", "slash"], range: 140, about: "The hunger carries you through three targets. Each sip is its own drink.", tactic: "lunge", form: "melee", react: "move", fail: 24, chain: { jumps: 2, range: 120, mult: 1.0 } },
+
+  // Orbit Strike class — circle an enemy for a chance at a guaranteed crit.
+  // Mechanically: very high crit stat, aura-ish risk/reward. Uses vortex fx
+  // to show the circling motion. Slow priority (you're committing to the circle).
+  { id: "orbitstrike", name: "Orbit Strike", type: "air", power: 54, accuracy: 90, crit: 40, priority: 0, effect: "expose", anim: ["spiral", "slash", "burst"], range: 72, about: "Circle the enemy in a tight arc. Land the full loop undamaged and the finishing cut always crits.", tactic: "strike", form: "melee", reach: 72, fx: "vortex" },
+  { id: "gravecircle", name: "Grave Circle", type: "spirit", power: 50, accuracy: 88, crit: 38, priority: 0, effect: "gloom", anim: ["orbit", "spiral", "slash"], range: 68, about: "Walk a slow ring around them. An unbroken orbit seals the curse and crits.", tactic: "strike", form: "melee", reach: 68, fx: "vortex" },
+  { id: "emberspin", name: "Ember Spin", type: "fire", power: 52, accuracy: 88, crit: 36, priority: 0, effect: "burn", anim: ["spark", "spiral", "slash"], range: 64, about: "Spin a burning path around the target. Complete the ring and ignite — guaranteed.", tactic: "strike", form: "melee", reach: 64, fx: "vortex" },
+
+  // Slam-Dash class — charge at a target and deliver a heavy blow on arrival.
+  // Feels like a committed dash that ends in an explosion of force. Lunge tactic
+  // with heavy-tier damage on landing.
+  { id: "crashdown", name: "Crash Down", type: "earth", power: 72, accuracy: 82, crit: 10, priority: 1, effect: "root", anim: ["burst", "slash", "pulse"], range: 160, about: "Sprint at them and land like a stone dropped from height. The ground cracks.", tactic: "lunge", form: "melee", react: "move", fail: 18 },
+  { id: "stormcleave", name: "Storm Cleave", type: "electric", power: 66, accuracy: 84, crit: 14, priority: 1, effect: "spark", anim: ["spark", "slash", "burst"], range: 165, about: "Close the gap in a bolt and cleave on arrival. The charge sparks everything near the landing.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 44, mult: 0.4 } },
+  { id: "tidecrasher", name: "Tide Crasher", type: "water", power: 68, accuracy: 82, crit: 10, priority: 1, effect: "soak", anim: ["rain", "slash", "burst"], range: 155, about: "Ride a wave of water at the target and break over them like a shore.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 48, mult: 0.45 } },
 ];
 /** The Reaver batch: 30 melee verses (strikes, heavies and lunges across every element). */
 export const REAVER_BATCH: string[] = ["boneclub", "coffinnail", "gravedigger", "ribrush", "embercleave", "ashmaul", "coalrush", "tidebreaker", "saltgash", "barrowmaul", "rootcleave", "stonefist", "reedslash", "windscythe", "gullrush", "sparkjab", "archook", "rimeedge", "iciclethrust", "hollowcut", "nullcleave", "umbralunge", "dawnblade", "censerswing", "smitingrod", "wraithclaw", "veilrend", "ghoulmaw", "carrionrend", "doublerake"];
+/** The Treatment batch: 9 movement-melee verses. Tri-Lunges, Orbit Strikes, and Slam-Dashes. */
+export const TREATMENT_BATCH: string[] = ["triblitz", "voidprowl", "bloodbound", "orbitstrike", "gravecircle", "emberspin", "crashdown", "stormcleave", "tidecrasher"];
 /** The Starfall batch: verses with animations of their own. */
 export const STARFALL_BATCH = MOVES.filter((m) => !!m.fx).map((m) => m.id);
 
