@@ -100,6 +100,7 @@ import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMM
 import { Gimmicks, type GimmickView } from "./class-gimmicks";
 import { witchSteer } from "./witch-brain";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
+import { drawBossSprite, initBossSprites } from "./boss-sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
 import { captureDeathGif } from "./death-gif";
 import { gearImbue } from "./gear-fx";
@@ -1530,6 +1531,8 @@ export class TurbzGame {
 		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
 		// The shipped pixel sprites become the random skin pool for every foe (greyscale + element tint).
 		try { installEnemySkins(); } catch { /* a bad skin must not stop the game */ }
+		// Warm the world/dungeon boss sheets so a boss is fully drawn on its first frame.
+		try { initBossSprites(); } catch { /* boss art must not stop the game */ }
 		// Only this device's own Enemy Designer creations still fold into the monster tables as species;
 		// the shipped designs are the skin pool now, not individual biome monsters.
 		try { installEnemyDesigns(localEnemyDesigns()); } catch { /* a broken design must not stop the game */ }
@@ -5494,7 +5497,7 @@ export class TurbzGame {
 		(this.plates = this.plates ?? []).push({
 			id: m.id,
 			x: m.x,
-			y: m.y - (m.witch || m.bounty || m.hunter ? 50 : m.boss ? 44 : m.animal ? 26 : 36),
+			y: m.y - (m.boss || m.dungeonBoss ? 86 : m.witch || m.bounty || m.hunter ? 50 : m.animal ? 26 : 36),
 			name: m.name,
 			level: m.level,
 			rank,
@@ -10753,7 +10756,13 @@ export class TurbzGame {
 					setFx: null, setOn: false,
 				});
 			} else {
-				// Monsters, animals and bosses draw from their random greyscale skin, tinted by element(s).
+				// World and dungeon bosses wear the full directional creature sheets (boss-sprites.ts);
+					// drawBossSprite returns false until its sheet loads, so it falls through to the creature draw.
+					if ((m.boss || m.dungeonBoss) && !m.ghost && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
+						this.queuePlate(m);
+						continue;
+					}
+					// Monsters, animals and other foes draw from their random greyscale skin, tinted by element(s).
 				const gfx = m.enemyGhost ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
 				if (gfx) drawGhostFx(ctx, gfx, this.clock, "back");
 				drawMonster(ctx, {
