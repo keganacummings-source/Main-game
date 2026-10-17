@@ -11,9 +11,11 @@ import {
   MOVES,
   SKILLS,
   WITCH_NAMES,
+  ENCHANT_BY_ID,
   attackForm,
   attackRange,
   equipmentStats,
+  gearPrice,
   gearScore,
   moveTactic,
   mulberry32,
@@ -127,7 +129,139 @@ export function installTurbz(game: any): void {
       used.add(nm);
       this.mobs.push(this.makeTwitch(r++, p.x, p.y, nm));
     });
-    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. No bounties, no quests. ${n} witches are already grinding. Health, mana and stamina — spells drink mana, melee drinks stamina.`);
+    this.turbzWorld = this.world;
+    this.turbzRoster = [];
+    this.witchGraves = [];
+    this.plantTurbzHunts();
+    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are grinding. Spells drink mana, melee drinks stamina. What you are wearing, and the ghosts out with you, fall back to level 1 if you die.`);
+    this.syncHud(true);
+  };
+
+  game.plantTurbzHunts = function () {
+    const save = this.save;
+    if (!save || !this.world) return;
+    save.dungeons = save.dungeons ?? { elapsed: 0, sequence: 1, portals: [], day: 0, dayElapsed: 0, stamps: {} };
+    const spots = lmsSpawns(this.world, 14);
+    const depths = [4, 8, 12, 18, 26, 36];
+    depths.forEach((lv, i) => {
+      const p = spots[i];
+      if (!p) return;
+      save.dungeons.portals.push({
+        id: `rift-${101 + i}`,
+        seed: (save.seed ^ (i + 3) * 104729) >>> 0,
+        level: lv,
+        x: p.x,
+        y: p.y,
+        cleared: false,
+        defeated: [],
+        day: 0,
+      });
+    });
+    save.dungeons.sequence = 106;
+    const bosses = [
+      { species: "naraku", name: "The Walking Pit", level: 10 },
+      { species: "yomi", name: "Door of Yomi", level: 18 },
+      { species: "saintling", name: "Marrow Saint", level: 28 },
+      { species: "kagaribi", name: "The Watchfire", level: 40 },
+      { species: "gaikotsu", name: "Bone Procession", level: 56 },
+    ];
+    bosses.forEach((b, i) => {
+      const p = spots[6 + i];
+      if (!p) return;
+      const m = this.makeMob({
+        id: `turbz-boss-${i}`, species: b.species, x: p.x, y: p.y, level: b.level,
+        fixedLevel: true, boss: true, bossId: `turbz-boss-${i}`, name: b.name,
+      });
+      m.turbzBoss = true;
+      this.mobs.push(m);
+    });
+    this.say("Six dungeons are open, and five world bosses walk the wild. That is where the good gear is.");
+  };
+
+  const origLoad = game.loadMap.bind(game);
+  game.loadMap = function (map: string, fresh: boolean) {
+    if (this.turbz) {
+      this.turbzRoster = (this.turbzRoster ?? []).filter((m: any) => m?.alive);
+      for (const m of this.mobs ?? []) {
+        if ((m.twitch || m.turbzBoss) && m.alive && !this.turbzRoster.includes(m)) this.turbzRoster.push(m);
+      }
+    }
+    origLoad(map, fresh);
+    if (this.turbz && map === TURBZ_MAP && this.world) this.turbzWorld = this.world;
+    if (this.turbz && map === TURBZ_MAP) {
+      const have = new Set((this.mobs ?? []).map((m: any) => m.id));
+      for (const m of this.turbzRoster ?? []) if (m.alive && !have.has(m.id)) this.mobs.push(m);
+    }
+  };
+
+  game.gearToLevelOne = function (g: any) {
+    const from = Math.max(1, g.level || 1);
+    g.level = 1;
+    g.gx = 0;
+    for (const e of g.enchants ?? []) {
+      const cap = ENCHANT_BY_ID[e.id]?.max ?? e.power;
+      e.power = Math.max(1, Math.min(cap, Math.round(e.power / from)));
+    }
+    g.price = gearPrice(g);
+  };
+
+  game.growWornGear = function (grant: number) {
+    const save = this.save;
+    if (!save) return;
+    for (const uid of Object.values(save.equipped ?? {})) {
+      const g = save.gear.find((x: any) => x.uid === uid);
+      if (!g || g.level >= save.level) continue;
+      g.gx = (g.gx ?? 0) + grant;
+      const need = Math.max(48, xpNeed(g.level) * 3);
+      if (g.gx < need) continue;
+      g.gx -= need;
+      g.level += 1;
+      for (const e of g.enchants ?? []) {
+        const cap = ENCHANT_BY_ID[e.id]?.max ?? e.power + 1;
+        e.power = Math.min(cap, e.power + 1);
+      }
+      g.price = gearPrice(g);
+      this.float(save.x, save.y - 72, `${g.name.split(" ").slice(-1)[0]} ${g.level}`, "#e6c15a");
+      this.say(`${g.name} grew to level ${g.level}. Gear climbs slower than you.`);
+    }
+  };
+
+  game.turbzDeath = function () {
+    const save = this.save;
+    if (!save || this.dead) return;
+    const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
+    for (const g of save.gear ?? []) if (worn.has(g.uid)) this.gearToLevelOne(g);
+    save.gear = (save.gear ?? []).filter((g: any) => worn.has(g.uid));
+    const out = (save.spirits ?? []).filter((s: any) => s.active);
+    for (const s of out) {
+      const was = Math.max(1, s.level || 1);
+      s.level = 1;
+      s.xp = 0;
+      s.max = Math.max(16, Math.round((s.max || 16) / was));
+      s.hp = s.max;
+    }
+    save.spirits = out;
+    save.ghostStore = [];
+    if (save.level > 1) { save.level -= 1; save.xp = 0; }
+    else save.xp = 0;
+    save.hp = Math.max(1, Math.floor(this.maxHp() * 0.5));
+    this.status = [];
+    this.shield = 0;
+    this.wardT = 0;
+    this.castLock = 0;
+    this.lunge = null;
+    this.rush = null;
+    this.orbit = null;
+    this.incoming = [];
+    this.dest = null;
+    this.path = [];
+    if (typeof save.map === "string" && save.map.startsWith("rift-")) {
+      const portal = save.dungeons?.portals?.find((p: any) => p.id === save.map);
+      this.switchTo(TURBZ_MAP, portal ? { x: portal.x, y: portal.y + 36 } : { x: save.x, y: save.y });
+    }
+    this.say("You fall. The gear you wore and the ghosts at your side drop to level 1. Everything else is gone.");
+    this.float(save.x, save.y - 70, "LEVEL 1 KIT", "#c4473a");
+    this.cue?.("boom", { rate: 0.6 }, [80, 0.3, "sawtooth"]);
     this.syncHud(true);
   };
 
@@ -244,20 +378,42 @@ export function installTurbz(game: any): void {
 
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;
-    const alive = this.mobs.filter((m: any) => m.twitch && m.alive);
-    const want = this.turbzWant ?? alive.length;
-    this.turbzWant = want || 12;
-    const cap = Math.max(10, Math.min(15, this.turbzWant));
-    this.refillT = (this.refillT ?? 0) - dt;
-    if (alive.length < cap && this.world && this.refillT <= 0) {
-      this.refillT = 2.5;
-      const spots = lmsSpawns(this.world, 6);
-      const far = spots.find((p) => Math.hypot(p.x - this.save.x, p.y - this.save.y) > 900) ?? spots[0];
-      if (far) {
-        const lv = Math.max(1, Math.round(alive.reduce((n: number, m: any) => n + m.rv.level, 0) / Math.max(1, alive.length)) - 1);
-        this.mobs.push(this.makeTwitch(this.mobs.length, far.x, far.y, pick(WITCH_NAMES), lv));
-      }
+    const graves: number[] = this.witchGraves ?? [];
+    for (let i = 0; i < graves.length; i++) graves[i] = (graves[i] ?? 0) - dt;
+    this.witchGraves = graves;
+    const onMap = this.save.map === TURBZ_MAP;
+    const pool = onMap ? this.mobs : (this.turbzRoster ?? []);
+    let aliveN = pool.filter((m: any) => m.twitch && m.alive).length;
+    while (graves.length && (graves[0] ?? 1) <= 0) {
+      if (aliveN >= 15) break;
+      graves.shift();
+      if (this.spawnReturnedWitch()) aliveN += 1;
     }
+  };
+
+  /** A fallen witch comes back about five minutes later, one level under you. */
+  game.queueWitch = function () {
+    if (!this.turbz) return;
+    this.witchGraves = this.witchGraves ?? [];
+    this.witchGraves.push(300);
+  };
+
+  game.spawnReturnedWitch = function () {
+    const save = this.save;
+    const world = this.turbzWorld || this.world;
+    if (!save || !world) return false;
+    const spots = lmsSpawns(world, 8);
+    const far = spots.find((p) => Math.hypot(p.x - save.x, p.y - save.y) > 700) ?? spots[0];
+    if (!far) return false;
+    const lv = Math.max(1, (save.level | 0) - 1);
+    const m = this.makeTwitch(this.mobs.length + (this.turbzRoster?.length ?? 0), far.x, far.y, pick(WITCH_NAMES), lv);
+    if (save.map === TURBZ_MAP) this.mobs.push(m);
+    else {
+      this.turbzRoster = this.turbzRoster ?? [];
+      this.turbzRoster.push(m);
+    }
+    this.say(`A witch steps back onto the wild at level ${lv}.`);
+    return true;
   };
 
   game.tickTwitch = function (m: any, dt: number) {
@@ -319,7 +475,7 @@ export function installTurbz(game: any): void {
     if (rand() < 0.2) this.twitchXp(m, 6 + r.level * 2);
     if (r.age > 40 && rand() < 0.012) {
       m.hp -= m.max * (0.35 + rand() * 0.5);
-      if (m.hp <= 0) { m.alive = false; m.hp = 0; return; }
+      if (m.hp <= 0) { m.alive = false; m.hp = 0; this.queueWitch(); return; }
     }
     const a = rand() * Math.PI * 2;
     const step = 70;
@@ -466,6 +622,7 @@ export function installTurbz(game: any): void {
     this.float(foe.x, foe.y - 28, `${Math.round(dmg)}`, "#c4473a");
     if (foe.hp <= 0) {
       foe.hp = 0; foe.alive = false;
+      if (foe.twitch) this.queueWitch();
       this.twitchXp(m, 10 + (foe.level ?? 1) * 3);
       if (rand() < 0.2) r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
     }

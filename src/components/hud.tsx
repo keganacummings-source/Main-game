@@ -176,6 +176,7 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   if (s.shrine) rows.push(<p key="shrine" className="text-kyo">{s.shrine}</p>);
   if (s.jarLeft > 0) rows.push(<p key="jar" className="text-kyo">Ghost jar · {s.jarLeft}s</p>);
   if (s.turbz) rows.push(<p key="witches" className="text-kyo">Witches grinding · {s.turbz.witches}</p>);
+  if (s.turbz && s.turbz.back > 0) rows.push(<p key="witchback" className="text-dim">Witch returns in {Math.floor(s.turbz.back / 60)}:{String(s.turbz.back % 60).padStart(2, "0")}</p>);
   if (s.orders) rows.push(
     <div key="orders" className="hud-surv" data-testid="turbz-orders">
       {s.orders.map((o) => (

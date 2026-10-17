@@ -316,7 +316,7 @@ export type Snap = {
   /** TURBZ autoplay assignments. */
   orders: { id: string; label: string; on: boolean }[] | null;
   /** Other witches still grinding, in TURBZ. */
-  turbz: { witches: number } | null;
+  turbz: { witches: number; back: number } | null;
   accountScore: number;
   turn: string;
   survival: SurvivalState | null;
@@ -1958,15 +1958,16 @@ export class TurbzGame {
 			this.persist();
 		}
 		const before = save.dungeons.elapsed;
-		if (!advanceDungeonClock(save.dungeons, dt)) {
+		if (!advanceDungeonClock(save.dungeons, this.turbz ? dt * 2.5 : dt)) {
 			if (Math.floor(before / 30) !== Math.floor(save.dungeons.elapsed / 30)) this.persist();
 			return;
 		}
 		const state = save.dungeons;
-		const world = this.overworld ?? this.world;
-		const anchor = save.map === "world" ? save : hearthXY();
+		const world = this.turbz && this.turbzWorld ? this.turbzWorld : (this.overworld ?? this.world);
+		const anchor = (save.map === "world" || (this.turbz && save.map === "custom-turbz")) ? save : (this.turbz ? { x: world.w * 16, y: world.h * 16 } : hearthXY());
 		const rng = mulberry32(save.seed ^ state.sequence * 7919);
-		const at = nearestOpen(world, anchor.x + (rng() - .5) * 600, anchor.y + (rng() - .5) * 600);
+		const spread = this.turbz ? 2400 : 600;
+		const at = nearestOpen(world, anchor.x + (rng() - .5) * spread, anchor.y + (rng() - .5) * spread);
 		state.portals.push({ id: `rift-${state.sequence}`, seed: (save.seed ^ state.sequence * 104729) >>> 0, level: save.level, x: at.x, y: at.y, cleared: false, defeated: [] });
 		this.say(`Dungeon ${state.sequence} has opened. Find its rift on the world map.`);
 		this.room?.send({ t: "dungeons", dungeons: state });
@@ -1975,13 +1976,13 @@ export class TurbzGame {
 	dungeonExitAt() { return this.world?.entry ?? dungeonExit(); }
 	trackRift(id) {
 		const portal = this.save?.dungeons?.portals.find(p => p.id === id && !p.cleared);
-		if (!portal || this.save.map !== "world") return;
+		if (!portal || (this.save.map !== "world" && this.save.map !== "custom-turbz")) return;
 		if (Math.hypot(portal.x - this.save.x, portal.y - this.save.y) <= 120) { this.closePanel(); this.enterRift(id); }
 		else { this.closePanel(); this.walkTo(portal.x, portal.y); this.say("Tracking the dungeon rift. Interact at its entrance."); }
 	}
 	enterRift(id) {
 		const portal = this.save?.dungeons?.portals.find(p => p.id === id);
-		if (!portal || portal.cleared || this.save.map !== "world" || Math.hypot(portal.x - this.save.x, portal.y - this.save.y) > 120) return false;
+		if (!portal || portal.cleared || (this.save.map !== "world" && this.save.map !== "custom-turbz") || Math.hypot(portal.x - this.save.x, portal.y - this.save.y) > 120) return false;
 		this.stampDungeonDay(id);
 		const dungeon = this.riftWorld(portal);
 		this.travel(id, dungeon.entry); return true;
@@ -4026,6 +4027,7 @@ export class TurbzGame {
 	killMob(mob) {
 		const save = this.save;
 		if (!save || !mob?.alive || this.dead) return;
+		if (mob.twitch) this.queueWitch?.();
 		if (mob.rival) this.lmsEliminate(mob, "you");
 		mob.alive = false;
 		mob.hp = 0;
@@ -4124,10 +4126,10 @@ export class TurbzGame {
 			const tier = Math.min(4, mob.rarity + (save.level >= 24 ? 1 : 0) + (save.level >= 40 ? 1 : 0));
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
 				level: save.level,
-				bonus: mob.boss ? SOURCE_BONUS.boss : SOURCE_BONUS.mob(mob.rarity),
+				bonus: mob.boss ? (this.turbz ? 0.12 : SOURCE_BONUS.boss) : SOURCE_BONUS.mob(mob.rarity),
 				luck: luck + mob.rarity * 14,
 				raceBias: save.race,
-				floor: mob.boss ? save.level > 14 ? "rare" : "fine" : floors[tier] ?? null,
+				floor: mob.boss ? (this.turbz ? (mob.dungeonBoss ? "epic" : "legendary") : save.level > 14 ? "rare" : "fine") : floors[tier] ?? null,
 				typeBias: mob.boss ? mob.type : null
 			});
 			this.lootGear(mob, piece);
@@ -4137,13 +4139,19 @@ export class TurbzGame {
 		if (mob.boss) {
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
 				level: save.level,
-				bonus: SOURCE_BONUS.boss,
-				luck: luck + 20,
+				bonus: this.turbz ? 0.16 : SOURCE_BONUS.boss,
+				luck: luck + (this.turbz ? 48 : 20),
 				raceBias: save.race,
-				floor: "epic"
+				floor: this.turbz ? "legendary" : "epic"
 			});
 			this.lootGear(mob, piece);
-			this.say(this.chestsOn() ? `${mob.name} falls. Its chest holds a warlord relic.` : `Warlord relic: ${piece.name}.`);
+			if (this.turbz && mob.dungeonBoss) {
+				const extra = rollGear(mulberry32(Math.random() * 1e9 | 0), {
+					level: save.level, bonus: 0.14, luck: luck + 36, raceBias: save.race, floor: "epic", typeBias: mob.type
+				});
+				this.lootGear(mob, extra);
+			}
+			this.say(this.chestsOn() ? `${mob.name} falls. ${this.turbz ? "The chest is good gear." : "Its chest holds a warlord relic."}` : `${this.turbz ? "Good gear" : "Warlord relic"}: ${piece.name}.`);
 			if (mob.bossId && !mob.dungeonBoss) save.bosses[mob.bossId] = (save.bosses[mob.bossId] ?? 0) + 1;
 		}
 		if (Math.random() < Math.min(0.8, 0.22 + mob.level * 0.012 + mob.rarity * 0.06)) this.lootItem(mob, mob.type === "water" ? "fish" : mob.type === "earth" ? "mushroom" : "meat", 1 + (mob.level >= 20 ? 1 : 0));
@@ -5006,6 +5014,7 @@ export class TurbzGame {
 		const grant = this.rules === "hardcore" ? Math.max(1, Math.floor(n * 0.72)) : n;
 		save.xp += grant;
 		this.gainAccount(grant);
+		if (this.turbz) this.growWornGear?.(grant);
 		let need = xpNeed(save.level);
 		let ups = 0;
 		while (save.xp >= need && ups < 48) {
@@ -5559,6 +5568,7 @@ export class TurbzGame {
 		}
 	}
 	die() {
+		if (this.turbz) { this.turbzDeath?.(); return; }
 		const save = this.save;
 		if (this.lms) { this.lmsDefeat?.(); return; }
 		if (this.rules !== "hardcore" && (this.shrine || save.map !== "world")) {
@@ -6677,11 +6687,12 @@ export class TurbzGame {
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
 			if (Math.hypot(save.x - ex.x, save.y - ex.y) < 36) {
-				this.travel("world", save.dungeons?.portals.find(p => p.id === save.map) ?? WORLD_RETURN[save.map] ?? hearthXY());
+				const back = this.turbz ? "custom-turbz" : "world";
+				this.travel(back, save.dungeons?.portals.find(p => p.id === save.map) ?? WORLD_RETURN[save.map] ?? hearthXY());
 				return;
 			}
 		}
-		if (save.map === "world") {
+		if (save.map === "world" || save.map === "custom-turbz") {
 			const portal = save.dungeons?.portals.find(p => !p.cleared && Math.hypot(p.x - save.x, p.y - save.y) <= 120);
 			if (portal) { this.enterRift(portal.id); return; }
 		}
@@ -9557,7 +9568,7 @@ export class TurbzGame {
 			build: this.buildInfo(),
 			race: !slow ? snap.race : save.race,
 			level: save.level,
-			dungeonCountdown: Math.ceil(DUNGEON_INTERVAL - (save.dungeons?.elapsed ?? 0)),
+			dungeonCountdown: Math.ceil((DUNGEON_INTERVAL - (save.dungeons?.elapsed ?? 0)) / (this.turbz ? 2.5 : 1)),
 			dungeonPortals: !slow ? snap.dungeonPortals : (save.dungeons?.portals ?? []).map((p) => ({ ...p })),
 			skillPoints: !slow ? snap.skillPoints : save.skillPoints ?? 0,
 			abilities: this.cachedAbilities(),
@@ -9743,7 +9754,10 @@ export class TurbzGame {
 				{ id: "crafting", label: "Craft", on: !!this.orders.crafting },
 				{ id: "spirits", label: "Seek spirits", on: !!this.orders.spirits },
 			] : null,
-			turbz: this.turbz ? { witches: this.mobs.filter((m) => m.twitch && m.alive).length } : null,
+			turbz: this.turbz ? {
+				witches: (this.save?.map === "custom-turbz" ? this.mobs : (this.turbzRoster ?? this.mobs)).filter((m) => m.twitch && m.alive).length,
+				back: Math.ceil(Math.min(...((this.witchGraves ?? []).length ? this.witchGraves : [0]))),
+			} : null,
 			accountLevel: !slow ? snap.accountLevel : save.accountLevel,
 			accountXp: !slow ? snap.accountXp : save.accountXp,
 			accountNeed: !slow ? snap.accountNeed : accountNeed(save.accountLevel),
@@ -9914,7 +9928,7 @@ export class TurbzGame {
 			drawRift(ctx, ex.x, ex.y + 8);
 			drawShadowName(ctx, "EXIT", ex.x, ex.y - 130, "#e7d9ff");
 		}
-		if (save.map === "world") for (const portal of save.dungeons?.portals ?? []) {
+		if (save.map === "world" || save.map === "custom-turbz") for (const portal of save.dungeons?.portals ?? []) {
 			if (portal.cleared) continue;
 			drawRift(ctx, portal.x, portal.y);
 			drawShadowName(ctx, `DUNGEON ${portal.id.slice(5)}`, portal.x, portal.y - 100, "#e7d9ff");

@@ -963,6 +963,8 @@ export type Gear = {
   style: number;
   name: string;
   level: number;
+  /** TURBZ: progress toward the next gear level. Gear climbs slower than the hunter. */
+  gx?: number;
   quality: QualityId;
   type: TypeId;
   enchants: EnchantRoll[];

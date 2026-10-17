@@ -494,7 +494,7 @@ export const MapPanel = memo(function MapPanel({ game }: GameProp) {
     <div className="world-map" data-testid="world-map">
       <div className="world-map-bar">
         <span className="text-kyo" data-testid={custom ? "custom-map-label" : undefined}>{s.region}</span>
-        {s.map === "world" && <span className="text-dim">Next rift {Math.floor(s.dungeonCountdown / 60)}:{String(s.dungeonCountdown % 60).padStart(2, "0")}</span>}
+        {(s.map === "world" || s.map === "custom-turbz") && <span className="text-dim">Next rift {Math.floor(s.dungeonCountdown / 60)}:{String(s.dungeonCountdown % 60).padStart(2, "0")}</span>}
         <span className="world-map-tools">
           <button type="button" className="px-btn ui-btn-sm" aria-label="Zoom out" onClick={() => zoomBy(0.7)}>−</button>
           <span className="text-dim">×{zoomLabel}</span>
