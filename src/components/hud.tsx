@@ -214,8 +214,8 @@ const MENUS = [
 
 /** Bottom-centre: verses and every menu, in one place. */
 export const HudDock = memo(function HudDock({ game }: GameProp) {
-  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "panel", "quick", "quickCd"] as const);
-  const manual = s.rules === "hardcore" && !s.autoplay;
+  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd"] as const);
+  const smart = s.autoCombat || s.autoplay;
   const q = s.quick[0];
   return (
     <div className="hud-dock">
@@ -242,10 +242,10 @@ export const HudDock = memo(function HudDock({ game }: GameProp) {
         </button>
       </div>
       <div className="hotbar px-panel" data-testid="move-bar">
-        <button type="button" data-testid="attack-btn" className="hot-slot hot-attack" title={manual ? "Hardcore only swings when you press Attack (Numpad 0)" : "Attack the nearest thing in range (Numpad 0)"} onClick={() => game?.attack()}>
+        <button type="button" data-testid="attack-btn" className="hot-slot hot-attack" title={smart ? "Auto combat is on. She picks the swing. Press Attack to force one (Numpad 0)." : "Auto combat is off. Press Attack (Numpad 0)."} onClick={() => game?.attack()}>
           <kbd className="key-badge hot-key">0</kbd>
           <span className="hot-name">Attack</span>
-          <span className="hot-tag">{manual ? "manual" : "nearest"}</span>
+          <span className="hot-tag">{smart ? "smart" : "manual"}</span>
         </button>
         <button type="button" data-testid="space-btn" className={`hot-slot hot-space ${q ? "" : "hot-space-empty"}`}
           title={q ? `Space: ${s.quick.map((x) => `${x.name} ×${x.count}`).join(" → ")}` : "Nothing on Space. In the Bag (B), choose Set to Space on an item."}
@@ -287,9 +287,12 @@ export const HudDock = memo(function HudDock({ game }: GameProp) {
 
 /** Bottom-right: autoplay and unstuck. */
 export const HudFabs = memo(function HudFabs({ game }: GameProp) {
-  const s = useSnapPick(["autoplay", "unstuck", "rules"] as const);
+  const s = useSnapPick(["autoplay", "autoCombat", "unstuck", "rules"] as const);
   return (
     <div className="hud-fabs">
+      <button type="button" className={`px-btn ui-btn-sm ${s.autoCombat ? "px-btn-kyo" : ""}`} onClick={() => game?.toggleAutoCombat()}>
+        {s.autoCombat ? "Combat auto" : "Combat manual"}
+      </button>
       <button type="button" className={`px-btn ui-btn-sm ${s.autoplay ? "px-btn-kyo" : ""}`} onClick={() => game?.toggleAutoplay()}>
         {s.autoplay ? "Stop auto" : "Autoplay"}
       </button>

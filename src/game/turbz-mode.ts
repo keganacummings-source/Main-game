@@ -31,7 +31,8 @@ import { lmsSpawns } from "./lms";
 import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
 import { nearestShore } from "./survival";
-import { ALL_ORDERS, thinkLikePlayer } from "./player-brain";
+import { combatRate } from "./pools";
+import { ALL_ORDERS, thinkLikePlayer, typeEdge } from "./player-brain";
 
 export const TURBZ_MAP = "custom-turbz";
 export const TURBZ_ORDERS = [
@@ -64,9 +65,11 @@ export function poolMax(level: number): number {
   return 50 + Math.max(0, Math.floor(level) - 1) * 3;
 }
 
-/** Mana for a spell, stamina for a melee verse. */
-export function poolCost(power: number, form: "melee" | "spell"): number {
-  return form === "spell" ? Math.max(4, Math.round(8 + power * 0.15)) : Math.max(4, Math.round(6 + power * 0.1));
+/** Mana for a spell. Stamina for a melee verse, and a lighter drink for a shot. */
+export function poolCost(power: number, form: "melee" | "spell" | "ranged"): number {
+  if (form === "spell") return Math.max(4, Math.round(8 + power * 0.15));
+  if (form === "ranged") return Math.max(3, Math.round(5 + power * 0.08));
+  return Math.max(4, Math.round(6 + power * 0.1));
 }
 
 const isHeal = (m: Move) => m.effect === "mend" || moveTactic(m) === "heal";
@@ -121,7 +124,8 @@ export function installTurbz(game: any): void {
     this.cam.x = save.x;
     this.cam.y = save.y;
     save.hp = this.maxHp();
-    this.pools = { mana: poolMax(1), maxMana: poolMax(1), stam: poolMax(1), maxStam: poolMax(1), manaSlow: 0, stamSlow: 0 };
+    const caps = this.poolCaps();
+    this.pools = { mana: caps.maxMana, maxMana: caps.maxMana, stam: caps.maxStam, maxStam: caps.maxStam, manaSlow: 0, stamSlow: 0 };
     const used = new Set<string>([save.name]);
     let r = 0;
     spots.forEach((p, i) => {
@@ -346,29 +350,37 @@ export function installTurbz(game: any): void {
     const save = this.save;
     const p = this.pools;
     if (!save || !p) return;
-    const lv = poolMax(save.level);
-    p.maxMana = lv;
-    p.maxStam = lv;
+    const caps = this.poolCaps();
+    const wounded = save.hp < caps.hp * 0.35;
+    p.maxMana = caps.maxMana;
+    p.maxStam = caps.maxStam;
     p.manaSlow = Math.max(0, p.manaSlow - dt);
     p.stamSlow = Math.max(0, p.stamSlow - dt);
-    const rate = this.combat > 0 ? 3.2 : 8;
-    p.mana = Math.min(lv, p.mana + rate * dt);
-    p.stam = Math.min(lv, p.stam + rate * dt);
+    let manaRate = combatRate(caps.manaRate, this.combat > 0);
+    let stamRate = combatRate(caps.stamRate, this.combat > 0);
+    if (wounded) { manaRate *= 0.55; stamRate *= 0.55; }
+    if (p.manaSlow > 0) stamRate *= 0.5;
+    if (p.stamSlow > 0) manaRate *= 0.5;
+    p.mana = Math.min(p.maxMana, Math.max(0, p.mana) + manaRate * dt);
+    p.stam = Math.min(p.maxStam, Math.max(0, p.stam) + stamRate * dt);
   };
 
   game.payPool = function (move: Move) {
     if (!this.turbz || !this.pools) return;
     const form = attackForm(move);
-    if (form !== "spell" && form !== "melee") return;
-    const key = form === "spell" ? "mana" : "stam";
-    const slow = form === "spell" ? "manaSlow" : "stamSlow";
-    const cost = poolCost(move.power, form);
+    const kind = form === "spell" ? "spell" : form === "ranged" ? "ranged" : form === "melee" ? "melee" : null;
+    if (!kind) return;
+    const key = kind === "spell" ? "mana" : "stam";
+    const slow = kind === "spell" ? "manaSlow" : "stamSlow";
+    const skill = kind === "spell" ? "mana" : "stamina";
+    const cost = poolCost(move.power, kind);
     if (this.pools[key] >= cost) this.pools[key] -= cost;
     else {
       this.pools[key] = 0;
       this.pools[slow] = 5;
-      this.float(this.save.x, this.save.y - 64, form === "spell" ? "NO MANA" : "NO STAMINA", "#c4473a");
+      this.float(this.save.x, this.save.y - 64, kind === "spell" ? "NO MANA" : "NO STAMINA", "#c4473a");
     }
+    this.gainSkill(skill, 2);
   };
 
   game.setOrder = function (id: string) {
@@ -655,25 +667,53 @@ export function installTurbz(game: any): void {
   game.twitchFight = function (m: any, foe: any, moves: Move[]) {
     const r: Brain = m.rv;
     const ready = (mv: Move) => (r.castCd[mv.id] ?? 0) <= 0;
+    if (!foe.player) {
+      let best = foe;
+      let pct = (foe.hp ?? foe.max ?? 1) / Math.max(1, foe.max ?? 1);
+      for (const o of this.mobs) {
+        if (!o.alive || o === m || (o.twitch && r.team && o.rv?.team === r.team)) continue;
+        if (Math.hypot(o.x - m.x, o.y - m.y) > 110) continue;
+        const p = o.hp / Math.max(1, o.max);
+        if (p < pct && p < 0.35) { pct = p; best = o; }
+      }
+      foe = best;
+      r.foe = foe.id;
+    }
     const d = Math.hypot(foe.x - m.x, foe.y - m.y);
     const spells = moves.filter((mv) => isOffense(mv) && attackForm(mv) === "spell");
     const melees = moves.filter((mv) => isOffense(mv) && attackForm(mv) === "melee");
-    const caster = spells.length > melees.length;
+    const foeType = foe.type || "normal";
+    const spellEdge = spells.reduce((n, mv) => Math.max(n, typeEdge(mv.type, foeType)), 0);
+    const meleeEdge = melees.reduce((n, mv) => Math.max(n, typeEdge(mv.type, foeType)), 0);
+    const caster = spellEdge > meleeEdge || (spellEdge === meleeEdge && spells.length > melees.length);
     const want = caster ? 96 : 42;
     if (d > want + 8) { r.goalX = foe.x; r.goalY = foe.y; }
-    else if (caster && d < 64) {
+    else if (caster && d < 58) {
       const a = Math.atan2(m.y - foe.y, m.x - foe.x);
-      r.goalX = m.x + Math.cos(a) * 70;
-      r.goalY = m.y + Math.sin(a) * 70;
+      r.goalX = m.x + Math.cos(a) * 80;
+      r.goalY = m.y + Math.sin(a) * 80;
     } else { r.goalX = m.x; r.goalY = m.y; }
-    const kit = (caster ? spells : melees.length ? melees : moves.filter(isOffense)).filter(ready);
-    const hit = kit.filter((mv) => d <= (attackForm(mv) === "melee" ? 64 : Math.min(160, attackRange(mv)))).sort((a, b) => b.power * (r.ranks[b.id] ?? 1) - a.power * (r.ranks[a.id] ?? 1))[0];
+    const pool = (caster && spellEdge > 0 ? spells : melees.length && meleeEdge > 0 ? melees : moves.filter(isOffense)).filter(ready);
+    const hpLeft = foe.hp ?? foe.max ?? 80;
+    const hit = pool.filter((mv) => typeEdge(mv.type, foeType) > 0 && d <= (attackForm(mv) === "melee" ? 64 : Math.min(160, attackRange(mv))))
+      .sort((a, b) => this.witchMoveScore(r, b, foeType, hpLeft) - this.witchMoveScore(r, a, foeType, hpLeft))[0];
     if (!hit) return;
-    if ((m.hp / m.max) < 0.7) {
+    const hurt = m.hp / Math.max(1, m.max);
+    if (hurt < 0.5 && hpLeft > (foe.max ?? hpLeft) * 0.25) {
       const ward = moves.find((mv) => isWard(mv) && ready(mv));
       if (ward && (m.wardT ?? 0) <= 0) return this.twitchCast(m, ward, null);
     }
     this.twitchCast(m, hit, foe.player ? null : foe);
+  };
+
+  game.witchMoveScore = function (r: Brain, mv: Move, foeType: string, hpLeft: number) {
+    const edge = typeEdge(mv.type, foeType);
+    if (edge <= 0) return -1;
+    const est = mv.power * (r.ranks[mv.id] ?? 1) * edge;
+    const cd = mv.power > 60 ? 1.35 : 0.7;
+    let score = est / cd;
+    if (est > hpLeft * 1.25) score -= (est - hpLeft) * 0.15;
+    return score;
   };
 
   game.twitchCast = function (m: any, move: Move, foe: any) {

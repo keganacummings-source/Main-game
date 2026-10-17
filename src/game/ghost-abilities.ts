@@ -57,11 +57,17 @@ export const GHOST_ABILITIES: readonly GhostAbilityDef[] = [
   { id: "thorn_veil", name: "Thorn Veil", kind: "passive", chan: "thorns", base: 4, cap: 30, unit: "%", about: "+{v} Thorns: foes that hit you take some back.", tag: "Thorns" },
   { id: "kindred_bond", name: "Kindred Bond", kind: "passive", chan: "spirit_bond", base: 6, cap: 50, unit: "%", about: "+{v}% damage from every ghost fighting beside you.", tag: "Ghost damage" },
   { id: "ember_touch", name: "Ember Touch", kind: "passive", chan: "ghost_burn", base: 3, cap: 20, unit: "%", about: "{v}% chance your hits set the foe burning.", tag: "Burn" },
+  { id: "mana_font", name: "Mana Font", kind: "passive", chan: "mana_well", base: 6, cap: 40, unit: "%", about: "+{v}% maximum mana.", tag: "Mana" },
+  { id: "steady_breath", name: "Steady Breath", kind: "passive", chan: "stam_well", base: 6, cap: 40, unit: "%", about: "+{v}% maximum stamina.", tag: "Stamina" },
+  { id: "font_tide", name: "Font Tide", kind: "passive", chan: "mana_flow", base: 5, cap: 35, unit: "%", about: "Mana recovers +{v}% faster.", tag: "Mana regen" },
+  { id: "second_lung", name: "Second Lung", kind: "passive", chan: "stam_flow", base: 5, cap: 35, unit: "%", about: "Stamina recovers +{v}% faster.", tag: "Stamina regen" },
+  { id: "shared_body", name: "Shared Body", kind: "passive", chan: "body_tide", base: 4, cap: 24, unit: "%", about: "+{v}% health. Mana and stamina rise with it.", tag: "Body" },
   // Timed
   { id: "spirit_guard", name: "Spirit Guard", kind: "timed", base: 1, cap: 1, cd: 60, cdRarity: 0.04, unit: "block", about: "Blocks one hit completely, once every {cd}s.", tag: "Block" },
   { id: "soul_bomb", name: "Soul Bomb", kind: "timed", base: 18, perLevel: 3.5, cap: 0, cd: 16, cdRarity: 0.03, unit: "dmg", about: "In a fight, throws a soul bomb every {cd}s: {v} damage to every foe in the blast.", tag: "Area damage" },
   { id: "soul_mend", name: "Soul Mend", kind: "timed", base: 2.5, cap: 12, cd: 12, cdRarity: 0.03, unit: "pct-hp", about: "Heals you for {v}% of your health every {cd}s.", tag: "Healing" },
   { id: "second_wind", name: "Second Wind", kind: "timed", base: 18, cap: 50, cd: 150, cdRarity: 0.04, unit: "pct-hp", about: "When a hit drops you under 25% health, heals {v}% of your health. Once every {cd}s.", tag: "Emergency heal" },
+  { id: "well_gift", name: "Well Gift", kind: "timed", base: 18, cap: 40, cd: 22, cdRarity: 0.03, unit: "pct-hp", about: "Refills {v}% of your mana and {v}% of your stamina every {cd}s.", tag: "Pools" },
   // Shiny only
   { id: "shiny_charm", name: "Shiny Charm", kind: "passive", shiny: true, chan: "shiny_luck", base: 15, cap: 100, unit: "%", about: "+{v}% shiny odds on every ghost you find.", tag: "Shiny odds" },
   { id: "radiant_surge", name: "Radiant Surge", kind: "timed", shiny: true, base: 24, perLevel: 4.5, cap: 0, cd: 40, cdRarity: 0.04, unit: "dmg", about: "In a fight, bursts with light every {cd}s: {v} damage to every foe near you and a small heal.", tag: "Nova" },

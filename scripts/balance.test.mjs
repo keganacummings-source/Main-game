@@ -13,9 +13,10 @@ function moduleUrl(path, imports = {}) {
   }
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 }
-const classesUrl = moduleUrl("../src/game/classes.ts");
+const kitsUrl = moduleUrl("../src/game/class-kits.ts");
+const classesUrl = moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl });
 const overmaxUrl = moduleUrl("../src/game/overmax.ts");
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl });
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl, "./class-kits": kitsUrl });
 const content = await import(contentUrl);
 const bal = await import(moduleUrl("../src/game/balance.ts", { "./content": contentUrl, "./overmax": overmaxUrl }));
 const respawn = await import(moduleUrl("../src/game/respawn.ts"));

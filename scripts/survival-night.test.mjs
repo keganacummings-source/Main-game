@@ -15,9 +15,10 @@ const bld = await import(moduleUrl("../src/game/building.ts"));
 const buildingUrl = moduleUrl("../src/game/building.ts");
 const surv = await import(moduleUrl("../src/game/survival.ts", { "./building": buildingUrl }));
 const fx = await import(moduleUrl("../src/game/combat-fx.ts"));
-const classesUrl = moduleUrl("../src/game/classes.ts");
+const kitsUrl = moduleUrl("../src/game/class-kits.ts");
+const classesUrl = moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl });
 const overmaxUrl = moduleUrl("../src/game/overmax.ts");
-const content = await import(moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl }));
+const content = await import(moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl, "./class-kits": kitsUrl }));
 
 test("day is 10 minutes, night is 15 minutes, and standard mode never has night", () => {
   assert.equal(dn.DAY_SECONDS, 600);
@@ -170,7 +171,7 @@ test("non-attack verses land instantly", () => {
 
 test("world collision includes placed logs", async () => {
   const world = await import(moduleUrl("../src/game/world.ts", {
-    "./content": moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts"), "./overmax": moduleUrl("../src/game/overmax.ts") }),
+    "./content": moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl }), "./overmax": moduleUrl("../src/game/overmax.ts"), "./class-kits": kitsUrl }),
     "./tile-atlas": moduleUrl("../src/game/tile-atlas.ts"),
   }));
   const w = fakeWorld();

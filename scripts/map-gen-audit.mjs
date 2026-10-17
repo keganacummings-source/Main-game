@@ -16,7 +16,8 @@ function moduleUrl(path, imports = {}) {
   for (const [specifier, url] of Object.entries(imports)) source = source.replaceAll(`from "${specifier}"`, `from "${url}"`);
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 }
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts"), "./overmax": moduleUrl("../src/game/overmax.ts") });
+const kitsUrl = moduleUrl("../src/game/class-kits.ts");
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl }), "./overmax": moduleUrl("../src/game/overmax.ts"), "./class-kits": kitsUrl });
 const atlasStub = `data:text/javascript;base64,${Buffer.from("export const findAtlasTile=()=>null;").toString("base64")}`;
 const idbUrl = moduleUrl("../src/game/idb-store.ts");
 const formatUrl = moduleUrl("../src/game/map-format.ts", { "./content": contentUrl, "./tile-atlas": atlasStub, "./idb-store": idbUrl });

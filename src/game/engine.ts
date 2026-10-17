@@ -103,6 +103,7 @@ import { gearImbue } from "./gear-fx";
 import { drawGhostFx, ghostImbue } from "./ghost-fx";
 import { clampRarity, rarityName, rollGhostRarity, rollShinyPalette, shinyPalette, PALETTE_BY_ID, DEFAULT_PALETTE, MAX_GHOST_RARITY } from "./ghost-style";
 import { aggregateGhostAbilities, describeAbilities, normalizeAbilities as normalizeGhostAbilities, rollGhostAbilities, GHOST_ABILITY_BY_ID, type GhostAbilityRoll, type GhostAggregate } from "./ghost-abilities";
+import { combatRate, derivePools } from "./pools";
 import { CHEST_BOTTOM, chestCanvas } from "./chest-sprite";
 /** One line on a verse's area, chain or boomerang hits, with the numbers when a hit size is known. */
 export function verseAreaNote(mv: Move, hit = 0): string {
@@ -311,6 +312,8 @@ export type Snap = {
   mapY: number;
   party: string[];
   autoplay: boolean;
+  /** Smart auto-combat. Off means she only swings when you press Attack. */
+  autoCombat: boolean;
   grind: string;
   /** TURBZ pools. Null in every other mode. */
   pools: { mana: number; maxMana: number; stam: number; maxStam: number; manaSlow: number; stamSlow: number } | null;
@@ -669,6 +672,7 @@ const emptySnap = (): Snap => ({
 	mapY: 0,
 	party: [],
 	autoplay: false,
+	autoCombat: true,
 	grind: "",
 	pools: null,
 	orders: null,
@@ -1324,7 +1328,7 @@ export class TurbzGame {
 			classId,
 			traitId: traitId && TRAIT_BY_ID[traitId] ? traitId : null,
 			female: female !== false,
-			classMovesV: 2,
+			classMovesV: 3,
 			seed,
 			x: home.x,
 			y: home.y,
@@ -3433,10 +3437,11 @@ export class TurbzGame {
 		if (!move) return;
 		if (!this.castMove(move)) this.say("Out of range, or that move is cooling.");
 	}
-	/** TurboHunt always swings. Hardcore swings on its own only while autogrind is on. */
+	/** Smart auto-combat when the toggle is on. Full autoplay still fights unless Fight is turned off. */
 	autoAttacks() {
-		if (this.turbz) return !!this.autoplay && this.orders?.combat !== false;
-		return this.rules !== "hardcore" || !!this.autoplay;
+		if (this.autoCombat) return true;
+		if (this.autoplay && this.orders?.combat !== false) return true;
+		return false;
 	}
 	isOffense(m) {
 		const tac = moveTactic(m);
@@ -3526,35 +3531,75 @@ export class TurbzGame {
 	autoBattle() {
 		const save = this.save;
 		if (!save || this.dead || this.castLock > 0 || this.lunge) return false;
+		const foe = this.smartFoe();
+		if (!foe) return true;
 		const ready = this.arsenal(save).filter((m) => (this.cds[m.id] ?? 0) <= 0);
-		const foe = this.fightTarget();
 		const hpPct = save.hp / Math.max(1, this.maxHp());
+		const foePct = foe.hp / Math.max(1, foe.max);
 		const by = (t: string) => ready.find((m) => moveTactic(m) === t);
-		if (hpPct < .5) {
+		if (hpPct < 0.4 && foePct > 0.18) {
 			const heal = by("heal");
 			if (heal && this.castMove(heal)) return true;
 		}
-		if (foe && this.wardT < .25 && this.shield < 8 && hpPct < .75) {
+		if (this.wardT < 0.2 && this.shield < 8 && hpPct < 0.62 && (foe.boss || Math.hypot(foe.x - save.x, foe.y - save.y) < 96)) {
 			const ward = by("ward");
 			if (ward && this.castMove(ward, foe)) return true;
 		}
-		if (foe && hpPct < .48) {
+		if (hpPct < 0.36 && foePct > 0.3) {
 			const roll = by("roll");
 			if (roll && Math.hypot(foe.x - save.x, foe.y - save.y) < 78 && this.castMove(roll, foe)) return true;
 		}
-		if (!foe) return false;
 		return this.castOffense(foe);
+	}
+	/**
+	 * Who auto-combat should hit: finish a wounded foe, take the element you beat,
+	 * ignore a hide you cannot touch, and leave a docile animal alone.
+	 */
+	smartFoe() {
+		const save = this.save;
+		if (!save) return null;
+		const moves = this.arsenal(save).filter((m) => this.isOffense(m) && (this.cds[m.id] ?? 0) <= 0);
+		const kit = moves.length ? moves : this.arsenal(save).filter((m) => this.isOffense(m));
+		if (!kit.length) return this.nearestMob(save.x, save.y, 52);
+		let best = null;
+		let bs = Infinity;
+		for (const mob of this.mobs) {
+			if (!mob.alive) continue;
+			const d = Math.hypot(mob.x - save.x, mob.y - save.y);
+			const reach = kit.some((mv) => this.moveReaches(mv, d));
+			if (!reach) continue;
+			if (mob.animal && !mob.aggro && (mob.hurt ?? 0) <= 0) continue;
+			const usable = kit.filter((mv) => typeChart(mv.type, mob.type) > 0 && this.moveReaches(mv, d));
+			if (!usable.length) continue;
+			const gap = (mob.level ?? 1) - save.level;
+			const hostile = !!(mob.aggro || (mob.hurt ?? 0) > 0);
+			if ((mob.boss || mob.hunter || (mob.witch && !mob.party)) && gap > 3 && !hostile) continue;
+			const hpPct = mob.hp / Math.max(1, mob.max);
+			const edge = usable.reduce((n, mv) => Math.max(n, typeChart(mv.type, mob.type)), 0);
+			let score = d * (edge >= 2 ? 0.62 : edge < 1 ? 1.35 : 1);
+			if (hpPct < 0.28) score -= 220;
+			else if (hpPct < 0.5) score -= 70;
+			if (hostile) score -= 80;
+			score += Math.max(0, gap) * 22;
+			if (score < bs) { bs = score; best = mob; }
+		}
+		return best;
 	}
 	moveScore(m, foe, magicBetter, dist) {
 		const tac = moveTactic(m);
 		const form = attackForm(m);
-		let score = m.power + m.priority * 6;
-		if (magicBetter === (form === "spell" || tac === "channel")) score += 28;
-		score += typeChart(m.type, foe.type) * 18;
-		if (tac === "blink" && dist > 40) score += 20;
-		if (tac === "lunge" && dist > 36 && dist <= MELEE_MAX_REACH) score += 16;
-		if (tac === "heavy" && dist < 60) score += 14;
-		if (tac === "channel" && dist < this.playerReach(m)) score += 10;
+		const edge = typeChart(m.type, foe.type);
+		if (edge === 0) return -999;
+		const rank = this.save?.abilityRanks?.[m.id] ?? 1;
+		const est = verseValues(m, rank, tac).power * edge * (magicBetter === (form === "spell" || tac === "channel") ? 1.2 : 0.82);
+		let score = est + m.priority * 4;
+		const over = est - (foe.hp ?? est);
+		if (over > 14) score -= over * 0.4;
+		if (edge >= 2) score += 18;
+		if (tac === "blink" && dist > 40) score += 16;
+		if (tac === "lunge" && dist > 36 && dist <= MELEE_MAX_REACH) score += 14;
+		if (tac === "heavy" && dist < 60 && (foe.hp ?? 0) > est * 0.8) score += 12;
+		if (tac === "channel" && dist < this.playerReach(m)) score += 8;
 		return score;
 	}
 	/** Casts a verse. An imbued weapon adds its layer to everything this cast draws. */
@@ -5864,7 +5909,11 @@ export class TurbzGame {
 			}
 		}
 		save.female = female !== false;
-		save.classMovesV = 2;
+		save.classMovesV = 3;
+		for (const id of CLASS_BY_ID[classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks?.[id]) {
+			save.abilityRanks = save.abilityRanks ?? {};
+			save.abilityRanks[id] = 1;
+		}
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
@@ -6369,6 +6418,16 @@ export class TurbzGame {
 			this.cfx = this.cfx ?? new CombatFx();
 			this.cfx.guard(save.x, save.y - 18, "water");
 			spend("soul_mend");
+		}
+		if (ready("well_gift") && this.pools) {
+			const pct = (timed.well_gift.value ?? 0) / 100;
+			const p = this.pools;
+			const mana = Math.max(1, Math.floor(p.maxMana * pct));
+			const stam = Math.max(1, Math.floor(p.maxStam * pct));
+			p.mana = Math.min(p.maxMana, p.mana + mana);
+			p.stam = Math.min(p.maxStam, p.stam + stam);
+			this.float(save.x, save.y - 58, `WELL +${mana}`, "#9ecbff");
+			spend("well_gift");
 		}
 		const fighting = this.inFight();
 		if (ready("soul_bomb") && fighting) {
@@ -7751,6 +7810,14 @@ export class TurbzGame {
 			: "Autoplay off.");
 		this.syncHud(true);
 	}
+	toggleAutoCombat() {
+		if (!this.save || this.dead) return;
+		this.autoCombat = !this.autoCombat;
+		this.say(this.autoCombat
+			? "Auto combat on. She finishes the weak one, uses the element that lands, and will not swing at a hide she cannot touch."
+			: "Auto combat off. She swings only when you press Attack.");
+		this.syncHud(true);
+	}
 	sell(uid) {
 		const save = this.save;
 		const i = save.gear.findIndex((g) => g.uid === uid);
@@ -9066,9 +9133,9 @@ export class TurbzGame {
 		normalizeAbilities(save);
 		if (save.traitId && !TRAIT_BY_ID[save.traitId]) save.traitId = null;
 		if (save.female === undefined) save.female = true;
-		if (save.classMovesV !== 2) {
+		if (save.classMovesV !== 3) {
 			for (const id of CLASS_BY_ID[save.classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks[id]) save.abilityRanks[id] = 1;
-			save.classMovesV = 2;
+			save.classMovesV = 3;
 		}
 		save.dungeons = normalizeDungeonState(save.dungeons);
 		if (this.rules === "hardcore") save.dayNight = normalizeDayNight(save.dayNight);
@@ -9242,8 +9309,28 @@ export class TurbzGame {
 	maxHp() {
 		const save = this.save;
 		if (!save) return 80;
-		const full = (78 + save.level * 12 + this.chan("spark_life") + this.chan("vitality")) * (1 + this.mod("hp") / 100);
+		const tide = 1 + Math.max(0, this.chan("body_tide")) / 100;
+		const full = (78 + save.level * 12 + this.chan("spark_life") + this.chan("vitality")) * (1 + this.mod("hp") / 100) * tide;
 		return Math.max(20, Math.floor(full * (1 - this.auraReserve())));
+	}
+	/** Mana and stamina as shares of max health, plus skills, enchants, auras and ghosts. */
+	poolCaps() {
+		const save = this.save;
+		const cls = save ? CLASS_BY_ID[save.classId] : null;
+		return derivePools({
+			hp: this.maxHp(),
+			role: cls?.role ?? "Bruiser",
+			fightStyle: cls?.fightStyle ?? "mixed",
+			manaSkill: this.skillN?.("mana") ?? 0,
+			stamSkill: this.skillN?.("stamina") ?? 0,
+			magic: this.skillN?.("magic") ?? 0,
+			physical: this.skillN?.("physical") ?? 0,
+			survival: this.skillN?.("survival") ?? 0,
+			manaWell: this.chan?.("mana_well") ?? 0,
+			stamWell: this.chan?.("stam_well") ?? 0,
+			manaFlow: this.chan?.("mana_flow") ?? 0,
+			stamFlow: this.chan?.("stam_flow") ?? 0,
+		});
 	}
 	armorType() {
 		return (this.piece("chest") ?? this.piece("weapon"))?.type ?? "normal";
@@ -9445,6 +9532,7 @@ export class TurbzGame {
 	swapRules(rules) {
 		if (this.save) this.persist();
 		this.rules = rules === "hardcore" ? "hardcore" : "hunt";
+		this.autoCombat = this.rules !== "hardcore";
 		this.duel = null;
 		this.save = null;
 		this.mobs = [];
@@ -9941,6 +10029,7 @@ export class TurbzGame {
 			mapY: save.y,
 			party: !slow ? snap.party : (save.party ?? []).map((id) => NPCS.find((n) => n.id === id)?.name ?? id),
 			autoplay: this.autoplay,
+			autoCombat: !!this.autoCombat,
 			grind: this.autoplay ? this.grind : "",
 			pools: this.turbz && this.pools ? {
 				mana: Math.ceil(this.pools.mana), maxMana: this.pools.maxMana,

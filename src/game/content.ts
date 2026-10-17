@@ -1,5 +1,7 @@
 
 
+import { KIT_MOVES } from "./class-kits";
+
 export type TypeId =
   | "normal"
   | "fire"
@@ -403,6 +405,7 @@ export const MOVES: Move[] = [
   { id: "crashdown", name: "Crash Down", type: "earth", power: 72, accuracy: 82, crit: 10, priority: 1, effect: "root", anim: ["burst", "slash", "pulse"], range: 160, about: "Sprint at them and land like a stone dropped from height. The ground cracks.", tactic: "lunge", form: "melee", react: "move", fail: 18 },
   { id: "stormcleave", name: "Storm Cleave", type: "electric", power: 66, accuracy: 84, crit: 14, priority: 1, effect: "spark", anim: ["spark", "slash", "burst"], range: 165, about: "Close the gap in a bolt and cleave on arrival. The charge sparks everything near the landing.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 44, mult: 0.4 } },
   { id: "tidecrasher", name: "Tide Crasher", type: "water", power: 68, accuracy: 82, crit: 10, priority: 1, effect: "soak", anim: ["rain", "slash", "burst"], range: 155, about: "Ride a wave of water at the target and break over them like a shore.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 48, mult: 0.45 } },
+  ...KIT_MOVES as Move[],
 ];
 /** The Reaver batch: 30 melee verses (strikes, heavies and lunges across every element). */
 export const REAVER_BATCH: string[] = ["boneclub", "coffinnail", "gravedigger", "ribrush", "embercleave", "ashmaul", "coalrush", "tidebreaker", "saltgash", "barrowmaul", "rootcleave", "stonefist", "reedslash", "windscythe", "gullrush", "sparkjab", "archook", "rimeedge", "iciclethrust", "hollowcut", "nullcleave", "umbralunge", "dawnblade", "censerswing", "smitingrod", "wraithclaw", "veilrend", "ghoulmaw", "carrionrend", "doublerake"];
@@ -431,6 +434,9 @@ export const AURAS: Move[] = [
   aura("galeaura", "Tailwind", "air", "The road runs downhill wherever you walk.", { reserve: 0.1, chan: { swift_step: 12, wayfarer: 15 }, label: "Speed", role: "travel" }),
   aura("goldaura", "Gilded Aura", "normal", "Coins and treasure drift your way.", { reserve: 0.1, chan: { kyo_find: 30, loot_find: 18, sell_boost: 12 }, label: "Fortune", role: "fortune" }),
   aura("sageaura", "Sage's Aura", "light", "Every fight teaches a little more.", { reserve: 0.1, chan: { xp_boost: 22 }, label: "Experience", role: "fortune" }),
+  aura("wellspringaura", "Wellspring Aura", "water", "The mana well runs deeper, and it refills faster.", { reserve: 0.12, chan: { mana_well: 22, mana_flow: 16 }, label: "Mana", role: "combat" }),
+  aura("ironlung", "Iron Lung", "earth", "A deeper stamina well, and breath that comes back faster.", { reserve: 0.12, chan: { stam_well: 22, stam_flow: 16 }, label: "Stamina", role: "combat" }),
+  aura("trinityaura", "Trinity", "light", "Health, mana and stamina are one body, and this makes the body larger.", { reserve: 0.14, chan: { body_tide: 16, vitality: 36 }, label: "Body", role: "defense" }),
 ];
 export const AURA_IDS = new Set(AURAS.map((m) => m.id));
 export const MOVE_BY_ID: Record<string, Move> = Object.fromEntries([...MOVES, ...AURAS].map((m) => [m.id, m]));
@@ -896,6 +902,11 @@ export const ENCHANTS: EnchantDef[] = [
   { id: "ghost_xp", name: "Ghost Mentor", cat: "spirits", max: 40, unit: "%", gear: (n) => `Your ghosts earn ${n}% more XP from kills and lone hunts.`, perk: { step: 2, max: 40, each: "+2% XP for your ghosts (out with you, tagged, or hunting alone)" } },
   { id: "ghost_power", name: "Spirit Resonance", cat: "spirits", max: 30, unit: "%", tag: "relic", gear: (n) => `Your ghosts' abilities are ${n}% stronger (each ability's cap still holds).`, perk: { step: 1, max: 20, each: "+1% strength for every ghost ability (each ability's cap still holds)" } },
   { id: "area_power", name: "Wide Arc", cat: "combat", max: 30, unit: "%", tag: "weapon", gear: (n) => `Splash, nova, chain and boomerang hits deal ${n}% more damage.`, perk: { step: 1, max: 20, each: "+1% damage from splash, nova, chain and boomerang hits" } },
+  { id: "mana_well", name: "Mana Well", max: 40, cat: "combat", unit: "%", tag: "relic", gear: (n) => `+${n}% maximum mana.`, perk: { step: 1, max: 24, each: "+1% maximum mana" } },
+  { id: "stam_well", name: "Stamina Well", max: 40, cat: "combat", unit: "%", tag: "armor", gear: (n) => `+${n}% maximum stamina.`, perk: { step: 1, max: 24, each: "+1% maximum stamina" } },
+  { id: "mana_flow", name: "Mana Flow", max: 30, cat: "combat", unit: "%", tag: "relic", gear: (n) => `Mana recovers ${n}% faster.`, perk: { step: 1, max: 20, each: "1% faster mana recovery" } },
+  { id: "stam_flow", name: "Stamina Flow", max: 30, cat: "combat", unit: "%", tag: "armor", gear: (n) => `Stamina recovers ${n}% faster.`, perk: { step: 1, max: 20, each: "+1% faster stamina recovery" } },
+  { id: "body_tide", name: "Body Tide", max: 24, cat: "defense", unit: "%", tag: "armor", gear: (n) => `+${n}% health, and mana and stamina rise with it, because they are shares of the same body.`, perk: { step: 1, max: 16, each: "+1% health, which also lifts mana and stamina" } },
 ];
 
 export const ENCHANT_BY_ID: Record<string, EnchantDef> = Object.fromEntries(ENCHANTS.map((e) => [e.id, e]));
@@ -1304,6 +1315,8 @@ export const SKILLS = [
   { id: "adventuring", name: "Adventuring" },
   { id: "physical", name: "Physical" },
   { id: "magic", name: "Magic" },
+  { id: "mana", name: "Mana" },
+  { id: "stamina", name: "Stamina" },
   { id: "wayfinding", name: "Wayfinding" },
   { id: "survival", name: "Survival" },
   { id: "cooking", name: "Cooking" },
@@ -1383,9 +1396,13 @@ export function skillLine(id: SkillId, level: number): string {
     case "adventuring":
       return `TurboHunt: out of combat, restore ${(1.2 + lv * 0.15).toFixed(1)} health per second (1.2 + level × 0.15, no cap). Hardcore has no natural healing.`;
     case "physical":
-      return `+${(n * 2).toFixed(0)}% melee and +${f(n * 1.5)}% ranged damage. 2% and 1.5% per level, no cap.`;
+      return `+${(n * 2).toFixed(0)}% melee and +${f(n * 1.5)}% ranged damage, and +${f(n * 0.25)}% maximum stamina. 2%, 1.5% and 0.25% per level, no cap.`;
     case "magic":
-      return `+${(n * 2.5).toFixed(0)}% spell damage, and spells recharge +${f(n * 0.2)}% faster. 2.5% and 0.2% per level, no cap.`;
+      return `+${(n * 2.5).toFixed(0)}% spell damage, spells recharge +${f(n * 0.2)}% faster, and +${f(n * 0.25)}% maximum mana. 2.5%, 0.2% and 0.25% per level, no cap.`;
+    case "mana":
+      return `+${f(n * 1)}% maximum mana and +${f(n * 0.4)}% mana recovery. 1% and 0.4% per level, no cap. Trained when you cast spells.`;
+    case "stamina":
+      return `+${f(n * 1)}% maximum stamina and +${f(n * 0.4)}% stamina recovery. 1% and 0.4% per level, no cap. Trained when you swing or shoot.`;
     case "wayfinding":
       return `+${f(n * 0.075)}% movement speed. 0.075% per level, no cap.`;
     case "survival":

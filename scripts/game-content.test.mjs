@@ -13,9 +13,10 @@ function moduleUrl(path, imports = {}) {
   }
   return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 }
-const classesUrl = moduleUrl("../src/game/classes.ts");
+const kitsUrl = moduleUrl("../src/game/class-kits.ts");
+const classesUrl = moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl });
 const overmaxUrl = moduleUrl("../src/game/overmax.ts");
-const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl });
+const contentUrl = moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl, "./class-kits": kitsUrl });
 const content = await import(contentUrl);
 const world = await import(
   moduleUrl("../src/game/world.ts", {
@@ -467,8 +468,8 @@ test("twelve shiny palettes; Prism is the default and rarer ghosts lean to rarer
   assert.match(ghostStyle.paletteColor(ghostStyle.shinyPalette("ember"), 1.3), /^rgba\(/);
 });
 
-test("twenty ghost abilities, two shiny-only, and the count follows rarity", () => {
-  assert.equal(ghostAbilities.GHOST_ABILITIES.length, 20);
+test("ghost abilities, two shiny-only, and the count follows rarity", () => {
+  assert.equal(ghostAbilities.GHOST_ABILITIES.length, 26);
   assert.deepEqual(ghostAbilities.GHOST_ABILITIES.filter((a) => a.shiny).map((a) => a.id).sort(), ["radiant_surge", "shiny_charm"]);
   assert.deepEqual([0, 1, 2, 3, 4, 5].map(ghostAbilities.abilityCount), [1, 1, 2, 2, 3, 3]);
   const rng = seeded(11);
