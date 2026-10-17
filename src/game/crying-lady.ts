@@ -17,8 +17,9 @@ const SHEET_COLS = 9;
 const SHEET_ROWS = 4;
 const CELL = 64;
 
-// Row per facing. (Row 0 is the back/up view; row 3 is the front/down view.)
-const DIR_ROW: Record<"down" | "up" | "left" | "right", number> = { up: 0, left: 1, right: 2, down: 3 };
+// Row per facing, matching the actual art: row 0 = back (up), row 1 = side facing left,
+// row 2 = front (down), row 3 = side facing right.
+const DIR_ROW: Record<"down" | "up" | "left" | "right", number> = { up: 0, left: 1, down: 2, right: 3 };
 
 type LayerName = "base" | "hair" | "brazalet" | "suit" | "boot" | "glove" | "belt" | "shawl" | "hairband";
 const COLOUR_LAYERS: LayerName[] = ["base", "hair", "brazalet"];
@@ -135,7 +136,7 @@ type Piece = { slot: string; type: TypeId; quality: number };
 
 export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   const dir = ((a.direction ?? "down") as "up" | "down" | "left" | "right");
-  const row = DIR_ROW[dir] ?? 3;
+  const row = DIR_ROW[dir] ?? 2;
   const scale = (a.scale ?? 1) * (a.tall ?? 1);
   const drawScale = 0.72 * scale;
   const destW = CELL * drawScale, destH = CELL * drawScale;
