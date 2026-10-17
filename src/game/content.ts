@@ -918,6 +918,13 @@ export const ENCHANTS: EnchantDef[] = [
   { id: "gimmick_power", name: "Showstopper", max: 30, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `Your class gimmick (R) deals ${n}% more damage.`, perk: { step: 1, max: 20, each: "+1% damage from your class gimmick" } },
   { id: "form_fury", name: "Shapeshifter", max: 24, cat: "combat", unit: "%", tag: "armor", gear: (n) => `While transformed (cat, rabbit, boss form, ghost, flight) you deal ${n}% more damage and take ${Math.round(n / 2)}% less.`, perk: { step: 1, max: 16, each: "+1% damage and 0.5% less damage taken while transformed" } },
   { id: "afterimage", name: "Afterimage", max: 20, cat: "combat", unit: "%", tag: "armor", gear: (n) => `Your gimmick lasts ${n}% longer.`, perk: { step: 1, max: 15, each: "+1% class gimmick duration" } },
+  // --- New-meta enchants ---
+  { id: "elementalist", name: "Elementalist", max: 20, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `+${n}% damage for EACH element you carry. The Crying Lady with two elements gets it twice (+${n * 2}%).`, perk: { step: 1, max: 14, each: "+1% damage per element you carry" } },
+  { id: "bloodlust", name: "Bloodlust", max: 40, cat: "combat", unit: "%", tag: "armor", gear: (n) => `Up to +${n}% damage as your health drops (full strength near death, nothing at full health).`, perk: { step: 2, max: 30, each: "+2% of your damage scaled by missing health" } },
+  { id: "overflow", name: "Overflow", max: 26, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `+${n}% damage while you are above 80% health — reward for staying healthy.`, perk: { step: 1, max: 18, each: "+1% damage while above 80% health" } },
+  { id: "set_seek", name: "Set Seeker", max: 40, cat: "fortune", unit: "%", tag: "relic", gear: (n) => `+${n}% chance that a gear drop belongs to an armour set — the fast lane to completing sets.`, perk: { step: 2, max: 30, each: "+2% chance a gear drop belongs to a set" } },
+  { id: "giant_slayer", name: "Giant Slayer", max: 24, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `+${n}% damage to witches, bounties and hunters — the real threats.`, perk: { step: 1, max: 16, each: "+1% damage to witches, bounties and hunters" } },
+  { id: "ironblood", name: "Ironblood", max: 24, cat: "defense", unit: "%", tag: "armor", gear: (n) => `+${n}% maximum health and ${Math.round(n / 2)}% out-of-combat recovery together.`, perk: { step: 1, max: 16, each: "+1% max health and 0.5% recovery" } },
 ];
 
 export const ENCHANT_BY_ID: Record<string, EnchantDef> = Object.fromEntries(ENCHANTS.map((e) => [e.id, e]));

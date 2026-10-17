@@ -112,15 +112,17 @@ export const LEAN_BUDGET = 40;
 export const LEAN_MAX = 30;
 export const LEAN_MIN = -20;
 export const LEAN_STEP = 2;
-export type CryingConfig = { type: TypeId; role: Role; fightStyle: FightStyle; lean: StatMods; rSkill: string };
+export type CryingConfig = { type: TypeId; type2: TypeId | null; role: Role; fightStyle: FightStyle; lean: StatMods; rSkill: string };
 const CRY_KEY = "turbz.cryingConfig";
-const CRY_DEFAULT: CryingConfig = { type: "water", role: "Support", fightStyle: "mixed", lean: { arcana: 10, regen: 10, affinity: 5 }, rSkill: "tearstorm" };
+const CRY_DEFAULT: CryingConfig = { type: "water", type2: "ice", role: "Support", fightStyle: "mixed", lean: { arcana: 10, regen: 10, affinity: 5 }, rSkill: "tearstorm" };
 
 export function leanSpent(lean: StatMods): number {
   return Object.values(lean).reduce((n: number, v) => n + (v ?? 0), 0);
 }
 function cleanCry(raw: Partial<CryingConfig> | null | undefined): CryingConfig {
   const type = CRY_TYPES.includes(raw?.type as never) ? raw!.type! : CRY_DEFAULT.type;
+  // Second element: a different valid element, or null for a single-element build.
+  const type2 = CRY_TYPES.includes(raw?.type2 as never) && raw!.type2 !== type ? raw!.type2! : null;
   const role = ROLES.includes(raw?.role as Role) ? raw!.role! : CRY_DEFAULT.role;
   const fightStyle = (["melee", "ranged", "mixed"] as const).includes(raw?.fightStyle as never) ? raw!.fightStyle! : CRY_DEFAULT.fightStyle;
   const lean: StatMods = {};
@@ -131,7 +133,12 @@ function cleanCry(raw: Partial<CryingConfig> | null | undefined): CryingConfig {
   // rSkill is validated against the gimmick registry lazily (GIMMICKS is defined later in this module),
   // so here we only coerce to a non-empty string; an unknown id simply yields no R skill at use time.
   const rSkill = typeof raw?.rSkill === "string" && raw.rSkill ? raw.rSkill : CRY_DEFAULT.rSkill;
-  return { type, role, fightStyle, lean: leanSpent(lean) <= LEAN_BUDGET && raw?.lean ? lean : { ...CRY_DEFAULT.lean }, rSkill };
+  return { type, type2, role, fightStyle, lean: leanSpent(lean) <= LEAN_BUDGET && raw?.lean ? lean : { ...CRY_DEFAULT.lean }, rSkill };
+}
+
+/** Her element list: primary, plus the second element when she has one. */
+export function cryingElements(): TypeId[] {
+  return cryConfig.type2 ? [cryConfig.type, cryConfig.type2] : [cryConfig.type];
 }
 let cryConfig: CryingConfig = (() => {
   try { return cleanCry(typeof localStorage !== "undefined" ? JSON.parse(localStorage.getItem(CRY_KEY) ?? "null") : null); } catch { return cleanCry(null); }
@@ -145,12 +152,16 @@ function applyCry() {
   // Her R skill is whatever gimmick she chose (classGimmick reads this live).
   c.gimmick = cryConfig.rSkill || "tearstorm";
   (CLASS_RACE as Record<string, RaceId>).cryinggirl = TYPE_RACE[cryConfig.type] ?? "vesper";
-  // Her verses take her element, and her attacks take her style (melee cuts, ranged shots or spells).
+  // Her verses take her element(s), and her attacks take her style (melee cuts, ranged shots or spells).
+  // With two elements, her kit alternates between them, so she is sent into the wild carrying both.
   const form = cryConfig.fightStyle === "melee" ? "melee" : cryConfig.fightStyle === "ranged" ? "ranged" : "spell";
+  const elems = cryConfig.type2 ? [cryConfig.type, cryConfig.type2] : [cryConfig.type];
+  let ei = 0;
   for (const m of KIT_MOVES) {
     if (m.cls !== "cryinggirl") continue;
     const base = (m as { base?: { type: string; form?: string; reach?: number; fx?: string } }).base ??= { type: m.type, form: m.form, reach: m.reach, fx: m.fx };
-    m.type = cryConfig.type;
+    m.type = elems[ei % elems.length]!;
+    ei++;
     const attack = ["strike", "heavy", "channel"].includes(m.tactic);
     if (!attack) continue;
     if (cryConfig.fightStyle === "mixed") { m.form = base.form; m.reach = base.reach; m.fx = base.fx; continue; }
@@ -324,14 +335,47 @@ export function classGimmick(classId: string | null | undefined): GimmickDef | n
   return id ? GIMMICKS[id] ?? null : null;
 }
 
-/** Every R skill the Crying Girl can equip, with the class it came from (for the customizer picker). */
-export const CRY_RSKILLS: { id: string; name: string; from: string; tags: readonly string[] }[] =
-  Object.values(GIMMICKS).map((g) => ({
-    id: g.id,
-    name: g.name,
-    from: CLASSES.find((c) => c.gimmick === g.id)?.name ?? "",
-    tags: g.tags,
-  }));
+/** Every R skill the Crying Girl can equip, with its source class and a plain description. */
+export const CRY_RSKILLS: { id: string; name: string; from: string; tags: readonly string[]; about: string }[] =
+  Object.values(GIMMICKS).map((g) => {
+    const owner = CLASSES.find((c) => c.gimmick === g.id);
+    // Strip the "Name (R): " lead from the class passive so we show just the effect.
+    const about = (owner?.passive ?? "").replace(/^[^:]*\(R\):\s*/, "");
+    return { id: g.id, name: g.name, from: owner?.name ?? "", tags: g.tags, about };
+  });
+
+// ---------------------------------------------------------------------------
+// Crying Lady preset builds (TURBZ): save/load named configurations on this device.
+// ---------------------------------------------------------------------------
+const CRY_PRESET_KEY = "turbz.cryPresets";
+export type CryPreset = { name: string; config: CryingConfig };
+export function getCryPresets(): CryPreset[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CRY_PRESET_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((p) => p && typeof p.name === "string" && p.config).map((p) => ({ name: String(p.name).slice(0, 24), config: cleanCry(p.config) }));
+  } catch { return []; }
+}
+function writeCryPresets(list: CryPreset[]): void {
+  try { localStorage.setItem(CRY_PRESET_KEY, JSON.stringify(list.slice(0, 24))); } catch { /* storage full */ }
+}
+/** Save the current build under a name (replacing one with the same name). */
+export function saveCryPreset(name: string): CryPreset[] {
+  const nm = (name || "Build").trim().slice(0, 24) || "Build";
+  const list = getCryPresets().filter((p) => p.name !== nm);
+  list.unshift({ name: nm, config: { ...cryConfig, lean: { ...cryConfig.lean } } });
+  writeCryPresets(list);
+  return list;
+}
+export function loadCryPreset(name: string): void {
+  const p = getCryPresets().find((x) => x.name === name);
+  if (p) setCryingConfig(p.config);
+}
+export function deleteCryPreset(name: string): CryPreset[] {
+  const list = getCryPresets().filter((p) => p.name !== name);
+  writeCryPresets(list);
+  return list;
+}
 
 export function classGendered(id: ClassId): boolean {
   return false;

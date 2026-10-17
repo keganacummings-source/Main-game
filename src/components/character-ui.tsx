@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOVE_BY_ID, SKILLS, TYPES, moveTactic, type TypeId } from "@/game/content";
-import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, CRY_RSKILLS, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, type ClassId, type Role } from "@/game/classes";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, CRY_RSKILLS, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, getCryPresets, saveCryPreset, loadCryPreset, deleteCryPreset, type ClassId, type Role } from "@/game/classes";
 import { actorSpritesReady } from "@/game/actor-sprites";
 import type { Sheet, TurbzGame } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -413,57 +413,101 @@ function PerkBuilder({ onChange }: { onChange: () => void }) {
 }
 
 /** The Crying Girl's own element, role, fight style and stat lean. Saved on this browser. */
+const ROLE_ABOUT: Record<string, string> = {
+  Tank: "Soak hits and hold the line.", Bruiser: "Trade blows up close.", Mobility: "Fast, slippery, hit-and-run.",
+  Caster: "Lean on spell power.", Support: "Heals, wards and utility.", Marksman: "Strike hard from range.",
+};
+const STYLE_ABOUT: Record<string, string> = {
+  melee: "Her verses land as close-range cuts.", ranged: "Her verses fly as shots from afar.", mixed: "Keeps each verse's own form (spells and all).",
+};
+
 export function CryingCustomizer({ onChange }: { onChange: () => void }) {
   const cfg = getCryingConfig();
   const spent = leanSpent(cfg.lean);
-  const set = (next: Parameters<typeof setCryingConfig>[0]) => { setCryingConfig(next); onChange(); };
+  const [, bump] = useState(0);
+  const refresh = () => bump((n) => n + 1);
+  const set = (next: Parameters<typeof setCryingConfig>[0]) => { setCryingConfig(next); onChange(); refresh(); };
   const step = (k: (typeof LEAN_STATS)[number], d: number) => {
     const cur = cfg.lean[k] ?? 0;
     const v = Math.max(LEAN_MIN, Math.min(LEAN_MAX, cur + d));
     if (v === cur || (d > 0 && spent + (v - cur) > LEAN_BUDGET)) return;
     set({ lean: { ...cfg.lean, [k]: v } });
   };
+  const rInfo = CRY_RSKILLS.find((g) => g.id === cfg.rSkill);
+  const [presetName, setPresetName] = useState("");
+  const [presets, setPresets] = useState(() => getCryPresets());
   return (
     <div className="grid gap-2" data-testid="crying-customizer">
       <p className="font-display text-[9px] text-kyo">CUSTOMISE HER</p>
+
       <div className="verse-filter-row" data-testid="cry-type">
         <span className="verse-filter-label">ELEMENT</span>
         {CRY_TYPES.map((t) => (
-          <button key={t} type="button" data-testid={`cry-type-${t}`} className={`verse-chip ${cfg.type === t ? "verse-chip-on" : ""}`} onClick={() => set({ type: t })}><span className={cfg.type === t ? "" : typeClass(t)}>{TYPES[t].name}</span></button>
+          <button key={t} type="button" data-testid={`cry-type-${t}`} className={`verse-chip ${cfg.type === t ? "verse-chip-on" : ""}`} onClick={() => set({ type: t, ...(cfg.type2 === t ? { type2: null } : {}) })}><span className={cfg.type === t ? "" : typeClass(t)}>{TYPES[t].name}</span></button>
         ))}
       </div>
+      <div className="verse-filter-row" data-testid="cry-type2">
+        <span className="verse-filter-label">2ND ELEMENT</span>
+        <button type="button" className={`verse-chip ${!cfg.type2 ? "verse-chip-on" : ""}`} onClick={() => set({ type2: null })}>Off</button>
+        {CRY_TYPES.filter((t) => t !== cfg.type).map((t) => (
+          <button key={t} type="button" data-testid={`cry-type2-${t}`} className={`verse-chip ${cfg.type2 === t ? "verse-chip-on" : ""}`} onClick={() => set({ type2: t })}><span className={cfg.type2 === t ? "" : typeClass(t)}>{TYPES[t].name}</span></button>
+        ))}
+      </div>
+      <p className="text-dim text-[11px]">Her verses and attacks deal her element{cfg.type2 ? "s" : ""}, and <b>Affinity</b> boosts {cfg.type2 ? "both" : "it"}. {cfg.type2 ? "Her kit alternates between the two, so she heads into the wild carrying both elements — harder for a foe to resist." : "Pick a 2nd element to send her in with two — her kit will alternate between them."}</p>
+
       <div className="verse-filter-row" data-testid="cry-role">
         <span className="verse-filter-label">ROLE</span>
         {ROLES.map((r) => (
-          <button key={r} type="button" data-testid={`cry-role-${r.toLowerCase()}`} className={`verse-chip ${cfg.role === r ? "verse-chip-on" : ""}`} onClick={() => set({ role: r })}>{r}</button>
+          <button key={r} type="button" data-testid={`cry-role-${r.toLowerCase()}`} title={ROLE_ABOUT[r] ?? ""} className={`verse-chip ${cfg.role === r ? "verse-chip-on" : ""}`} onClick={() => set({ role: r })}>{r}</button>
         ))}
       </div>
+      <p className="text-dim text-[11px]">{ROLE_ABOUT[cfg.role] ?? ""}</p>
+
       <div className="verse-filter-row" data-testid="cry-style">
         <span className="verse-filter-label">STYLE</span>
         {(["melee", "ranged", "mixed"] as const).map((st) => (
-          <button key={st} type="button" data-testid={`cry-style-${st}`} className={`verse-chip ${cfg.fightStyle === st ? "verse-chip-on" : ""}`} onClick={() => set({ fightStyle: st })}>{st}</button>
+          <button key={st} type="button" data-testid={`cry-style-${st}`} title={STYLE_ABOUT[st]} className={`verse-chip ${cfg.fightStyle === st ? "verse-chip-on" : ""}`} onClick={() => set({ fightStyle: st })}>{st}</button>
         ))}
       </div>
+      <p className="text-dim text-[11px]">{STYLE_ABOUT[cfg.fightStyle] ?? ""}</p>
+
       <div className="verse-filter-row" data-testid="cry-rskill">
         <span className="verse-filter-label">R SKILL</span>
         {CRY_RSKILLS.map((g) => (
-          <button key={g.id} type="button" data-testid={`cry-rskill-${g.id}`} title={g.from ? `From ${g.from} · ${g.tags.join(", ")}` : g.tags.join(", ")} className={`verse-chip ${cfg.rSkill === g.id ? "verse-chip-on" : ""}`} onClick={() => set({ rSkill: g.id })}>{g.name}</button>
+          <button key={g.id} type="button" data-testid={`cry-rskill-${g.id}`} title={g.about || g.tags.join(", ")} className={`verse-chip ${cfg.rSkill === g.id ? "verse-chip-on" : ""}`} onClick={() => set({ rSkill: g.id })}>{g.name}</button>
         ))}
       </div>
-      <p className="text-dim" data-testid="cry-lean-budget">Stat lean: <span className={spent > LEAN_BUDGET ? "text-blood" : "text-kyo"}>{spent}/{LEAN_BUDGET}</span> points. Lower a stat (to {LEAN_MIN}%) to free points for another (up to +{LEAN_MAX}%).</p>
-      <div className="grid gap-1 sm:grid-cols-3">
+      {rInfo && <p className="text-dim text-[11px]" data-testid="cry-rskill-about"><b className="text-kyo">{rInfo.name}</b>{rInfo.from ? ` (from ${rInfo.from})` : ""} — {rInfo.about || "Press R in a fight to use it."}</p>}
+
+      <p className="text-dim" data-testid="cry-lean-budget">Stat lean: <span className={spent > LEAN_BUDGET ? "text-blood" : "text-kyo"}>{spent}/{LEAN_BUDGET}</span> points. Lower a stat (to {LEAN_MIN}%) to free points for another (up to +{LEAN_MAX}%). Hover a stat for what it does.</p>
+      <div className="grid gap-1 sm:grid-cols-2">
         {LEAN_STATS.map((k) => {
           const v = cfg.lean[k] ?? 0;
           return (
-            <div key={k} className="verse-filter-row" data-testid={`cry-lean-${k}`}>
+            <div key={k} className="verse-filter-row" data-testid={`cry-lean-${k}`} title={STAT_LABEL[k].about}>
               <button type="button" className="px-btn ui-btn-sm" data-testid={`cry-lean-${k}-down`} disabled={v <= LEAN_MIN} onClick={() => step(k, -LEAN_STEP)}>−</button>
-              <span className={`text-base ${v > 0 ? "stat-up" : v < 0 ? "stat-down" : "text-dim"}`} style={{ minWidth: 110 }} title={STAT_LABEL[k].about}>{STAT_LABEL[k].name} {v > 0 ? "+" : ""}{v}</span>
+              <span className={`text-base ${v > 0 ? "stat-up" : v < 0 ? "stat-down" : "text-dim"}`} style={{ minWidth: 92 }}>{STAT_LABEL[k].name} {v > 0 ? "+" : ""}{v}</span>
               <button type="button" className="px-btn ui-btn-sm" data-testid={`cry-lean-${k}-up`} disabled={v >= LEAN_MAX || spent + LEAN_STEP > LEAN_BUDGET} onClick={() => step(k, LEAN_STEP)}>+</button>
+              <span className="text-dim text-[10px]" style={{ flex: 1 }}>{STAT_LABEL[k].about}</span>
             </div>
           );
         })}
       </div>
       <button type="button" className="px-btn ui-btn-sm" data-testid="cry-lean-reset" onClick={() => set({ lean: {} })}>Clear stat lean</button>
+
+      <p className="font-display text-[9px] text-kyo mt-1">PRESET BUILDS</p>
+      <div className="verse-filter-row">
+        <input className="px-input" style={{ flex: 1, minWidth: 120 }} placeholder="Name this build" value={presetName} maxLength={24} onChange={(e) => setPresetName(e.target.value)} />
+        <button type="button" className="px-btn ui-btn-sm" data-testid="cry-preset-save" disabled={!presetName.trim()} onClick={() => { setPresets(saveCryPreset(presetName)); setPresetName(""); }}>Save</button>
+      </div>
+      {presets.length === 0 && <p className="text-dim text-[11px]">No saved builds yet. Save your current one to reuse it next run.</p>}
+      {presets.map((p) => (
+        <div key={p.name} className="verse-filter-row" data-testid={`cry-preset-${p.name}`}>
+          <span className="text-base" style={{ flex: 1 }}>{p.name} <span className="text-dim text-[10px]">· {TYPES[p.config.type]?.name}{p.config.type2 ? `/${TYPES[p.config.type2]?.name}` : ""} · {CRY_RSKILLS.find((g) => g.id === p.config.rSkill)?.name ?? p.config.rSkill}</span></span>
+          <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => { loadCryPreset(p.name); onChange(); refresh(); }}>Load</button>
+          <button type="button" className="px-btn ui-btn-sm" onClick={() => setPresets(deleteCryPreset(p.name))}>✕</button>
+        </div>
+      ))}
     </div>
   );
 }

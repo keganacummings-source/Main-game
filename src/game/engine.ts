@@ -95,7 +95,7 @@ import {
 import type { GraveBody } from "./social-types";
 import { flushNow, noteShiny, readAccountMeta, takeVaultGhosts, unionGhosts, vaultGhosts, wipeAccountProgress, writeAccountMeta } from "./account-save";
 import { furtherLevel, perkPointsAvailable, perkPointsEarned, perkPointsSpent, PERK_POINTS_PER_LEVEL } from "./account-progress";
-import { getCryingConfig, getCustomBuild } from "./classes";
+import { getCryingConfig, getCustomBuild, cryingElements } from "./classes";
 import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { Gimmicks, type GimmickView } from "./class-gimmicks";
 import { witchSteer } from "./witch-brain";
@@ -2687,7 +2687,7 @@ export class TurbzGame {
 		this.attackT = Math.max(0, this.attackT - dt * 3);
 		this.tickBurn(dt);
 		const adv = save.skills.adventuring.level;
-		if (this.rules !== "hardcore" && this.combat <= 0) save.hp = Math.min(this.maxHp(), save.hp + (1.2 + adv * .15) * dt * Math.max(0, 1 + this.mod("regen") / 100));
+		if (this.rules !== "hardcore" && this.combat <= 0) save.hp = Math.min(this.maxHp(), save.hp + (1.2 + adv * .15) * dt * Math.max(0, 1 + this.mod("regen") / 100 + this.chan("ironblood") / 200));
 		this.combat = Math.max(0, this.combat - dt);
 		if (this.channel) {
 			if (this.channel.kind === "fishing" && Math.hypot(this.channel.x - save.x, this.channel.y - save.y) > 40) {
@@ -4252,6 +4252,7 @@ export class TurbzGame {
 		if (mob && mob.max > 0 && mob.hp < mob.max * 0.35) add("execute", "Execute", 1 + this.chan("execute") / 100);
 		if (mob && mob.level > save.level) add("giant_bane", "Giant Bane", 1 + this.chan("giant_bane") / 100);
 		if (mob?.boss) add("boss", "Boss Bane", 1 + this.chan("boss_bane") / 100);
+		if (mob && (mob.witch || mob.bounty || mob.hunter)) { const gs = this.chan("giant_slayer"); if (gs) add("giant_slayer", "Giant Slayer", 1 + gs / 100); }
 		if (this.skillN(masteryOf(move.type))) add("mastery", `${TYPES[move.type]?.name ?? ""} Mastery`, 1 + this.skillN(masteryOf(move.type)) * .006);
 		if (mob && (mob.bounty || mob.witch || mob.hunter) && this.skillN("bountyhunting")) add("bountyhunting", "Bounty Hunting skill", 1 + this.skillN("bountyhunting") * .005);
 		if (this.status.some((s) => s.id === "gloom")) add("gloom", "Gloom", .8);
@@ -4274,7 +4275,16 @@ export class TurbzGame {
 		if (!fromPet) {
 			add("rank", "Verse rank", abilityMultiplier(save, move.id));
 			add("class", magicLike ? "Class Arcana" : "Class Might", bendDown(1 + this.mod(magicLike ? "arcana" : "might") / 100, 0.2, 0.05));
-			if (move.type === CLASS_BY_ID[save.classId]?.type) add("affinity", "Element Affinity", 1 + this.mod("affinity") / 100);
+			// Affinity rewards your element — for the Crying Lady, either of her two elements counts.
+			const myElems = save.classId === "cryinggirl" ? cryingElements() : [CLASS_BY_ID[save.classId]?.type];
+			if (myElems.includes(move.type)) add("affinity", "Element Affinity", 1 + this.mod("affinity") / 100);
+			// New meta enchants.
+			const elc = this.chan("elementalist");
+			if (elc) { const nTypes = save.classId === "cryinggirl" ? cryingElements().length : 1; add("elementalist", "Elementalist", 1 + (elc / 100) * nTypes); }
+			const blc = this.chan("bloodlust");
+			if (blc) { const hpPct = Math.max(0, Math.min(1, save.hp / Math.max(1, this.maxHp()))); add("bloodlust", "Bloodlust", 1 + (blc / 100) * (1 - hpPct)); }
+			const ovc = this.chan("overflow");
+			if (ovc && save.hp >= this.maxHp() * 0.8) add("overflow", "Overflow", 1 + ovc / 100);
 		}
 		let dmg = base;
 		for (const x of f) dmg *= x.value;
@@ -4557,13 +4567,17 @@ export class TurbzGame {
 			// Drops start at your level; rarity, bosses and luck push them up from there.
 			const floors = [null, "fine", "rare", "epic", "legendary"];
 			const tier = Math.min(4, mob.rarity + (save.level >= 24 ? 1 : 0) + (save.level >= 40 ? 1 : 0));
+			// Set Seeker: a chance the drop is forced into your current set (or a random one) to complete it.
+			const seek = this.chan("set_seek");
+			const forceSet = seek > 0 && Math.random() < seek / 100 ? (this.setInfo().id ?? this.randomSetId(save.race)) : undefined;
 			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), {
 				level: save.level,
 				bonus: mob.boss ? (this.turbz ? 0.12 : SOURCE_BONUS.boss) : SOURCE_BONUS.mob(mob.rarity),
 				luck: luck + mob.rarity * 14,
 				raceBias: save.race,
 				floor: mob.boss ? (this.turbz ? (mob.dungeonBoss ? "epic" : "legendary") : save.level > 14 ? "rare" : "fine") : floors[tier] ?? null,
-				typeBias: mob.boss ? mob.type : null
+				typeBias: mob.boss ? mob.type : null,
+				setId: forceSet
 			});
 			this.lootGear(mob, piece);
 			if (!this.chestsOn()) this.say(`Found ${piece.name} (Lv ${piece.level}).`);
@@ -9671,6 +9685,12 @@ export class TurbzGame {
 		this._setBonusVal = val;
 		return val;
 	}
+	/** A random set id for a race (Set Seeker falls back to this when you aren't wearing a set yet). */
+	randomSetId(race) {
+		const pool = SETS.filter((s) => s.race === race);
+		const list = pool.length ? pool : SETS;
+		return list[Math.floor(Math.random() * list.length)]?.id;
+	}
 	setBonusMod(id) { const v = this.setBonusMods(); return v ? (v[id] ?? 0) : 0; }
 	setBonusChan(id) { const v = this.setBonusMods(); return v ? (v._chan?.[id] ?? 0) : 0; }
 	/** Pops the "SET COMPLETED" banner once, the moment a new 5-piece set comes together. */
@@ -9691,7 +9711,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save) return 80;
 		const tide = 1 + Math.max(0, this.chan("body_tide")) / 100;
-		const full = (78 + save.level * 12 + this.chan("spark_life") + this.chan("vitality")) * (1 + this.mod("hp") / 100) * tide;
+		const full = (78 + save.level * 12 + this.chan("spark_life") + this.chan("vitality")) * (1 + this.mod("hp") / 100 + this.chan("ironblood") / 100) * tide;
 		return Math.max(20, Math.floor(full * (1 - this.auraReserve())));
 	}
 	/** Mana and stamina as shares of max health, plus skills, enchants, auras and ghosts. */
