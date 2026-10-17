@@ -460,12 +460,26 @@ const TINY_SCALE = 0.25;
  * how they move there; trail: how far they lag when you walk; jitter/kick: random darts (shinies).
  */
 const GHOST_DRIFT = {
-	normal: { near: 24, far: 62, flat: 0.55, lift: -4, hold: [1.6, 3.8], arrive: 6, restless: 0.4, spring: 7, drag: 2.6, max: 150, trail: 26, bob: 3, bobRate: 2.1, jitter: 0, kick: 0 },
-	shiny: { near: 14, far: 44, flat: 0.6, lift: -10, hold: [0.25, 0.9], arrive: 5, restless: 3, spring: 22, drag: 3.4, max: 290, trail: 12, bob: 4, bobRate: 5.3, jitter: 2.2, kick: 120 },
-	tiny: { near: 3, far: 15, flat: 0.5, lift: 0, hold: [0.8, 2.2], arrive: 2, restless: 1, spring: 14, drag: 3.2, max: 140, trail: 6, bob: 1.5, bobRate: 2.6, jitter: 0, kick: 0 },
-	tinyShiny: { near: 2, far: 18, flat: 0.55, lift: 0, hold: [0.2, 0.7], arrive: 2, restless: 4, spring: 30, drag: 4, max: 220, trail: 4, bob: 2, bobRate: 6, jitter: 3, kick: 70 },
+	normal: { near: 58, far: 100, flat: 0.45, lift: 4, hold: [1.6, 3.8], arrive: 8, restless: 0.4, spring: 7, drag: 2.6, max: 150, trail: 26, bob: 3, bobRate: 2.1, jitter: 0, kick: 0 },
+	shiny: { near: 48, far: 86, flat: 0.5, lift: -8, hold: [0.25, 0.9], arrive: 6, restless: 3, spring: 22, drag: 3.4, max: 290, trail: 12, bob: 4, bobRate: 5.3, jitter: 2.2, kick: 120 },
+	tiny: { near: 6, far: 18, flat: 0.5, lift: 0, hold: [0.8, 2.2], arrive: 2, restless: 1, spring: 14, drag: 3.2, max: 140, trail: 6, bob: 1.5, bobRate: 2.6, jitter: 0, kick: 0 },
+	tinyShiny: { near: 4, far: 20, flat: 0.55, lift: 0, hold: [0.2, 0.7], arrive: 2, restless: 4, spring: 30, drag: 4, max: 220, trail: 4, bob: 2, bobRate: 6, jitter: 3, kick: 70 },
 	perch: { near: 0, far: 2.5, flat: 0.6, lift: 0, hold: [1, 3], arrive: 1, restless: 1, spring: 40, drag: 7, max: 200, trail: 2, bob: 0.6, bobRate: 3, jitter: 0, kick: 0 },
 };
+/** How wide a ghost is, so it can stand beside you instead of on you. */
+function ghostHalfWidth(spirit) {
+	const id = spirit?.species ?? "";
+	if (id === "stag") return 46;
+	if (id === "boar" || id === "wolf") return 40;
+	if (id === "hare" || id === "crow") return 28;
+	return 22;
+}
+/** How high the name sits above a ghost's feet. */
+function ghostNameLift(spirit) {
+	const id = spirit?.species ?? "";
+	if (id === "stag" || id === "boar" || id === "wolf") return 78;
+	return 62;
+}
 /** tone(freq) plays the synthesised blip at freq / BLIP_HZ speed (see sfx-bank.ts). */
 const SFX_BASE_HZ = BLIP_HZ;
 const SFX_MASTER = 1;
@@ -6060,6 +6074,18 @@ export class TurbzGame {
 		if (Math.abs(at.vx) > 4) at.facing = at.vx > 0 ? 1 : -1;
 		else if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
 	}
+	/** Shove a follower out of the hunter's sprite. The class art is tall, so close in x covers the body. */
+	clearOfHunter(at, half) {
+		const save = this.save;
+		if (!save || !at) return;
+		const need = 36 + (half ?? 22);
+		const dx = at.x - save.x;
+		const dy = at.y - save.y;
+		const onBody = Math.abs(dx) < need && dy > -92 && dy < 16;
+		if (!onBody) return;
+		const side = dx < -1 ? -1 : dx > 1 ? 1 : (at.facing || this.facing || 1);
+		at.x = save.x + side * need;
+	}
 	/** Keeps ghosts from piling onto the same spot. */
 	spreadGhosts(list, gap) {
 		for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
@@ -6210,8 +6236,9 @@ export class TurbzGame {
 			const perch = i < 2 && !g.shiny;
 			if (perch) {
 				const side = i === 0 ? -1 : 1;
-				this.driftGhost(at, i, dt, GHOST_DRIFT.perch, save.x + side * 11, save.y - 24);
-			} else this.driftGhost(at, i, dt, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x, save.y - 44);
+				this.driftGhost(at, i, dt, GHOST_DRIFT.perch, save.x + side * 48, save.y - 8);
+			} else this.driftGhost(at, i, dt, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x + ((i % 2 === 0 ? -1 : 1) * 36), save.y - 108);
+			this.clearOfHunter(at, 16);
 		});
 		this.spreadGhosts(this.tinies, 7);
 	}
@@ -6449,8 +6476,10 @@ export class TurbzGame {
 				return;
 			}
 			this.moveGhost(spirit, at, i, dt);
+			this.clearOfHunter(at, ghostHalfWidth(spirit));
 		});
-		if (!this.fightTarget()) this.spreadGhosts(this.mates, 16);
+		if (!this.fightTarget()) this.spreadGhosts(this.mates, 44);
+		list.forEach((spirit, i) => { if (spirit.hp > 0) this.clearOfHunter(this.mates[i], ghostHalfWidth(spirit)); });
 		this.tickTinies(dt);
 	}
 	tickParty(dt) {
@@ -6468,9 +6497,9 @@ export class TurbzGame {
 			const py = this.mateCd[`${key}y`] ?? save.y;
 			const dist = foe ? Math.hypot(foe.x - px, foe.y - py) : 999;
 			const ang = this.clock * .9 + i * 2.1;
-			const orbit = foe ? dist > 80 ? 70 : 36 : 28;
-			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : hold ? hold.x : save.x + Math.cos(ang) * 28;
-			const homeY = foe ? foe.y + Math.sin(ang) * 22 : hold ? hold.y : save.y + 10 + i * 8;
+			const orbit = foe ? dist > 80 ? 70 : 48 : 56;
+			const homeX = foe ? foe.x + Math.cos(ang) * (orbit + i * 10) : hold ? hold.x : save.x + Math.cos(ang) * 56;
+			const homeY = foe ? foe.y + Math.sin(ang) * 22 : hold ? hold.y : save.y + 4;
 			if (foe && dist > 90 && dist < 160 && (this.mateCd[`${key}blink`] ?? 0) <= 0) {
 				const behind = foe.x >= save.x ? 1 : -1;
 				this.mateCd[`${key}x`] = foe.x + behind * 26;
@@ -9970,7 +9999,7 @@ export class TurbzGame {
 				time: this.clock
 			});
 			drawGhostFx(ctx, gfx, this.clock, "front");
-			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - 36, spirit.shiny ? (shinyPalette(spirit.palette).kind === "rainbow" ? `hsl(${(this.clock * 120) % 360},90%,70%)` : shinyPalette(spirit.palette).badge) : TYPES[spirit.type].color);
+			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - ghostNameLift(spirit), spirit.shiny ? (shinyPalette(spirit.palette).kind === "rainbow" ? `hsl(${(this.clock * 120) % 360},90%,70%)` : shinyPalette(spirit.palette).badge) : TYPES[spirit.type].color);
 		});
 		if (!homeAway) for (const id of save.party ?? []) {
 			const npc = NPCS.find((n) => n.id === id);
@@ -10018,7 +10047,7 @@ export class TurbzGame {
 				time: this.clock,
 				scale: 1
 			});
-			drawShadowName(ctx, npc.name.split(" ").slice(-1)[0], px, py - 44, "#9ad8c8");
+			drawShadowName(ctx, npc.name.split(" ").slice(-1)[0], px, py - 58, "#9ad8c8");
 		}
 		for (const r of this.remotes.values()) {
 			if (r.map !== save.map) continue;
@@ -10083,7 +10112,9 @@ export class TurbzGame {
 		}
 		if (!this.dead && !this.sleeping) this.drawTinies(ctx);
 		const barOn = this.combat > 0 || this.wardT > 0;
-		drawShadowName(ctx, save.name, save.x, save.y - (barOn ? 54 : 44), "#fff6e8");
+		const head = save.y - 98;
+		const nameY = barOn ? head - 14 : head + 2;
+		drawShadowName(ctx, save.name, save.x, nameY, "#fff6e8");
 		if (this.unstuckT > 0 && this.mouseWorld) {
 			const spot = nearestOpen(this.world, this.mouseWorld.x, this.mouseWorld.y);
 			ctx.strokeStyle = "#e6c15a";
@@ -10094,24 +10125,25 @@ export class TurbzGame {
 		if (!this.channel && !this.dead && !this.sleeping) {
 			const node = this.nodeNear(null, 56);
 			const prompt = node ? (node.node === "ore" ? "E  Mine" : node.node === "tree" ? "E  Chop" : "E  Forage") : nearestWaterTile(this.world, save.x, save.y, 64) ? "E  Fish" : "";
-			if (prompt) drawShadowName(ctx, prompt, save.x, save.y - (barOn ? 72 : 62), "#e6c15a");
+			if (prompt) drawShadowName(ctx, prompt, save.x, nameY - 16, "#e6c15a");
 		}
 		if (this.combat > 0 || this.wardT > 0) {
 			const pct = Math.max(0, save.hp / this.maxHp());
+			const barY = head;
 			ctx.fillStyle = "#140e0c";
-			ctx.fillRect(save.x - 23, save.y - 50, 46, 7);
+			ctx.fillRect(save.x - 23, barY, 46, 7);
 			ctx.fillStyle = "#3a1414";
-			ctx.fillRect(save.x - 22, save.y - 49, 44, 5);
+			ctx.fillRect(save.x - 22, barY + 1, 44, 5);
 			ctx.fillStyle = pct < 0.3 ? "#ff4d4d" : "#c4473a";
-			ctx.fillRect(save.x - 22, save.y - 49, Math.round(44 * pct), 5);
+			ctx.fillRect(save.x - 22, barY + 1, Math.round(44 * pct), 5);
 			ctx.fillStyle = "rgba(255,255,255,.3)";
-			ctx.fillRect(save.x - 22, save.y - 49, Math.round(44 * pct), 1);
+			ctx.fillRect(save.x - 22, barY + 1, Math.round(44 * pct), 1);
 			if (this.wardT > 0) {
 				ctx.strokeStyle = "#fff1a8";
 				ctx.lineWidth = 2;
-				ctx.strokeRect(save.x - 25, save.y - 52, 50, 11);
+				ctx.strokeRect(save.x - 25, barY - 2, 50, 11);
 			}
-			let markY = save.y - 60;
+			let markY = nameY - 16;
 			const chain = this.meleeChain;
 			if (chain && (chain.n > 0 || chain.recover > 0)) {
 				for (let i = 0; i < 3; i++) {
