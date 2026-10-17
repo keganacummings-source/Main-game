@@ -894,10 +894,11 @@ export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
-  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build"] as const);
+  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo"] as const);
   if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
-  const count = (id: string) => bag[id] ?? 0;
+  // Blocks are bought with kyo, which lives outside the bag — count() resolves it so cost chips read right.
+  const count = (id: string) => (id === "kyo" ? (s.kyo ?? 0) : (bag[id] ?? 0));
   const food = bestFood(bag, s.survival.hunger);
   const night = s.clock.phase === "night" && s.clock.active;
   return (
@@ -950,7 +951,7 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
             );
           })}
         </div>
-        <p className="text-dim">A campfire makes a 15×15 safe zone. Walls go anywhere; beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up. Walls placed: {s.build.placed} · Beds: {s.build.beds}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
+        <p className="text-dim">Build a campfire, then interact (E) with it and click Build to lay out your camp — the world pauses while you build. Walls, floors and doors cost 100 kyo each (press E beside a door to open or shut it); beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up for a refund. In TURBZ you keep one camp: it packs up when you die and drops back when you light a campfire again. Blocks placed: {s.build.placed} · Beds: {s.build.beds} · Kyo: {s.kyo ?? 0}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
       </Section>
       <Section title="CAMPFIRE CRAFTING">
         <div className="ui-grid" style={{ "--min": "210px" } as React.CSSProperties}>

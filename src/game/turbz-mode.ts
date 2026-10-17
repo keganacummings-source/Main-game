@@ -39,6 +39,8 @@ export const TURBZ_MAP = "custom-turbz";
 export const TURBZ_SAVE_KEY = "turbz-run-v1";
 /** The armor you keep forever: every piece from your bag, reset to level 1, enchants intact. */
 export const TURBZ_HEIR_KEY = "turbz-heirloom-v1";
+/** Your packed-up camp: it survives death and drops back when you place a campfire next life. */
+export const TURBZ_CAMP_KEY = "turbz-camp-v1";
 
 /** Is there a TURBZ run to continue? (Used by the menu to offer Continue.) */
 export function hasTurbzSave(): boolean {
@@ -169,6 +171,8 @@ export function installTurbz(game: any): void {
     this.plantTurbzHunts();
     this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
     this.giveTurbzHeirloom();
+    // Bring back the camp you were packed up with, so placing a campfire drops it where you stand.
+    try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
     this.persistTurbz();
     this.syncHud(true);
   };
@@ -391,6 +395,57 @@ export function installTurbz(game: any): void {
       this.pools.mana = caps.maxMana;
       this.pools.stam = caps.maxStam;
     }
+  };
+
+  /**
+   * TURBZ one-camp rule: on death, fold the campfire, its blocks and its beds into a single packed camp
+   * (stored as tile offsets from the fire) that survives the run. Placing a campfire next life drops it back.
+   */
+  game.packTurbzCamp = function () {
+    const save = this.save;
+    if (!this.turbz || !save?.survival) return;
+    const fire = save.survival.campfires.find((c: any) => c.map === save.map) ?? save.survival.campfires[0];
+    if (!fire) { try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ } save.turbzCamp = null; return; }
+    const bx = Math.floor(fire.x / 32), by = Math.floor(fire.y / 32);
+    const logs = (save.survival.logs ?? []).filter((l: any) => l.map === fire.map)
+      .map((l: any) => ({ dx: l.tx - bx, dy: l.ty - by, kind: l.kind, open: l.open }));
+    const beds = (save.survival.beds ?? []).filter((b: any) => b.map === fire.map)
+      .map((b: any) => ({ dx: b.tx - bx, dy: b.ty - by }));
+    save.turbzCamp = { logs, beds };
+    // Remove it from the world so nothing is left standing after death.
+    save.survival.campfires = save.survival.campfires.filter((c: any) => c !== fire);
+    save.survival.logs = (save.survival.logs ?? []).filter((l: any) => l.map !== fire.map);
+    save.survival.beds = (save.survival.beds ?? []).filter((b: any) => b.map !== fire.map);
+    this.syncSolids?.(save.map);
+    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(save.turbzCamp)); } catch { /* private mode */ }
+  };
+
+  /** Drops the packed camp back onto the world, centred on a freshly placed campfire at (x, y). */
+  game.restoreTurbzCamp = function (x: number, y: number) {
+    const save = this.save;
+    const camp = save?.turbzCamp;
+    if (!camp || !this.world) return;
+    const bx = Math.floor(x / 32), by = Math.floor(y / 32);
+    const w = this.world.w, h = this.world.h;
+    save.survival.logs = save.survival.logs ?? [];
+    for (const l of camp.logs ?? []) {
+      const tx = bx + l.dx, ty = by + l.dy;
+      if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2) continue;
+      if (save.survival.logs.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty)) continue;
+      const tile: any = { map: save.map, tx, ty, kind: l.kind };
+      if (l.kind === "door") tile.open = !!l.open;
+      save.survival.logs.push(tile);
+    }
+    save.survival.beds = save.survival.beds ?? [];
+    for (const b of camp.beds ?? []) {
+      const tx = bx + b.dx, ty = by + b.dy;
+      if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2) continue;
+      if (save.survival.beds.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty)) continue;
+      save.survival.beds.push({ map: save.map, tx, ty });
+    }
+    save.turbzCamp = null;
+    try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ }
+    this.syncSolids?.(save.map);
   };
 
   game.growWornGear = function (grant: number) {

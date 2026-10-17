@@ -168,7 +168,7 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
       </div>,
     );
     if (s.sleeping) rows.push(<button key="wake" type="button" className="px-btn ui-btn-sm" onClick={() => game?.survivalAction("sleep")}>Sleeping · wake up</button>);
-    if (s.build.on) rows.push(<button key="build" type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.toggleBuild(false)}>Building · {s.build.logs} logs · stop</button>);
+    if (s.build.on) rows.push(<button key="build" type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.toggleBuild(false)}>Building · {s.build.kyo ?? 0} kyo · stop</button>);
   }
   s.bounties.forEach((line, i) => rows.push(<p key={`b${i}`} className="text-blood" data-testid={i === 0 ? "vitals-bounty" : undefined}>{line}</p>));
   if (s.hunt.wanted > 0) rows.push(<p key="wanted" className="text-blood">WANTED {s.hunt.wanted} · {s.hunt.hunters ? `${s.hunt.hunters} hunters on you` : `squad in ${s.hunt.waveIn}s`}</p>);

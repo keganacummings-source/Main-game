@@ -18,20 +18,31 @@ export const MAX_LOG_TILES = 800;
 export const BUILD_REACH = 112;
 export const LOG_COST = { timber: 1 } as const;
 
-/** A placed wall tile. `kind` is missing on bare logs placed before walls cost ore. */
-export type LogTile = { map: string; tx: number; ty: number; kind?: "wood" | "brick" };
+/** A placed tile. Walls and closed doors are solid; floors are decorative. `open` tracks a door. */
+export type TileKind = "wood" | "brick" | "stone" | "woodfloor" | "stonefloor" | "door";
+export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; open?: boolean };
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "brick" | "bed" | "ghostbox";
-/** What each camp piece costs. Walls are solid; beds and the Ghost Box must stand inside a campfire's safe zone. */
-export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<string, number>; about: string }> = {
-  wood: { name: "Wooden Wall", cost: { timber: 2, ore: 1 }, about: "Logs pinned with ore. Solid for everyone." },
-  brick: { name: "Brick Wall", cost: { timber: 1, ore: 3 }, about: "Fired ore bricks on a log frame. Solid for everyone." },
+export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox";
+/** Kinds that block movement (floors never do; a door blocks only while closed). */
+export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
+export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
+/** Every block now costs a flat 100 kyo. Beds and the Ghost Box keep their own material cost. */
+export const BLOCK_KYO = 100;
+/** What each camp piece costs. Walls/doors are solid; beds and the Ghost Box must stand inside a safe zone. */
+export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<string, number>; about: string; kind?: TileKind }> = {
+  wood: { name: "Wooden Wall", cost: { kyo: BLOCK_KYO }, kind: "wood", about: "A solid wooden wall. Blocks everyone." },
+  stone: { name: "Stone Wall", cost: { kyo: BLOCK_KYO }, kind: "stone", about: "A solid stone wall. Blocks everyone." },
+  woodfloor: { name: "Wooden Floor", cost: { kyo: BLOCK_KYO }, kind: "woodfloor", about: "Wooden flooring. Decorative — you can walk on it." },
+  stonefloor: { name: "Stone Floor", cost: { kyo: BLOCK_KYO }, kind: "stonefloor", about: "Stone flooring. Decorative — you can walk on it." },
+  door: { name: "Door", cost: { kyo: BLOCK_KYO }, kind: "door", about: "A door. Press E beside it to open or close it." },
   bed: { name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here." },
   ghostbox: { name: "Ghost Box", cost: { timber: 4, ore: 4 }, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter." },
 };
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
+/** The placeable blocks (not furniture), for the campfire build menu. */
+export const BLOCK_PIECE_IDS: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door"];
 export const MAX_BEDS = 12;
 export type Camp = { map: string; x: number; y: number };
 export type HoldPoint = { map: string; x: number; y: number };
@@ -47,9 +58,18 @@ export function sanitizeLogs(raw: unknown): LogTile[] {
     const k = `${r.map}|${r.tx},${r.ty}`;
     if (seen.has(k)) continue;
     seen.add(k);
-    out.push(r.kind === "brick" || r.kind === "wood" ? { map: r.map, tx: r.tx, ty: r.ty, kind: r.kind } : { map: r.map, tx: r.tx, ty: r.ty });
+    const valid: TileKind[] = ["wood", "brick", "stone", "woodfloor", "stonefloor", "door"];
+    const kind = valid.includes(r.kind) ? (r.kind as TileKind) : undefined;
+    out.push(kind ? { map: r.map, tx: r.tx, ty: r.ty, kind, ...(kind === "door" ? { open: !!r.open } : {}) } : { map: r.map, tx: r.tx, ty: r.ty });
   }
   return out.slice(-MAX_LOG_TILES);
+}
+
+/** True when a placed tile blocks movement (walls, old logs/bricks, and closed doors). */
+export function tileSolid(l: LogTile): boolean {
+  if (!l.kind) return true; // bare legacy logs were solid
+  if (l.kind === "door") return !l.open;
+  return SOLID_KINDS.has(l.kind);
 }
 
 export function sanitizeFurniture(raw: unknown, max = MAX_BEDS): Furniture[] {
@@ -82,10 +102,10 @@ export function sanitizeHold(raw: unknown): HoldPoint | null {
   return { map: h.map, x: h.x as number, y: h.y as number };
 }
 
-/** Set of tile indices (ty * width + tx) that are solid because of placed logs on `map`. */
+/** Set of tile indices (ty * width + tx) that are solid because of placed blocks on `map`. */
 export function solidsFor(logs: LogTile[], map: string, width: number): Set<number> {
   const s = new Set<number>();
-  for (const l of logs) if (l.map === map) s.add(l.ty * width + l.tx);
+  for (const l of logs) if (l.map === map && tileSolid(l)) s.add(l.ty * width + l.tx);
   return s;
 }
 

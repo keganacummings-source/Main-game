@@ -2,7 +2,7 @@
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
-import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileAt, zoneRect } from "./building";
+import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
@@ -212,7 +212,7 @@ export type DeathReport = {
   name: string; className: string; focus: string; level: number; mode: string; cause: string; kills: number; survived: string;
   kyo: number; score: number; accountScore: number; spirits: number; shinies: number; gear: string[]; skills: { name: string; level: number }[];
 };
-export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost";
+export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build";
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
 export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
@@ -2026,6 +2026,14 @@ export class TurbzGame {
 			if (this.unstuckT > 0 || this.liveBounty()) this.syncHud(false);
 			return;
 		}
+		// Build mode freezes the world (foes, time, hunger, spawns) but still lets the hunter walk around to
+		// lay out and pick up blocks. Placement itself happens on click, outside step().
+		if (this.buildMode && this.buildOn()) {
+			this.tickPlayer(dt);
+			this.tickFx(dt);
+			this.syncHud(false);
+			return;
+		}
 		if (this.role !== "guest" && !this.lms) this.tickDungeons(dt);
 		this.tickPlayer(dt);
 		if (this.dead) return;
@@ -2199,6 +2207,8 @@ export class TurbzGame {
 		if (this.buildOn() && !this.dead) {
 			this.buildMode = true;
 			this.dest = null;
+			// Close the camp menu so the canvas is clickable; build mode runs with no panel open (and pauses the world).
+			if (snap.panel) publish({ panel: null });
 			const def = BUILD_PIECES[piece];
 			this.say(`Building ${def.name} (${this.costLine(def.cost)}). Click a tile to place it; click a placed piece to pick it up. F or Esc to stop.`);
 		}
@@ -2211,6 +2221,7 @@ export class TurbzGame {
 		if (!this.buildOn() || this.dead) return;
 		this.buildMode = typeof force === "boolean" ? force : !this.buildMode;
 		this.dest = null;
+		if (this.buildMode && snap.panel) publish({ panel: null });
 		const def = BUILD_PIECES[this.buildPiece ?? "wood"] ?? BUILD_PIECES.wood;
 		this.say(this.buildMode ? `Build mode: ${def.name} (${this.costLine(def.cost)}). Click a tile to place it. Click a placed piece to pick it up. F or Esc to stop.` : "Build mode off.");
 		this.syncHud(true);
@@ -2233,21 +2244,27 @@ export class TurbzGame {
 	checkPiece(piece, tx, ty) {
 		const save = this.save;
 		const sv = save.survival;
+		const cost = BUILD_PIECES[piece].cost;
+		// Blocks cost kyo now, not materials; kyo isn't in the bag, so check it here and hide it from checkPlaceLog.
+		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
+		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : [])];
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
 			terrainBlocked: (px, py) => blocked(this.world, px, py),
 			keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
-			cost: BUILD_PIECES[piece].cost,
+			cost: matCost,
 			furniture,
 			needZone: piece === "bed" || piece === "ghostbox",
 		});
 	}
-	/** Spends a piece's materials. The Building skill may hand one back. */
+	/** Spends a piece's cost (kyo for blocks, materials for furniture). The Building skill may hand one back. */
 	payForPiece(piece, xp) {
 		const save = this.save;
 		const cost = BUILD_PIECES[piece].cost;
-		consumeMaterials(save.bag, cost);
+		if (cost.kyo) save.kyo = Math.max(0, (save.kyo ?? 0) - cost.kyo);
+		const { kyo, ...matCost } = cost;
+		if (Object.keys(matCost).length) consumeMaterials(save.bag, matCost);
 		this.gainSkill("building", xp);
 		for (let r = procs(this.skillN("building") * 0.25); r > 0; r--) {
 			const ids = Object.keys(cost);
@@ -2260,11 +2277,14 @@ export class TurbzGame {
 		if (save.survival.logs.length >= MAX_LOG_TILES) { this.say("You have placed the most walls the frontier can hold. Pick some up."); return false; }
 		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
-		this.payForPiece(piece, piece === "brick" ? 8 : 6);
-		save.survival.logs.push({ map: save.map, tx, ty, kind: piece === "brick" ? "brick" : "wood" });
-		this.world.solids = this.world.solids ?? new Set();
-		this.world.solids.add(ty * this.world.w + tx);
-		this.cue("click", { rate: piece === "brick" ? 0.8 : 1 }, [piece === "brick" ? 150 : 190, .05, "square"]);
+		this.payForPiece(piece, piece === "stone" ? 8 : 6);
+		const kind = BUILD_PIECES[piece]?.kind ?? "wood";
+		const tile: any = { map: save.map, tx, ty, kind };
+		if (kind === "door") tile.open = false;
+		save.survival.logs.push(tile);
+		// Floors are walkable; walls and closed doors block.
+		if (tileSolid(tile)) { this.world.solids = this.world.solids ?? new Set(); this.world.solids.add(ty * this.world.w + tx); }
+		this.cue("click", { rate: kind === "stone" ? 0.8 : 1 }, [kind === "stone" ? 150 : 190, .05, "square"]);
 		this.persist();
 		this.syncHud(true);
 		return true;
@@ -2274,9 +2294,9 @@ export class TurbzGame {
 		if (Math.hypot(l.tx * 32 + 16 - save.x, l.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
 		save.survival.logs = save.survival.logs.filter((x) => x !== l);
 		this.world.solids?.delete(l.ty * this.world.w + l.tx);
-		// Old saves placed bare logs (one log each); new walls refund what they cost.
-		const cost = l.kind === "brick" ? BUILD_PIECES.brick.cost : l.kind === "wood" ? BUILD_PIECES.wood.cost : { timber: 1 };
-		for (const [id, n] of Object.entries(cost)) this.giveItem(id, n);
+		// New blocks (wood/stone/floors/door/legacy brick) cost kyo and refund kyo; legacy bare logs refund one timber.
+		if (l.kind) save.kyo = (save.kyo ?? 0) + BLOCK_KYO;
+		else this.giveItem("timber", 1);
 		this.cue("click", { rate: 0.75 }, [150, .05, "triangle"]);
 		this.persist();
 		this.syncHud(true);
@@ -2399,6 +2419,7 @@ export class TurbzGame {
 		return {
 			on: !!this.buildMode && this.buildOn(),
 			logs: save?.bag?.timber ?? 0,
+			kyo: save?.kyo ?? 0,
 			placed: sv ? sv.logs.filter((l) => l.map === save.map).length : 0,
 			inZone: !!this.playerSafeCamp(),
 			holding: this.holdActive(),
@@ -2566,6 +2587,19 @@ export class TurbzGame {
 		if (action === "fire") {
 			if (this.nearCamp()) return this.say("A campfire is already nearby.");
 			if (blocked(this.world, save.x, save.y)) return;
+			// TURBZ: one camp at a time. Placing a fire drops (restores) the camp you were packed up with.
+			if (this.turbz) {
+				if (save.survival.campfires.some((c) => c.map === save.map)) return this.say("You can only keep one camp at a time in TURBZ. Pick up this campfire to move it.");
+				if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
+				save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
+				this.gainSkill("survival", 12);
+				if (save.turbzCamp && (save.turbzCamp.logs?.length || save.turbzCamp.beds?.length)) {
+					this.restoreTurbzCamp?.(save.x, save.y);
+					this.say("You drop your old camp back around the fire.");
+				} else this.say("Campfire built. Build your camp here — it will follow you between lives.");
+				this.persist(); this.syncHud(true); this.syncSolids(save.map);
+				return;
+			}
 			if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 			save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
 			save.survival.campfires = save.survival.campfires.slice(-100);
@@ -6100,6 +6134,8 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save || this.dead) return;
 		this.stashTurbzKit?.();
+		// Pack up the camp (campfire + blocks + beds) so it drops back when you light a fire next life.
+		this.packTurbzCamp?.();
 		// The run is over — clear its resume slot. Starting over restores the kept armour (level 1, enchants).
 		this.clearTurbzSave?.();
 		let score = save.level * 50 + (save.xp | 0) + Math.floor((save.kyo | 0) / 2);
@@ -7270,9 +7306,57 @@ export class TurbzGame {
 		}
 		if (this.rules !== "hardcore" && (fx === "lanternwake" || fx === "featherfall" || fx === "gravepulse")) save.hp = Math.min(this.maxHp(), save.hp + 20);
 	}
+	/** A placed door within reach of the player, nearest first, or null. */
+	doorNear(reach = BUILD_REACH) {
+		const save = this.save;
+		if (!save?.survival?.logs) return null;
+		let best = null, bd = reach;
+		for (const l of save.survival.logs) {
+			if (l.map !== save.map || l.kind !== "door") continue;
+			const d = Math.hypot(l.tx * 32 + 16 - save.x, l.ty * 32 + 16 - save.y);
+			if (d <= bd) { bd = d; best = l; }
+		}
+		return best;
+	}
+	/** Opens or shuts a placed door, toggling whether it blocks movement. */
+	toggleDoor(l) {
+		if (!l || !this.world) return;
+		l.open = !l.open;
+		const idx = l.ty * this.world.w + l.tx;
+		if (tileSolid(l)) { this.world.solids = this.world.solids ?? new Set(); this.world.solids.add(idx); }
+		else this.world.solids?.delete(idx);
+		this.cue("click", { rate: l.open ? 1.3 : 0.7 }, [l.open ? 320 : 150, .05, "triangle"]);
+		this.say(l.open ? "The door swings open." : "The door shuts.");
+		this.persist();
+		this.syncHud(true);
+	}
+	/** A campfire the player is standing on or beside, or null. */
+	campfireNear(reach = 72) {
+		const save = this.save;
+		if (!save?.survival?.campfires) return null;
+		for (const c of save.survival.campfires) {
+			if (c.map !== save.map) continue;
+			if (Math.hypot(c.x - save.x, c.y - save.y) <= reach) return c;
+		}
+		return null;
+	}
+	/** Opens the campfire build menu: the Survival & Camp panel, where Build and the block palette live. */
+	openBuildMenu() {
+		if (!this.buildOn()) { this.say("Building is only available in survival (Hardcore) play."); return; }
+		publish({ panel: "survival" });
+		this.say("Camp. Click Build, pick a piece, then click tiles to place blocks (100 kyo each). Click a placed piece to pick it up.");
+		this.syncHud(true);
+	}
 	interact() {
 		const save = this.save;
 		if (!save || this.dead || !this.world) return;
+		// A placed door right beside you: E opens or shuts it before anything else.
+		if (this.buildOn()) {
+			const door = this.doorNear(52);
+			if (door) { this.toggleDoor(door); return; }
+			const fire = this.campfireNear();
+			if (fire && !this.nearestChest() && !this.nearestWild()) { this.openBuildMenu(); return; }
+		}
 		{
 			const chest = this.nearestChest();
 			const wild = this.nearestWild();
@@ -10983,6 +11067,78 @@ export class TurbzGame {
 			}
 		}
 	}
+	/** Pixel-sprite wooden wall: vertical planks with grain and a plated seam. */
+	paintWoodWall(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 28, 30, 4);
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 30);
+		for (let c = 0; c < 4; c++) {
+			const bx = x + 1 + c * 8;
+			ctx.fillStyle = c % 2 ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx, y + 1, 7, 28);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx, y + 1, 2, 28);
+			ctx.fillStyle = "#5a3a20"; ctx.fillRect(bx + 6, y + 1, 1, 28);
+			ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(bx + 2, y + 9 + (c % 2) * 6, 3, 1); ctx.fillRect(bx + 1, y + 19, 4, 1);
+		}
+		ctx.fillStyle = "#4a3018"; ctx.fillRect(x, y + 13, 32, 3);
+		ctx.fillStyle = "#6b4528"; ctx.fillRect(x, y + 14, 32, 1);
+	}
+	/** Pixel-sprite stone wall: staggered grey blocks with mortar. */
+	paintStoneWall(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.32)"; ctx.fillRect(x + 2, y + 28, 30, 4);
+		ctx.fillStyle = "#2c2e33"; ctx.fillRect(x, y, 32, 30);
+		for (let r = 0; r < 5; r++) {
+			const by = y + 1 + r * 6;
+			const off = r % 2 ? 0 : -6;
+			for (let c = -1; c < 4; c++) {
+				const bx = x + 1 + off + c * 11;
+				const x0 = Math.max(x + 1, bx), x1 = Math.min(x + 31, bx + 10);
+				if (x1 <= x0) continue;
+				ctx.fillStyle = (r + c) % 3 === 0 ? "#6c7076" : (r + c) % 3 === 1 ? "#7e8288" : "#5a5e64";
+				ctx.fillRect(x0, by, x1 - x0, 5);
+				ctx.fillStyle = "#9aa0a6"; ctx.fillRect(x0, by, x1 - x0, 1);
+				ctx.fillStyle = "rgba(0,0,0,.2)"; ctx.fillRect(x0, by + 4, x1 - x0, 1);
+			}
+		}
+	}
+	/** Pixel-sprite wooden floor: flat boards, walkable (no drop shadow). */
+	paintWoodFloor(ctx, x, y) {
+		ctx.fillStyle = "#6b4528"; ctx.fillRect(x, y, 32, 32);
+		for (let r = 0; r < 4; r++) {
+			const by = y + r * 8;
+			ctx.fillStyle = r % 2 ? "#7e5230" : "#8a5a34"; ctx.fillRect(x + 1, by + 1, 30, 6);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(x + 1, by + 1, 30, 1);
+			ctx.fillStyle = "#5a3a20"; ctx.fillRect(x + 1, by + 7, 30, 1);
+			ctx.fillStyle = "rgba(0,0,0,.18)"; ctx.fillRect(x + 10 + (r % 2) * 10, by + 2, 1, 4);
+		}
+	}
+	/** Pixel-sprite stone floor: flat flagstones, walkable. */
+	paintStoneFloor(ctx, x, y) {
+		ctx.fillStyle = "#44474d"; ctx.fillRect(x, y, 32, 32);
+		const cells = [[1, 1, 14, 14], [17, 1, 14, 14], [1, 17, 14, 14], [17, 17, 14, 14]];
+		for (let i = 0; i < cells.length; i++) {
+			const [cx, cy, cw, ch] = cells[i];
+			ctx.fillStyle = i % 2 ? "#60646a" : "#6d7177"; ctx.fillRect(x + cx, y + cy, cw, ch);
+			ctx.fillStyle = "#818690"; ctx.fillRect(x + cx, y + cy, cw, 1);
+			ctx.fillStyle = "rgba(0,0,0,.22)"; ctx.fillRect(x + cx, y + cy + ch - 1, cw, 1);
+		}
+	}
+	/** Pixel-sprite door: a framed panel, swung open (thin, walkable) or shut (solid). */
+	paintDoor(ctx, x, y, open) {
+		ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fillRect(x + 2, y + 28, 30, 4);
+		// Frame posts always show so you can see where the door is.
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 4, 30); ctx.fillRect(x + 28, y, 4, 30); ctx.fillRect(x, y, 32, 3);
+		if (open) {
+			// Leaf folded to the side.
+			ctx.fillStyle = "#7a4e2c"; ctx.fillRect(x + 4, y + 3, 6, 25);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(x + 4, y + 3, 2, 25);
+			ctx.fillStyle = "#e6c15a"; ctx.fillRect(x + 7, y + 15, 2, 2);
+			return;
+		}
+		ctx.fillStyle = "#5a3a20"; ctx.fillRect(x + 4, y + 3, 24, 25);
+		ctx.fillStyle = "#8a5a34"; ctx.fillRect(x + 6, y + 5, 20, 21);
+		ctx.fillStyle = "#6b4528"; ctx.fillRect(x + 15, y + 5, 2, 21);
+		ctx.fillStyle = "#9a6a3c"; ctx.fillRect(x + 7, y + 6, 8, 8); ctx.fillRect(x + 17, y + 6, 8, 8); ctx.fillRect(x + 7, y + 16, 8, 8); ctx.fillRect(x + 17, y + 16, 8, 8);
+		ctx.fillStyle = "#e6c15a"; ctx.fillRect(x + 22, y + 14, 3, 3);
+	}
 	paintBed(ctx, x, y) {
 		ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(x + 3, y + 26, 28, 4);
 		ctx.fillStyle = "#5a3820"; ctx.fillRect(x + 3, y + 4, 26, 24);
@@ -11034,7 +11190,12 @@ export class TurbzGame {
 			if (l.map !== save.map) continue;
 			const x = l.tx * 32, y = l.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
-			if (l.kind === "brick") this.paintBrick(ctx, x, y);
+			if (l.kind === "stone") this.paintStoneWall(ctx, x, y);
+			else if (l.kind === "woodfloor") this.paintWoodFloor(ctx, x, y);
+			else if (l.kind === "stonefloor") this.paintStoneFloor(ctx, x, y);
+			else if (l.kind === "door") this.paintDoor(ctx, x, y, !!l.open);
+			else if (l.kind === "wood") this.paintWoodWall(ctx, x, y);
+			else if (l.kind === "brick") this.paintBrick(ctx, x, y);
 			else this.paintLog(ctx, x, y);
 		}
 		for (const b of sv.beds ?? []) {
