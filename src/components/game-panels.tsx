@@ -1213,10 +1213,9 @@ export function RebirthOverlay({ game }: GameProp) {
   // Start on the class that just died: that is where its finished sets live.
   const [pick, setPick] = useState<Pick>(() => ({ classId: (CLASS_BY_ID[lastClass as ClassId] ? lastClass : "warden") as ClassId, traitId: null, female: true }));
   const race = CLASS_RACE[pick.classId];
-  const owned = unlocked.filter((s) => s.classId === pick.classId);
+  // Sets are account-wide now: every finished set is offered to every class.
+  const owned = unlocked;
   const [setId, setSetId] = useState<string | null>(() => owned[0]?.id ?? null);
-  const counts = unlocked.reduce<Record<string, number>>((m, s) => ((m[s.classId] = (m[s.classId] ?? 0) + 1), m), {});
-  const others = Object.keys(counts).filter((c) => c !== pick.classId && CLASS_BY_ID[c as ClassId]);
   return (
     <div className="loot-overlay">
       <div className="px-panel loot-panel" data-testid="rebirth-screen">
@@ -1229,11 +1228,8 @@ export function RebirthOverlay({ game }: GameProp) {
         <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" /></Field>
         <ClassPicker
           pick={pick}
-          badge={(id) => (counts[id] ? `${counts[id]} set${counts[id] > 1 ? "s" : ""}` : null)}
-          setPick={(p) => {
-            setPick(p);
-            if (p.classId !== pick.classId) setSetId(unlocked.find((s) => s.classId === p.classId)?.id ?? null);
-          }}
+          badge={() => (owned.length ? `${owned.length} set${owned.length > 1 ? "s" : ""}` : null)}
+          setPick={(p) => setPick(p)}
           game={game}
         />
         {!turbz && (
@@ -1246,8 +1242,7 @@ export function RebirthOverlay({ game }: GameProp) {
               </button>
             ))}
           </div>
-          {owned.length === 0 && <Empty>No finished set for this class yet. Collect all five pieces (helm, raiment, skirt, boots, relic) of one set while playing it.</Empty>}
-          {others.length > 0 && <p className="text-dim">Sets are saved on: {others.map((c) => `${CLASS_BY_ID[c as ClassId].name} (${counts[c]})`).join(", ")}.</p>}
+          {owned.length === 0 && <Empty>No finished set yet. Collect all five pieces (helm, raiment, skirt, boots, relic) of one set in any mode — once found, any class can wear it.</Empty>}
         </Section>
         )}
         <button type="button" className="px-btn px-btn-kyo" data-testid="rebirth-go-btn" onClick={() => game?.rebirth(name, race, setId, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true)}>

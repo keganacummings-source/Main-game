@@ -69,6 +69,56 @@ function shape(ctx: C, kind: FxShape, x: number, y: number, pal: Pal4, lead: num
       px(ctx, x - P, y, main); px(ctx, x + P, y, main); px(ctx, x, y - P, main); px(ctx, x, y + P, main);
       if (big > 1) px(ctx, x, y, low);
       break;
+    case "spark":
+      px(ctx, x, y, hi);
+      px(ctx, x + P, y - P, main); px(ctx, x - P, y + P, main); px(ctx, x + P, y + P, low); px(ctx, x - P, y - P, low);
+      break;
+    case "arc": {
+      const a = ang || 0;
+      for (let i = -1; i <= 1; i++) {
+        const aa = a + i * 0.7;
+        px(ctx, x + Math.round(Math.cos(aa)) * P, y + Math.round(Math.sin(aa)) * P, i === 0 ? hi : main);
+      }
+      break;
+    }
+    case "arrow": {
+      const dx = Math.round(Math.cos(ang)) * P, dy = Math.round(Math.sin(ang)) * P;
+      px(ctx, x, y, hi); px(ctx, x - dx, y - dy, main);
+      px(ctx, x - dx + dy, y - dy - dx, low); px(ctx, x - dx - dy, y - dy + dx, low);
+      break;
+    }
+    case "crystal":
+      px(ctx, x, y - P, hi); px(ctx, x, y, main); px(ctx, x - P, y, low); px(ctx, x + P, y, low); px(ctx, x, y + P, main);
+      if (big > 1) { px(ctx, x, y - 2 * P, hi); px(ctx, x, y + 2 * P, low); }
+      break;
+    case "bolt":
+      px(ctx, x, y - P, hi); px(ctx, x + P, y, main); px(ctx, x, y + P, main); px(ctx, x + P, y + 2 * P, low);
+      break;
+    case "orb":
+      px(ctx, x, y, main, 2);
+      px(ctx, x, y, hi);
+      if (big > 1) { px(ctx, x - P, y - P, low); px(ctx, x + P, y + P, low); }
+      break;
+    case "petal": {
+      const dx = Math.round(Math.cos(ang - Math.PI / 2)) * P, dy = Math.round(Math.sin(ang - Math.PI / 2)) * P;
+      px(ctx, x, y, hi); px(ctx, x + dx, y + dy, main); px(ctx, x + 2 * dx, y + 2 * dy, low);
+      px(ctx, x + dx + dy, y + dy - dx, main); px(ctx, x + dx - dy, y + dy + dx, main);
+      break;
+    }
+    case "ember":
+      px(ctx, x, y, hi); px(ctx, x, y + P, main); px(ctx, x, y + 2 * P, low);
+      if (big > 1) px(ctx, x + (hash(x + y) > 0.5 ? P : -P), y + P, main);
+      break;
+    case "splash":
+      px(ctx, x, y, hi);
+      px(ctx, x + 2 * P, y, low); px(ctx, x - 2 * P, y, low); px(ctx, x, y - 2 * P, low); px(ctx, x, y + 2 * P, low);
+      px(ctx, x + P, y + P, main); px(ctx, x - P, y - P, main);
+      break;
+    case "runedot":
+      px(ctx, x, y, hi);
+      px(ctx, x + P, y, main); px(ctx, x - P, y, main); px(ctx, x, y + P, main); px(ctx, x, y - P, main);
+      px(ctx, x + P, y + P, low); px(ctx, x - P, y - P, low); px(ctx, x + P, y - P, low); px(ctx, x - P, y + P, low);
+      break;
   }
 }
 
@@ -399,6 +449,143 @@ function drawPattern(c: Ctx): void {
       }
       break;
     }
+    // -----------------------------------------------------------------------
+    // EXPANDED VARIETY PACK
+    // -----------------------------------------------------------------------
+    case "blossom": {
+      if (!front) break;
+      const petals = 4 + (g.sides % 4);
+      const life = (Math.abs(T) * 0.4) % 1;
+      const r = life * R * 1.3;
+      for (let i = 0; i < petals; i++) {
+        const a = (i / petals) * Math.PI * 2 + T * 0.3;
+        shape(ctx, "petal", Math.cos(a) * r, -10 * k + lift + Math.sin(a) * r * 0.5, palFor(c, i), life < 0.3 ? 3 : L, big, a);
+      }
+      break;
+    }
+    case "cyclone": {
+      const cols = Math.max(3, n);
+      for (let i = 0; i < cols; i++) {
+        const u = (Math.abs(T) * 0.5 + i / cols) % 1;
+        const a = u * Math.PI * 4 * g.dir + i;
+        const depth = Math.sin(a);
+        if ((depth >= 0) !== front) continue;
+        const r = R * (0.3 + u * 0.7);
+        shape(ctx, g.shape, Math.cos(a) * r, lift - u * H + depth * r * 0.25, palFor(c, i), u > 0.7 ? 3 : L, big, a);
+      }
+      break;
+    }
+    case "meteor": {
+      if (!front) break;
+      const m = Math.max(2, Math.round(n / 2));
+      for (let i = 0; i < m; i++) {
+        const life = (Math.abs(T) * 0.7 + hash(c.seed + i * 7)) % 1;
+        const x = (hash(c.seed + i * 5) - 0.3) * R * 2 - life * R;
+        const y = -H + life * (H + 6 * k) + lift;
+        for (let j = 0; j < 3; j++) shape(ctx, j === 0 ? g.shape : "streak", x + j * P, y - j * P, palFor(c, i), j === 0 ? 3 : L, j === 0 ? big : 1, Math.PI * 0.75);
+      }
+      break;
+    }
+    case "fireflies": {
+      if (!front) break;
+      for (let i = 0; i < n; i++) {
+        const x = Math.sin(t * (0.6 + hash(c.seed + i) * 0.7) + i * 2.3) * R;
+        const y = -10 * k + Math.cos(t * (0.5 + hash(c.seed + i * 3) * 0.6) + i * 1.7) * R * 0.6 + lift;
+        const blink = (Math.sin(t * 4 + i * 2.1) + 1) / 2;
+        if (blink < 0.35) continue;
+        shape(ctx, "orb", x, y, palFor(c, i), blink > 0.8 ? 3 : L, blink > 0.7 ? big : 1);
+      }
+      break;
+    }
+    case "lattice": {
+      if (front) break;
+      const cells = 3;
+      for (let gx = -cells; gx <= cells; gx++) for (let gy = -cells; gy <= cells; gy++) {
+        const pulse = (Math.sin(t * 2 + gx + gy + g.phase * 6) + 1) / 2;
+        if (pulse < 0.5) continue;
+        px(ctx, gx * P * 2, -8 * k + gy * P * 2 * 0.5 + lift, palFor(c, gx + gy)[pulse > 0.85 ? 3 : L]!);
+      }
+      break;
+    }
+    case "fountain": {
+      if (!front) break;
+      for (let i = 0; i < n; i++) {
+        const life = (Math.abs(T) * 0.6 + hash(c.seed + i * 11)) % 1;
+        const side = hash(c.seed + i) < 0.5 ? -1 : 1;
+        const x = side * life * R * 0.9;
+        const y = lift - (life * H - life * life * H * 0.9) - 4 * k;
+        shape(ctx, g.shape, x, y, palFor(c, i), life < 0.3 ? 3 : L, 1, -Math.PI / 2);
+      }
+      break;
+    }
+    case "crescents": {
+      const m = Math.max(2, Math.round(n / 2));
+      for (let i = 0; i < m; i++) {
+        const a = T * 1.1 + (i / m) * Math.PI * 2;
+        const depth = Math.sin(a);
+        if ((depth >= 0) !== front) continue;
+        shape(ctx, "arc", Math.cos(a) * R, -10 * k + lift + depth * R * 0.34, palFor(c, i), L, big, a + Math.PI / 2);
+      }
+      break;
+    }
+    case "vortex": {
+      if (front) break;
+      const spokes = Math.max(4, n);
+      for (let i = 0; i < spokes; i++) {
+        const u = (Math.abs(T) * 0.6 + i / spokes) % 1;
+        const a = T * 1.4 * g.dir + u * Math.PI * 3;
+        const r = R * 1.3 * (1 - u);
+        px(ctx, Math.cos(a) * r, -9 * k + Math.sin(a) * r * 0.32 + lift, palFor(c, i)[u > 0.7 ? 1 : u > 0.3 ? 2 : 3]!);
+      }
+      break;
+    }
+    case "static_fuzz": {
+      if (!front) break;
+      const frame = Math.floor(t * 24);
+      for (let i = 0; i < n * 2; i++) {
+        if (hash(c.seed + i * 3 + frame * 13) > 0.3) continue;
+        const x = (hash(c.seed + i * 7 + frame) - 0.5) * R * 1.6;
+        const y = -10 * k - (hash(c.seed + i * 5 + frame) - 0.5) * H * 0.9 + lift;
+        shape(ctx, "bolt", x, y, palFor(c, i), 3, 1);
+      }
+      break;
+    }
+    case "bloom_rings": {
+      if (!front) break;
+      const waves = 3;
+      for (let w = 0; w < waves; w++) {
+        const life = (Math.abs(T) * 0.45 + w / waves) % 1;
+        const r = life * R * 1.6;
+        const dots = 6 + n;
+        for (let i = 0; i < dots; i++) {
+          if (life > 0.6 && i % 2) continue;
+          const a = (i / dots) * Math.PI * 2 + w;
+          shape(ctx, g.shape, Math.cos(a) * r, -10 * k + lift + Math.sin(a) * r * 0.4, palFor(c, i), life < 0.3 ? 3 : L, 1, a);
+        }
+      }
+      break;
+    }
+    case "snowfall": {
+      if (!front) break;
+      for (let i = 0; i < n; i++) {
+        const life = (Math.abs(T) * 0.22 * (0.6 + hash(c.seed + i) * 0.5) + hash(c.seed + i * 9)) % 1;
+        const sway = Math.sin(t * 1.5 + i * 2.2) * 5 * k;
+        const x = (hash(c.seed + i * 13) - 0.5) * R * 2.2 + sway;
+        const y = -H - 4 * k + life * (H + 6 * k) + lift;
+        shape(ctx, "crystal", x, y, palFor(c, i), life < 0.3 ? 3 : L, 1);
+      }
+      break;
+    }
+    case "emberstorm": {
+      if (!front) break;
+      for (let i = 0; i < n; i++) {
+        const life = (Math.abs(T) * (0.4 + hash(c.seed + i) * 0.5) + hash(c.seed + i * 3)) % 1;
+        const x = (hash(c.seed + i * 5) - 0.5) * 2 * R + Math.sin(t * 3 + i * 1.3) * 5 * k;
+        if (life > 0.85 && Math.floor(t * 18 + i) % 2) continue;
+        shape(ctx, "ember", x, lift - life * H, palFor(c, i), life < 0.25 ? 3 : L, life < 0.5 ? big : 1);
+      }
+      break;
+    }
   }
   // Flare: a slow glow pulse at the piece's own anchor.
   if (g.flare && front) {
@@ -635,6 +822,36 @@ function drawWings(c: Sig) {
         for (const [tx, ty] of tips) { seg(ctx, rx, rootY, tx, ty, pal[1]); px(ctx, tx, ty, pal[3]); }
         break;
       }
+      case 6: {
+        // NEW — Insect Wings: two narrow fast-fluttering pairs with dotted veins.
+        const fast = Math.sin(t * (4 + g.speed * 2) + g.phase * 8) * 0.3;
+        for (const pair of [0, 1]) {
+          const spread = pair === 0 ? 1 : 0.62;
+          for (let i = 0; i < tips.length; i++) {
+            const [tx, ty] = tips[i]!;
+            const ex = rx + (tx - rx) * spread, ey = rootY + (ty - rootY) * spread + fast * 6 * s * pair;
+            const n = Math.ceil(Math.hypot(ex - rx, ey - rootY) / P);
+            for (let j = 0; j <= n; j++) {
+              const u = j / n;
+              px(ctx, rx + (ex - rx) * u, rootY + (ey - rootY) * u, (j % 3 === 0 ? alt : pal)[u > 0.75 ? 3 : u > 0.35 ? 2 : 1]);
+            }
+          }
+        }
+        break;
+      }
+      default: {
+        // NEW — Prism Wings (style 7+): fanned translucent shards cycling through the accent.
+        tips.forEach(([tx, ty], i) => {
+          for (let u = 0.3; u <= 1; u += 0.22) {
+            const cyc = Math.floor((t * 1.5 + u * 3 + i) % 2);
+            const pick = cyc === 0 ? pal : alt;
+            const bob = Math.sin(t * 2.5 + i * 1.3 + u * 5) * P;
+            shape(ctx, "crystal", rx + (tx - rx) * u, rootY + (ty - rootY) * u + bob, pick, u > 0.85 ? 3 : 2, 2);
+          }
+        });
+        for (const [tx, ty] of tips) seg(ctx, rx, rootY, tx, ty, pal[1]);
+        break;
+      }
     }
   }
 }
@@ -668,6 +885,16 @@ function drawTail(c: Sig) {
       }
       case 2: // Wisp tail: fading dots.
         if (Math.floor(t * 10 + i) % 4) px(ctx, px0, py0, (u > 0.5 ? alt : pal)[u > 0.7 ? 3 : 2]);
+        break;
+      case 4: // Scorpion tail: thick segments that brighten toward a hooked tip.
+        shape(ctx, "block", px0, py0, u > 0.75 ? alt : pal, u > 0.6 ? 3 : u > 0.3 ? 2 : 1, u < 0.4 ? 2 : 1);
+        break;
+      case 5: // Ribbon tail: thin wavy band alternating colours.
+        px(ctx, px0, py0 + Math.sin(t * 6 + i) * P, (i % 2 ? alt : pal)[u > 0.6 ? 3 : 2]);
+        break;
+      case 6: // Storm tail: crackling sparks along the whip.
+        if (Math.floor(t * 18 + i) % 2) px(ctx, px0 + (hash(i + Math.floor(t * 12)) - 0.5) * 4, py0, pal[u > 0.5 ? 3 : 2]);
+        else shape(ctx, "bolt", px0, py0, alt, 3, 1);
         break;
       default: // Orb chain.
         if (i % 2 === 0) shape(ctx, "ring", px0, py0, i % 4 ? pal : alt, 2, u > 0.7 ? 2 : 1);
@@ -716,6 +943,36 @@ function drawCrown(c: Sig, front: boolean) {
     }
     default: { // Third eye.
       if (!front) break;
+      if (tr.style === 4) { // Flame crown: licking flames above the head.
+        for (let i = 0; i < 5; i++) {
+          const fx = (i - 2) * 2.2 * s;
+          const h = (1.5 + ((Math.floor(t * 14) + i) % 3)) * P;
+          for (let j = 0; j < h / P; j++) px(ctx, fx + Math.sin(t * 5 + i + j) * P, top - 2 * s - j * P, pal[j === 0 ? 3 : j === 1 ? 2 : 1]);
+        }
+        return;
+      }
+      if (tr.style === 5) { // Ring crown: a band of linked rings.
+        const m = 6;
+        for (let i = 0; i < m; i++) {
+          const a = t * 0.7 * g.dir + (i / m) * Math.PI * 2;
+          const depth = Math.sin(a);
+          if ((depth >= 0) !== front) continue;
+          shape(ctx, "ring", Math.cos(a) * 5 * s, top - 2 * s + depth * s, i % 2 && g.accent ? alt : pal, 2, 1);
+        }
+        return;
+      }
+      if (tr.style === 6) { // Antlers: branching horns.
+        for (const side of [-1, 1]) {
+          for (let j = 0; j < 5; j++) {
+            const u = j / 4;
+            const bx = side * (2.5 * s + u * 2 * s * tr.size);
+            const by = -16 * s - u * 4 * s * tr.size;
+            px(ctx, bx, by, pal[u > 0.6 ? 3 : 2]);
+            if (j === 2 || j === 3) px(ctx, bx + side * 1.6 * s, by - P, pal[2]);
+          }
+        }
+        return;
+      }
       const open = (Math.sin(t * 1.3 + g.phase * 6) + 1) / 2;
       shape(ctx, "diamond", 0, -14 * s, pal, open > 0.5 ? 3 : 2, open > 0.7 ? 2 : 1);
     }
@@ -734,6 +991,9 @@ function drawFamiliar(c: Sig, front: boolean) {
     if (j > 0) { px(ctx, x, y, (g.accent ? alt : pal)[Math.max(0, 3 - j)]); continue; }
     if (tr.style === 0) shape(ctx, "block", x, y, pal, 3, 2);
     else if (tr.style === 1) shape(ctx, "star", x, y, pal, 3, 2);
+    else if (tr.style === 3) shape(ctx, "orb", x, y, alt, 3, 2);
+    else if (tr.style === 4) { shape(ctx, "block", x, y, alt, 3, 2); px(ctx, x, y, pal[3]); }
+    else if (tr.style === 5) { shape(ctx, "ring", x, y, pal, 3, 2); px(ctx, x, y, alt[3]); }
     else { px(ctx, x, y, pal[3], 2); px(ctx, x + 2 * P, y, pal[0]); px(ctx, x + P * 2, y + P, pal[0]); }
   }
 }
@@ -902,7 +1162,10 @@ export function drawGearFx(ctx: C, a: Actor, t: number, s: number, layer: Layer)
       if (front) {
         const u = (t * 1.6 * g.speed + g.phase) % 1;
         const wx = 7 * s * flip;
-        for (let j = 0; j < 3 + p.quality; j++) px(ctx, wx + (j % 2 ? P : 0), (-15 + u * 10) * s + j * P, j === 0 ? alt[3] : pal[2]);
+        // Each imbue style carries its own rising glyph, so the weapon aura reads differently per imbue.
+        const IMBUE_SHAPES = ["spark", "splash", "runedot", "streak", "crystal", "bolt", "petal"] as const;
+        const gk = IMBUE_SHAPES[tr.style % IMBUE_SHAPES.length]!;
+        for (let j = 0; j < 3 + p.quality; j++) shape(ctx, gk, wx + (j % 2 ? P : 0), (-15 + u * 10) * s + j * P, j === 0 ? alt : pal, j === 0 ? 3 : 2, 1, -Math.PI / 2);
         if (Math.floor(t * 6) % 3 === 0) px(ctx, wx + (hash(Math.floor(t * 6)) - 0.5) * 8, -12 * s - hash(Math.floor(t * 6) + 1) * 8, alt[3]);
       }
       continue;

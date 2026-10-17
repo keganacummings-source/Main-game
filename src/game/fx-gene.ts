@@ -31,10 +31,27 @@ export const FX_PATTERNS = [
   "flicker",
   "aurora",
   "void_rift",
+  // Expanded variety pack:
+  "blossom",
+  "cyclone",
+  "meteor",
+  "fireflies",
+  "lattice",
+  "fountain",
+  "crescents",
+  "vortex",
+  "static_fuzz",
+  "bloom_rings",
+  "snowfall",
+  "emberstorm",
 ] as const;
 export type FxPattern = (typeof FX_PATTERNS)[number];
 
-export const FX_SHAPES = ["dot", "plus", "diamond", "block", "streak", "star", "cross", "ring"] as const;
+export const FX_SHAPES = [
+  "dot", "plus", "diamond", "block", "streak", "star", "cross", "ring",
+  // Expanded variety pack:
+  "spark", "arc", "arrow", "crystal", "bolt", "orb", "petal", "ember", "splash", "runedot",
+] as const;
 export type FxShape = (typeof FX_SHAPES)[number];
 
 /** Elements that read well as a second colour next to each element. */
@@ -148,12 +165,12 @@ export type FxTrait = { kind: FxTraitKind; style: number; size: number };
 
 const SIGNATURE: Record<string, FxTraitKind> = { chest: "wings", legs: "tail", feet: "trail", head: "crown", relic: "familiar", weapon: "imbue" };
 export const TRAIT_STYLES: Record<Exclude<FxTraitKind, "aura">, readonly string[]> = {
-  wings: ["Feathered Wings", "Demon Wings", "Crystal Wings", "Spirit Wings", "Moth Wings", "Void Wings"],
-  tail: ["Demon Tail", "Flame Whip", "Wisp Tail", "Orb Chain"],
-  trail: ["Afterimage Trail", "Footprint Trail", "Ribbon Trail", "Spark Wake"],
-  crown: ["Halo", "Horns", "Shard Crown", "Third Eye"],
-  familiar: ["Orb Familiar", "Star Familiar", "Moon Familiar"],
-  imbue: ["Echo Imbue", "Burst Imbue", "Sigil Imbue", "Comet Imbue"],
+  wings: ["Feathered Wings", "Demon Wings", "Crystal Wings", "Spirit Wings", "Moth Wings", "Void Wings", "Insect Wings", "Prism Wings"],
+  tail: ["Demon Tail", "Flame Whip", "Wisp Tail", "Orb Chain", "Scorpion Tail", "Ribbon Tail", "Storm Tail"],
+  trail: ["Afterimage Trail", "Footprint Trail", "Ribbon Trail", "Spark Wake", "Petal Wake", "Shadow Trail", "Comet Trail"],
+  crown: ["Halo", "Horns", "Shard Crown", "Third Eye", "Flame Crown", "Ring Crown", "Antlers"],
+  familiar: ["Orb Familiar", "Star Familiar", "Moon Familiar", "Wisp Familiar", "Cube Familiar", "Eye Familiar"],
+  imbue: ["Echo Imbue", "Burst Imbue", "Sigil Imbue", "Comet Imbue", "Frost Imbue", "Storm Imbue", "Blossom Imbue"],
 };
 /** Chance that a piece of this quality rolls its slot's signature. Rare 45%, Epic 75%, Legendary always. */
 export function signatureChance(quality: number): number {

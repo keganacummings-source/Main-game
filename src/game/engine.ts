@@ -794,6 +794,11 @@ function loadAudioPrefs(): AudioPrefs {
 	return d;
 }
 
+/** The two background songs, played back to back with a quiet gap between them. */
+const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg"];
+/** Silence between songs: a full song plays, then this timer runs before the next one starts. */
+const MUSIC_GAP_MS = 20 * 60 * 1000;
+
 export class TurbzGame {
 	canvas!: HTMLCanvasElement;
 	ctx!: CanvasRenderingContext2D;
@@ -925,6 +930,7 @@ export class TurbzGame {
 		this.events?.abort();
 		this.resetInput();
 		this.music?.pause(); this.music = null; this.musicTried = false;
+		clearTimeout(this.musicTimer); this.musicTimer = null;
 		void this.audio?.close().catch(() => {}); this.audio = null;
 		this.running = false;
 		cancelAnimationFrame(this.raf);
@@ -1076,7 +1082,7 @@ export class TurbzGame {
 		this.loadSfx();
 		if (!this.musicTried) {
 			this.musicTried = true;
-			this.playMusic("veil.ogg");
+			this.startMusicCycle();
 		}
 	}
 	/** Music element volume: the slider value, or silence while music is muted. */
@@ -1113,6 +1119,33 @@ export class TurbzGame {
 			audio.loop = true;
 			audio.volume = this.musicLevel();
 			this.toBus(audio, 0.9);
+			await audio.play();
+		} catch {}
+	}
+	/** Starts the two-song soundtrack from the first track. */
+	startMusicCycle() {
+		clearTimeout(this.musicTimer); this.musicTimer = null;
+		this.playTrack(0);
+	}
+	/**
+	 * Plays one background song in full (no loop). When it ends, a 20-minute timer runs,
+	 * then the other song plays, and so on — the two songs trade back and forth.
+	 */
+	async playTrack(i) {
+		const file = MUSIC_TRACKS[((i % MUSIC_TRACKS.length) + MUSIC_TRACKS.length) % MUSIC_TRACKS.length]!;
+		try {
+			if (!this.running) return;
+			if (!(await fetch(`/music/${file}`, { method: "HEAD" })).ok) return;
+			const audio = new Audio(`/music/${file}`);
+			this.music?.pause(); this.music = audio;
+			audio.loop = false;
+			audio.volume = this.musicLevel();
+			this.toBus(audio, 0.9);
+			audio.addEventListener("ended", () => {
+				if (this.music !== audio || !this.running) return;
+				clearTimeout(this.musicTimer);
+				this.musicTimer = setTimeout(() => this.playTrack(i + 1), MUSIC_GAP_MS);
+			});
 			await audio.play();
 		} catch {}
 	}
@@ -6204,39 +6237,40 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save || !g?.setId || g.slot === "weapon" || !SET_BY_ID[g.setId]) return;
 		const slots = new Set(save.found[g.setId] ?? []);
+		const wasComplete = SET_PIECES.every((s) => slots.has(s));
 		slots.add(g.slot);
 		save.found[g.setId] = [...slots];
-		// Per character: the class wearing the body when the piece was found.
+		// Keep the per-class record for old-save migration, but unlocking is account-wide now.
 		const cls = save.classId;
-		if (!cls) return;
-		save.foundBy = save.foundBy ?? {};
-		const mine = (save.foundBy[cls] = save.foundBy[cls] ?? {});
-		const had = mine[g.setId] ?? [];
-		if (had.includes(g.slot)) return;
-		mine[g.setId] = [...had, g.slot];
-		if (mine[g.setId].length === SET_PIECES.length) {
+		if (cls) {
+			save.foundBy = save.foundBy ?? {};
+			const mine = (save.foundBy[cls] = save.foundBy[cls] ?? {});
+			if (!(mine[g.setId] ?? []).includes(g.slot)) mine[g.setId] = [...(mine[g.setId] ?? []), g.slot];
+		}
+		const nowComplete = SET_PIECES.every((s) => slots.has(s));
+		if (nowComplete && !wasComplete) {
 			const set = SET_BY_ID[g.setId];
-			this.say(`Set unlocked for ${CLASS_BY_ID[cls]?.name ?? "this witch"}: ${set.name}. Your next life as this class can wake wearing it.`);
+			this.say(`Set unlocked: ${set.name}. Any class can wake wearing it from now on.`);
 			this.cue("sparkle", { rate: 1.1, len: 1.4 }, [660, .25]);
 		}
 	}
-	/** A set is unlocked for a class once that class has found all five pieces. */
-	isUnlocked(id, classId = this.save?.classId) {
-		const have = new Set(this.save?.foundBy?.[classId]?.[id] ?? []);
+	/** A set is unlocked once all five pieces have been found by any class on the account. */
+	isUnlocked(id, _classId?) {
+		const have = new Set(this.save?.found?.[id] ?? []);
 		return SET_PIECES.every((s) => have.has(s));
 	}
 	unlockedSets() {
-		const by = this.save?.foundBy ?? {};
+		const found = this.save?.found ?? {};
 		const out = [];
-		for (const cls of Object.keys(by)) for (const id of Object.keys(by[cls])) {
+		for (const id of Object.keys(found)) {
 			const set = SET_BY_ID[id];
-			if (set && this.isUnlocked(id, cls)) out.push({ id, name: set.name, race: set.race, bonus: set.bonus, classId: cls });
+			if (set && this.isUnlocked(id)) out.push({ id, name: set.name, race: set.race, bonus: set.bonus, classId: "" });
 		}
 		return out;
 	}
 	setProgress() {
-		const mine = this.save?.foundBy?.[this.save?.classId] ?? {};
-		return Object.entries(mine).filter(([id]) => SET_BY_ID[id]).map(([id, slots]) => ({ id, name: SET_BY_ID[id].name, have: slots.length, slots: [...slots] }))
+		const mine = this.save?.found ?? {};
+		return Object.entries(mine).filter(([id]) => SET_BY_ID[id]).map(([id, slots]) => ({ id, name: SET_BY_ID[id].name, have: (slots as string[]).length, slots: [...(slots as string[])] }))
 			.sort((a, b) => b.have - a.have || a.name.localeCompare(b.name)).slice(0, 12);
 	}
 	autoHarvest() {
