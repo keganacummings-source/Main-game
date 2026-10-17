@@ -427,6 +427,10 @@ type Spirit = {
   /** Inherited from the foe it came from: its random skin and element list (ghost "steals the sprite"). */
   skin?: string | null;
   types?: TypeId[] | null;
+  /** For witch replicas: the class/race visual identity so the ghost draws as the witch. */
+  classId?: string;
+  race?: string | null;
+  female?: boolean;
 };
 type GhostPet = { species: string; level: number; rarity: number; look?: GhostLook; move?: string; name?: string; type?: TypeId; template?: number; hp?: number; max?: number; speed?: number };
 type SkillState = Record<SkillId, { level: number; xp: number }>;
@@ -4923,6 +4927,7 @@ export class TurbzGame {
 			uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"),
 			template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10,
 			look: spirit.look ?? null, at: Date.now(), mode: this.turbz ? "turbz" : this.rules, by: this.save.name, palette: spirit.palette,
+			skin: spirit.skin ?? null, types: spirit.types ?? null, classId: spirit.classId, race: spirit.race ?? null, female: spirit.female,
 		});
 		if (added) { this.say(`✦ ${spirit.name} joins your Shiny collection.`); this.shinyFn?.(); }
 	}
@@ -4932,7 +4937,7 @@ export class TurbzGame {
 		// Big on-screen "SHINY DROPPED" pop-up (see ShinyDropAlert in turbz-app.tsx).
 		publish({ shinyAlert: getSnap().shinyAlert + 1 });
 		this.shinySeenFn?.({
-			entry: { uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"), template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10, look: spirit.look ?? null, at: Date.now(), mode: this.turbz ? "turbz" : this.rules, by: this.save.name, palette: spirit.palette },
+			entry: { uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"), template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10, look: spirit.look ?? null, at: Date.now(), mode: this.turbz ? "turbz" : this.rules, by: this.save.name, palette: spirit.palette, skin: spirit.skin ?? null, types: spirit.types ?? null, classId: spirit.classId, race: spirit.race ?? null, female: spirit.female },
 			witch: this.save.name,
 			place: this.mapRegion?.name ?? (this.save.map === "world" ? this.customFile?.name ?? "the wilds" : this.customFile?.name ?? "a dungeon"),
 		});
@@ -5089,6 +5094,9 @@ export class TurbzGame {
 			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false, shiny: isShiny, xp: 0,
 			// The ghost steals the foe's skin and elements, so it looks and reads like the thing it came from.
 			skin: mob.skin ?? null, types: mob.types ?? (mob.type ? [mob.type] : null),
+			classId: (mob.witch || mob.bounty) ? (mob.classId ?? null) : undefined,
+			race: (mob.witch || mob.bounty) ? (mob.race ?? null) : undefined,
+			female: (mob.witch || mob.bounty) ? !!mob.female : undefined,
 		};
 		this.finishGhost(sp, true);
 		return sp;

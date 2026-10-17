@@ -333,6 +333,12 @@ export type ShinyEntry = {
   by: string;
   /** Shiny palette id (missing on older entries: the Prism rainbow). */
   palette?: string;
+  /** Inherited visual identity so the collection/GIF matches the source enemy. */
+  skin?: string | null;
+  types?: string[] | null;
+  classId?: string;
+  race?: string | null;
+  female?: boolean;
 };
 export const SHINY_MAX = 400;
 

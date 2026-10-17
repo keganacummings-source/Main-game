@@ -58,6 +58,13 @@ export function witchSteer(g: any, m: Brainy, d: number, dx: number, dy: number,
   const want = sp * dt;
   const bx = m.x, by = m.y;
   g.moveMob(m, vx / l * want, vy / l * want);
+  // Ensure direction tracks the intended movement vector so the sprite row updates even on tiny steps or wall nudges.
+  if (typeof m.direction !== "undefined") {
+    const adx = vx, ady = vy;
+    if (Math.hypot(adx, ady) > 0.05) {
+      m.direction = Math.abs(adx) >= Math.abs(ady) ? (adx < 0 ? "left" : "right") : (ady < 0 ? "up" : "down");
+    }
+  }
   const got = Math.hypot(m.x - bx, m.y - by);
   m.stallT = got < want * 0.3 ? (m.stallT ?? 0) + dt : 0;
   if (m.stallT > 0.35) { m.stallT = 0; m.detourT = 0.7; m.detourA = (Math.random() < 0.5 ? -1 : 1) * 1.57; m.strafe = -(m.strafe ?? 1); }

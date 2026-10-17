@@ -27,16 +27,16 @@ type BossLook = {
 };
 
 // row 0 up, 1 left, 2 down, 3 right (sheepmen, dragons)
-const ULDR: Record<BossDir, number> = { up: 0, left: 1, down: 2, right: 3 };
+const ULDR: Record<BossDir, number> = { up: 0, left: 3, down: 2, right: 1 };
 // row 0 down, 1 left, 2 right, 3 up (googon, arachne — RPG Maker SWEN)
 const SWEN: Record<BossDir, number> = { down: 0, left: 1, right: 2, up: 3 };
 
 const BASE = "/sprites/bosses/";
 
 export const BOSS_LOOKS: Record<string, BossLook> = {
-  dragon_red: { src: BASE + "dragon_red.png", fw: 144, fh: 128, rows: ULDR, scale: 0.62, lift: 8, fly: true },
-  dragon_gold: { src: BASE + "dragon_gold.png", fw: 144, fh: 128, rows: ULDR, scale: 0.62, lift: 8, fly: true },
-  dragon_blue: { src: BASE + "dragon_blue.png", fw: 144, fh: 128, rows: ULDR, scale: 0.62, lift: 8, fly: true },
+  dragon_red: { src: BASE + "dragon_red.png", fw: 144, fh: 128, rows: ULDR, scale: 0.85, lift: 8, fly: true },
+  dragon_gold: { src: BASE + "dragon_gold.png", fw: 144, fh: 128, rows: ULDR, scale: 0.85, lift: 8, fly: true },
+  dragon_blue: { src: BASE + "dragon_blue.png", fw: 144, fh: 128, rows: ULDR, scale: 0.85, lift: 8, fly: true },
   sheepman: { src: BASE + "sheepman.png", fw: 48, fh: 64, rows: ULDR, scale: 1.15, lift: 2 },
   sheepman_armored: { src: BASE + "sheepman_armored.png", fw: 48, fh: 64, rows: ULDR, scale: 1.18, lift: 2 },
   sheepman_elite: { src: BASE + "sheepman_elite.png", fw: 48, fh: 64, rows: ULDR, scale: 1.22, lift: 2 },

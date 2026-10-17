@@ -2,8 +2,9 @@
  * The Shiny collection GIF: every shiny ghost the account has picked up, bobbing in a grid with its name.
  * Made in the browser (the ghosts are drawn procedurally) and uploaded for the Discord bot's /shiny.
  */
-import { drawMonster } from "./sprites";
+import { drawMonster, drawActor } from "./sprites";
 import { drawGhostFx } from "./ghost-fx";
+import { tryDrawActorSprite } from "./actor-sprites";
 import { bytesToBase64, encodeGif, type GifFrame } from "./gif-encode";
 import type { GhostLook, TypeId } from "./content";
 import type { ShinyEntry } from "./account-save";
@@ -14,7 +15,26 @@ const CELL_W = 56, CELL_H = 60, COLS = 6, MAX_ROWS = 5, FRAMES = 14, DELAY_CS = 
 export function drawShiny(ctx: CanvasRenderingContext2D, s: ShinyEntry, x: number, y: number, t: number): void {
   const fx = { x, y, type: s.type as TypeId, rarity: s.rarity, level: s.level, speed: s.speed, max: s.max, shiny: true, seed: s.uid, palette: s.palette };
   drawGhostFx(ctx, fx, t, "back");
-  drawMonster(ctx, { x, y, template: s.template, type: s.type as TypeId, facing: 1, walk: t * 3, hurt: 0, boss: false, rarity: s.rarity, ghost: true, shiny: true, palette: s.palette, look: (s.look as GhostLook | null) ?? null, time: t });
+
+  // Witch replicas draw as the full actor sprite (class/race identity).
+  const isWitchReplica = !!(s.classId || s.race);
+  let drawn = false;
+  if (isWitchReplica) {
+    const actor: any = {
+      x, y, race: s.race ?? "vesper", female: !!s.female, hair: 0, skin: 0,
+      facing: 1, direction: "down", walk: t, swing: 0, hurt: 0, moving: true,
+      classId: s.classId, time: t,
+    };
+    if (tryDrawActorSprite(ctx, actor)) drawn = true;
+    else { drawActor(ctx, actor); drawn = true; }
+  }
+  if (!drawn) {
+    drawMonster(ctx, {
+      x, y, template: s.template, type: s.type as TypeId, facing: 1, walk: t * 3, hurt: 0, boss: false, rarity: s.rarity,
+      ghost: true, shiny: true, palette: s.palette, spin: 0, species: s.species,
+      skin: s.skin ?? null, types: s.types as any, look: (s.look as GhostLook | null) ?? null, time: t,
+    });
+  }
   drawGhostFx(ctx, fx, t, "front");
 }
 
