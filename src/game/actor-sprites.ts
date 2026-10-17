@@ -65,7 +65,8 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
   const atlas = atlases[sheet];
   if (!atlas) return false;
 
-  const s = (a.scale ?? 1) * (a.tall ?? 1) * ACTOR_SPRITE_SCALE;
+  // The chibi class template is ~27px tall (old class art was ~35px), so class sheets draw a bit larger.
+  const s = (a.scale ?? 1) * (a.tall ?? 1) * ACTOR_SPRITE_SCALE * (sheet === "warrior" ? 1.3 : 1);
   const fxT = a.time ?? a.walk;
 
   if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE, a.setVariant ?? 0);
