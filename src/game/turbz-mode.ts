@@ -1,0 +1,512 @@
+/**
+ * TURBZ. Hardcore difficulty on a fresh 450×450 wild with no bounties, no townsfolk and no quests.
+ * Ten to fifteen other witches grind, craft, catch spirits and sometimes die. If two meet, they
+ * team up, never more than three. You have health, mana and stamina instead of food and water.
+ */
+import {
+  CLASSES,
+  CLASS_BY_ID,
+  CLASS_RACE,
+  MOVE_BY_ID,
+  MOVES,
+  SKILLS,
+  WITCH_NAMES,
+  attackForm,
+  attackRange,
+  equipmentStats,
+  gearScore,
+  moveTactic,
+  mulberry32,
+  nextUid,
+  rollGear,
+  xpNeed,
+  type Gear,
+  type Move,
+} from "./content";
+import type { ClassId } from "./classes";
+import { generateWorld } from "./map-gen";
+import { lmsSpawns } from "./lms";
+import { blocked } from "./world";
+import { DAY_SECONDS } from "./daynight";
+
+export const TURBZ_MAP = "custom-turbz";
+export const TURBZ_ORDERS = [
+  { id: "combat", label: "Fight" },
+  { id: "mining", label: "Mine ore" },
+  { id: "woodcutting", label: "Chop wood" },
+  { id: "fishing", label: "Fish" },
+  { id: "shroom", label: "Forage" },
+  { id: "crafting", label: "Craft" },
+  { id: "spirits", label: "Seek spirits" },
+] as const;
+
+const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
+const NEAR = 1100;
+const SIM = 2;
+const TEAM_MAX = 3;
+const rand = Math.random;
+const pick = <T,>(list: readonly T[]): T => list[Math.floor(rand() * list.length)]!;
+
+type Brain = {
+  level: number; xp: number; sp: number; ranks: Record<string, number>; known: string[];
+  gear: Partial<Record<(typeof SLOTS)[number], Gear>>;
+  bag: Record<string, number>; spirits: number; team: number;
+  state: string; goalX: number; goalY: number; think: number; simT: number;
+  castCd: Record<string, number>; foe: string; foeT: number; dodgeCd: number; wanderT: number; age: number;
+};
+
+export function poolMax(level: number): number {
+  return 50 + Math.max(0, Math.floor(level) - 1) * 3;
+}
+
+/** Mana for a spell, stamina for a melee verse. */
+export function poolCost(power: number, form: "melee" | "spell"): number {
+  return form === "spell" ? Math.max(4, Math.round(8 + power * 0.15)) : Math.max(4, Math.round(6 + power * 0.1));
+}
+
+const isHeal = (m: Move) => m.effect === "mend" || moveTactic(m) === "heal";
+const isWard = (m: Move) => m.effect === "shell" || moveTactic(m) === "ward";
+const isOffense = (m: Move) => m.power > 0 && !isHeal(m) && !isWard(m) && !["roll", "dash", "surge"].includes(moveTactic(m));
+
+export function installTurbz(game: any): void {
+  game.turbz = false;
+  game.pools = null;
+  game.orders = null;
+
+  game.startTurbz = function (name: string, race: string, classId: string, traitId: string | null, female: boolean) {
+    this.turbz = true;
+    this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
+    this.teamSeq = 1;
+    this.swapRules("hardcore");
+    this.begin(name, race, undefined, classId, traitId, female);
+    const save = this.save;
+    if (!save) return;
+    save.skills = Object.fromEntries(SKILLS.map((sk) => [sk.id, { level: 1, xp: 0 }]));
+    save.perks = {};
+    save.perkPoints = 0;
+    save.accountLevel = 1;
+    save.level = 1;
+    save.xp = 0;
+    save.spirits = [];
+    save.ghostStore = [];
+    save.party = [];
+    save.kyo = 0;
+    save.bag = { potion: 2 };
+    if (save.hunt) { save.hunt.wanted = 0; save.hunt.stars = 0; save.hunt.board = []; save.hunt.waveIn = 0; }
+    save.dayNight = { t: DAY_SECONDS * 0.35, nights: 0 };
+    const seed = (Math.random() * 1e9) >>> 0 || 7;
+    const file = generateWorld({
+      id: "turbz", name: "TURBZ", seed, w: 450, h: 450,
+      continentCount: 5, citiesPerContinent: 1, islands: 4, story: false,
+      intro: "",
+    });
+    file.npcs = [];
+    file.quests = [];
+    file.id = "turbz";
+    this.turbzFile = file;
+    save.map = TURBZ_MAP;
+    this.contract = [];
+    this.loadMap(TURBZ_MAP, true);
+    if (this.world) this.world.swim = true;
+    const n = 10 + Math.floor(rand() * 6);
+    const spots = lmsSpawns(this.world, n + 1);
+    const mine = Math.floor(rand() * spots.length);
+    save.x = spots[mine]!.x;
+    save.y = spots[mine]!.y;
+    this.cam.x = save.x;
+    this.cam.y = save.y;
+    save.hp = this.maxHp();
+    this.pools = { mana: poolMax(1), maxMana: poolMax(1), stam: poolMax(1), maxStam: poolMax(1), manaSlow: 0, stamSlow: 0 };
+    const used = new Set<string>([save.name]);
+    let r = 0;
+    spots.forEach((p, i) => {
+      if (i === mine) return;
+      let nm = pick(WITCH_NAMES);
+      for (let k = 0; k < 12 && used.has(nm); k++) nm = pick(WITCH_NAMES);
+      if (used.has(nm)) nm = `${nm} ${r + 2}`;
+      used.add(nm);
+      this.mobs.push(this.makeTwitch(r++, p.x, p.y, nm));
+    });
+    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. No bounties, no quests. ${n} witches are already grinding. Health, mana and stamina — spells drink mana, melee drinks stamina.`);
+    this.syncHud(true);
+  };
+
+  game.makeTwitch = function (i: number, x: number, y: number, name: string, level = 1) {
+    const cls = pick(CLASSES);
+    const raceId = CLASS_RACE[cls.id] ?? "vesper";
+    const rng = mulberry32(((rand() * 1e9) | 0) || 9);
+    const weapon = rollGear(rng, { level, slot: "weapon", floor: "common", typeBias: cls.type, raceBias: raceId });
+    const m = this.makeMob({ id: `twitch-${i}-${nextUid()}`, species: "muma", x, y, level, fixedLevel: true, template: 20, type: cls.type, name });
+    const brain: Brain = {
+      level, xp: 0, sp: Math.max(0, (level - 1) * 3), ranks: {}, known: [...cls.starterMoves].filter((id) => MOVE_BY_ID[id]),
+      gear: { weapon }, bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: 1 }, spirits: 0, team: 0,
+      state: "grind", goalX: x, goalY: y, think: rand() * 0.4, simT: rand() * SIM, castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 8, age: 0,
+    };
+    Object.assign(m, {
+      twitch: true, witch: true, rival: false, classId: cls.id, race: raceId, female: rand() < 0.6,
+      ghost: false, aggro: false, seen: true, huntIn: 0, enchants: [], fromSpawn: false,
+      stats: { hp: 1, dmg: 1.1, speed: 1, crit: 0.08, dodge: 0.08, physRes: 0, spellRes: 0 },
+      rarity: 2, lootKyo: 8 + level * 4, rv: brain, homeX: x, homeY: y,
+    });
+    this.scaleTwitch(m, true);
+    if (level > 1) this.twitchSpend(m);
+    return m;
+  };
+
+  game.scaleTwitch = function (m: any, fresh = false) {
+    const r: Brain = m.rv;
+    if (!r) return;
+    const armor = SLOTS.reduce((n, s) => n + (r.gear[s] ? equipmentStats(r.gear[s]!).armor : 0), 0);
+    const max = Math.round((78 + r.level * 16) * (1 + armor / 280) * (1 + r.spirits * 0.04));
+    const ratio = fresh || !(m.max > 0) ? 1 : Math.max(0, Math.min(1, m.hp / m.max));
+    m.level = r.level;
+    m.max = max;
+    if (m.alive !== false) m.hp = Math.max(1, Math.ceil(max * ratio));
+    m.frac = Math.min(0.14, 0.055 + r.level * 0.0016);
+    m.dmgMult = 1.2 + Math.min(0.3, r.spirits * 0.03);
+    const offense = r.known.map((id) => MOVE_BY_ID[id]).filter((mv): mv is Move => !!mv && isOffense(mv));
+    m.kit = offense.sort((a, b) => b.power * (r.ranks[b.id] ?? 1) - a.power * (r.ranks[a.id] ?? 1)).slice(0, 4).map((mv) => mv.id);
+    m.move = m.kit[0] ?? "measured";
+    m.lootGear = SLOTS.map((s) => r.gear[s]).filter(Boolean);
+  };
+
+  game.twitchSpend = function (m: any) {
+    const r: Brain = m?.rv;
+    if (!r) return;
+    const cls = CLASS_BY_ID[m.classId as ClassId];
+    const learn = (filter: (mv: Move) => boolean) => {
+      const pool = MOVES.filter((mv) => !r.known.includes(mv.id) && filter(mv));
+      const own = pool.filter((mv) => mv.type === cls?.type);
+      const choice = (own.length ? own : pool).sort((a, b) => b.power - a.power)[0];
+      if (!choice) return false;
+      r.known.push(choice.id);
+      r.ranks[choice.id] = 1;
+      return true;
+    };
+    let guard = 30;
+    while (r.sp > 0 && guard-- > 0) {
+      const k = r.known.map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
+      if (!k.some(isHeal) && learn(isHeal)) { r.sp--; continue; }
+      if (r.level >= 3 && !k.some(isWard) && learn(isWard)) { r.sp--; continue; }
+      if (k.filter(isOffense).length < 4 && learn((mv) => isOffense(mv) && mv.power <= 28 + r.level * 3)) { r.sp--; continue; }
+      const best = k.filter(isOffense).sort((a, b) => (r.ranks[a.id] ?? 1) - (r.ranks[b.id] ?? 1))[0];
+      if (!best) break;
+      r.ranks[best.id] = (r.ranks[best.id] ?? 1) + 1;
+      r.sp--;
+    }
+    this.scaleTwitch(m);
+  };
+
+  game.twitchXp = function (m: any, n: number) {
+    const r: Brain = m.rv;
+    r.xp += n;
+    let ups = 0;
+    while (r.xp >= xpNeed(r.level) && ups < 8) { r.xp -= xpNeed(r.level); r.level++; r.sp += 3; ups++; }
+    if (ups) this.twitchSpend(m);
+  };
+
+  game.tickPools = function (dt: number) {
+    const save = this.save;
+    const p = this.pools;
+    if (!save || !p) return;
+    const lv = poolMax(save.level);
+    p.maxMana = lv;
+    p.maxStam = lv;
+    p.manaSlow = Math.max(0, p.manaSlow - dt);
+    p.stamSlow = Math.max(0, p.stamSlow - dt);
+    const rate = this.combat > 0 ? 3.2 : 8;
+    p.mana = Math.min(lv, p.mana + rate * dt);
+    p.stam = Math.min(lv, p.stam + rate * dt);
+  };
+
+  game.payPool = function (move: Move) {
+    if (!this.turbz || !this.pools) return;
+    const form = attackForm(move);
+    if (form !== "spell" && form !== "melee") return;
+    const key = form === "spell" ? "mana" : "stam";
+    const slow = form === "spell" ? "manaSlow" : "stamSlow";
+    const cost = poolCost(move.power, form);
+    if (this.pools[key] >= cost) this.pools[key] -= cost;
+    else {
+      this.pools[key] = 0;
+      this.pools[slow] = 5;
+      this.float(this.save.x, this.save.y - 64, form === "spell" ? "NO MANA" : "NO STAMINA", "#c4473a");
+    }
+  };
+
+  game.setOrder = function (id: string) {
+    if (!this.orders || !(id in this.orders)) return;
+    this.orders[id] = !this.orders[id];
+    this.autoPlan = 0;
+    this.say(`${TURBZ_ORDERS.find((o) => o.id === id)?.label ?? id} ${this.orders[id] ? "on" : "off"} for autoplay.`);
+    this.syncHud(true);
+  };
+
+  game.tickTurbz = function (dt: number) {
+    if (!this.turbz || !this.save) return;
+    const alive = this.mobs.filter((m: any) => m.twitch && m.alive);
+    const want = this.turbzWant ?? alive.length;
+    this.turbzWant = want || 12;
+    const cap = Math.max(10, Math.min(15, this.turbzWant));
+    this.refillT = (this.refillT ?? 0) - dt;
+    if (alive.length < cap && this.world && this.refillT <= 0) {
+      this.refillT = 2.5;
+      const spots = lmsSpawns(this.world, 6);
+      const far = spots.find((p) => Math.hypot(p.x - this.save.x, p.y - this.save.y) > 900) ?? spots[0];
+      if (far) {
+        const lv = Math.max(1, Math.round(alive.reduce((n: number, m: any) => n + m.rv.level, 0) / Math.max(1, alive.length)) - 1);
+        this.mobs.push(this.makeTwitch(this.mobs.length, far.x, far.y, pick(WITCH_NAMES), lv));
+      }
+    }
+  };
+
+  game.tickTwitch = function (m: any, dt: number) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    if (!r || !save || !m.alive) return;
+    r.age += dt;
+    r.dodgeCd = Math.max(0, r.dodgeCd - dt);
+    r.foeT = Math.max(0, r.foeT - dt);
+    for (const k of Object.keys(r.castCd)) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
+    const near = Math.hypot(m.x - save.x, m.y - save.y) < NEAR;
+    if (!near) return this.simTwitch(m, dt);
+    this.liveTwitch(m, dt);
+  };
+
+  game.twitchTeamSize = function (id: number) {
+    if (!id) return 0;
+    return this.mobs.filter((m: any) => m.twitch && m.alive && m.rv?.team === id).length;
+  };
+
+  game.twitchMeet = function (m: any) {
+    const r: Brain = m.rv;
+    for (const o of this.mobs) {
+      if (!o.twitch || !o.alive || o === m) continue;
+      if (Math.hypot(o.x - m.x, o.y - m.y) > 150) continue;
+      const other: Brain = o.rv;
+      if (r.team && r.team === other.team) continue;
+      if (r.team && other.team) continue;
+      const host = r.team || other.team;
+      if (host && this.twitchTeamSize(host) >= TEAM_MAX) continue;
+      const id = host || (this.teamSeq = (this.teamSeq ?? 1) + 1);
+      if (this.twitchTeamSize(id) >= TEAM_MAX) continue;
+      r.team = id;
+      other.team = id;
+      if (this.twitchTeamSize(id) > TEAM_MAX) { r.team = 0; continue; }
+      this.float(m.x, m.y - 52, "TEAMS UP", "#9ad8c8");
+      return;
+    }
+  };
+
+  game.simTwitch = function (m: any, dt: number) {
+    const r: Brain = m.rv;
+    r.simT -= dt;
+    if (r.simT > 0) return;
+    r.simT = SIM;
+    const roll = rand();
+    if (roll < 0.22) r.bag.timber = (r.bag.timber ?? 0) + 1;
+    else if (roll < 0.4) r.bag.ore = (r.bag.ore ?? 0) + 1;
+    else if (roll < 0.55) r.bag.fish = (r.bag.fish ?? 0) + 1;
+    else if (roll < 0.68) r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
+    if ((r.bag.timber ?? 0) >= 3 && (r.bag.ore ?? 0) >= 2) {
+      r.bag.timber -= 3; r.bag.ore -= 2;
+      const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 4), { level: r.level, slot: pick(SLOTS), typeBias: m.type, raceBias: m.race });
+      const slot = g.slot as (typeof SLOTS)[number];
+      if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) r.gear[slot] = g;
+      this.scaleTwitch(m);
+    }
+    if ((r.bag.mushroom ?? 0) >= 2 && rand() < 0.35) { r.bag.mushroom -= 2; r.spirits++; this.scaleTwitch(m); }
+    if (rand() < 0.2) this.twitchXp(m, 6 + r.level * 2);
+    if (r.age > 40 && rand() < 0.012) {
+      m.hp -= m.max * (0.35 + rand() * 0.5);
+      if (m.hp <= 0) { m.alive = false; m.hp = 0; return; }
+    }
+    const a = rand() * Math.PI * 2;
+    const step = 70;
+    let nx = m.x + Math.cos(a) * step, ny = m.y + Math.sin(a) * step;
+    if (!this.world || blocked(this.world, nx, ny)) return;
+    m.x = nx; m.y = ny;
+  };
+
+  game.liveTwitch = function (m: any, dt: number) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    r.think -= dt;
+    if (r.think <= 0) { r.think = 0.28; this.twitchThink(m); }
+    const d = Math.hypot(r.goalX - m.x, r.goalY - m.y);
+    if (d > 8) {
+      const sp = 78 + Math.min(36, r.level);
+      this.moveMob(m, ((r.goalX - m.x) / d) * sp * dt, ((r.goalY - m.y) / d) * sp * dt);
+    }
+    if (!this.dead && r.foe === "player") m.facing = save.x < m.x ? -1 : 1;
+  };
+
+  game.twitchThink = function (m: any) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    this.twitchMeet(m);
+    const hp = m.hp / Math.max(1, m.max);
+    const moves = r.known.map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
+    const ready = (mv: Move) => (r.castCd[mv.id] ?? 0) <= 0;
+    let foe = this.twitchFoe(m);
+    if (hp < 0.5) {
+      const heal = moves.find((mv) => isHeal(mv) && ready(mv));
+      if (heal) return this.twitchCast(m, heal, null);
+      if ((r.bag.potion ?? 0) > 0) {
+        r.bag.potion--;
+        m.hp = Math.min(m.max, m.hp + m.max * 0.22);
+        this.float(m.x, m.y - 46, "DRINKS", "#9ad8c8");
+        return;
+      }
+      if (foe && hp < 0.28) {
+        const a = Math.atan2(m.y - foe.y, m.x - foe.x);
+        r.goalX = m.x + Math.cos(a) * 180;
+        r.goalY = m.y + Math.sin(a) * 180;
+        return;
+      }
+    }
+    if (!foe && hp > 0.62) {
+      let best: any = null, bs = Infinity;
+      for (const o of this.mobs) {
+        if (!o.alive || o === m || o.twitch) continue;
+        const d = Math.hypot(o.x - m.x, o.y - m.y);
+        if (d > 520 || (o.level ?? 1) > r.level + 6) continue;
+        if (d < bs) { bs = d; best = o; }
+      }
+      const yd = this.dead ? Infinity : Math.hypot(save.x - m.x, save.y - m.y);
+      if (yd < 240 && yd < bs) { r.foe = "player"; r.foeT = 6; foe = this.twitchFoe(m); }
+      else if (best) { r.foe = best.id; r.foeT = 4; foe = best; }
+    }
+    if (foe && foe.player && Math.hypot(foe.x - m.x, foe.y - m.y) > 280) { r.foe = ""; foe = null; }
+    if (foe) return this.twitchFight(m, foe, moves);
+    if ((r.bag.timber ?? 0) >= 3 && (r.bag.ore ?? 0) >= 2) {
+      r.bag.timber -= 3; r.bag.ore -= 2;
+      this.float(m.x, m.y - 46, "CRAFTS", "#e6c15a");
+      const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 2), { level: r.level, slot: pick(SLOTS), typeBias: m.type });
+      const slot = g.slot as (typeof SLOTS)[number];
+      if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
+      return;
+    }
+    const want = (r.bag.timber ?? 0) < 3 ? "tree" : (r.bag.ore ?? 0) < 2 ? "ore" : (r.bag.mushroom ?? 0) < 2 ? "shroom" : rand() < 0.5 ? "fish" : "";
+    if (want && want !== "fish") {
+      const node = this.rivalNode?.(m, want) ?? null;
+      if (node) {
+        if (Math.hypot(node.x - m.x, node.y - m.y) < 36) {
+          if (want === "tree") r.bag.timber++;
+          else if (want === "ore") r.bag.ore++;
+          else r.bag.mushroom++;
+          this.float(m.x, m.y - 44, want === "tree" ? "CHOPS" : want === "ore" ? "MINES" : "FORAGES", "#9ad8c8");
+          this.twitchXp(m, 4);
+        } else { r.goalX = node.x; r.goalY = node.y; }
+        return;
+      }
+    }
+    r.wanderT -= 0.3;
+    if (r.wanderT <= 0 || Math.hypot(r.goalX - m.x, r.goalY - m.y) < 24) {
+      r.wanderT = 6 + rand() * 8;
+      const a = rand() * Math.PI * 2;
+      r.goalX = m.x + Math.cos(a) * (140 + rand() * 220);
+      r.goalY = m.y + Math.sin(a) * (140 + rand() * 220);
+    }
+  };
+
+  game.twitchFoe = function (m: any) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    if (r.foe === "player" && !this.dead && r.foeT > 0) return { player: true, x: save.x, y: save.y, alive: true, level: save.level };
+    if (r.foe && r.foe !== "player") {
+      const o = this.mobs.find((x: any) => x.id === r.foe && x.alive);
+      if (o && !(o.twitch && o.rv?.team && o.rv.team === r.team)) return o;
+    }
+    r.foe = "";
+    return null;
+  };
+
+  game.twitchFight = function (m: any, foe: any, moves: Move[]) {
+    const r: Brain = m.rv;
+    const ready = (mv: Move) => (r.castCd[mv.id] ?? 0) <= 0;
+    const d = Math.hypot(foe.x - m.x, foe.y - m.y);
+    const spells = moves.filter((mv) => isOffense(mv) && attackForm(mv) === "spell");
+    const melees = moves.filter((mv) => isOffense(mv) && attackForm(mv) === "melee");
+    const caster = spells.length > melees.length;
+    const want = caster ? 96 : 42;
+    if (d > want + 8) { r.goalX = foe.x; r.goalY = foe.y; }
+    else if (caster && d < 64) {
+      const a = Math.atan2(m.y - foe.y, m.x - foe.x);
+      r.goalX = m.x + Math.cos(a) * 70;
+      r.goalY = m.y + Math.sin(a) * 70;
+    } else { r.goalX = m.x; r.goalY = m.y; }
+    const kit = (caster ? spells : melees.length ? melees : moves.filter(isOffense)).filter(ready);
+    const hit = kit.filter((mv) => d <= (attackForm(mv) === "melee" ? 64 : Math.min(160, attackRange(mv)))).sort((a, b) => b.power * (r.ranks[b.id] ?? 1) - a.power * (r.ranks[a.id] ?? 1))[0];
+    if (!hit) return;
+    if ((m.hp / m.max) < 0.7) {
+      const ward = moves.find((mv) => isWard(mv) && ready(mv));
+      if (ward && (m.wardT ?? 0) <= 0) return this.twitchCast(m, ward, null);
+    }
+    this.twitchCast(m, hit, foe.player ? null : foe);
+  };
+
+  game.twitchCast = function (m: any, move: Move, foe: any) {
+    const r: Brain = m.rv;
+    r.castCd[move.id] = Math.max(0.45, (move.power > 60 ? 1.3 : 0.7));
+    if (isHeal(move)) {
+      const n = 12 + move.power * 0.4 + r.level;
+      m.hp = Math.min(m.max, m.hp + n);
+      this.float(m.x, m.y - 46, `+${Math.round(n)}`, "#9ad8c8");
+      return;
+    }
+    if (isWard(move)) { m.wardT = 2.4; this.float(m.x, m.y - 46, "WARD", "#fff1a8"); return; }
+    if (!foe) {
+      this.mobAttack(m, move);
+      return;
+    }
+    if (!foe.alive) return;
+    const dmg = (8 + move.power * 0.35 + r.level * 1.4) * (1 + ((r.ranks[move.id] ?? 1) - 1) * 0.12) * (this.isNightNow?.() ? 1.35 : 1);
+    foe.hp -= dmg;
+    this.float(foe.x, foe.y - 28, `${Math.round(dmg)}`, "#c4473a");
+    if (foe.hp <= 0) {
+      foe.hp = 0; foe.alive = false;
+      this.twitchXp(m, 10 + (foe.level ?? 1) * 3);
+      if (rand() < 0.2) r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
+    }
+  };
+
+  const origPlan = game.planGrind.bind(game);
+  game.planGrind = function () {
+    if (!this.turbz || !this.orders) return origPlan();
+    const save = this.save;
+    if (!save) return;
+    const allow = ["mining", "woodcutting", "fishing", "shroom"].filter((id) => this.orders[id]);
+    const skip = this.grindSkip ?? {};
+    const open = allow.filter((id) => (skip[id] ?? 0) <= this.clock);
+    for (const id of [...open, ...allow.filter((id) => !open.includes(id))]) if (this.aimSkill(id)) { this.grind = id; return; }
+    if (this.orders.spirits) {
+      let best: any = null, bd = 1400;
+      for (const o of this.mobs) {
+        if (!o.alive || o.twitch || !(o.ghost || o.enemyGhost)) continue;
+        const d = Math.hypot(o.x - save.x, o.y - save.y);
+        if (d < bd) { bd = d; best = o; }
+      }
+      if (best) { this.grind = "spirits"; this.walkTo(best.x, best.y); return; }
+    }
+    this.grind = "wander";
+    const ang = Math.random() * Math.PI * 2;
+    this.walkTo(save.x + Math.cos(ang) * 200, save.y + Math.sin(ang) * 200);
+  };
+
+  const origAuto = game.tickAutoplay.bind(game);
+  game.tickAutoplay = function (dt: number) {
+    if (this.turbz && this.save && this.orders?.crafting && !this.channel) {
+      const bag = this.save.bag;
+      if ((bag.timber ?? 0) >= 3 && (bag.ore ?? 0) >= 2) {
+        bag.timber -= 3; bag.ore -= 2;
+        const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 11), { level: this.save.level, slot: pick(SLOTS), typeBias: CLASS_BY_ID[this.save.classId]?.type });
+        this.save.gear.push(g);
+        this.say(`Autoplay crafts ${g.name}.`);
+        this.syncHud(true);
+        return;
+      }
+    }
+    return origAuto(dt);
+  };
+}

@@ -19,6 +19,7 @@ import { postShinySeen, writeShinies } from "@/game/cloud-client";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
+import { installTurbz } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
 import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
@@ -93,7 +94,7 @@ function veilName(user: { id: string; displayName?: string | null; primaryEmail?
   return `w${tail}`.slice(0, 16);
 }
 
-type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "shinies";
+type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "turbz" | "shinies";
 
 /** Re-renders the Shiny collection GIF and uploads it (for the Discord bot's /shiny). */
 function uploadShinies(): void {
@@ -132,6 +133,7 @@ function Hunt() {
     const game = new TurbzGame(canvas);
     installBlackMarket(game);
     installLms(game);
+    installTurbz(game);
     gameRef.current = game;
     game.attachCloud((json) => {
       try {
@@ -218,6 +220,7 @@ function Hunt() {
             onHunt={() => { g()?.swapRules("hunt"); setScreen("hunt"); }}
             onCircle={() => setScreen("circle")}
             onLms={() => setScreen("lms")}
+            onTurbz={() => setScreen("turbz")}
             onHard={() => { g()?.swapRules("hardcore"); setScreen("hard"); }}
             onBoards={() => setScreen("boards")}
             onOptions={() => setScreen("options")}
@@ -257,6 +260,23 @@ function Hunt() {
               setCreate(false);
             }}
           />
+        )}
+        {screen === "turbz" && !playing && (
+          <Screen kicker="TURBZ" title="A hard wild. Other witches." wide>
+            <div className="ui-stack" data-testid="turbz-screen">
+              <p className="text-dim">You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills — switch to the other. No bounties, no quests, no townsfolk. Ten to fifteen witches are already out there grinding ore, wood, fish and mushrooms, crafting, and catching spirits. They fight well, and sometimes a monster kills one. If two meet, they team up. A team never grows past three. They are not hunting you. They find you when their grind walks them into you. Autoplay can fight, mine, chop, fish, forage, craft and look for spirits — turn each of those on or off from the tracker while you play. This run is not saved and does not touch your Hardcore witch.</p>
+              <Field label="Name">
+                <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
+              </Field>
+              <ClassPicker pick={pick} setPick={setPick} game={g()} />
+              <div className="screen-actions">
+                <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true)}>
+                  Wake as {CLASSES.find((c) => c.id === pick.classId)?.name}
+                </button>
+              </div>
+            </div>
+          </Screen>
         )}
         {screen === "lms" && !playing && (
           <Screen kicker="LAST MAN STANDING" title="One hundred witches. One survivor." wide>

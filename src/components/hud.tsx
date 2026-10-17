@@ -9,7 +9,7 @@ type GameProp = { game: TurbzGame | null };
 
 /** Top-left: who you are, health, experience, effects and the latest line of the log. */
 export const HudVitals = memo(function HudVitals({ game: _game }: GameProp) {
-  const s = useSnapPick(["name", "className", "level", "kyo", "hp", "maxHp", "shield", "xp", "xpNeed", "region", "effects", "log", "rules"] as const);
+  const s = useSnapPick(["name", "className", "level", "kyo", "hp", "maxHp", "shield", "xp", "xpNeed", "region", "effects", "log", "rules", "pools", "turbz"] as const);
   const low = s.hp / Math.max(1, s.maxHp) < 0.3;
   return (
     <div className={`hud-vitals px-panel ${low ? "hud-vitals-low" : ""}`} data-testid="vitals-dock">
@@ -19,6 +19,12 @@ export const HudVitals = memo(function HudVitals({ game: _game }: GameProp) {
         <span className="hud-vitals-kyo" data-testid="vitals-kyo">{s.kyo.toLocaleString()} kyo</span>
       </div>
       <Meter kind="hp" label="HP" value={s.hp} max={s.maxHp} detail={`${s.hp}/${s.maxHp}${s.shield > 0 ? ` +${s.shield}` : ""}`} />
+      {s.pools && (
+        <>
+          <Meter kind="void" small label={s.pools.manaSlow > 0 ? "MANA · SLOW" : "MANA"} value={s.pools.mana} max={s.pools.maxMana} detail={`${s.pools.mana}/${s.pools.maxMana}`} />
+          <Meter kind="kyo" small label={s.pools.stamSlow > 0 ? "STAMINA · SLOW" : "STAMINA"} value={s.pools.stam} max={s.pools.maxStam} detail={`${s.pools.stam}/${s.pools.maxStam}`} />
+        </>
+      )}
       <Meter kind="xp" small label="XP" value={s.xp} max={s.xpNeed} />
       {s.effects.length > 0 && (
         <div className="effect-row" data-testid="vitals-effects">
@@ -29,7 +35,7 @@ export const HudVitals = memo(function HudVitals({ game: _game }: GameProp) {
           ))}
         </div>
       )}
-      <p className="hud-vitals-region text-dim">{s.region}{s.rules === "hardcore" ? " · Hardcore" : ""}</p>
+      <p className="hud-vitals-region text-dim">{s.region}{s.turbz ? " · TURBZ" : s.rules === "hardcore" ? " · Hardcore" : ""}</p>
       {s.log[0] && <p className="hud-log" data-testid="vitals-log">{s.log[0]}</p>}
     </div>
   );
@@ -133,7 +139,7 @@ const TRACK_KEY = "turbz-hud-tracker-open";
 
 /** Top-right: everything you are tracking. Folds to one line. */
 export const HudTracker = memo(function HudTracker({ game }: GameProp) {
-  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "mapQuests", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck"] as const);
+  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "mapQuests", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck", "pools", "orders", "turbz"] as const);
   const [open, setOpen] = useState(() => {
     try {
       const saved = localStorage.getItem(TRACK_KEY);
@@ -151,7 +157,7 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   }, [open]);
   const rows: React.ReactNode[] = [];
   if (s.clock.active) rows.push(<p key="clock" className={s.clock.phase === "night" ? "text-blood" : "text-kyo"} data-testid="hud-clock">{s.clock.phase === "night" ? "☾" : "☀"} {s.clock.label} · {s.clock.left}</p>);
-  if (s.survival) {
+  if (s.survival && !s.turbz) {
     rows.push(
       <div key="surv" className="hud-surv">
         <Meter small kind={s.survival.hunger < 15 ? "bad" : "good"} label="FOOD" value={s.survival.hunger} max={100} detail={Math.ceil(s.survival.hunger)} />
@@ -169,7 +175,15 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   if (mq) rows.push(<p key="mq" className="text-kyo" data-testid="vitals-map-quest">◆ {mq.name}: <span className="text-bone">{mq.ready ? `report to ${mq.turnIn}` : (mq.lines.find((l) => l.startsWith("[ ]")) ?? "").slice(4)}</span></p>);
   if (s.shrine) rows.push(<p key="shrine" className="text-kyo">{s.shrine}</p>);
   if (s.jarLeft > 0) rows.push(<p key="jar" className="text-kyo">Ghost jar · {s.jarLeft}s</p>);
-  if (s.autoplay) rows.push(<p key="auto" className="text-kyo">{s.rules === "hardcore" ? "Grinding" : "Autoplay"} · {s.grind || "looking"}</p>);
+  if (s.turbz) rows.push(<p key="witches" className="text-kyo">Witches grinding · {s.turbz.witches}</p>);
+  if (s.orders) rows.push(
+    <div key="orders" className="hud-surv" data-testid="turbz-orders">
+      {s.orders.map((o) => (
+        <button key={o.id} type="button" className={`px-btn ui-btn-sm ${o.on ? "px-btn-kyo" : ""}`} onClick={() => game?.setOrder?.(o.id)}>{o.label}</button>
+      ))}
+    </div>,
+  );
+  if (s.autoplay) rows.push(<p key="auto" className="text-kyo">{s.turbz ? "Autoplay" : s.rules === "hardcore" ? "Grinding" : "Autoplay"} · {s.grind || "looking"}</p>);
   if (s.unstuck) rows.push(<p key="unstuck" className="text-kyo">Unstuck in {s.unstuck}</p>);
   if (!rows.length) return null;
   return (

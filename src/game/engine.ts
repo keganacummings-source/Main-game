@@ -311,6 +311,12 @@ export type Snap = {
   party: string[];
   autoplay: boolean;
   grind: string;
+  /** TURBZ pools. Null in every other mode. */
+  pools: { mana: number; maxMana: number; stam: number; maxStam: number; manaSlow: number; stamSlow: number } | null;
+  /** TURBZ autoplay assignments. */
+  orders: { id: string; label: string; on: boolean }[] | null;
+  /** Other witches still grinding, in TURBZ. */
+  turbz: { witches: number } | null;
   accountScore: number;
   turn: string;
   survival: SurvivalState | null;
@@ -663,6 +669,9 @@ const emptySnap = (): Snap => ({
 	party: [],
 	autoplay: false,
 	grind: "",
+	pools: null,
+	orders: null,
+	turbz: null,
 	accountScore: 0,
 	turn: "",
 	survival: null, nearCamp: false, nearBed: false, nearWater: false, nearTree: false, sleeping: false,
@@ -1525,6 +1534,15 @@ export class TurbzGame {
 				this.customFile = main;
 				this.mapNpcs = main.npcs ?? [];
 			}
+		} else if (map === "custom-turbz" && this.turbzFile) {
+			const file = this.turbzFile;
+			this.customFile = file;
+			this.mapNpcs = [];
+			this.regionKey = "";
+			this.mapRegion = null;
+			this.world = mapToWorld(file);
+			this.world.spawns.push(...expandZones(file));
+			this.world.entry = { x: (file.spawn?.tx ?? 1) * 32 + 16, y: (file.spawn?.ty ?? 1) * 32 + 16 };
 		} else if (map.startsWith("custom-")) {
 			const file = findMapFile(map.slice(7));
 			if (!file) return this.loadMap("world", true);
@@ -1789,6 +1807,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save || !m) return;
 		if (m.rival) return this.scaleRival(m, fresh);
+		if (m.twitch && this.scaleTwitch) return this.scaleTwitch(m, fresh);
 		if (!this.powerRef) this.refreshPower(0);
 		const kind = this.enemyKind(m);
 		const hc = this.rules === "hardcore";
@@ -1877,7 +1896,8 @@ export class TurbzGame {
 		this.tickPotions(dt);
 		this.tickGhostTasks(dt);
 		this.tickTurns(dt);
-		if (this.rules === "hardcore" && !this.dead) this.tickSurvival(dt);
+		if (this.rules === "hardcore" && !this.dead && !this.turbz) this.tickSurvival(dt);
+		if (this.turbz) { this.tickPools?.(dt); this.tickTurbz?.(dt); }
 		this.tickParty(dt);
 		this.tickChests(dt);
 		this.tickWildGhosts(dt);
@@ -3232,6 +3252,7 @@ export class TurbzGame {
 	}
 	/** TurboHunt always swings. Hardcore swings on its own only while autogrind is on. */
 	autoAttacks() {
+		if (this.turbz) return !!this.autoplay && this.orders?.combat !== false;
 		return this.rules !== "hardcore" || !!this.autoplay;
 	}
 	isOffense(m) {
@@ -3265,8 +3286,16 @@ export class TurbzGame {
 		if (!save || !foe?.alive) return false;
 		const dist = Math.hypot(foe.x - save.x, foe.y - save.y);
 		const magicBetter = bodyRead(foe.type).kind === "magic";
+		const tiredMana = this.pools?.manaSlow > 0;
+		const tiredStam = this.pools?.stamSlow > 0;
 		const pick = this.arsenal(save).filter((m) => (this.cds[m.id] ?? 0) <= 0 && this.isOffense(m) && this.moveReaches(m, dist))
-			.sort((a, b) => this.moveScore(b, foe, magicBetter, dist) - this.moveScore(a, foe, magicBetter, dist))[0];
+			.sort((a, b) => {
+				let sb = this.moveScore(b, foe, magicBetter, dist);
+				let sa = this.moveScore(a, foe, magicBetter, dist);
+				if (tiredStam) { if (attackForm(b) === "melee") sb -= 80; if (attackForm(a) === "melee") sa -= 80; }
+				if (tiredMana) { if (attackForm(b) === "spell") sb -= 80; if (attackForm(a) === "spell") sa -= 80; }
+				return sb - sa;
+			})[0];
 		if (!pick) return false;
 		return this.castMove(pick, foe);
 	}
@@ -3398,6 +3427,7 @@ export class TurbzGame {
 		}
 		const form = attackForm(move);
 		const cd = this.moveCooldown(move);
+		if (this.turbz) this.payPool?.(move);
 		this.cds[move.id] = cd;
 		this.cdMax = this.cdMax ?? {};
 		this.cdMax[move.id] = cd;
@@ -3570,6 +3600,7 @@ export class TurbzGame {
 	}
 	/** Pay the verse's cooldown and grind, once a movement attack has actually started. */
 	spendMove(move, floor = 0) {
+		if (this.turbz) this.payPool?.(move);
 		const cd = Math.max(this.moveCooldown(move), floor);
 		this.cds[move.id] = cd;
 		this.cdMax = this.cdMax ?? {};
@@ -3876,6 +3907,10 @@ export class TurbzGame {
 		if (tactic === "heal") cd = Math.max(cd, 3.2);
 		if (tactic === "dash") cd = Math.max(cd, 1.6);
 		if (tactic === "surge") cd = Math.max(cd, 8);
+		if (this.turbz && this.pools) {
+			if (form === "spell" && this.pools.manaSlow > 0) cd *= 2;
+			if (form === "melee" && this.pools.stamSlow > 0) cd *= 2;
+		}
 		return Math.max(.2, cd * (1 - bendSigned(this.mod("haste") / 100, -1.5, -0.4, 0.45, 0.82)));
 	}
 	resolveHit(move, mob, fromPet, mult = 1, opts = {}) {
@@ -4134,7 +4169,7 @@ export class TurbzGame {
 	ghostDrop(mob) {
 		if (!this.save || !mob) return;
 		if (mob.boss || mob.dungeonBoss) {
-			if (this.lms) return;
+			if (this.lms || this.turbz) return;
 			const shiny = Math.random() < this.shinyChance(BOSS_SHINY_CHANCE);
 			if (shiny || Math.random() < BOSS_GHOST_CHANCE) this.bossGhost(mob, shiny);
 			return;
@@ -5204,6 +5239,7 @@ export class TurbzGame {
 				continue;
 			}
 			if (m.rival) { this.tickRival(m, dt); continue; }
+			if (m.twitch) { this.tickTwitch?.(m, dt); continue; }
 			if (m.status.some((s) => s.id === "sleep")) continue;
 			const dx = save.x - m.x;
 			const dy = save.y - m.y;
@@ -7489,6 +7525,8 @@ export class TurbzGame {
 			this.say(`Wore ${g.name}. Score ${gearScore(g)}.`);
 		}
 	}
+	/** TURBZ autoplay assignments. The mode replaces this. */
+	setOrder(_id: string) {}
 	toggleAutoplay() {
 		if (!this.save || this.dead) return;
 		this.autoplay = !this.autoplay;
@@ -8212,6 +8250,7 @@ export class TurbzGame {
 		for (const m of this.contract ?? []) if (m.alive && m.map === map) this.mobs.push(m);
 	}
 	tickContract(dt) {
+		if (this.turbz) return;
 		if (!this.save) return;
 		for (const lead of this.liveBounties()) {
 			if (!lead.enraged && lead.huntIn > 0) {
@@ -8827,7 +8866,7 @@ export class TurbzGame {
 			if (fresh) { save.bag.trail_ration = (save.bag.trail_ration ?? 0) + 2; }
 		}
 		if (save.map.startsWith("rift-") && !save.dungeons.portals.some(p => p.id === save.map)) { save.map = "world"; Object.assign(save, hearthXY()); }
-		if (save.map.startsWith("custom-") && !findMapFile(save.map.slice(7))) { save.map = "world"; Object.assign(save, hearthXY()); }
+		if (save.map.startsWith("custom-") && save.map !== "custom-turbz" && !findMapFile(save.map.slice(7))) { save.map = "world"; Object.assign(save, hearthXY()); }
 		// The Green Cave is Hardcore only.
 		if (save.map === `custom-${GREEN_CAVE_ID}` && this.rules !== "hardcore") { save.map = "world"; Object.assign(save, hearthXY()); }
 		for (const g of save.gear) migrateEquipment(g);
@@ -8862,7 +8901,7 @@ export class TurbzGame {
 			need = accountNeed(save.accountLevel);
 		}
 		save.perkPoints = perkPointsAvailable(save.accountLevel, save.perks);
-		if (ups && !this.lms) { this.writeProgress(save); this.syncHud(true); }
+		if (ups && !this.lms && !this.turbz) { this.writeProgress(save); this.syncHud(true); }
 	}
 	pickTavern() {
 		const last = this.save?.lastTavern;
@@ -9148,7 +9187,7 @@ export class TurbzGame {
 	persist() {
 		if (!this.save) return;
 		// Last Man Standing is a match, not a save: nothing is written, so your Hardcore witch is untouched.
-		if (this.lms) return;
+		if (this.lms || this.turbz) return;
 		for (const g of this.save.gear) this.noteFound(g);
 		this.save.savedAt = Date.now();
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
@@ -9166,7 +9205,7 @@ export class TurbzGame {
 	}
 	/** The page is closing: save now and send to the cloud without waiting for the usual pause. */
 	flushCloud() {
-		if (!this.save || this.lms) { flushNow(); return; }
+		if (!this.save || this.lms || this.turbz) { flushNow(); return; }
 		this.persist();
 		window.clearTimeout(this.cloudTimer);
 		const json = JSON.stringify({ slot: this.rules === "hardcore" ? "hardcore" : "hunt", save: this.save });
@@ -9690,6 +9729,21 @@ export class TurbzGame {
 			party: !slow ? snap.party : (save.party ?? []).map((id) => NPCS.find((n) => n.id === id)?.name ?? id),
 			autoplay: this.autoplay,
 			grind: this.autoplay ? this.grind : "",
+			pools: this.turbz && this.pools ? {
+				mana: Math.ceil(this.pools.mana), maxMana: this.pools.maxMana,
+				stam: Math.ceil(this.pools.stam), maxStam: this.pools.maxStam,
+				manaSlow: Math.ceil(this.pools.manaSlow), stamSlow: Math.ceil(this.pools.stamSlow),
+			} : null,
+			orders: this.turbz && this.orders ? [
+				{ id: "combat", label: "Fight", on: !!this.orders.combat },
+				{ id: "mining", label: "Mine ore", on: !!this.orders.mining },
+				{ id: "woodcutting", label: "Chop wood", on: !!this.orders.woodcutting },
+				{ id: "fishing", label: "Fish", on: !!this.orders.fishing },
+				{ id: "shroom", label: "Forage", on: !!this.orders.shroom },
+				{ id: "crafting", label: "Craft", on: !!this.orders.crafting },
+				{ id: "spirits", label: "Seek spirits", on: !!this.orders.spirits },
+			] : null,
+			turbz: this.turbz ? { witches: this.mobs.filter((m) => m.twitch && m.alive).length } : null,
 			accountLevel: !slow ? snap.accountLevel : save.accountLevel,
 			accountXp: !slow ? snap.accountXp : save.accountXp,
 			accountNeed: !slow ? snap.accountNeed : accountNeed(save.accountLevel),
