@@ -434,10 +434,11 @@ export function installTurbz(game: any): void {
 
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;
+    const save = this.save;
     const graves: number[] = this.witchGraves ?? [];
     for (let i = 0; i < graves.length; i++) graves[i] = (graves[i] ?? 0) - dt;
     this.witchGraves = graves;
-    const onMap = this.save.map === TURBZ_MAP;
+    const onMap = save.map === TURBZ_MAP;
     const pool = onMap ? this.mobs : (this.turbzRoster ?? []);
     let aliveN = pool.filter((m: any) => m.twitch && m.alive).length;
     while (graves.length && (graves[0] ?? 1) <= 0) {
@@ -445,6 +446,51 @@ export function installTurbz(game: any): void {
       graves.shift();
       if (this.spawnReturnedWitch()) aliveN += 1;
     }
+    // Secret witch hunt: check if the player crossed a new multiple-of-10 level mark.
+    const huntMark = Math.floor(save.level / 10);
+    if (huntMark >= 1 && huntMark > (save.turbzHuntMark ?? 0)) {
+      save.turbzHuntMark = huntMark;
+      this.spawnTurbzHunterWitch();
+    }
+  };
+
+  /**
+   * Silently spawns a rival witch near the player whose sole purpose is hunting them down.
+   * No message is shown — the player will not know it is coming until it arrives.
+   */
+  game.spawnTurbzHunterWitch = function () {
+    const save = this.save;
+    const world = this.turbzWorld || this.world;
+    if (!save || !world) return;
+    // Pick a spawn ring 280–480 px out, out of immediate sight but not across the map.
+    let sx = save.x + 380, sy = save.y;
+    for (let i = 0; i < 48; i++) {
+      const ang = rand() * Math.PI * 2;
+      const dist = 280 + rand() * 200;
+      const wx = save.x + Math.cos(ang) * dist;
+      const wy = save.y + Math.sin(ang) * dist;
+      if (this.witchLand(wx, wy)) { sx = wx; sy = wy; break; }
+    }
+    // Level: within 2 of the player — a real match, not a stomp.
+    const lv = Math.max(1, save.level + Math.floor(rand() * 3) - 1);
+    let nm = pick(WITCH_NAMES);
+    const used = new Set<string>((this.mobs ?? []).map((m: any) => m.name));
+    for (let k = 0; k < 10 && used.has(nm); k++) nm = pick(WITCH_NAMES);
+    const m = this.makeTwitch(
+      (this.mobs?.length ?? 0) + (this.turbzRoster?.length ?? 0) + 9000,
+      sx, sy, nm, lv,
+    );
+    // Override AI: this witch is always hunting the player.
+    m.rv.foe = "player";
+    m.rv.foeT = 9999;
+    m.turbzHunter = true;
+    m.aggro = true;
+    if (save.map === TURBZ_MAP) this.mobs.push(m);
+    else {
+      this.turbzRoster = this.turbzRoster ?? [];
+      this.turbzRoster.push(m);
+    }
+    // Intentionally: no this.say() call. The player gets no warning.
   };
 
   /** A fallen witch comes back about five minutes later, one level under you. */
@@ -478,7 +524,9 @@ export function installTurbz(game: any): void {
     if (!r || !save || !m.alive) return;
     r.age += dt;
     r.dodgeCd = Math.max(0, r.dodgeCd - dt);
-    r.foeT = Math.max(0, r.foeT - dt);
+    // Hunter witches never forget the player — keep the foe lock permanently refreshed.
+    if (m.turbzHunter) { r.foe = "player"; r.foeT = 9999; }
+    else r.foeT = Math.max(0, r.foeT - dt);
     for (const k of Object.keys(r.castCd)) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
     const near = Math.hypot(m.x - save.x, m.y - save.y) < NEAR;
     if (!near) return this.simTwitch(m, dt);

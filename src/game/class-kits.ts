@@ -262,6 +262,30 @@ export const KIT_MOVES: KitMove[] = [
   x("cryinggirl", "sx_monsoon", "Monsoon", "water", 22, 98, 8, 1, "soak", "channel", "The sky cries with her: five falling waves.", { form: "spell", multi: { hits: 5, gap: 0.2, mult: 0.55 }, splash: { radius: 70, mult: 0.5 }, fx: "barrage" }),
   x("cryinggirl", "sx_weepingblade", "Weeping Blade", "water", 26, 98, 16, 2, "soak", "strike", "A blade of tears: three quick cuts, then she weeps again.", { form: "melee", reach: 52, multi: { hits: 3, gap: 0.12, mult: 0.7 } }),
   x("cryinggirl", "sx_heartbreak", "Heartbreak", "water", 66, 86, 18, 0, "gloom", "heavy", "Everything she held in, all at once.", { form: "spell", nova: 80, echo: 0.5, fx: "bloom" }),
+  // Arcanist — pure spell battery, no melee at all
+  x("arcanist", "ck_arcprism", "Arc Prism", "electric", 52, 96, 14, 1, "spark", "strike", "Arcanist signature. A prism that splits and forks across three paths.", { form: "spell", chain: { jumps: 2, range: 140, mult: 0.8 }, fx: "fork" }),
+  x("arcanist", "ck_manaveil", "Mana Veil", "electric", 0, 100, 0, 3, "shell", "ward", "Arcanist starter. Wraps a shell of condensed mana around the body."),
+  x("arcanist", "ck_leybeam", "Ley Beam", "electric", 44, 92, 10, 1, "spark", "channel", "Arcanist starter. A sustained electric beam. Each moment it holds, the damage climbs.", { form: "spell", multi: { hits: 4, gap: 0.18, mult: 0.75 } }),
+  x("arcanist", "ck_spellpulse", "Spell Pulse", "electric", 34, 100, 8, 2, "spark", "strike", "Arcanist starter. A radial burst of arcane force — pushes nearby foes back.", { form: "spell", nova: 88, fx: "bloom" }),
+  x("arcanist", "ck_arcblink", "Arc Blink", "electric", 12, 100, 6, 3, "spark", "blink", "Arcanist starter. Step through an arc to reposition behind the last cast target.", { form: "spell", react: "move", fail: 10 }),
+  x("arcanist", "sx_overcharge", "Overcharge", "electric", 58, 88, 18, 0, "spark", "heavy", "Arcanist bonus. Build up charge and release it — the delayed hit lands twice as hard.", { form: "spell", echo: 0.9, fx: "meteor" }),
+  x("arcanist", "sx_manaflood", "Mana Flood", "electric", 24, 98, 6, 1, "spark", "channel", "Arcanist bonus. Spend mana freely: a rapid torrent of bolts for 2 seconds.", { form: "spell", multi: { hits: 6, gap: 0.12, mult: 0.55 }, fx: "barrage" }),
+  // Ruinmage — catastrophic single-spell nuker
+  x("ruinmage", "ck_ruinstrike", "Ruin Strike", "void", 72, 82, 16, 0, "expose", "heavy", "Ruinmage signature. A single massive void detonation. Reload is slow.", { form: "spell", splash: { radius: 80, mult: 0.7 }, fx: "meteor" }),
+  x("ruinmage", "ck_darkward", "Dark Ward", "void", 0, 100, 0, 3, "shell", "ward", "Ruinmage starter. A ward woven from the dark between stars."),
+  x("ruinmage", "ck_voidcrack", "Void Crack", "void", 42, 90, 12, 1, "expose", "strike", "Ruinmage starter. A crack in the veil that exposes every foe it touches.", { form: "spell", chain: { jumps: 1, range: 130, mult: 0.75 } }),
+  x("ruinmage", "ck_abyssdrain", "Abyss Drain", "void", 30, 100, 0, 2, "mend", "heal", "Ruinmage starter. Drain the void into the body. Heals a chunk of health."),
+  x("ruinmage", "ck_riftslip", "Rift Slip", "void", 14, 100, 8, 3, "expose", "blink", "Ruinmage starter. Slip through a micro-rift to safety.", { form: "spell", react: "move", fail: 12 }),
+  x("ruinmage", "sx_annihilate", "Annihilate", "void", 88, 78, 22, 0, "expose", "heavy", "Ruinmage bonus. The biggest spell in any book. Needs a long wind-up.", { form: "spell", splash: { radius: 110, mult: 0.6 }, fx: "meteor" }),
+  x("ruinmage", "sx_cursedrain", "Curse Drain", "void", 20, 96, 8, 1, "gloom", "channel", "Ruinmage bonus. A stream of cursed mana that gloom-stacks everything it touches.", { form: "spell", multi: { hits: 5, gap: 0.2, mult: 0.6 } }),
+  // Veilsinger — spell-chain cascader
+  x("veilsinger", "ck_veilsong", "Veil Song", "spirit", 46, 94, 12, 1, "expose", "strike", "Veilsinger signature. A resonant note that bounces between nearby foes.", { form: "spell", chain: { jumps: 3, range: 130, mult: 0.78 }, fx: "orbit" }),
+  x("veilsinger", "ck_spiritmend", "Spirit Mend", "spirit", 32, 100, 0, 2, "mend", "heal", "Veilsinger starter. A soft spirit hymn that mends in time with the song."),
+  x("veilsinger", "ck_veilward", "Veil Ward", "spirit", 0, 100, 0, 3, "shell", "ward", "Veilsinger starter. A ward woven from the edge of the veil."),
+  x("veilsinger", "ck_harmonystrike", "Harmony Strike", "spirit", 36, 96, 10, 1, "expose", "strike", "Veilsinger starter. Three ascending notes, each one louder than the last.", { form: "spell", multi: { hits: 3, gap: 0.14, mult: 0.7 } }),
+  x("veilsinger", "ck_ghoststep", "Ghost Step", "spirit", 10, 100, 6, 3, "expose", "blink", "Veilsinger starter. Step along a veil-thread to a new spot.", { form: "spell", react: "move", fail: 10 }),
+  x("veilsinger", "sx_crescendo", "Crescendo", "spirit", 64, 86, 18, 0, "expose", "heavy", "Veilsinger bonus. The final note — a wave that slams every foe on screen.", { form: "spell", nova: 160, echo: 0.45, fx: "wave" }),
+  x("veilsinger", "sx_echopulse", "Echo Pulse", "spirit", 26, 98, 8, 1, "expose", "strike", "Veilsinger bonus. An echo of the last spell you cast, rebounding back.", { form: "spell", echo: 0.7, fx: "bloom" }),
 ];
 
 const SIGNATURE_BATCH = KIT_MOVES.filter((m) => m.cls);
@@ -297,6 +321,9 @@ export const STARTER_KITS: Record<string, string[]> = {
   bladedancer: ["whirlingveil", "ck_stepcut", "ck_tempo", "ck_silkroll", "ck_spinlunge"],
   sovereign: ["royaldecree", "ck_edict", "ck_levy", "ck_crownward", "ck_courtstep"],
   cryinggirl: ["ck_tearlance", "ck_sobwave", "ck_sorrowmend", "ck_puddlestep"],
+  arcanist: ["ck_arcprism", "ck_manaveil", "ck_leybeam", "ck_spellpulse", "ck_arcblink"],
+  ruinmage: ["ck_ruinstrike", "ck_darkward", "ck_voidcrack", "ck_abyssdrain", "ck_riftslip"],
+  veilsinger: ["ck_veilsong", "ck_spiritmend", "ck_veilward", "ck_harmonystrike", "ck_ghoststep"],
 };
 for (const m of SIGNATURE_BATCH) {
   const kit = STARTER_KITS[m.cls!];
