@@ -6,6 +6,7 @@ import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
+import { ALL_ORDERS, thinkLikePlayer, type PlayOrders } from "./player-brain";
 import { dungeonSeed, generateDungeon } from "./map-gen";
 import {
   CLASS_BY_ID,
@@ -2358,6 +2359,7 @@ export class TurbzGame {
 		bed = bed ?? this.bedNear();
 		if (!bed && !this.nearCamp()) return this.say("Build a bed or a campfire to sleep.");
 		if (this.inFight() || this.combat > 0) return this.say("Clear nearby enemies before sleeping.");
+		if (this.autoplay) this.resumeAuto = true;
 		this.dest = null; this.path = []; this.pathI = 0; this.pendingBed = null;
 		this.sleeping = true; this.autoplay = false; this.channel = null; this.closePanel();
 		this.sleepBed = bed ?? null;
@@ -2372,6 +2374,12 @@ export class TurbzGame {
 	wakeUp() {
 		this.sleeping = false;
 		this.sleepBed = null;
+		if (this.resumeAuto) {
+			this.resumeAuto = false;
+			this.autoplay = true;
+			this.grind = "looking";
+			this.say("Rested. Autoplay continues.");
+		}
 		this.syncHud(true);
 	}
 	tickSurvival(dt) {
@@ -2671,21 +2679,194 @@ export class TurbzGame {
 	planGrind() {
 		const save = this.save;
 		if (!save) return;
+		const act = this.playThink();
+		if (act && act.kind !== "wander" && this.playAct(act)) return;
 		const order = Object.keys(save.skills).sort((a, b) => {
 			const A = save.skills[a];
 			const B = save.skills[b];
 			return A.level - B.level || A.xp - B.xp;
 		});
 		const skip = this.grindSkip ?? {};
-		const open = order.filter((id) => (skip[id] ?? 0) <= this.clock);
+		const orders = this.orders;
+		const blocked = new Set();
+		if (orders) {
+			if (!orders.mining) blocked.add("mining");
+			if (!orders.woodcutting) blocked.add("woodcutting");
+			if (!orders.fishing) blocked.add("fishing");
+			if (!orders.shroom) blocked.add("shroom");
+			if (!orders.crafting) blocked.add("alchemy");
+			if (!orders.spirits) blocked.add("catching");
+			if (!orders.combat) { blocked.add("hunting"); blocked.add("physical"); blocked.add("bountyhunting"); }
+			if (!orders.dungeon) blocked.add("adventuring");
+		}
+		const open = order.filter((id) => (skip[id] ?? 0) <= this.clock && !blocked.has(id));
 		// Skipped skills still run as a last resort, so autogrind never idles when they are all that is left.
-		for (const id of [...open, ...order.filter((id) => !open.includes(id))]) if (this.aimSkill(id)) {
+		for (const id of [...open, ...order.filter((id) => !open.includes(id) && !blocked.has(id))]) if (this.aimSkill(id)) {
 			this.grind = id;
 			return;
 		}
 		this.grind = "wander";
 		const ang = Math.random() * Math.PI * 2;
 		this.walkTo(save.x + Math.cos(ang) * 180, save.y + Math.sin(ang) * 180);
+	}
+	/** Orders default to everything, so autoplay can be told to stop a task in any mode. */
+	ensureOrders() {
+		if (this.orders && typeof this.orders === "object" && !Array.isArray(this.orders)) return;
+		this.orders = { ...ALL_ORDERS };
+	}
+	playOrders(): PlayOrders {
+		const o = this.orders;
+		if (!o || Array.isArray(o)) return { ...ALL_ORDERS };
+		return {
+			combat: o.combat !== false,
+			mining: o.mining !== false,
+			woodcutting: o.woodcutting !== false,
+			fishing: o.fishing !== false,
+			shroom: o.shroom !== false,
+			crafting: o.crafting !== false,
+			spirits: o.spirits !== false,
+			dungeon: o.dungeon !== false,
+		};
+	}
+	/** The next thing a player would do from where she stands. */
+	playThink() {
+		const save = this.save;
+		if (!save || !this.world) return null;
+		const orders = this.playOrders();
+		const foes = [];
+		for (const m of this.mobs) {
+			if (!m.alive || m.party) continue;
+			const d = Math.hypot(m.x - save.x, m.y - save.y);
+			if (d > 720) continue;
+			foes.push({
+				id: m.id, x: m.x, y: m.y, d, level: m.level ?? 1, type: m.type || "normal",
+				boss: !!m.boss, dungeonBoss: !!m.dungeonBoss, hunter: !!m.hunter,
+				witch: !!m.witch && !m.party, animal: !!m.animal, ghost: !!(m.ghost || m.enemyGhost),
+			});
+		}
+		foes.sort((a, b) => a.d - b.d);
+		if (foes.length > 10) foes.length = 10;
+		const nodes = [];
+		for (const n of this.world.spawns ?? []) {
+			if (n.kind !== "node" || n.node === "fish") continue;
+			const d = Math.hypot(n.x - save.x, n.y - save.y);
+			if (d > 980) continue;
+			nodes.push({ id: n.id, node: n.node, x: n.x, y: n.y, d });
+		}
+		nodes.sort((a, b) => a.d - b.d);
+		if (nodes.length > 8) nodes.length = 8;
+		let rift = null;
+		let rd = 1400;
+		for (const p of save.dungeons?.portals ?? []) {
+			if (p.cleared) continue;
+			const d = Math.hypot(p.x - save.x, p.y - save.y);
+			if (d < rd) { rd = d; rift = { id: p.id, x: p.x, y: p.y, level: p.level ?? 1, d }; }
+		}
+		const shore = nearestShore(this.world, save.x, save.y);
+		const hc = this.rules === "hardcore" && !this.turbz;
+		const bed = hc ? this.bedNear(280) : null;
+		const exit = this.isDungeonMap(save.map) ? this.dungeonExitAt() : null;
+		const hungry = hc && (save.survival?.hunger ?? 100) < 38 && !!bestFood(save.bag, save.survival?.hunger ?? 100);
+		const thirsty = hc && (save.survival?.thirst ?? 100) < 38 && (save.bag.drinking_water ?? 0) > 0;
+		const tired = hc && (save.survival?.rest ?? 100) < 18 && !!(bed || this.nearCamp());
+		return thinkLikePlayer({
+			x: save.x, y: save.y, level: save.level, hpPct: save.hp / Math.max(1, this.maxHp()),
+			type: CLASS_BY_ID[save.classId]?.type ?? "normal",
+			bag: save.bag, orders, inDungeon: this.isDungeonMap(save.map),
+			needs: { eat: hungry, drink: thirsty, sleep: tired },
+			foes, nodes, shore, rift, exit, bed: bed ? { x: bed.tx * 32 + 16, y: bed.ty * 32 + 16 } : (this.nearCamp() ? { x: save.x, y: save.y } : null),
+			wander: ((Math.floor(this.clock / 5) * 17) % 628) / 100,
+		});
+	}
+	/** Carry out one player-like decision. False lets the old skill rotation take the turn. */
+	playAct(act) {
+		const save = this.save;
+		if (!save || !act) return false;
+		if (act.kind === "flee") { this.grind = "fleeing"; return this.walkTo(act.x, act.y); }
+		if (act.kind === "potion") {
+			const id = (save.bag.big_potion ?? 0) > 0 && save.hp < this.maxHp() * 0.3 ? "big_potion" : (save.bag.potion ?? 0) > 0 ? "potion" : "big_potion";
+			if ((save.bag[id] ?? 0) > 0 && !this.itemProblem(ITEM_BY_ID[id])) { this.useBag(id); this.potionCd = 6; return true; }
+			return false;
+		}
+		if (act.kind === "eat") { this.eatFood(); return true; }
+		if (act.kind === "drink") { if ((save.bag.drinking_water ?? 0) > 0) this.useBag("drinking_water"); return true; }
+		if (act.kind === "sleep") {
+			if (this.inFight() || this.combat > 0) return false;
+			if (this.bedNear() || this.nearCamp()) { this.goToSleep(); return true; }
+			return this.walkTo(act.x, act.y);
+		}
+		if (act.kind === "leave") {
+			if (Math.hypot(save.x - act.x, save.y - act.y) < 40) {
+				const back = this.turbz ? "custom-turbz" : "world";
+				this.travel(back, save.dungeons?.portals.find((p) => p.id === save.map) ?? { x: act.x, y: act.y });
+				return true;
+			}
+			this.grind = "leaving";
+			return this.walkTo(act.x, act.y);
+		}
+		if (act.kind === "fight") {
+			this.grind = "combat";
+			if (Math.hypot(act.x - save.x, act.y - save.y) < 64) { this.path = []; this.dest = null; return true; }
+			return this.walkTo(act.x, act.y);
+		}
+		if (act.kind === "craft") return this.playCraft();
+		if (act.kind === "brew") return this.playBrew();
+		if (act.kind === "gather") {
+			const id = act.node === "ore" ? "mining" : act.node === "tree" ? "woodcutting" : "shroom";
+			if (this.aimSkill(id)) { this.grind = id; return true; }
+			return false;
+		}
+		if (act.kind === "fish") {
+			if (this.aimSkill("fishing")) { this.grind = "fishing"; return true; }
+			return false;
+		}
+		if (act.kind === "rift") {
+			if (Math.hypot(act.x - save.x, act.y - save.y) <= 120) { this.enterRift(act.id); return true; }
+			this.grind = "dungeon";
+			return this.walkTo(act.x, act.y);
+		}
+		return false;
+	}
+	playCraft() {
+		const save = this.save;
+		if (!save || (save.bag.timber ?? 0) < 3 || (save.bag.ore ?? 0) < 2) return false;
+		save.bag.timber -= 3;
+		save.bag.ore -= 2;
+		const g = rollGear(mulberry32(Math.random() * 1e9 | 0), {
+			level: save.level,
+			typeBias: CLASS_BY_ID[save.classId]?.type,
+			raceBias: save.race,
+		});
+		this.receiveGear(g);
+		this.autoEquip();
+		this.gainSkill("alchemy", 8);
+		this.say(`Autoplay crafts ${g.name}.`);
+		this.syncHud(true);
+		return true;
+	}
+	playBrew() {
+		const save = this.save;
+		if (!save) return false;
+		if ((save.bag.fish ?? 0) >= 1 && (save.bag.fish_meal ?? 0) < 2 && this.rules === "hardcore") { this.brew("meal"); return true; }
+		for (const recipe of ALCHEMY_RECIPES) {
+			if (recipe.output !== "potion" && recipe.output !== "big_potion") continue;
+			if (Object.entries(recipe.costs).every(([k, n]) => (save.bag[k] ?? 0) >= n)) { this.brew(recipe.id); return true; }
+		}
+		return false;
+	}
+	/** Wear the best piece in each slot. Autoplay does this in every mode, Hardcore included. */
+	autoEquip() {
+		const save = this.save;
+		if (!save) return;
+		let wore = "";
+		for (const g of save.gear) {
+			const worn = save.equipped?.[g.slot] ? save.gear.find((x) => x.uid === save.equipped[g.slot]) : null;
+			if (!worn || gearScore(g) > gearScore(worn)) {
+				save.equipped[g.slot] = g.uid;
+				wore = g.name;
+			}
+		}
+		if (wore) this.say(`Autoplay wears ${wore}.`);
 	}
 	aimSkill(id) {
 		const save = this.save;
@@ -2889,6 +3070,7 @@ export class TurbzGame {
 		}
 		if (this.autoCareT > 0) return false;
 		this.autoCareT = 6;
+		this.autoEquip();
 		// Spend skill points on the equipped verses, lowest rank first (strongest attacks break ties).
 		let guard = 20;
 		while ((save.skillPoints ?? 0) > 0 && guard-- > 0) {
@@ -5576,17 +5758,26 @@ export class TurbzGame {
 			return;
 		}
 		for (const g of save.gear) this.noteFound(g);
-		// Her ghosts outlive her, in every mode: bank them on the account for whichever witch comes next.
-		this.bankGhosts(save);
+		// Hunt keeps her ghosts for the next witch. Hardcore does not.
+		if (this.rules !== "hardcore") this.bankGhosts(save);
 		const kyoAtDeath = save.kyo;
 		const scored = this.bankAccount(save);
 		this.emitGrave(save, scored);
 		this.dead = true;
 		this.dest = null;
 		save.lastDeath = this.deathReport(save, scored, kyoAtDeath);
+		if (this.rules === "hardcore") {
+			save.spirits = [];
+			save.ghostStore = [];
+			save.companion = null;
+			save.box = [];
+			takeVaultGhosts("hardcore");
+		}
 		publish({ panel: "died", died: save.lastDeath });
 		this.persist();
-		this.say("This witch is gone. Her levels and kit became Account Score. Skills, account level, and permanent bonuses stay.");
+		this.say(this.rules === "hardcore"
+			? "This witch is gone. Her ghosts are gone with her. Skills, account level, and permanent bonuses stay."
+			: "This witch is gone. Her levels and kit became Account Score. Skills, account level, and permanent bonuses stay.");
 		this.playYouDied();
 		this.syncHud(true);
 	}
@@ -5659,9 +5850,9 @@ export class TurbzGame {
 		save.classId = classId;
 		save.traitId = traitId && TRAIT_BY_ID[traitId] ? traitId : null;
 		{
-			// Her ghosts stay with the line: anything banked on the account at death comes back too.
+			// Hunt: ghosts banked at death come back. Hardcore already emptied the vault.
 			const have = new Set([...(save.spirits ?? []), ...(save.ghostStore ?? [])].map((g) => g.uid));
-			const back = takeVaultGhosts(this.rules).filter((g) => g && !have.has(g.uid) && g.species);
+			const back = this.rules === "hardcore" ? [] : takeVaultGhosts(this.rules).filter((g) => g && !have.has(g.uid) && g.species);
 			save.ghostStore = [...(save.ghostStore ?? []), ...back.map((g) => ({ ...g, active: false }))].slice(0, GHOST_STORE_MAX);
 		}
 		{
@@ -7536,17 +7727,28 @@ export class TurbzGame {
 			this.say(`Wore ${g.name}. Score ${gearScore(g)}.`);
 		}
 	}
-	/** TURBZ autoplay assignments. The mode replaces this. */
-	setOrder(_id: string) {}
+	/** Task toggles for autoplay. Every mode can turn a job off. */
+	setOrder(id) {
+		this.ensureOrders();
+		if (!this.orders || !(id in this.orders)) return;
+		this.orders[id] = !this.orders[id];
+		this.autoPlan = 0;
+		const labels = { combat: "Fight", mining: "Mine ore", woodcutting: "Chop wood", fishing: "Fish", shroom: "Forage", crafting: "Craft", spirits: "Seek spirits", dungeon: "Dungeons" };
+		this.say(`${labels[id] ?? id} ${this.orders[id] ? "on" : "off"} for autoplay.`);
+		this.syncHud(true);
+	}
 	toggleAutoplay() {
 		if (!this.save || this.dead) return;
+		this.ensureOrders();
 		this.autoplay = !this.autoplay;
 		this.path = [];
 		this.pathI = 0;
 		this.autoPlan = 0;
 		this.grind = this.autoplay ? "looking" : "";
 		this.dest = null;
-		this.say(this.autoplay ? (this.rules === "hardcore" ? "Autogrind. She gathers and attacks whatever is nearest in range." : "Autoplay. She grinds and attacks whatever is nearest in range.") : "Autoplay off.");
+		this.say(this.autoplay
+			? "Autoplay. She fights fair prey, gathers, crafts, catches spirits, eats and sleeps when she must, and takes a dungeon she can survive."
+			: "Autoplay off.");
 		this.syncHud(true);
 	}
 	sell(uid) {
@@ -9745,7 +9947,7 @@ export class TurbzGame {
 				stam: Math.ceil(this.pools.stam), maxStam: this.pools.maxStam,
 				manaSlow: Math.ceil(this.pools.manaSlow), stamSlow: Math.ceil(this.pools.stamSlow),
 			} : null,
-			orders: this.turbz && this.orders ? [
+			orders: (this.turbz || this.autoplay) && this.orders && !Array.isArray(this.orders) ? [
 				{ id: "combat", label: "Fight", on: !!this.orders.combat },
 				{ id: "mining", label: "Mine ore", on: !!this.orders.mining },
 				{ id: "woodcutting", label: "Chop wood", on: !!this.orders.woodcutting },
@@ -9753,6 +9955,7 @@ export class TurbzGame {
 				{ id: "shroom", label: "Forage", on: !!this.orders.shroom },
 				{ id: "crafting", label: "Craft", on: !!this.orders.crafting },
 				{ id: "spirits", label: "Seek spirits", on: !!this.orders.spirits },
+				{ id: "dungeon", label: "Dungeons", on: !!this.orders.dungeon },
 			] : null,
 			turbz: this.turbz ? {
 				witches: (this.save?.map === "custom-turbz" ? this.mobs : (this.turbzRoster ?? this.mobs)).filter((m) => m.twitch && m.alive).length,

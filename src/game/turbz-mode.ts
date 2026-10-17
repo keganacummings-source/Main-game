@@ -30,6 +30,8 @@ import { generateWorld } from "./map-gen";
 import { lmsSpawns } from "./lms";
 import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
+import { nearestShore } from "./survival";
+import { ALL_ORDERS, thinkLikePlayer } from "./player-brain";
 
 export const TURBZ_MAP = "custom-turbz";
 export const TURBZ_ORDERS = [
@@ -40,6 +42,7 @@ export const TURBZ_ORDERS = [
   { id: "shroom", label: "Forage" },
   { id: "crafting", label: "Craft" },
   { id: "spirits", label: "Seek spirits" },
+  { id: "dungeon", label: "Dungeons" },
 ] as const;
 
 const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
@@ -459,29 +462,156 @@ export function installTurbz(game: any): void {
     r.simT -= dt;
     if (r.simT > 0) return;
     r.simT = SIM;
-    const roll = rand();
-    if (roll < 0.22) r.bag.timber = (r.bag.timber ?? 0) + 1;
-    else if (roll < 0.4) r.bag.ore = (r.bag.ore ?? 0) + 1;
-    else if (roll < 0.55) r.bag.fish = (r.bag.fish ?? 0) + 1;
-    else if (roll < 0.68) r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
-    if ((r.bag.timber ?? 0) >= 3 && (r.bag.ore ?? 0) >= 2) {
-      r.bag.timber -= 3; r.bag.ore -= 2;
-      const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 4), { level: r.level, slot: pick(SLOTS), typeBias: m.type, raceBias: m.race });
-      const slot = g.slot as (typeof SLOTS)[number];
-      if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) r.gear[slot] = g;
-      this.scaleTwitch(m);
+    this.witchPlay(m, true);
+  };
+
+  /** Same decisions a player autoplay makes, carried out on a witch's body. */
+  game.witchAct = function (m: any) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    const foes: any[] = [];
+    for (const o of this.mobs) {
+      if (!o.alive || o === m) continue;
+      if (o.twitch && r.team && o.rv?.team === r.team) continue;
+      const d = Math.hypot(o.x - m.x, o.y - m.y);
+      if (d > 640) continue;
+      foes.push({
+        id: o.id, x: o.x, y: o.y, d, level: o.level ?? 1, type: o.type || "normal",
+        boss: !!o.boss, dungeonBoss: !!o.dungeonBoss, hunter: !!o.hunter,
+        witch: !!o.witch, animal: !!o.animal, ghost: !!(o.ghost || o.enemyGhost),
+      });
     }
-    if ((r.bag.mushroom ?? 0) >= 2 && rand() < 0.35) { r.bag.mushroom -= 2; r.spirits++; this.scaleTwitch(m); }
-    if (rand() < 0.2) this.twitchXp(m, 6 + r.level * 2);
-    if (r.age > 40 && rand() < 0.012) {
-      m.hp -= m.max * (0.35 + rand() * 0.5);
-      if (m.hp <= 0) { m.alive = false; m.hp = 0; this.queueWitch(); return; }
+    if (save && !this.dead) {
+      const d = Math.hypot(save.x - m.x, save.y - m.y);
+      if (d < 280) foes.push({ id: "player", x: save.x, y: save.y, d, level: save.level, type: CLASS_BY_ID[save.classId]?.type ?? "spirit" });
     }
-    const a = rand() * Math.PI * 2;
-    const step = 70;
-    let nx = m.x + Math.cos(a) * step, ny = m.y + Math.sin(a) * step;
-    if (!this.world || blocked(this.world, nx, ny)) return;
-    m.x = nx; m.y = ny;
+    foes.sort((a, b) => a.d - b.d);
+    if (foes.length > 8) foes.length = 8;
+    const nodes: any[] = [];
+    for (const n of this.world?.spawns ?? []) {
+      if (n.kind !== "node" || n.node === "fish") continue;
+      const d = Math.hypot(n.x - m.x, n.y - m.y);
+      if (d > 720) continue;
+      nodes.push({ id: n.id, node: n.node, x: n.x, y: n.y, d });
+    }
+    nodes.sort((a, b) => a.d - b.d);
+    if (nodes.length > 6) nodes.length = 6;
+    let rift = null;
+    let rd = 1200;
+    for (const p of save?.dungeons?.portals ?? []) {
+      if (p.cleared) continue;
+      const d = Math.hypot(p.x - m.x, p.y - m.y);
+      if (d < rd) { rd = d; rift = { id: p.id, x: p.x, y: p.y, level: p.level ?? 1, d }; }
+    }
+    const shore = this.world ? nearestShore(this.world, m.x, m.y) : null;
+    return thinkLikePlayer({
+      x: m.x, y: m.y, level: r.level, hpPct: m.hp / Math.max(1, m.max), type: m.type || "normal",
+      bag: r.bag, orders: ALL_ORDERS, inDungeon: false,
+      needs: { eat: false, drink: false, sleep: false },
+      foes, nodes, shore, rift, exit: null, bed: null,
+      wander: ((Math.floor((r.age + (m.x | 0)) / 6) * 13) % 628) / 100,
+    });
+  };
+
+  game.witchPlay = function (m: any, far: boolean) {
+    const r: Brain = m.rv;
+    const act = this.witchAct(m);
+    const go = (x: number, y: number) => { r.goalX = x; r.goalY = y; };
+    if (act.kind === "flee" || act.kind === "wander" || act.kind === "sleep") { go(act.x, act.y); if (far) this.witchStep(m); return; }
+    if (act.kind === "potion") {
+      if ((r.bag.potion ?? 0) > 0) {
+        r.bag.potion--;
+        m.hp = Math.min(m.max, m.hp + m.max * 0.28);
+        this.float(m.x, m.y - 46, "DRINKS", "#9ad8c8");
+      }
+      return;
+    }
+    if (act.kind === "craft") {
+      if ((r.bag.timber ?? 0) >= 3 && (r.bag.ore ?? 0) >= 2) {
+        r.bag.timber -= 3; r.bag.ore -= 2;
+        const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 2), { level: r.level, slot: pick(SLOTS), typeBias: m.type, floor: rand() < 0.25 ? "fine" : "common" });
+        const slot = g.slot as (typeof SLOTS)[number];
+        if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
+        this.float(m.x, m.y - 46, "CRAFTS", "#e6c15a");
+      }
+      return;
+    }
+    if (act.kind === "brew") {
+      if ((r.bag.mushroom ?? 0) >= 2) { r.bag.mushroom -= 2; r.bag.potion = (r.bag.potion ?? 0) + 1; this.float(m.x, m.y - 46, "BREWS", "#c9a6e8"); }
+      return;
+    }
+    if (act.kind === "gather") {
+      if (Math.hypot(act.x - m.x, act.y - m.y) < 40) {
+        if (act.node === "tree") r.bag.timber = (r.bag.timber ?? 0) + 1;
+        else if (act.node === "ore") r.bag.ore = (r.bag.ore ?? 0) + 1;
+        else r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
+        this.float(m.x, m.y - 44, act.node === "tree" ? "CHOPS" : act.node === "ore" ? "MINES" : "FORAGES", "#9ad8c8");
+        this.twitchXp(m, 4);
+      } else { go(act.x, act.y); if (far) this.witchStep(m); }
+      return;
+    }
+    if (act.kind === "fish") {
+      if (Math.hypot(act.x - m.x, act.y - m.y) < 36) { r.bag.fish = (r.bag.fish ?? 0) + 1; this.float(m.x, m.y - 44, "FISHES", "#7eb6d8"); this.twitchXp(m, 4); }
+      else { go(act.x, act.y); if (far) this.witchStep(m); }
+      return;
+    }
+    if (act.kind === "rift") {
+      if (Math.hypot(act.x - m.x, act.y - m.y) < 80) {
+        m.hp -= m.max * (0.08 + rand() * 0.1);
+        this.float(m.x, m.y - 46, "DELVES", "#e7d9ff");
+        if (m.hp <= 0) { m.alive = false; m.hp = 0; this.queueWitch(); return; }
+        if (rand() < 0.4) {
+          const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 5), { level: r.level, slot: pick(SLOTS), typeBias: m.type, floor: "rare", bonus: 0.08 });
+          const slot = g.slot as (typeof SLOTS)[number];
+          if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
+        }
+        this.twitchXp(m, 14 + r.level);
+      } else { go(act.x, act.y); if (far) this.witchStep(m); }
+      return;
+    }
+    if (act.kind === "fight") {
+      if (act.id === "player") {
+        r.foe = "player"; r.foeT = 5;
+        const foe = { player: true, x: act.x, y: act.y, alive: true, level: this.save?.level ?? 1 };
+        if (!far) return this.twitchFight(m, foe, this.witchMoves(m));
+        go(act.x, act.y); this.witchStep(m); return;
+      }
+      const foe = this.mobs.find((o: any) => o.id === act.id && o.alive);
+      if (!foe) return;
+      r.foe = foe.id; r.foeT = 4;
+      if (!far) return this.twitchFight(m, foe, this.witchMoves(m));
+      const d = Math.hypot(foe.x - m.x, foe.y - m.y);
+      if (d > 52) { go(foe.x, foe.y); this.witchStep(m); return; }
+      const boss = !!(foe.boss || foe.dungeonBoss);
+      foe.hp -= foe.max * (boss ? 0.05 : 0.1);
+      m.hp -= m.max * (boss ? 0.14 : 0.06);
+      if (foe.hp <= 0) {
+        foe.hp = 0; foe.alive = false;
+        if (foe.twitch) this.queueWitch();
+        this.twitchXp(m, 10 + (foe.level ?? 1) * 3);
+        if (boss && rand() < 0.65) {
+          const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 6), { level: r.level, slot: pick(SLOTS), floor: "epic", bonus: 0.12, typeBias: m.type });
+          const slot = g.slot as (typeof SLOTS)[number];
+          if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
+        }
+      }
+      if (m.hp <= 0) { m.alive = false; m.hp = 0; this.queueWitch(); }
+      return;
+    }
+    if ("x" in act) { go(act.x, act.y); if (far) this.witchStep(m); }
+  };
+
+  game.witchMoves = function (m: any): Move[] {
+    return (m.rv.known as string[]).map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
+  };
+
+  game.witchStep = function (m: any) {
+    const r: Brain = m.rv;
+    const d = Math.hypot(r.goalX - m.x, r.goalY - m.y) || 1;
+    const step = Math.min(90, d);
+    const nx = m.x + ((r.goalX - m.x) / d) * step;
+    const ny = m.y + ((r.goalY - m.y) / d) * step;
+    if (this.world && !blocked(this.world, nx, ny)) { m.x = nx; m.y = ny; }
   };
 
   game.liveTwitch = function (m: any, dt: number) {
@@ -499,71 +629,15 @@ export function installTurbz(game: any): void {
 
   game.twitchThink = function (m: any) {
     const r: Brain = m.rv;
-    const save = this.save;
     this.twitchMeet(m);
     const hp = m.hp / Math.max(1, m.max);
-    const moves = r.known.map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
+    const moves = this.witchMoves(m);
     const ready = (mv: Move) => (r.castCd[mv.id] ?? 0) <= 0;
-    let foe = this.twitchFoe(m);
-    if (hp < 0.5) {
+    if (hp < 0.55) {
       const heal = moves.find((mv) => isHeal(mv) && ready(mv));
       if (heal) return this.twitchCast(m, heal, null);
-      if ((r.bag.potion ?? 0) > 0) {
-        r.bag.potion--;
-        m.hp = Math.min(m.max, m.hp + m.max * 0.22);
-        this.float(m.x, m.y - 46, "DRINKS", "#9ad8c8");
-        return;
-      }
-      if (foe && hp < 0.28) {
-        const a = Math.atan2(m.y - foe.y, m.x - foe.x);
-        r.goalX = m.x + Math.cos(a) * 180;
-        r.goalY = m.y + Math.sin(a) * 180;
-        return;
-      }
     }
-    if (!foe && hp > 0.62) {
-      let best: any = null, bs = Infinity;
-      for (const o of this.mobs) {
-        if (!o.alive || o === m || o.twitch) continue;
-        const d = Math.hypot(o.x - m.x, o.y - m.y);
-        if (d > 520 || (o.level ?? 1) > r.level + 6) continue;
-        if (d < bs) { bs = d; best = o; }
-      }
-      const yd = this.dead ? Infinity : Math.hypot(save.x - m.x, save.y - m.y);
-      if (yd < 240 && yd < bs) { r.foe = "player"; r.foeT = 6; foe = this.twitchFoe(m); }
-      else if (best) { r.foe = best.id; r.foeT = 4; foe = best; }
-    }
-    if (foe && foe.player && Math.hypot(foe.x - m.x, foe.y - m.y) > 280) { r.foe = ""; foe = null; }
-    if (foe) return this.twitchFight(m, foe, moves);
-    if ((r.bag.timber ?? 0) >= 3 && (r.bag.ore ?? 0) >= 2) {
-      r.bag.timber -= 3; r.bag.ore -= 2;
-      this.float(m.x, m.y - 46, "CRAFTS", "#e6c15a");
-      const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 2), { level: r.level, slot: pick(SLOTS), typeBias: m.type });
-      const slot = g.slot as (typeof SLOTS)[number];
-      if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
-      return;
-    }
-    const want = (r.bag.timber ?? 0) < 3 ? "tree" : (r.bag.ore ?? 0) < 2 ? "ore" : (r.bag.mushroom ?? 0) < 2 ? "shroom" : rand() < 0.5 ? "fish" : "";
-    if (want && want !== "fish") {
-      const node = this.rivalNode?.(m, want) ?? null;
-      if (node) {
-        if (Math.hypot(node.x - m.x, node.y - m.y) < 36) {
-          if (want === "tree") r.bag.timber++;
-          else if (want === "ore") r.bag.ore++;
-          else r.bag.mushroom++;
-          this.float(m.x, m.y - 44, want === "tree" ? "CHOPS" : want === "ore" ? "MINES" : "FORAGES", "#9ad8c8");
-          this.twitchXp(m, 4);
-        } else { r.goalX = node.x; r.goalY = node.y; }
-        return;
-      }
-    }
-    r.wanderT -= 0.3;
-    if (r.wanderT <= 0 || Math.hypot(r.goalX - m.x, r.goalY - m.y) < 24) {
-      r.wanderT = 6 + rand() * 8;
-      const a = rand() * Math.PI * 2;
-      r.goalX = m.x + Math.cos(a) * (140 + rand() * 220);
-      r.goalY = m.y + Math.sin(a) * (140 + rand() * 220);
-    }
+    this.witchPlay(m, false);
   };
 
   game.twitchFoe = function (m: any) {
@@ -630,40 +704,6 @@ export function installTurbz(game: any): void {
 
   const origPlan = game.planGrind.bind(game);
   game.planGrind = function () {
-    if (!this.turbz || !this.orders) return origPlan();
-    const save = this.save;
-    if (!save) return;
-    const allow = ["mining", "woodcutting", "fishing", "shroom"].filter((id) => this.orders[id]);
-    const skip = this.grindSkip ?? {};
-    const open = allow.filter((id) => (skip[id] ?? 0) <= this.clock);
-    for (const id of [...open, ...allow.filter((id) => !open.includes(id))]) if (this.aimSkill(id)) { this.grind = id; return; }
-    if (this.orders.spirits) {
-      let best: any = null, bd = 1400;
-      for (const o of this.mobs) {
-        if (!o.alive || o.twitch || !(o.ghost || o.enemyGhost)) continue;
-        const d = Math.hypot(o.x - save.x, o.y - save.y);
-        if (d < bd) { bd = d; best = o; }
-      }
-      if (best) { this.grind = "spirits"; this.walkTo(best.x, best.y); return; }
-    }
-    this.grind = "wander";
-    const ang = Math.random() * Math.PI * 2;
-    this.walkTo(save.x + Math.cos(ang) * 200, save.y + Math.sin(ang) * 200);
-  };
-
-  const origAuto = game.tickAutoplay.bind(game);
-  game.tickAutoplay = function (dt: number) {
-    if (this.turbz && this.save && this.orders?.crafting && !this.channel) {
-      const bag = this.save.bag;
-      if ((bag.timber ?? 0) >= 3 && (bag.ore ?? 0) >= 2) {
-        bag.timber -= 3; bag.ore -= 2;
-        const g = rollGear(mulberry32(((rand() * 1e9) | 0) || 11), { level: this.save.level, slot: pick(SLOTS), typeBias: CLASS_BY_ID[this.save.classId]?.type });
-        this.save.gear.push(g);
-        this.say(`Autoplay crafts ${g.name}.`);
-        this.syncHud(true);
-        return;
-      }
-    }
-    return origAuto(dt);
+    return origPlan();
   };
 }

@@ -184,7 +184,7 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
       ))}
     </div>,
   );
-  if (s.autoplay) rows.push(<p key="auto" className="text-kyo">{s.turbz ? "Autoplay" : s.rules === "hardcore" ? "Grinding" : "Autoplay"} · {s.grind || "looking"}</p>);
+  if (s.autoplay) rows.push(<p key="auto" className="text-kyo">Autoplay · {s.grind || "looking"}</p>);
   if (s.unstuck) rows.push(<p key="unstuck" className="text-kyo">Unstuck in {s.unstuck}</p>);
   if (!rows.length) return null;
   return (
@@ -291,7 +291,7 @@ export const HudFabs = memo(function HudFabs({ game }: GameProp) {
   return (
     <div className="hud-fabs">
       <button type="button" className={`px-btn ui-btn-sm ${s.autoplay ? "px-btn-kyo" : ""}`} onClick={() => game?.toggleAutoplay()}>
-        {s.autoplay ? (s.rules === "hardcore" ? "Stop grind" : "Stop auto") : s.rules === "hardcore" ? "Grind nodes" : "Autoplay"}
+        {s.autoplay ? "Stop auto" : "Autoplay"}
       </button>
       <button type="button" className={`px-btn ui-btn-sm ${s.unstuck ? "px-btn-kyo" : ""}`} data-testid="unstuck-btn" onClick={() => game?.beginUnstuck()}>
         {s.unstuck ? `Unstuck ${s.unstuck}` : "Unstuck"}

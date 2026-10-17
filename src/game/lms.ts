@@ -45,6 +45,7 @@ import {
 import type { ClassId } from "./classes";
 import { blocked } from "./world";
 import { defenseVs } from "./balance";
+import { pickFight } from "./player-brain";
 import { DAY_SECONDS, NIGHT_SECONDS } from "./daynight";
 
 export const LMS_RIVALS = 99;
@@ -610,16 +611,18 @@ export function installLms(game: any): void {
       if (foe) r.state = "hunt";
     }
     if (!foe && hp > 0.5) {
-      // Hunt ghosts of its level.
-      let best = null, bs = Infinity;
+      const sensed = [];
       for (const o of this.mobs) {
-        if (!o.alive || o.rival || o.animal) continue;
+        if (!o.alive || o.rival || o.animal || o === m) continue;
         const d = Math.hypot(o.x - m.x, o.y - m.y);
-        if (d > 700 || (o.level ?? 1) > r.level + 4) continue;
-        const s = d + Math.max(0, (o.level ?? 1) - r.level) * 80;
-        if (s < bs) { bs = s; best = o; }
+        if (d > 700) continue;
+        sensed.push({ id: o.id, x: o.x, y: o.y, d, level: o.level ?? 1, type: o.type || "normal", boss: !!o.boss, ghost: !!(o.ghost || o.enemyGhost), hunter: !!o.hunter, witch: !!o.witch });
       }
-      if (best) { r.foe = best.id; foe = best; r.state = "grind"; }
+      const best = pickFight(
+        { level: r.level, hpPct: hp, type: m.type || "normal", orders: { combat: true, mining: true, woodcutting: true, fishing: true, shroom: true, crafting: true, spirits: true, dungeon: false } },
+        sensed,
+      );
+      if (best) { r.foe = best.id; foe = this.mobs.find((o: any) => o.id === best.id); r.state = "grind"; }
     }
     if (foe) return this.rivalFight(m, foe, moves);
     // 4. Gather what it lacks.
