@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOVE_BY_ID, SKILLS, TYPES, moveTactic, type TypeId } from "@/game/content";
-import { CLASSES, CLASS_BY_ID, CLASS_RACE, ROLES, TRAITS, buffLines, classGendered, type ClassId, type Role } from "@/game/classes";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, ROLES, TRAITS, buffLines, type ClassId, type Role } from "@/game/classes";
 import { actorSpritesReady } from "@/game/actor-sprites";
 import type { Sheet, TurbzGame } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -109,13 +109,7 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
             ))}
           </div>
         </div>
-        {classGendered(pick.classId) && (
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-dim">Body</span>
-            <button type="button" data-testid="body-feminine" className={`px-btn ui-btn-sm ${pick.female ? "px-btn-kyo" : ""}`} onClick={() => setPick({ ...pick, female: true })}>Feminine</button>
-            <button type="button" data-testid="body-masculine" className={`px-btn ui-btn-sm ${!pick.female ? "px-btn-kyo" : ""}`} onClick={() => setPick({ ...pick, female: false })}>Masculine</button>
-          </div>
-        )}
+
       </div>
       <div className="sheet-box" data-testid="trait-picker">
         <p className="font-display text-[9px] text-kyo">PICK ONE CHARACTER TRAIT</p>
