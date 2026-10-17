@@ -1319,8 +1319,10 @@ export function skillNeed(level: number): number {
 
 export function xpNeed(level: number): number {
   const lv = Math.max(1, Math.floor(level) || 1);
-  const early = 30 * Math.pow(1.17, Math.min(lv - 1, 20));
-  const tail = 1 + Math.max(0, lv - 20) * 0.055;
+  // Steep early so the first levels come in a handful of kills, then a long tail
+  // so the late game has weight. Tuned against kill XP of 10 + 4 per foe level.
+  const early = 28 * Math.pow(1.22, Math.min(lv - 1, 18));
+  const tail = 1 + Math.max(0, lv - 18) * 0.08;
   const need = Math.floor(early * tail);
   return Number.isFinite(need) ? Math.max(20, need) : Number.MAX_SAFE_INTEGER;
 }

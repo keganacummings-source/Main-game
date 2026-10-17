@@ -147,7 +147,7 @@ import { enemyDesignFor, installEnemyDesigns } from "./enemy-design";
 import {
 	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_ENRAGE, DEATH_MARK, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
 	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, defenseVs, enemyHitDamage, enemyTargets,
-	gearSellValue, hardcoreGrowth, itemSellValue, rollEnemyKit, standardGrowth,
+	expectedHunterPower, gearSellValue, hardcoreGrowth, itemSellValue, killXpAmount, openWorldLevelEdge, rollEnemyKit, standardGrowth,
 } from "./balance";
 import {
   BIOME_LABEL,
@@ -1707,7 +1707,7 @@ export class TurbzGame {
 		if (m.animal) return "animal";
 		return "normal";
 	}
-	/** Difficulty growth: Hardcore climbs with level, nights and bounty tier; Standard climbs gently. */
+	/** Difficulty growth: Hardcore climbs with level, nights and bounty tier; Standard climbs toward double. */
 	growth() {
 		const save = this.save;
 		if (!save) return 1;
@@ -1744,8 +1744,23 @@ export class TurbzGame {
 		}
 	}
 	/**
+	 * Bosses, witches, bounties, hunters, shrine saints and every foe inside a dungeon
+	 * do not shrink to a naked hunter. The open world does.
+	 */
+	dangerousFoe(m, kind) {
+		if (!m) return false;
+		if (kind === "boss" || kind === "witch" || kind === "bounty" || kind === "hunter") return true;
+		if (m.dungeonBoss) return true;
+		if (typeof m.id === "string" && m.id.startsWith("shrine")) return true;
+		const map = this.save?.map ?? "";
+		if (this.isDungeonMap(map)) return true;
+		return false;
+	}
+	/**
 	 * Resizes a live foe to the hunter: never below your level, health measured in your hits,
 	 * damage measured in your health. Keeps the foe's health fraction.
+	 * Ordinary foes copy less of your level as you climb. Dangerous ones read the better of
+	 * your real power and a decent kit for your level, then add dungeon and shrine pressure.
 	 */
 	scaleMob(m, fresh = false) {
 		const save = this.save;
@@ -1757,10 +1772,33 @@ export class TurbzGame {
 		const t = enemyTargets({ kind, rarity: m.rarity, hardcore: hc, growth: this.growth(), tier: m.tier ?? 0, wanted: m.wanted ?? 1 });
 		const stats = m.stats ?? { hp: 1, dmg: 1, speed: 1, crit: .03, dodge: 0, physRes: 0, spellRes: 0 };
 		const level = Math.max(m.spawnLevel ?? 1, save.level + t.levelOffset + (m.levelJitter ?? 0));
+		const dangerous = this.dangerousFoe(m, kind);
+		const inDungeon = this.isDungeonMap(save.map);
+		const shrineRound = typeof m.id === "string" && m.id.startsWith("shrine") ? (this.shrine?.round ?? 1) : 0;
+		const edge = openWorldLevelEdge(save.level) * (dangerous ? 0.4 : 1);
+		const liveHit = Math.max(1, this.powerRef.hit);
+		const liveHp = Math.max(1, this.powerRef.maxHp);
+		let hitRef = liveHit;
+		let hpRef = liveHp;
+		let dangerDmg = 1;
+		if (dangerous) {
+			const exp = expectedHunterPower(save.level);
+			hitRef = Math.max(liveHit, exp.hit);
+			hpRef = Math.max(liveHp, exp.maxHp);
+			const armor = Math.max(0, this.powerRef.armor ?? 0);
+			if (armor < exp.armor) dangerDmg *= 1 + ((exp.armor - armor) / exp.armor) * 0.35;
+		}
+		hitRef *= 1 - edge;
+		hpRef *= 1 - edge;
 		const floorHp = (20 + level * 8) * (kind === "boss" ? 2.5 : kind === "bounty" || kind === "witch" ? 2.5 : kind === "hunter" ? 1.5 : 1) * (kind === "animal" ? .45 : 1);
 		const party = m.party ? .55 : m.summoner ? .7 : 1;
-		const shrine = m.id?.startsWith?.("shrine") ? 1 + (this.shrine?.round ?? 1) * .25 : 1;
-		const base = Math.max(floorHp, this.powerRef.hit * t.hits) * stats.hp * party * shrine;
+		// Each shrine round is louder. The last round is already a boss, so it gets a smaller extra pile of health and a harder hit.
+		const shrineHp = shrineRound ? (kind === "boss" ? 1.2 : 1.15 + shrineRound * 0.35) : 1;
+		const shrineDmg = shrineRound ? 1.1 + shrineRound * 0.12 : 1;
+		// Dungeon rooms stack: trash is chunkier than the road, and the boss at the end is chunkier than a world boss.
+		const dungeonHp = inDungeon ? (m.dungeonBoss || kind === "boss" ? 1.35 : 1.4) : 1;
+		const dungeonDmg = inDungeon ? (m.dungeonBoss || kind === "boss" ? 1.18 : 1.12) : 1;
+		const base = Math.max(floorHp, hitRef * t.hits) * stats.hp * party * shrineHp * dungeonHp;
 		const bountyRage = m.enraged && (m.bounty || m.bountySpirit);
 		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1) * (bountyRage ? BOUNTY_ENRAGE.hp : 1);
 		const max = Math.max(1, Math.floor(base * mult));
@@ -1769,7 +1807,10 @@ export class TurbzGame {
 		m.max = max;
 		m.hp = m.alive === false ? 0 : Math.max(1, Math.ceil(max * ratio));
 		m.baseMax = Math.floor(base);
-		m.frac = t.frac * party;
+		const bite = t.frac * party * shrineDmg * dungeonDmg * dangerDmg;
+		// foeHitRaw multiplies by the live health reference. Dangerous blows are sized off the
+		// geared-or-better pool, so an undergeared hunter loses a bigger share of her real bar.
+		m.frac = dangerous ? (hpRef * bite) / liveHp : bite * (1 - edge);
 		m.nightScaled = this.isNightNow();
 		m.speed = Math.max(1, Math.round((this.playerSpeed() + t.speedOffset) * stats.speed * (m.enraged ? 1.25 : 1) * (bountyRage ? BOUNTY_ENRAGE.speed : 1)));
 	}
@@ -3697,10 +3738,17 @@ export class TurbzGame {
 			if (mob.boss) { portal.cleared = true; this.say("Dungeon cleared. Return through the entrance rift."); }
 			this.room?.send({ t: "dungeons", dungeons: save.dungeons });
 		}
-		const xp = Math.floor((8 + mob.level * 3) * (mob.boss ? 4 : 1) * (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1));
+		const amount = killXpAmount(mob.level, {
+			boss: !!mob.boss,
+			dungeon: this.isDungeonMap(save.map),
+			witch: !!mob.witch,
+			shrine: typeof mob.id === "string" && mob.id.startsWith("shrine"),
+			bounty: !!mob.bounty,
+		});
+		const xp = Math.floor(amount * (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1));
 		this.gainXp(xp);
 		// Ghosts out with you and tagged tiny followers learn from every kill too.
-		this.feedGhostXp(Math.floor((8 + mob.level * 3) * (mob.boss ? 4 : 1) * (this.isNightNow() ? NIGHT.xp : 1)));
+		this.feedGhostXp(Math.floor(amount * (this.isNightNow() ? NIGHT.xp : 1)));
 		this.gainSkill("hunting", mob.boss ? 28 : 10);
 		save.kyo += Math.floor((2 + mob.level) * (mob.boss ? 6 : 1) * (mob.lootMult ?? 1) * (1 + this.chan("kyo_find") / 100) * bendDown(1 + this.mod("kyo") / 100, 0.2, 0.05));
 		save.wins += 1;
@@ -5096,7 +5144,6 @@ export class TurbzGame {
 			enraged: !!m.enraged,
 			frenzied: !!m.enchants?.includes("frenzied") && m.hp < m.max * .5,
 		});
-		if (m.dungeonBoss) dmg *= .9;
 		if (m.enraged && (m.bounty || m.bountySpirit)) dmg *= BOUNTY_ENRAGE.dmg;
 		return dmg;
 	}

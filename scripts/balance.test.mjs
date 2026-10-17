@@ -39,6 +39,37 @@ test("gear drops start at the hunter's level and never compound", () => {
   }
 });
 
+test("levels pull ahead of the road, and bosses stay a real bite", () => {
+  assert.equal(bal.openWorldLevelEdge(1), 0);
+  assert.ok(bal.openWorldLevelEdge(40) > bal.openWorldLevelEdge(10));
+  assert.ok(bal.openWorldLevelEdge(500) <= 0.34);
+  const early = bal.expectedHunterPower(10);
+  const late = bal.expectedHunterPower(80);
+  assert.ok(late.hit > early.hit * 2 && late.maxHp > early.maxHp * 2 && late.armor > early.armor);
+  assert.ok(bal.standardGrowth(500, 0) <= 2);
+  assert.ok(bal.standardGrowth(100, 0) > bal.standardGrowth(1, 0));
+  const n = bal.enemyTargets({ kind: "normal" });
+  const b = bal.enemyTargets({ kind: "boss" });
+  const w = bal.enemyTargets({ kind: "witch" });
+  assert.ok(b.frac > n.frac && w.frac > n.frac && b.hits >= 10 && w.hits >= 9);
+  const lateN = bal.enemyTargets({ kind: "normal", growth: bal.standardGrowth(200, 0) });
+  const lateB = bal.enemyTargets({ kind: "boss", growth: bal.standardGrowth(200, 0) });
+  assert.ok(lateN.frac < 0.2, `late trash bite ${lateN.frac}`);
+  assert.ok(lateB.frac > 0.14 && lateB.frac < 0.4, `late boss bite ${lateB.frac}`);
+});
+
+test("xp rushes early, weighs late, and dangerous kills pay more", () => {
+  const kills = (lv) => Math.ceil(content.xpNeed(lv) / bal.killXpAmount(lv, {}));
+  assert.ok(kills(1) <= 3, `level 1 took ${kills(1)} kills`);
+  assert.ok(kills(10) < kills(30));
+  assert.ok(kills(30) < kills(100));
+  assert.ok(kills(100) >= 16 && kills(100) <= 22, `level 100 took ${kills(100)} kills`);
+  assert.ok(bal.killXpAmount(20, { boss: true }) >= bal.killXpAmount(20, {}) * 4);
+  assert.ok(bal.killXpAmount(20, { dungeon: true, boss: true }) > bal.killXpAmount(20, { boss: true }));
+  assert.ok(bal.killXpAmount(20, { witch: true }) > bal.killXpAmount(20, {}) * 3);
+  assert.ok(bal.killXpAmount(20, { shrine: true }) > bal.killXpAmount(20, { dungeon: true }));
+});
+
 test("hardcore foes are bigger, hit harder, sit higher and keep growing", () => {
   for (const kind of ["normal", "boss", "bounty", "hunter", "witch", "minion"]) {
     const std = bal.enemyTargets({ kind });

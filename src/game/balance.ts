@@ -13,6 +13,12 @@
  *    is smoothed: it climbs toward your real power over a minute or two (faster in
  *    Hardcore) and falls back slowly. Upgrades give a honeymoon, then the world catches up.
  *
+ *    Levels are the part the open world does not fully catch. Ordinary foes copy less of
+ *    you as you climb (openWorldLevelEdge), so camps get shorter and chip less. Bosses,
+ *    witches, bounties, hunters, shrines and everything inside a dungeon ignore most of
+ *    that edge and measure themselves against the better of you and a hunter your level
+ *    in decent gear (expectedHunterPower). Show up undergeared and they do not shrink.
+ *
  * 3. Gear always starts at the hunter's level. Quality, the source (boss, bounty tier,
  *    hunter squad, market) and luck add a bounded percentage on top. Nothing compounds
  *    off the gear you already wear, which is what used to hand out level-1000 pieces.
@@ -40,17 +46,31 @@ export type EnemyTargets = {
 };
 
 export type Row = { hits: number; frac: number; lv: number; spd: number };
+type Share = { knee: number; ceil: number };
 
-/** Standard mode. Hardcore multiplies these (see HARDCORE). */
+/** Standard mode. Hardcore multiplies these (see HARDCORE).
+ *  Bosses and witches hit for a real share of your health. Ordinary foes stay a chip.
+ */
 export const BASE: Record<EnemyKind, Row> = {
-  animal: { hits: 2, frac: 0.05, lv: 0, spd: -2 },
-  normal: { hits: 3, frac: 0.085, lv: 0, spd: -1 },
+  animal: { hits: 2, frac: 0.04, lv: 0, spd: -2 },
+  normal: { hits: 3, frac: 0.09, lv: 0, spd: -1 },
   minion: { hits: 2, frac: 0.035, lv: 1, spd: 0 },
-  boss: { hits: 10, frac: 0.105, lv: 4, spd: 3 },
-  witch: { hits: 9, frac: 0.09, lv: 3, spd: 2 },
+  boss: { hits: 12, frac: 0.13, lv: 4, spd: 3 },
+  witch: { hits: 11, frac: 0.14, lv: 3, spd: 2 },
   // Bounties hit hard on purpose: a fumbled fight (no dodge, ward or blink when it matters) kills you.
-  bounty: { hits: 9, frac: 0.12, lv: 3, spd: 4 },
-  hunter: { hits: 3, frac: 0.042, lv: 3, spd: 3 },
+  bounty: { hits: 10, frac: 0.13, lv: 3, spd: 4 },
+  hunter: { hits: 4, frac: 0.055, lv: 3, spd: 3 },
+};
+
+/** Where one hit bends once it passes the knee. Trash cannot delete you; bosses and witches can. */
+const SHARE: Record<EnemyKind, Share> = {
+  animal: { knee: 0.18, ceil: 0.32 },
+  normal: { knee: 0.3, ceil: 0.46 },
+  minion: { knee: 0.2, ceil: 0.34 },
+  hunter: { knee: 0.28, ceil: 0.44 },
+  boss: { knee: 0.38, ceil: 0.58 },
+  witch: { knee: 0.38, ceil: 0.58 },
+  bounty: { knee: 0.4, ceil: 0.62 },
 };
 
 /** Hardcore gets the biggest buff: more health, harder hits, higher levels, and it keeps growing. */
@@ -102,13 +122,14 @@ export function enemyTargets(o: TargetOpts): EnemyTargets {
     lv += HARDCORE.lv;
     spd += HARDCORE.spd;
   }
-  // Health scales gently with growth; damage carries most of the climb.
-  hits *= Math.sqrt(growth);
-  frac *= Math.sqrt(growth);
+  // Health climbs gently. Damage carries most of the late-game climb, and bends per kind
+  // so a boss can still take a third of you while a roadside foe stays a chip.
+  hits *= Math.pow(growth, 0.35);
+  frac *= Math.pow(growth, 0.6);
   lv += Math.floor((growth - 1) * 10);
-  // Hit share used to stop at 32% of your health. Overmax still raises it, but one hit bends toward 54% and never reaches it.
-  const share = bend(frac, 0.32, 0.54);
-  return { hits: Math.round(hits * 10) / 10, frac: share, levelOffset: Math.max(0, Math.round(lv)), speedOffset: spd };
+  const share = SHARE[o.kind] ?? SHARE.normal;
+  const bite = bend(frac, share.knee, share.ceil);
+  return { hits: Math.round(hits * 10) / 10, frac: bite, levelOffset: Math.max(0, Math.round(lv)), speedOffset: spd };
 }
 
 /** Hardcore difficulty climbs with level, nights survived and bounties taken. */
@@ -116,9 +137,53 @@ export function hardcoreGrowth(level: number, nights: number, bountyTier = 0): n
   return Math.min(2.5, 1 + Math.max(0, level) * 0.0025 + Math.max(0, nights) * 0.04 + Math.max(0, bountyTier) * 0.02);
 }
 
-/** Standard keeps a gentle climb so late levels are still a fight. */
+/** Standard keeps a real climb so late bosses, witches and dungeons stay a fight. Caps at double. */
 export function standardGrowth(level: number, bountyTier = 0): number {
-  return Math.min(1.45, 1 + Math.max(0, level) * 0.001 + Math.max(0, bountyTier) * 0.008);
+  return Math.min(2, 1 + Math.max(0, level) * 0.0018 + Math.max(0, bountyTier) * 0.01);
+}
+
+/**
+ * Share of your level the open world fails to copy.
+ * 0 at level 1, about 9% by 20, 18% by 40, and it stops at 34% so a pack of foes is
+ * still a fight. Dangerous content uses only a fraction of this (see the engine).
+ */
+export function openWorldLevelEdge(level: number): number {
+  const lv = Math.max(1, Math.floor(level) || 1);
+  return Math.min(0.34, (lv - 1) * 0.0045);
+}
+
+/**
+ * What a hunter of this level does in decent gear: a fine weapon, a mid verse, a little
+ * Might, and the vitality two fine pieces tend to carry. Dangerous fights read the
+ * better of this and your real power, so missing gear does not shrink the foe.
+ */
+export function expectedHunterPower(level: number): { hit: number; maxHp: number; armor: number } {
+  const lv = Math.max(1, Math.floor(level) || 1);
+  const weapon = 8 + lv * 2 + 12 + Math.min(40, Math.floor(lv * 0.35));
+  const base = 6 + 42 * 0.42 + weapon * 0.35;
+  const hit = base * (1 + lv * 0.045) * 1.35 * (1 + Math.min(0.24, lv * 0.0015));
+  const vitality = 24 + lv * 1.6;
+  const maxHp = 78 + lv * 12 + vitality;
+  // About two fine armor pieces. Less than this and dangerous hits land harder.
+  const armor = (8 + lv * 2 + 10) * 2;
+  return { hit: Math.max(1, hit), maxHp: Math.max(20, maxHp), armor };
+}
+
+/**
+ * XP for one kill. Ordinary foes are 10 + 4 per level, which is what the level curve
+ * is tuned against. Bosses, dungeon clears, witches, shrines and bounties pay more,
+ * and a dungeon boss pays more than a world boss.
+ */
+export function killXpAmount(level: number, kind: { boss?: boolean; dungeon?: boolean; witch?: boolean; shrine?: boolean; bounty?: boolean } = {}): number {
+  const lv = Math.max(1, Math.floor(level) || 1);
+  let mult = 1;
+  if (kind.boss) mult = Math.max(mult, 5);
+  if (kind.witch) mult = Math.max(mult, 3.5);
+  if (kind.bounty) mult = Math.max(mult, 4.5);
+  if (kind.dungeon) mult = Math.max(mult, kind.boss ? 8 : 2.25);
+  if (kind.shrine) mult = Math.max(mult, kind.boss ? 7 : 3);
+  const xp = Math.floor((10 + lv * 4) * mult);
+  return Number.isFinite(xp) ? Math.max(1, xp) : 1;
 }
 
 // ---------------------------------------------------------------------------
