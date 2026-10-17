@@ -779,6 +779,21 @@ function wallBetween(world, ax: number, ay: number, bx: number, by: number): boo
 	return false;
 }
 
+const AUDIO_KEY = "turbz-audio";
+type AudioPrefs = { master: number; music: number; musicMuted: boolean };
+function loadAudioPrefs(): AudioPrefs {
+	const d: AudioPrefs = { master: 1, music: 0.35, musicMuted: false };
+	try {
+		const r = JSON.parse(localStorage.getItem(AUDIO_KEY) || "null");
+		if (r && typeof r === "object") {
+			if (typeof r.master === "number") d.master = Math.min(1, Math.max(0, r.master));
+			if (typeof r.music === "number") d.music = Math.min(1, Math.max(0, r.music));
+			if (typeof r.musicMuted === "boolean") d.musicMuted = r.musicMuted;
+		}
+	} catch { /* private mode or bad json: defaults */ }
+	return d;
+}
+
 export class TurbzGame {
 	canvas!: HTMLCanvasElement;
 	ctx!: CanvasRenderingContext2D;
@@ -792,6 +807,7 @@ export class TurbzGame {
 	fightGap = 0;
 	turnQ: TurnStep[] = [];
 	fought = false;
+	audioPrefs: AudioPrefs = loadAudioPrefs();
 
 	constructor(canvas: HTMLCanvasElement) {
 		this.canvas = canvas;
@@ -1063,6 +1079,26 @@ export class TurbzGame {
 			this.playMusic("veil.ogg");
 		}
 	}
+	/** Music element volume: the slider value, or silence while music is muted. */
+	musicLevel() { return this.audioPrefs.musicMuted ? 0 : this.audioPrefs.music; }
+	saveAudioPrefs() { try { localStorage.setItem(AUDIO_KEY, JSON.stringify(this.audioPrefs)); } catch { /* private mode */ } }
+	/** Master volume 0..1 (effects, music and the You Died sting). */
+	setMasterVolume(v: number) {
+		this.audioPrefs.master = Math.min(1, Math.max(0, v));
+		if (this.busOut && this.audio) this.busOut.gain.setTargetAtTime(0.92 * this.audioPrefs.master, this.audio.currentTime, 0.02);
+		this.saveAudioPrefs();
+	}
+	/** Music volume 0..1. */
+	setMusicVolume(v: number) {
+		this.audioPrefs.music = Math.min(1, Math.max(0, v));
+		if (this.music) this.music.volume = this.musicLevel();
+		this.saveAudioPrefs();
+	}
+	setMusicMuted(m: boolean) {
+		this.audioPrefs.musicMuted = m;
+		if (this.music) this.music.volume = this.musicLevel();
+		this.saveAudioPrefs();
+	}
 	async playMusic(file) {
 		try {
 			if (!(await fetch(`/music/${file}`, { method: "HEAD" })).ok) {
@@ -1075,7 +1111,7 @@ export class TurbzGame {
 			const audio = new Audio(`/music/${file}`);
 			this.music?.pause(); this.music = audio;
 			audio.loop = true;
-			audio.volume = .35;
+			audio.volume = this.musicLevel();
 			this.toBus(audio, 0.9);
 			await audio.play();
 		} catch {}
@@ -1100,7 +1136,8 @@ export class TurbzGame {
 			const lim = ac.createDynamicsCompressor();
 			lim.threshold.value = -1.5; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.06;
 			const out = ac.createGain();
-			out.gain.value = 0.92;
+			out.gain.value = 0.92 * this.audioPrefs.master;
+			this.busOut = out;
 			input.connect(comp); comp.connect(sat); sat.connect(makeup); makeup.connect(lim); lim.connect(out); out.connect(ac.destination);
 			this.sfxIn = input;
 			this.busComp = comp;
@@ -1243,7 +1280,7 @@ export class TurbzGame {
 			a.volume = 0.85;
 			this.toBus(a);
 			const music = this.music;
-			if (music) { const was = music.volume; music.volume = Math.min(was, 0.08); setTimeout(() => { if (this.music === music) music.volume = was; }, 6200); }
+			if (music) { music.volume = Math.min(music.volume, 0.08); setTimeout(() => { if (this.music === music) music.volume = this.musicLevel(); }, 6200); }
 			void a.play().catch(() => this.synth(70, .3, "sawtooth"));
 		} catch {
 			this.synth(70, .3, "sawtooth");

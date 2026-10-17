@@ -120,7 +120,19 @@ export function installTurbz(game: any): void {
     if (this.world) this.world.swim = true;
     const n = 10 + Math.floor(rand() * 6);
     const spots = lmsSpawns(this.world, n + 1);
-    const mine = Math.floor(rand() * spots.length);
+    // Land ladder: continent levels climb 1, 13, 25, 37, 49... Start on the gentlest land, not a random one.
+    const zones: { tx: number; ty: number; tw: number; th: number; levelMin: number }[] = file.zones ?? [];
+    const landLevel = (p: { x: number; y: number }) => {
+      let best = Infinity, lv = 1;
+      for (const z of zones) {
+        const d = Math.hypot((z.tx + z.tw / 2) * 32 - p.x, (z.ty + z.th / 2) * 32 - p.y);
+        if (d < best) { best = d; lv = z.levelMin; }
+      }
+      return lv;
+    };
+    const lowest = Math.min(...spots.map(landLevel));
+    const gentle = spots.map((p, i) => ({ i, lv: landLevel(p) })).filter((o) => o.lv <= lowest + 3).map((o) => o.i);
+    const mine = gentle[Math.floor(rand() * gentle.length)] ?? 0;
     save.x = spots[mine]!.x;
     save.y = spots[mine]!.y;
     this.cam.x = save.x;
