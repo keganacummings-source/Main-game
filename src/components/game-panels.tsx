@@ -1005,6 +1005,7 @@ export function SaveStatus({ game }: GameProp) {
 export const PausePanel = memo(function PausePanel({ game }: GameProp) {
   const { map, unstuck } = useSnapPick(["map", "unstuck"] as const);
   const maps = game?.customMaps() ?? [];
+  const [audio, setAudio] = useState(() => ({ ...(game?.audioPrefs ?? { master: 1, music: 0.35, musicMuted: false }) }));
   return (
     <div className="ui-stack">
       <div className="ui-row-gap">
@@ -1013,6 +1014,21 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
         <button type="button" className="px-btn" onClick={() => game?.toggle("skills")}>Skills (K)</button>
       </div>
       <SaveStatus game={game} />
+      <Section title="AUDIO">
+        <div className="ui-stack">
+          <label className="ui-slider">
+            <span>Volume · {Math.round(audio.master * 100)}%</span>
+            <input type="range" min={0} max={100} value={Math.round(audio.master * 100)} data-testid="master-volume" onChange={(e) => { const v = Number(e.target.value) / 100; game?.setMasterVolume(v); setAudio({ ...game!.audioPrefs }); }} />
+          </label>
+          <label className="ui-slider">
+            <span>Music · {Math.round(audio.music * 100)}%{audio.musicMuted ? " (muted)" : ""}</span>
+            <input type="range" min={0} max={100} value={Math.round(audio.music * 100)} data-testid="music-volume" onChange={(e) => { const v = Number(e.target.value) / 100; game?.setMusicVolume(v); setAudio({ ...game!.audioPrefs }); }} />
+          </label>
+          <div className="ui-row-gap">
+            <button type="button" className={`px-btn ui-btn-sm ${audio.musicMuted ? "px-btn-kyo" : ""}`} data-testid="music-mute-btn" aria-pressed={audio.musicMuted} onClick={() => { game?.setMusicMuted(!audio.musicMuted); setAudio({ ...game!.audioPrefs }); }}>{audio.musicMuted ? "Unmute music" : "Mute music"}</button>
+          </div>
+        </div>
+      </Section>
       <Section title="CONTROLS">
         <div className="controls-grid">
           {CONTROLS.map(([k, v]) => (
