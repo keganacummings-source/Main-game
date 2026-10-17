@@ -1,7 +1,9 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Backpack, Compass, FlaskConical, Ghost, Map as MapIcon, Menu, ScrollText, Store, Swords, Tent, User, Shield } from "lucide-react";
 import { TYPES } from "@/game/content";
 import type { TurbzGame } from "@/game/engine";
+import type { GimmickView } from "@/game/class-gimmicks";
 import { useSnapPick } from "./use-snap";
 import { Meter } from "./ui-kit";
 
@@ -214,7 +216,7 @@ const MENUS = [
 
 /** Bottom-centre: verses and every menu, in one place. */
 export const HudDock = memo(function HudDock({ game }: GameProp) {
-  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd"] as const);
+  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd", "gimmick"] as const);
   const smart = s.autoCombat || s.autoplay;
   const q = s.quick[0];
   return (
@@ -255,6 +257,7 @@ export const HudDock = memo(function HudDock({ game }: GameProp) {
           <span className="hot-tag">{q ? `×${q.count}${s.quick.length > 1 ? ` · +${s.quick.length - 1} queued` : ""}` : "set in Bag"}</span>
           {s.quickCd > 0 && <span className="hot-cd-num">{s.quickCd}</span>}
         </button>
+        {s.gimmick && <GimmickSlot game={game} g={s.gimmick} />}
         {s.bar.map((move, i) => {
           const cooling = move.cd > 0.05;
           const pct = cooling ? Math.min(100, (move.cd / Math.max(0.05, move.max)) * 100) : 0;
@@ -302,3 +305,35 @@ export const HudFabs = memo(function HudFabs({ game }: GameProp) {
     </div>
   );
 });
+
+/** The class gimmick on R: cooldown, time left, and the boss-skin catalog for Trophy Skins. */
+function GimmickSlot({ game, g }: { game: TurbzGame | null; g: GimmickView }) {
+  const [open, setOpen] = useState(false);
+  const cooling = !g.active && g.cd > 0.05;
+  const pct = cooling ? Math.min(100, (g.cd / Math.max(1, g.cdMax)) * 100) : 0;
+  return (
+    <span className="gim-wrap">
+      <button type="button" data-testid="gimmick-btn" className={`hot-slot hot-gimmick ${g.active ? "hot-gimmick-on" : cooling ? "hot-slot-cd" : "hot-slot-ready"}`} title={g.about} onClick={() => game?.gim?.activate()}>
+        <kbd className="key-badge hot-key">R</kbd>
+        <span className="hot-name">{g.name}</span>
+        <span className="hot-tag">{g.active ? `${g.left.toFixed(0)}s left` : g.id === "blink" ? "dbl-click map" : "gimmick"}</span>
+        {cooling && (<><span className="hot-cd" style={{ height: `${pct}%` }} /><span className="hot-cd-num">{g.cd.toFixed(g.cd < 1 ? 1 : 0)}</span></>)}
+      </button>
+      {g.id === "bossform" && (
+        <button type="button" className="gim-cat-btn" data-testid="boss-catalog-btn" title="Trophy catalog: pick a boss skin" onClick={() => setOpen(!open)}>SKINS {g.catalog.length}</button>
+      )}
+      {open && g.id === "bossform" && createPortal(
+        <div className="px-panel gim-catalog" data-testid="boss-catalog">
+          <button type="button" className="px-btn ui-btn-sm" data-testid="boss-catalog-close" onClick={() => setOpen(false)}>Close</button>
+          <p className="font-display text-[9px] text-kyo">TROPHY CATALOG</p>
+          {g.catalog.length === 0 && <p className="text-dim">Slay a boss to take its skin.</p>}
+          {g.catalog.map((b) => (
+            <button key={b.key} type="button" data-testid={`boss-form-${b.key}`} className={`px-btn ui-btn-sm ${g.pick === b.key ? "px-btn-kyo" : ""}`} onClick={() => { game?.gim?.pickBoss(b.key); setOpen(false); }}>
+              {b.name} · Lv {b.level}
+            </button>
+          ))}
+        </div>, document.body,
+      )}
+    </span>
+  );
+}

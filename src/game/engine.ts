@@ -95,7 +95,10 @@ import {
 import type { GraveBody } from "./social-types";
 import { flushNow, noteShiny, readAccountMeta, takeVaultGhosts, unionGhosts, vaultGhosts, wipeAccountProgress, writeAccountMeta } from "./account-save";
 import { furtherLevel, perkPointsAvailable, perkPointsEarned, perkPointsSpent, PERK_POINTS_PER_LEVEL } from "./account-progress";
+import { getCryingConfig, getCustomBuild } from "./classes";
 import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
+import { Gimmicks, type GimmickView } from "./class-gimmicks";
+import { witchSteer } from "./witch-brain";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
 import { captureDeathGif } from "./death-gif";
@@ -113,6 +116,8 @@ export function verseAreaNote(mv: Move, hit = 0): string {
 	if (mv.splash) bits.push(`Foes within ${mv.splash.radius}px of the target take ${Math.round(mv.splash.mult * 100)}%${n(mv.splash.mult)}.`);
 	if (mv.chain) bits.push(`Leaps to ${mv.chain.jumps} more foes within ${mv.chain.range}px, ${Math.round(mv.chain.mult * 100)}% each jump.`);
 	if (mv.echo) bits.push(`Returns for a second cut at ${Math.round(mv.echo * 100)}%${n(mv.echo)}.`);
+	if (mv.multi) bits.push(`Strikes ${mv.multi.hits} times, ${Math.round(mv.multi.mult * 100)}% on each extra hit${n(mv.multi.mult)}.`);
+	if (mv.selfBuff) bits.push(`Landing it grants you ${mv.selfBuff === "swift" ? "Swift" : mv.selfBuff === "shell" ? "Shell" : mv.selfBuff} for 4s.`);
 	return bits.join(" ");
 }
 /** Each set gets its own aura variant (tint, spin, size, crest) so the 10 aura kinds look like 100. */
@@ -314,6 +319,7 @@ export type Snap = {
   autoplay: boolean;
   /** Smart auto-combat. Off means she only swings when you press Attack. */
   autoCombat: boolean;
+  gimmick: GimmickView | null;
   grind: string;
   /** TURBZ pools. Null in every other mode. */
   pools: { mana: number; maxMana: number; stam: number; maxStam: number; manaSlow: number; stamSlow: number } | null;
@@ -673,6 +679,7 @@ const emptySnap = (): Snap => ({
 	party: [],
 	autoplay: false,
 	autoCombat: true,
+	gimmick: null,
 	grind: "",
 	pools: null,
 	orders: null,
@@ -778,6 +785,7 @@ export class TurbzGame {
 	// recovered fields stay loose; combat fields are assigned in methods
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	[k: string]: any;
+	gim!: Gimmicks;
 	mates: { x: number; y: number; swing: number }[] = [];
 	mateCd: Record<string, number> = {};
 	mateDirections: Record<string, ActorDirection> = {};
@@ -835,6 +843,7 @@ export class TurbzGame {
 		this.wardT = 0;
 		this.rollT = 0;
 		this.cfx = new CombatFx();
+		this.gim = new Gimmicks(this);
 		this.castLock = 0;
 		this.meleeChain = freshMelee();
 		this.weave = freshWeave();
@@ -959,6 +968,7 @@ export class TurbzGame {
 			}
 			if (/^Numpad[1-9]$/.test(e.code)) this.cast(Number(e.code.slice(6)) - 1);
 			if (e.code === "Numpad0" || e.code === "NumpadEnter") this.attack();
+			if (e.code === "KeyR") this.gim?.activate();
 			if (e.code === "KeyE") this.interact();
 			if (e.code === "KeyB") this.toggle("bag");
 			if (e.code === "KeyI") this.toggle("gear");
@@ -1025,6 +1035,10 @@ export class TurbzGame {
 		}, options);
 		this.canvas.addEventListener("pointerup", () => {
 			if (this.pointer) this.pointer.down = false;
+		}, options);
+		this.canvas.addEventListener("dblclick", (e) => {
+			if (snap.mode !== "play" || this.dead) return;
+			this.gim?.dblclick(this.screenToWorld(e.clientX, e.clientY));
 		}, options);
 		this.canvas.addEventListener("pointercancel", () => { if (this.pointer) this.pointer.down = false; }, options);
 		this.canvas.addEventListener("wheel", (e) => {
@@ -1888,6 +1902,7 @@ export class TurbzGame {
 		if (this.role !== "guest" && !this.lms) this.tickDungeons(dt);
 		this.tickPlayer(dt);
 		if (this.dead) return;
+		this.gim?.tick(dt);
 		if (this.save) this.save.lifeT = (this.save.lifeT ?? 0) + dt;
 		this.tickDayNight(dt);
 		this.tickMapQuests(dt);
@@ -2320,6 +2335,15 @@ export class TurbzGame {
 		if (move.splash) {
 			for (const m of this.foesNear(at.x, at.y, move.splash.radius)) if (m !== mob) this.resolveHit(move, m, fromPet, mult * move.splash.mult, { pet });
 		}
+		if (move.multi && !fromPet) {
+			const extra = mult * move.multi.mult * (1 + Math.max(0, this.chan("combo_core")) / 100);
+			for (let i = 1; i < move.multi.hits; i++) this.later(move.multi.gap * i, () => {
+				if (!mob.alive) return;
+				this.cfx?.mote(mob.x, mob.y - 14, TYPES[move.type]?.color ?? "#fff1a8", move.type, 30, 0.35, "spark");
+				this.resolveHit(move, mob, fromPet, extra, { pet, child: true });
+			});
+		}
+		if (move.selfBuff && !fromPet && move.selfBuff !== "none") this.addStatus(move.selfBuff, 4);
 		if (move.echo) this.later(0.36, () => { if (mob.alive) this.resolveHit(move, mob, fromPet, mult * move.echo, { pet }); });
 		if (move.chain) {
 			const hit = new Set([mob]);
@@ -2524,7 +2548,8 @@ export class TurbzGame {
 		this.lastWalk = { map: save.map, x: save.x, y: save.y };
 		this.cam.x += (save.x - this.cam.x) * Math.min(1, dt * 8);
 		this.cam.y += (save.y - this.cam.y) * Math.min(1, dt * 8);
-		for (const id of Object.keys(this.cds)) this.cds[id] = Math.max(0, (this.cds[id] ?? 0) - dt);
+		const cdRate = this.gim?.cdRate() ?? 1;
+		for (const id of Object.keys(this.cds)) this.cds[id] = Math.max(0, (this.cds[id] ?? 0) - dt * cdRate);
 		this.status = tickStatuses(this.status, dt);
 		if (this.buff.t > 0) this.buff.t -= dt;
 		if ((save.jarLeft ?? 0) > 0) {
@@ -2567,8 +2592,14 @@ export class TurbzGame {
 		const x = save.x;
 		const y = save.y;
 		const hit = (x, y) => blocked(world, x, y) || blocked(world, x - 7, y) || blocked(world, x + 7, y) || blocked(world, x, y - 6);
-		if (!hit(save.x + dx, save.y)) save.x += dx;
-		if (!hit(save.x, save.y + dy)) save.y += dy;
+		if (this.gim?.flying()) {
+			// Skyborne: over walls and water, but never off the edge of the map.
+			save.x = Math.max(16, Math.min(world.w * 32 - 16, save.x + dx));
+			save.y = Math.max(16, Math.min(world.h * 32 - 16, save.y + dy));
+		} else {
+			if (!hit(save.x + dx, save.y)) save.x += dx;
+			if (!hit(save.x, save.y + dy)) save.y += dy;
+		}
 		this.moving ||= save.x !== x || save.y !== y;
 		this.direction = directionFromDelta(save.x - x, save.y - y, this.direction);
 		if (save.x !== x) this.facing = save.x < x ? -1 : 1;
@@ -2577,16 +2608,31 @@ export class TurbzGame {
 		const save = this.save;
 		if (this.dead || !this.world) return;
 		if (this.autoCare(dt)) return;
-		// Casters keep their distance: step back from a foe that closes to melee range.
+		// Fight footwork: casters and archers hold a range and circle, melee closes in, everyone steps off a telegraphed hit.
 		{
 			const foe = this.fightTarget();
-			if (foe && !this.channel && Math.hypot(foe.x - save.x, foe.y - save.y) < 44) {
+			if (foe && !this.channel) {
+				const d = Math.hypot(foe.x - save.x, foe.y - save.y);
 				const kit = this.arsenal(save).filter((m) => this.isOffense(m));
-				const ranged = kit.filter((m) => attackForm(m) !== "melee").length;
-				if (ranged > kit.length - ranged && !foe.animal) {
-					const ang = Math.atan2(save.y - foe.y, save.x - foe.x);
-					this.stepToward(save.x + Math.cos(ang) * 60, save.y + Math.sin(ang) * 60, dt);
+				const ranged = kit.filter((m) => attackForm(m) !== "melee");
+				const caster = ranged.length > kit.length - ranged.length && !foe.animal;
+				const ang = Math.atan2(save.y - foe.y, save.x - foe.x);
+				this.autoSide = (this.autoSide ?? 1);
+				if ((this.autoSideT = (this.autoSideT ?? 0) - dt) <= 0) { this.autoSideT = 1.4 + Math.random() * 1.4; this.autoSide = -this.autoSide; }
+				const threatened = this.incoming?.some((h) => h.t < 0.32 && h.form === "melee");
+				if (threatened && d < 80) {
+					const side = ang + this.autoSide * 1.9;
+					this.stepToward(save.x + Math.cos(side) * 70, save.y + Math.sin(side) * 70, dt);
 					return;
+				}
+				if (caster) {
+					const want = Math.max(70, Math.min(150, Math.max(...ranged.map((m) => this.playerReach(m))) * 0.72));
+					if (d < want - 18 || (d < want + 30 && this.castLock <= 0)) {
+						const out = d < want - 18 ? 1 : 0.15;
+						const side = ang + this.autoSide * (Math.PI / 2) * (1 - out * 0.6);
+						this.stepToward(save.x + Math.cos(side) * 60, save.y + Math.sin(side) * 60, dt);
+						return;
+					}
 				}
 			}
 		}
@@ -3038,7 +3084,10 @@ export class TurbzGame {
 			if (gap > 8) continue;
 			if (m.animal && this.grind !== "hunting" && this.grind !== "skinning") continue;
 			const edge = offense.reduce((n, mv) => Math.max(n, typeChart(mv.type, m.type)), 1);
-			const score = d * (edge > 1 ? 0.7 : edge < 1 ? 1.3 : 1) + Math.max(0, gap) * 60 + (m.rarity ?? 0) * 25;
+			if (this.gim?.active("phase") && !this.gim.isGhost(m)) continue;
+			const walled = this.world && wallBetween(this.world, save.x, save.y, m.x, m.y) ? 140 : 0;
+			const pack = this.foesNear(m.x, m.y, 90).length;
+			const score = d * (edge > 1 ? 0.7 : edge < 1 ? 1.3 : 1) + Math.max(0, gap) * 60 + (m.rarity ?? 0) * 25 + walled + Math.max(0, pack - 2) * 45 - (m.aggro ? 90 : 0);
 			if (score < bs) { bs = score; best = m; }
 		}
 		return best ?? this.nearestMob(save.x, save.y, Math.min(range, 400));
@@ -3051,6 +3100,12 @@ export class TurbzGame {
 	autoCare(dt) {
 		const save = this.save;
 		const hp = save.hp / Math.max(1, this.maxHp());
+		// Asleep or rooted: mash to break free, like a player would.
+		const held = this.status.find((s) => (s.id === "sleep" || s.id === "root") && s.t > 0);
+		if (held) {
+			this.mashT = (this.mashT ?? 0) - dt;
+			if (this.mashT <= 0) { this.mashT = 0.15; struggle(this.status, held.id === "sleep" ? 0.3 : 0.18); }
+		}
 		this.autoCareT = (this.autoCareT ?? 0) - dt;
 		this.potionCd = Math.max(0, (this.potionCd ?? 0) - dt);
 		if (hp < 0.45 && this.potionCd <= 0 && (this.healCd ?? 0) <= 0 && this.inFight()) {
@@ -3062,10 +3117,17 @@ export class TurbzGame {
 			if (this.autoRest) {
 				if (hp >= 0.85) { this.autoRest = false; this.say("Rested. Back to it."); }
 				else {
-					const threat = this.nearestMob(save.x, save.y, 220);
-					if (threat) {
-						const ang = Math.atan2(save.y - threat.y, save.x - threat.x);
+					const threats = this.foesNear(save.x, save.y, 420).filter((m) => m.aggro || (!m.animal && Math.hypot(m.x - save.x, m.y - save.y) < 220));
+					// Being hit with nothing to run from (a shot from far off, a ghost): stop resting and answer it.
+					if (!threats.length && this.combat > 1.5 && (this.hurt ?? 0) > 0.2) { this.autoRest = false; return false; }
+					if (threats.length) {
+						// Run from the middle of the pack, not just the nearest foe. Cornered, it turns and fights.
+						const cx = threats.reduce((n, m) => n + m.x, 0) / threats.length, cy = threats.reduce((n, m) => n + m.y, 0) / threats.length;
+						const ang = Math.atan2(save.y - cy, save.x - cx);
+						const bx = save.x, by = save.y;
 						this.stepToward(save.x + Math.cos(ang) * 90, save.y + Math.sin(ang) * 90, dt);
+						this.fleeStall = Math.hypot(save.x - bx, save.y - by) < 0.5 ? (this.fleeStall ?? 0) + dt : 0;
+						if (this.fleeStall > 0.6) { this.fleeStall = 0; this.autoRest = false; return false; }
 					} else { this.path = []; this.dest = null; }
 					this.grind = "resting";
 					return true;
@@ -3549,6 +3611,16 @@ export class TurbzGame {
 			const roll = by("roll");
 			if (roll && Math.hypot(foe.x - save.x, foe.y - save.y) < 78 && this.castMove(roll, foe)) return true;
 		}
+		// A telegraphed blow is about to land: roll or dash out of it if anything is ready.
+		if (this.incoming?.some((h) => h.t < 0.3)) {
+			const out = by("roll") ?? by("dash") ?? by("blink");
+			if (out && this.castMove(out, foe)) return true;
+		}
+		// Class gimmick: used in real fights (a boss, a witch, or three or more foes close by).
+		if (this.autoplay || this.autoCombat) {
+			const crowd = this.foesNear(save.x, save.y, 160).length;
+			if ((foe.boss || foe.witch || foe.bounty || crowd >= 3 || hpPct < 0.4) && this.gim?.autoUse(foe)) return true;
+		}
 		return this.castOffense(foe);
 	}
 	/**
@@ -3569,6 +3641,9 @@ export class TurbzGame {
 			const reach = kit.some((mv) => this.moveReaches(mv, d));
 			if (!reach) continue;
 			if (mob.animal && !mob.aggro && (mob.hurt ?? 0) <= 0) continue;
+			// Do not lock onto something it cannot see or hit through a wall.
+			if (this.world && wallBetween(this.world, save.x, save.y, mob.x, mob.y) && !(mob.aggro && d < 60)) continue;
+			if (this.gim?.active("phase") && !this.gim.isGhost(mob)) continue;
 			const usable = kit.filter((mv) => typeChart(mv.type, mob.type) > 0 && this.moveReaches(mv, d));
 			if (!usable.length) continue;
 			const gap = (mob.level ?? 1) - save.level;
@@ -4219,7 +4294,9 @@ export class TurbzGame {
 		}
 	}
 	damageMob(mob, dmg, crit) {
-		const amount = Math.floor(dmg);
+		const gm = this.gim ? this.gim.dealMult(mob) : 1;
+		if (gm <= 0) { this.float(mob.x, mob.y - 30, "PHASED", "#9ad8ff"); return; }
+		const amount = Math.floor(dmg * gm);
 		if (this.role === "guest") {
 			this.room?.send({
 				t: "dmg",
@@ -4231,6 +4308,7 @@ export class TurbzGame {
 			return;
 		}
 		this.applyMobDamage(mob, amount, crit);
+		this.gim?.onHit(mob, amount, crit);
 		// Thorned foes bite back, at most 4% of your health a hit and three times a second.
 		if (mob.enchants?.includes("thorned") && (mob.thornT ?? 0) <= 0 && !this.dead && this.save) {
 			mob.thornT = .33;
@@ -4258,6 +4336,7 @@ export class TurbzGame {
 		if (mob.rival) this.lmsEliminate(mob, "you");
 		mob.alive = false;
 		mob.hp = 0;
+		this.gim?.onKill(mob);
 		save.lifeKills = (save.lifeKills ?? 0) + 1;
 		this.mapQuestEvent({ t: "kill", species: mob.species });
 		const delay = this.respawnSecondsFor(mob);
@@ -5579,10 +5658,8 @@ export class TurbzGame {
 		const engage = hunting || m.seen;
 		const agility = m.classId && CLASS_BY_ID[m.classId] ? 1 + Math.max(-.25, (CLASS_BY_ID[m.classId].stats.speed ?? 0) / 180) : 1;
 		if (!rooted && d > 4) {
-			if (engage && d > (hunting ? 42 : 96)) {
-				const sp = (hunting ? 188 : 64) * agility;
-				this.moveMob(m, dx / d * sp * dt, dy / d * sp * dt);
-				m.facing = dx < 0 ? -1 : 1;
+			if (engage && (hunting || d < 320)) {
+				witchSteer(this, m, d, dx, dy, dt, hunting, agility);
 			} else if (!engage) {
 				const hx = m.homeX - m.x;
 				const hy = m.homeY - m.y;
@@ -5630,6 +5707,7 @@ export class TurbzGame {
 			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
 			return;
 		}
+		if (this.gim && !this.gim.allowHit(m, this.foeForm(m, move))) return;
 		let dmg = this.foeHitRaw(m, move, dist) * mult;
 		const crit = Math.random() < bendChance((m.stats?.crit ?? .03) + (m.enraged && (m.bounty || m.bountySpirit) ? BOUNTY_ENRAGE.crit : 0));
 		if (crit) {
@@ -5719,7 +5797,7 @@ export class TurbzGame {
 				if (amount < 0.75) return;
 			}
 		}
-		let dmg = amount;
+		let dmg = amount * (this.gim?.hurtMult(amount) ?? 1);
 		if (this.shield > 0) {
 			const use = Math.min(this.shield, dmg);
 			this.shield -= use;
@@ -5736,6 +5814,8 @@ export class TurbzGame {
 		this.sleeping = false;
 		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60, "AWAKE", "#fff1a8");
 		save.hp -= dmg;
+		if (save.hp <= 0 && this.gim?.saveFromDeath()) save.hp = 1;
+		this.gim?.afterHurt(dmg);
 		if (save.hp > 0) this.ghostSecondWind();
 		if (this.rules === "hardcore") this.persist();
 		this.hurt = 1;
@@ -6182,6 +6262,9 @@ export class TurbzGame {
 	}
 	inFight() {
 		return !!this.fightTarget();
+	}
+	openSpot(x, y) {
+		return nearestOpen(this.world, x, y);
 	}
 	playerSpeed() {
 		const save = this.save;
@@ -6847,6 +6930,7 @@ export class TurbzGame {
 				at.y += (bed.y - 6 + Math.cos(this.clock * .5 + i) * 2 - at.y) * Math.min(1, step * 3);
 				return;
 			}
+			if (this.gim?.leading()) { this.gim.leadGhost(at, i, step); return; }
 			this.moveGhost(spirit, at, i, step);
 		});
 		if (!this.fightTarget()) this.spreadGhosts(this.mates, 40);
@@ -9421,7 +9505,7 @@ export class TurbzGame {
 	}
 	profile() {
 		const save = this.save;
-		const key = `${save?.classId}|${save?.traitId ?? ""}`;
+		const key = `${save?.classId}|${save?.traitId ?? ""}|${save?.classId === "cryinggirl" ? getCustomBuild().join(",") + JSON.stringify(getCryingConfig()) : ""}`;
 		if (this.profileKey !== key) {
 			this.profileKey = key;
 			this.profileCache = save ? classProfile(save.classId, save.traitId) : { stats: {}, immune: [] };
@@ -9438,7 +9522,7 @@ export class TurbzGame {
 		const swift = this.status.some((s) => s.id === "swift") ? 1.45 : 1;
 		const agility = bendDown(1 + this.mod("speed") / 100, 0.5, 0.05);
 		const roam = this.combat > 0 ? 1 : 1 + bend(this.chan("wayfarer") / 100, 0.5, 0.9);
-		return agility * swift * roam * (1 + bend(this.chan("swift_step") / 100, 0.45, 0.85)) * (1 + this.skillN("wayfinding") * 0.00075);
+		return agility * swift * roam * (1 + bend(this.chan("swift_step") / 100, 0.45, 0.85)) * (1 + this.skillN("wayfinding") * 0.00075) * (this.gim?.speedMult() ?? 1);
 	}
 	addStatus(id, t) {
 		if (id === "none") return;
@@ -9874,7 +9958,7 @@ export class TurbzGame {
 	/** The verse catalog only changes when ranks change, so it keeps one identity between updates. */
 	cachedAbilities() {
 		const ranks = this.save?.abilityRanks ?? {};
-		const key = `${JSON.stringify(ranks)}|${this.chan("reach")}|${this.chan("swift")}|${this.chan("focus")}`;
+		const key = `${JSON.stringify(ranks)}|${this.chan("reach")}|${this.chan("swift")}|${this.chan("focus")}|${JSON.stringify(getCryingConfig())}`;
 		if (this.abilityKey !== key || !this.abilityCache) {
 			this.abilityKey = key;
 			this.abilityCache = [...MOVES, ...AURA_LIST].map((m) => {
@@ -10105,6 +10189,7 @@ export class TurbzGame {
 			party: !slow ? snap.party : (save.party ?? []).map((id) => NPCS.find((n) => n.id === id)?.name ?? id),
 			autoplay: this.autoplay,
 			autoCombat: !!this.autoCombat,
+			gimmick: this.gim?.view() ?? null,
 			grind: this.autoplay ? this.grind : "",
 			pools: this.turbz && this.pools ? {
 				mana: Math.ceil(this.pools.mana), maxMana: this.pools.maxMana,
@@ -10235,6 +10320,7 @@ export class TurbzGame {
 		if (this.world.cache) ctx.drawImage(this.world.cache, 0, 0);
 		else drawWorldSlice(ctx, this.world, this.cam.x, this.cam.y, w, h, this.zoom);
 		const save = this.save;
+		this.gim?.drawUnder(ctx, this.clock);
 		if (save.map === "world") for (const p of POIS) {
 			const pos = poiPos(p);
 			if (!pos) continue;
@@ -10515,7 +10601,10 @@ export class TurbzGame {
 			});
 			drawShadowName(ctx, r.name, r.x, r.y - 44, "#e6c15a");
 		}
-		drawActor(ctx, {
+		const formDrawn = !!this.gim?.drawForm(ctx, { x: save.x, y: save.y, direction: this.direction, moving: this.moving && !this.dead, walk: this.walk, facing: this.facing, hurt: this.hurt, time: this.clock });
+		if (this.gim?.active("phase")) ctx.globalAlpha = 0.5 + Math.sin(this.clock * 5) * 0.1;
+		if (this.gim?.active("flight")) ctx.translate(0, -10);
+		if (!formDrawn) drawActor(ctx, {
 			x: save.x,
 			y: save.y,
 			race: save.race,
@@ -10537,6 +10626,9 @@ export class TurbzGame {
 			time: this.clock,
 			scale: 1
 		});
+		ctx.globalAlpha = 1;
+		if (this.gim?.active("flight")) ctx.translate(0, 10);
+		this.gim?.drawOver(ctx, this.clock);
 		if (this.sleeping && this.sleepBed) {
 			// Tucked in: the bed's blanket covers you while you sleep in it.
 			const bx = this.sleepBed.tx * 32, by = this.sleepBed.ty * 32;

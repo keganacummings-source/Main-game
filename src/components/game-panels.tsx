@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ALCHEMY_RECIPES, ITEM_BY_ID, TYPES, type TypeId } from "@/game/content";
-import { classGendered, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
+import { ALCHEMY_RECIPES, attackForm, ITEM_BY_ID, moveTactic, TYPES, type TypeId } from "@/game/content";
+import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
 import { BUILD_PIECES, BUILD_PIECE_IDS } from "@/game/building";
@@ -98,12 +98,48 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 const MAX_BAR = 9;
+type VerseRow = Snap["abilities"][number];
+const ROLE_OF = (m: VerseRow): string => {
+  if (m.aura) return "support";
+  const tac = moveTactic(m);
+  if (["blink", "lunge", "dash", "roll", "surge"].includes(tac)) return "movement";
+  if (tac === "heal" || tac === "ward") return "support";
+  const f = attackForm(m);
+  return f === "melee" ? "melee" : f === "ranged" ? "ranged" : "spell";
+};
+const SHAPES: { id: string; label: string; has: (m: VerseRow) => boolean }[] = [
+  { id: "multi", label: "Multi-hit", has: (m) => !!m.multi },
+  { id: "area", label: "Area", has: (m) => !!(m.nova || m.splash) },
+  { id: "chain", label: "Chain", has: (m) => !!m.chain },
+  { id: "echo", label: "Echo", has: (m) => !!m.echo },
+  { id: "buff", label: "Self-buff", has: (m) => !!m.selfBuff },
+];
+const ROLES_V = [["melee", "Melee"], ["ranged", "Ranged"], ["spell", "Magic"], ["support", "Support"], ["movement", "Movement"]] as const;
+const EFFECTS_V = ["burn", "soak", "root", "sleep", "gloom", "silence", "spark", "expose", "leech", "mend", "shell"] as const;
+const toggleIn = (set: string[], id: string) => (set.includes(id) ? set.filter((x) => x !== id) : [...set, id]);
+
+function ToggleRow({ label, value, onChange, options, testid }: { label: string; value: string[]; onChange: (v: string[]) => void; options: readonly (readonly [string, React.ReactNode])[]; testid: string }) {
+  return (
+    <div className="verse-filter-row" role="group" aria-label={label} data-testid={testid}>
+      <span className="verse-filter-label">{label}</span>
+      {options.map(([id, l]) => (
+        <button key={id} type="button" data-testid={`${testid}-${id}`} aria-pressed={value.includes(id)} className={`verse-chip ${value.includes(id) ? "verse-chip-on" : ""}`} onClick={() => onChange(toggleIn(value, id))}>{l}</button>
+      ))}
+    </div>
+  );
+}
 export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
-  const s = useSnapPick(["bar", "abilities", "skillPoints"] as const);
+  const s = useSnapPick(["bar", "abilities", "skillPoints", "className"] as const);
+  const myClass = useMemo(() => CLASSES.find((c) => c.name === s.className)?.id ?? "", [s.className]);
+  const [roles, setRoles] = useState<string[]>([]);
+  const [effects, setEffects] = useState<string[]>([]);
+  const [shapes, setShapes] = useState<string[]>([]);
+  const [source, setSource] = useState<"any" | "mine" | "signature" | "starfall">("any");
+  const [desc, setDesc] = useState(true);
   const [tab, setTab] = useState<"loadout" | "library">("loadout");
   const [filter, setFilter] = useState("");
   const [type, setType] = useState<TypeId | "all">("all");
-  const [sort, setSort] = useState<"type" | "name" | "power" | "rank">("type");
+  const [sort, setSort] = useState<"type" | "name" | "power" | "rank" | "cd" | "reach" | "dps" | "acc" | "crit">("type");
   const [show, setShow] = useState<"all" | "owned" | "locked" | "aura" | "new">("all");
   const equipped = useMemo(() => new Set(s.bar.map((m) => m.id)), [s.bar]);
   const [picked, setPicked] = useState<number | null>(null);
@@ -113,11 +149,18 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
   const unlocked = useMemo(() => s.abilities.filter((m) => m.rank > 0), [s.abilities]);
   const catalog = useMemo(() => {
     const f = filter.trim().toLowerCase();
+    const num = (m: VerseRow): number => sort === "power" ? m.now.power || m.power : sort === "rank" ? m.rank : sort === "cd" ? -(m.cdNow ?? 99) : sort === "reach" ? m.reachNow ?? m.range : sort === "acc" ? m.accuracy : sort === "crit" ? m.crit : sort === "dps" ? (m.now.power || m.power) * (m.multi ? 1 + (m.multi.hits - 1) * m.multi.mult : 1) / Math.max(0.5, m.cdNow ?? 1) : 0;
+    const dir = desc ? 1 : -1;
     return s.abilities
       .filter((m) => (type === "all" || m.type === type) && (show === "all" || (show === "aura" ? !!m.aura : show === "new" ? !!m.fx : show === "owned" ? m.rank > 0 : m.rank === 0)))
+      .filter((m) => !roles.length || roles.includes(ROLE_OF(m)))
+      .filter((m) => !effects.length || effects.includes(m.effect))
+      .filter((m) => shapes.every((id) => SHAPES.find((x) => x.id === id)!.has(m)))
+      .filter((m) => source === "any" || (source === "mine" ? (m.cls === myClass || CLASS_BY_ID[myClass as ClassId]?.starterMoves.includes(m.id)) : source === "signature" ? !!m.cls : !!m.fx))
       .filter((m) => !f || m.name.toLowerCase().includes(f) || m.effect.includes(f) || m.about.toLowerCase().includes(f))
-      .sort((a, b) => (sort === "name" ? a.name.localeCompare(b.name) : sort === "power" ? b.power - a.power : sort === "rank" ? b.rank - a.rank || a.name.localeCompare(b.name) : a.type.localeCompare(b.type) || a.name.localeCompare(b.name)));
-  }, [s.abilities, filter, type, sort, show]);
+      .sort((a, b) => sort === "name" ? (desc ? 1 : -1) * a.name.localeCompare(b.name) : sort === "type" ? (desc ? 1 : -1) * (a.type.localeCompare(b.type) || a.name.localeCompare(b.name)) : !desc && (!!a.aura !== !!b.aura) ? (a.aura ? 1 : -1) : dir * (num(b) - num(a)) || a.name.localeCompare(b.name));
+  }, [s.abilities, filter, type, sort, show, roles, effects, shapes, source, desc, myClass]);
+  const filtersOn = roles.length + effects.length + shapes.length + (source !== "any" ? 1 : 0) + (type !== "all" ? 1 : 0) + (show !== "all" ? 1 : 0) + (filter ? 1 : 0);
   return (
     <div className="ui-stack">
       <Tabs value={tab} onChange={setTab} tabs={[{ id: "loadout", label: `Loadout · ${s.bar.length}/${MAX_BAR}` }, { id: "library", label: `Library · ${s.skillPoints} pts` }]} />
@@ -190,9 +233,21 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
               <option value="name">By name</option>
               <option value="power">By power</option>
               <option value="rank">By rank</option>
+              <option value="dps">By damage per second</option>
+              <option value="cd">By cooldown (shortest)</option>
+              <option value="reach">By reach</option>
+              <option value="acc">By accuracy</option>
+              <option value="crit">By crit</option>
             </select>
+            <button type="button" className="px-btn ui-btn-sm" data-testid="verse-sort-dir" onClick={() => setDesc(!desc)} title="Flip the order">{sort === "name" || sort === "type" ? (desc ? "A → Z" : "Z → A") : desc ? "▼ High first" : "▲ Low first"}</button>
+            <button type="button" className="px-btn ui-btn-sm" data-testid="verse-filter-reset" disabled={!filtersOn} onClick={() => { setRoles([]); setEffects([]); setShapes([]); setSource("any"); setType("all"); setShow("all"); setFilter(""); }}>Reset {filtersOn || ""}</button>
           </div>
-          <Chips value={show} onChange={setShow} options={[{ id: "all", label: "All" }, { id: "owned", label: "Unlocked" }, { id: "locked", label: "Locked" }, { id: "aura", label: "Auras" }, { id: "new", label: "✦ Starfall" }]} />
+          <Chips value={source} onChange={setSource} label="Source" options={[{ id: "any", label: "Every verse" }, { id: "mine", label: "My class" }, { id: "signature", label: "★ Signature batch" }, { id: "starfall", label: "✦ Starfall" }]} />
+          <ToggleRow label="ROLE" testid="verse-role" value={roles} onChange={setRoles} options={ROLES_V} />
+          <ToggleRow label="EFFECT" testid="verse-effect" value={effects} onChange={setEffects} options={EFFECTS_V.map((e) => [e, e] as const)} />
+          <ToggleRow label="SHAPE" testid="verse-shape" value={shapes} onChange={setShapes} options={SHAPES.map((x) => [x.id, x.label] as const)} />
+          <p className="text-dim" data-testid="verse-count">{catalog.length} of {s.abilities.length} verses</p>
+          <Chips value={show} onChange={setShow} options={[{ id: "all", label: "All" }, { id: "owned", label: "Unlocked" }, { id: "locked", label: "Locked" }, { id: "aura", label: "Auras" }]} />
           <Chips value={type} onChange={setType} label="Element" options={[{ id: "all" as const, label: "Any element" }, ...(Object.keys(TYPES) as TypeId[]).map((t) => ({ id: t, label: <span className={typeClass(t)}>{TYPES[t].name}</span> }))]} />
           <div className="ui-grid" style={{ "--min": "240px" } as React.CSSProperties}>
             {catalog.map((m) => (
@@ -202,6 +257,11 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
                   {m.rank > 5 ? <span className="text-dim">Rank {m.rank}</span> : <Pips value={m.rank} max={5} />}
                 </div>
                 <p className="ui-card-about">{m.about}</p>
+                <span className="verse-tags">
+                  <span className="verse-tag">{ROLE_OF(m)}</span>
+                  {SHAPES.filter((x) => x.has(m)).map((x) => <span key={x.id} className="verse-tag">{x.id === "multi" && m.multi ? `${m.multi.hits} hits` : x.label}</span>)}
+                  {m.cls && <span className="verse-tag text-kyo">★ {CLASS_BY_ID[m.cls as ClassId]?.name}</span>}
+                </span>
                 <VerseNums m={m} crit />
                 <div className="ui-row-gap">
                   <button type="button" className="px-btn ui-btn-sm" disabled={s.skillPoints < 1} onClick={() => game?.spendAbility(m.id)}>

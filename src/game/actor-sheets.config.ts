@@ -60,7 +60,7 @@ const SHEET_SRC: Record<SheetId, string> = {
   third: "/sprites/charsets_12_3rd_sheet.png",
   fourth: "/sprites/charsets_12_4th_sheet.png",
   // ?v= busts the 24h /sprites/* cache (public/_headers) when the sheet changes; bump it on each redraw.
-  warrior: "/sprites/class_warriors.png?v=3",
+  warrior: "/sprites/class_warriors.png?v=4",
 };
 
 /** One character block: origin of its up-row, first frame, and its frame size. */
@@ -127,6 +127,7 @@ CHARACTERS["warrior:seraph"] = { sheet: "warrior", x: 256, y: 704, fw: 32, fh: 4
 CHARACTERS["warrior:moonhopper"] = { sheet: "warrior", x: 384, y: 704, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 CHARACTERS["warrior:bladedancer"] = { sheet: "warrior", x: 512, y: 704, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 CHARACTERS["warrior:sovereign"] = { sheet: "warrior", x: 640, y: 704, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
+CHARACTERS["warrior:cryinggirl"] = { sheet: "warrior", x: 0, y: 880, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 
 export const spriteKey = (charId: string, row: number, frame: number): string => `${charId}|d${row}f${frame}`;
 

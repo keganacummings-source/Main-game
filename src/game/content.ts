@@ -136,6 +136,12 @@ export type Move = {
   chain?: { jumps: number; range: number; mult: number };
   /** Comes back for a second hit on the same foe at `echo` of the damage (boomerangs). */
   echo?: number;
+  /** Multi-hit: the target is struck `hits` times in all, `gap` seconds apart, each extra hit at `mult`. */
+  multi?: { hits: number; gap: number; mult: number };
+  /** A status the caster gains when the verse lands (swift, shell). */
+  selfBuff?: string;
+  /** The class whose signature batch this verse belongs to. */
+  cls?: string;
 };
 /** Bespoke verse animations (see combat-fx.ts MOVE_FX_IDS). */
 export type MoveFx = "meteor" | "chain" | "vortex" | "pillar" | "nova" | "boomerang" | "barrage" | "fissure" | "sigil" | "spectral" | "wave" | "bloom";
@@ -907,6 +913,11 @@ export const ENCHANTS: EnchantDef[] = [
   { id: "mana_flow", name: "Mana Flow", max: 30, cat: "combat", unit: "%", tag: "relic", gear: (n) => `Mana recovers ${n}% faster.`, perk: { step: 1, max: 20, each: "1% faster mana recovery" } },
   { id: "stam_flow", name: "Stamina Flow", max: 30, cat: "combat", unit: "%", tag: "armor", gear: (n) => `Stamina recovers ${n}% faster.`, perk: { step: 1, max: 20, each: "+1% faster stamina recovery" } },
   { id: "body_tide", name: "Body Tide", max: 24, cat: "defense", unit: "%", tag: "armor", gear: (n) => `+${n}% health, and mana and stamina rise with it, because they are shares of the same body.`, perk: { step: 1, max: 16, each: "+1% health, which also lifts mana and stamina" } },
+  { id: "combo_core", name: "Combo Core", max: 24, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `Multi-hit verses strike ${n}% harder on every extra hit.`, perk: { step: 1, max: 16, each: "+1% damage on the extra hits of multi-hit verses" } },
+  { id: "gimmick_haste", name: "Trickster", max: 20, cat: "combat", unit: "%", tag: "relic", gear: (n) => `Your class gimmick (R) comes back ${n}% sooner. All Trickster together cannot pass 50%.`, perk: { step: 1, max: 15, each: "1% shorter class gimmick cooldown (cannot pass 50%)" } },
+  { id: "gimmick_power", name: "Showstopper", max: 30, cat: "combat", unit: "%", tag: "weapon", gear: (n) => `Your class gimmick (R) deals ${n}% more damage.`, perk: { step: 1, max: 20, each: "+1% damage from your class gimmick" } },
+  { id: "form_fury", name: "Shapeshifter", max: 24, cat: "combat", unit: "%", tag: "armor", gear: (n) => `While transformed (cat, rabbit, boss form, ghost, flight) you deal ${n}% more damage and take ${Math.round(n / 2)}% less.`, perk: { step: 1, max: 16, each: "+1% damage and 0.5% less damage taken while transformed" } },
+  { id: "afterimage", name: "Afterimage", max: 20, cat: "combat", unit: "%", tag: "armor", gear: (n) => `Your gimmick lasts ${n}% longer.`, perk: { step: 1, max: 15, each: "+1% class gimmick duration" } },
 ];
 
 export const ENCHANT_BY_ID: Record<string, EnchantDef> = Object.fromEntries(ENCHANTS.map((e) => [e.id, e]));

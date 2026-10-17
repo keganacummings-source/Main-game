@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOVE_BY_ID, SKILLS, TYPES, moveTactic, type TypeId } from "@/game/content";
-import { CLASSES, CLASS_BY_ID, CLASS_RACE, ROLES, TRAITS, buffLines, type ClassId, type Role } from "@/game/classes";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, type ClassId, type Role } from "@/game/classes";
 import { actorSpritesReady } from "@/game/actor-sprites";
 import type { Sheet, TurbzGame } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -47,9 +47,17 @@ export type Pick = { classId: ClassId; traitId: string | null; female: boolean }
 
 export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPick: (p: Pick) => void; game: TurbzGame | null; badge?: (classId: string) => string | null }) {
   const [role, setRole] = useState<Role | "All">("All");
+  const [style, setStyle] = useState<string>("all");
+  const [tags, setTags] = useState<string[]>([]);
+  const [, bump] = useState(0);
   const c = CLASS_BY_ID[pick.classId];
-  const lines = buffLines(c.stats, (c as { immune?: readonly string[] }).immune as never);
-  const list = CLASSES.filter((x) => role === "All" || x.role === role);
+  const perks = classPerks(c.id);
+  const sum: Record<string, number> = { ...c.stats };
+  for (const p of perks) for (const [k, v] of Object.entries(p.stats)) sum[k] = (sum[k] ?? 0) + (v ?? 0);
+  const lines = buffLines(sum, [...((c as { immune?: readonly string[] }).immune ?? []), ...perks.flatMap((p) => p.immune ?? [])] as never);
+  const tagOf = (id: string) => GIMMICKS[(CLASS_BY_ID[id as ClassId] as { gimmick: string }).gimmick]?.tags ?? [];
+  const allTags = [...new Set(CLASSES.flatMap((x) => tagOf(x.id)))].sort();
+  const list = CLASSES.filter((x) => (role === "All" || x.role === role) && (style === "all" || x.fightStyle === style) && tags.every((t) => tagOf(x.id).includes(t)));
   return (
     <div className="grid gap-3" data-testid="class-picker">
       <div className="flex flex-wrap gap-1">
@@ -59,6 +67,19 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
           </button>
         ))}
       </div>
+      <div className="flex flex-wrap gap-1" data-testid="style-filter">
+        {["all", "melee", "ranged", "mixed"].map((st) => (
+          <button key={st} type="button" data-testid={`style-filter-${st}`} className={`px-btn ui-btn-sm ${style === st ? "px-btn-kyo" : ""}`} onClick={() => setStyle(st)}>{st === "all" ? "Any style" : st}</button>
+        ))}
+      </div>
+      <div className="verse-filter-row" data-testid="gimmick-filter">
+        <span className="verse-filter-label">GIMMICK</span>
+        {allTags.map((t) => (
+          <button key={t} type="button" data-testid={`gimmick-filter-${t}`} className={`verse-chip ${tags.includes(t) ? "verse-chip-on" : ""}`} onClick={() => setTags(tags.includes(t) ? tags.filter((x) => x !== t) : [...tags, t])}>{t}</button>
+        ))}
+        {tags.length > 0 && <button type="button" className="px-btn ui-btn-sm" onClick={() => setTags([])}>Clear</button>}
+      </div>
+      {!list.length && <Empty>No class has all of those. Clear a filter.</Empty>}
       <div className="class-grid">
         {list.map((x) => (
           <button
@@ -83,7 +104,16 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
         </div>
         <p data-testid="class-focus"><span className="text-kyo">Focus: {c.focus}.</span> <span className="text-dim">Side element:</span> <span className={typeClass(c.type)}>{TYPES[c.type].name}</span> <span className="text-dim">(+5% Affinity with its verses)</span></p>
         <p>{c.blurb} <span className="text-dim">{c.specialty}.</span></p>
-        <p className="text-kyo">Passive: <span className="text-bone">{c.passive}</span></p>
+        <p className="text-kyo" data-testid="class-gimmick">Gimmick: <span className="text-bone">{c.passive}</span></p>
+        {c.id !== "cryinggirl" && (
+          <div data-testid="class-perks">
+            <p className="font-display text-[9px] text-kyo">CLASS PERKS</p>
+            {perks.map((p) => <p key={p.id}><span className="text-kyo">{p.name}:</span> {p.about}</p>)}
+            {c.legacyPassive && <p className="text-dim">Old perk (now only in the Crying Girl's build): {c.legacyPassive}</p>}
+          </div>
+        )}
+        {c.id === "cryinggirl" && <CryingCustomizer onChange={() => bump((n) => n + 1)} />}
+        {c.id === "cryinggirl" && <PerkBuilder onChange={() => bump((n) => n + 1)} />}
         <Lines buffs={lines.buffs} debuffs={lines.debuffs} />
         <div>
           <p className="font-display text-[9px] text-kyo">MOVESET</p>
@@ -340,6 +370,94 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
           {s.combat.filter((r) => r.label === "Set").map((r) => <p key={r.label} className="text-dim mt-1">Set bonus: {r.value}</p>)}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The Crying Girl's custom build: any 4 perks from every class perk plus every legacy perk. */
+function PerkBuilder({ onChange }: { onChange: () => void }) {
+  const [kind, setKind] = useState<"all" | "new" | "legacy">("all");
+  const [q, setQ] = useState("");
+  const picked = getCustomBuild();
+  const f = q.trim().toLowerCase();
+  const shown = PERKS.filter((p) => (kind === "all" || (kind === "legacy" ? p.legacy : !p.legacy)) && (!f || p.name.toLowerCase().includes(f) || p.about.toLowerCase().includes(f) || (CLASS_BY_ID[p.cls as ClassId]?.name ?? "").toLowerCase().includes(f)));
+  const toggle = (id: string) => {
+    setCustomBuild(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+    onChange();
+  };
+  return (
+    <div className="grid gap-2" data-testid="perk-builder">
+      <p className="font-display text-[9px] text-kyo">BUILD HER · {picked.length}/{CUSTOM_BUILD_MAX} PERKS</p>
+      <div className="flex flex-wrap gap-1">
+        {(["all", "new", "legacy"] as const).map((k) => (
+          <button key={k} type="button" data-testid={`perk-kind-${k}`} className={`px-btn ui-btn-sm ${kind === k ? "px-btn-kyo" : ""}`} onClick={() => setKind(k)}>{k === "all" ? "Every perk" : k === "new" ? "New perks" : "Legacy perks"}</button>
+        ))}
+        <input className="px-input" data-testid="perk-search" placeholder="Search perks or class" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      <div className="grid gap-1 sm:grid-cols-2" style={{ maxHeight: 260, overflowY: "auto" }}>
+        {shown.map((p) => {
+          const on = picked.includes(p.id);
+          const l = buffLines(p.stats, (p.immune ?? []) as never);
+          return (
+            <button key={p.id} type="button" data-testid={`perk-pick-${p.id}`} disabled={!on && picked.length >= CUSTOM_BUILD_MAX}
+              className={`class-card perk-pick ${p.legacy ? "perk-pick-legacy" : ""} ${on ? "class-card-on" : ""}`} onClick={() => toggle(p.id)}>
+              <span className="block text-lg">{on ? "✔ " : ""}{p.name} <span className="text-dim text-sm">· {CLASS_BY_ID[p.cls as ClassId]?.name}</span></span>
+              <span className="block text-base text-dim">{p.about}</span>
+              <span className="block text-sm">{l.buffs.map((b) => <span key={b} className="stat-up">▲ {b} </span>)}{l.debuffs.map((b) => <span key={b} className="stat-down">▼ {b} </span>)}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** The Crying Girl's own element, role, fight style and stat lean. Saved on this browser. */
+function CryingCustomizer({ onChange }: { onChange: () => void }) {
+  const cfg = getCryingConfig();
+  const spent = leanSpent(cfg.lean);
+  const set = (next: Parameters<typeof setCryingConfig>[0]) => { setCryingConfig(next); onChange(); };
+  const step = (k: (typeof LEAN_STATS)[number], d: number) => {
+    const cur = cfg.lean[k] ?? 0;
+    const v = Math.max(LEAN_MIN, Math.min(LEAN_MAX, cur + d));
+    if (v === cur || (d > 0 && spent + (v - cur) > LEAN_BUDGET)) return;
+    set({ lean: { ...cfg.lean, [k]: v } });
+  };
+  return (
+    <div className="grid gap-2" data-testid="crying-customizer">
+      <p className="font-display text-[9px] text-kyo">CUSTOMISE HER</p>
+      <div className="verse-filter-row" data-testid="cry-type">
+        <span className="verse-filter-label">ELEMENT</span>
+        {CRY_TYPES.map((t) => (
+          <button key={t} type="button" data-testid={`cry-type-${t}`} className={`verse-chip ${cfg.type === t ? "verse-chip-on" : ""}`} onClick={() => set({ type: t })}><span className={cfg.type === t ? "" : typeClass(t)}>{TYPES[t].name}</span></button>
+        ))}
+      </div>
+      <div className="verse-filter-row" data-testid="cry-role">
+        <span className="verse-filter-label">ROLE</span>
+        {ROLES.map((r) => (
+          <button key={r} type="button" data-testid={`cry-role-${r.toLowerCase()}`} className={`verse-chip ${cfg.role === r ? "verse-chip-on" : ""}`} onClick={() => set({ role: r })}>{r}</button>
+        ))}
+      </div>
+      <div className="verse-filter-row" data-testid="cry-style">
+        <span className="verse-filter-label">STYLE</span>
+        {(["melee", "ranged", "mixed"] as const).map((st) => (
+          <button key={st} type="button" data-testid={`cry-style-${st}`} className={`verse-chip ${cfg.fightStyle === st ? "verse-chip-on" : ""}`} onClick={() => set({ fightStyle: st })}>{st}</button>
+        ))}
+      </div>
+      <p className="text-dim" data-testid="cry-lean-budget">Stat lean: <span className={spent > LEAN_BUDGET ? "text-blood" : "text-kyo"}>{spent}/{LEAN_BUDGET}</span> points. Lower a stat (to {LEAN_MIN}%) to free points for another (up to +{LEAN_MAX}%).</p>
+      <div className="grid gap-1 sm:grid-cols-3">
+        {LEAN_STATS.map((k) => {
+          const v = cfg.lean[k] ?? 0;
+          return (
+            <div key={k} className="verse-filter-row" data-testid={`cry-lean-${k}`}>
+              <button type="button" className="px-btn ui-btn-sm" data-testid={`cry-lean-${k}-down`} disabled={v <= LEAN_MIN} onClick={() => step(k, -LEAN_STEP)}>−</button>
+              <span className={`text-base ${v > 0 ? "stat-up" : v < 0 ? "stat-down" : "text-dim"}`} style={{ minWidth: 110 }} title={STAT_LABEL[k].about}>{STAT_LABEL[k].name} {v > 0 ? "+" : ""}{v}</span>
+              <button type="button" className="px-btn ui-btn-sm" data-testid={`cry-lean-${k}-up`} disabled={v >= LEAN_MAX || spent + LEAN_STEP > LEAN_BUDGET} onClick={() => step(k, LEAN_STEP)}>+</button>
+            </div>
+          );
+        })}
+      </div>
+      <button type="button" className="px-btn ui-btn-sm" data-testid="cry-lean-reset" onClick={() => set({ lean: {} })}>Clear stat lean</button>
     </div>
   );
 }

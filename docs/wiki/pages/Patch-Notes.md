@@ -1,5 +1,17 @@
 # Patch Notes
 
+## Class Rebuild — gimmicks, perks, 64 new verses
+
+- **Every class has a real playstyle gimmick on R.** Phasewalker double-clicks the map to teleport. Nightblade turns into a black cat at 4x speed. Moonhopper becomes a hopping moon rabbit. Hexbinder phases into ghost mode for 20s (she can only hurt enemy ghosts, and only enemy ghosts can hurt her). Bloodrager wears the skins of bosses it has slain and keeps a catalog of them. Spirit Caller's Choir Lead makes her spirits follow your mouse. Every other class has its own: Iron Bastion, Overload, Hawk Volley, Hundred Fists, Grave Tether, Glacier Path, Living Pyre, Tide Pool, Cyclone Ride, Meteor Leap, Sun Lance, Halo of Mercy, Night Watch Lantern, Coin Rain, Grapple Hook, War Banner, Blood Moon, Tempo Shift, Oath of Retribution, Iaido Dash, Skyborne, Blade Waltz and Royal Decree.
+- **Old class passives are gone.** Each class now has two new perks built around its gimmick. The old passives and stat packages live on as **Legacy perks**.
+- **New class: Crying Girl.** She builds her own loadout: pick any 4 perks from every new and legacy perk. Her gimmick is Tearstorm. Choosing ranged stretches her melee verses out to a real shot; choosing melee pulls her attacks in close.
+- **64 new complex verses.** Two signature verses per class plus the Crying Girl's kit: multi-hit strings (Eightfold Cut, Jackpot, Dragon Combo), chains, rings, echoes and verses that leave you Swift or Shelled. Each class starts with its two.
+- **New gear enchants:** Combo Core, Trickster, Showstopper, Shapeshifter and Afterimage boost multi-hit verses and class gimmicks.
+- **Verses library sorting.** You can now combine filters for role (melee, ranged, magic, support, movement), effect and shape (multi-hit, area, chain, echo, self-buff), and filter by your class or the signature batch. You can also sort by damage per second, cooldown, reach, accuracy or crit, flip the order, or reset everything at once. The class picker also filters by fight style and gimmick tag.
+- **Revamped sprites.** Every class sprite has sharper rim lighting and a contact shadow. Melee classes now carry their weapons (sword, axe, hammer, katana, cutlass, daggers, gauntlets) and wear shoulder plates.
+- **Smarter rival witches.** They keep a range that suits their class, circle you, sidestep your casts, drink a potion when low and find their way around walls.
+- **Smarter autoplay.** Casters kite and strafe, everyone steps off telegraphed blows (and rolls or dashes when they can), it stops targeting foes behind walls, avoids packs, flees from the middle of a pack, fights back when cornered, and uses the class gimmick in real fights.
+
 ## Close Quarters Update — melee vs ranged
 
 - **Melee only works within 2 tiles (64 px) or less.** The old 1–4 tile melee reach is gone. Melee verses (strikes, heavies, blinks, lunges) can no longer start from across the screen, and the extra casting slack melee used to get is removed.

@@ -23,6 +23,11 @@ type KitMove = {
   chain?: { jumps: number; range: number; mult: number };
   nova?: number;
   echo?: number;
+  multi?: { hits: number; gap: number; mult: number };
+  selfBuff?: string;
+  fx?: string;
+  cdMult?: number;
+  cls?: string;
 };
 
 const v = (
@@ -34,6 +39,15 @@ const v = (
   range: extra.range ?? (tactic === "blink" || tactic === "lunge" ? 150 : tactic === "dash" || tactic === "surge" || tactic === "roll" || tactic === "heal" || tactic === "ward" ? 40 : extra.form === "ranged" ? 160 : extra.form === "spell" ? 140 : 52),
   about, tactic, ...extra,
 });
+
+const x = (cls: string, id: string, name: string, type: string, power: number, acc: number, crit: number, pri: number, effect: string, tactic: string, about: string, extra: Partial<KitMove> = {}): KitMove =>
+  ({ ...v(id, name, type, power, acc, crit, pri, effect, tactic, about, ringFit(extra)), cls, cdMult: extra.cdMult ?? (extra.multi || extra.chain || extra.nova ? 1.25 : 1.1) });
+/** A bespoke ring animation must match the ring: spell rings reach exactly as far, melee rings keep the stock slash. */
+function ringFit(extra: Partial<KitMove>): Partial<KitMove> {
+  if (!extra.fx || !extra.nova) return extra;
+  if (extra.form === "melee") { const { fx: _fx, ...rest } = extra; return rest; }
+  return { ...extra, reach: extra.nova };
+}
 
 export const KIT_MOVES: KitMove[] = [
   // Bulwark
@@ -181,7 +195,76 @@ export const KIT_MOVES: KitMove[] = [
   v("ck_levy", "Levy", "light", 44, 90, 10, 1, "expose", "strike", "Sovereign starter. The crown collects, in light.", { form: "spell" }),
   v("ck_crownward", "Crown Ward", "light", 0, 100, 0, 3, "shell", "ward", "Sovereign starter. The crown takes the blow."),
   v("ck_courtstep", "Court Step", "light", 0, 100, 0, 3, "none", "dash", "Sovereign starter. The court makes way.", { fail: 10 }),
+  // ---- Signature batch: two complex verses per class (multi-hit, combos, areas, chains, self-buffs) ----
+  x("warden", "sx_aegisquake", "Aegis Quake", "earth", 58, 90, 8, 0, "root", "heavy", "Slam the shield three times; the ground ripples out each time.", { form: "melee", reach: 56, nova: 72, multi: { hits: 3, gap: 0.22, mult: 0.45 }, fx: "fissure" }),
+  x("warden", "sx_bulwarkcharge", "Bulwark Charge", "earth", 40, 92, 6, 1, "expose", "lunge", "Charge behind the shield, cracking guards, then brace.", { form: "melee", react: "move", fail: 16, splash: { radius: 44, mult: 0.5 }, selfBuff: "shell" }),
+  x("spellweaver", "sx_stormlattice", "Storm Lattice", "electric", 46, 94, 12, 1, "spark", "strike", "A lattice of bolts that leaps across five foes.", { form: "spell", chain: { jumps: 4, range: 130, mult: 0.8 }, fx: "chain" }),
+  x("spellweaver", "sx_thunderglyph", "Thunder Glyph", "electric", 62, 86, 10, 0, "spark", "channel", "Draw a glyph and let it strike four times.", { form: "spell", multi: { hits: 4, gap: 0.18, mult: 0.35 }, splash: { radius: 52, mult: 0.4 }, fx: "sigil" }),
+  x("spiritbinder", "sx_requiem", "Requiem", "spirit", 40, 96, 8, 1, "gloom", "strike", "The choir sings in a ring, then sings again.", { form: "spell", nova: 104, echo: 0.6, fx: "spectral" }),
+  x("spiritbinder", "sx_soulweave", "Soul Weave", "spirit", 34, 100, 6, 2, "leech", "strike", "Thread the dead between foes; every stitch drinks.", { form: "spell", chain: { jumps: 3, range: 120, mult: 0.85 } }),
+  x("nightblade", "sx_thousandcuts", "Thousand Cuts", "void", 22, 98, 30, 2, "expose", "strike", "Five cuts so fast they land as one.", { form: "melee", reach: 44, multi: { hits: 5, gap: 0.08, mult: 0.7 } }),
+  x("nightblade", "sx_umbralstep", "Umbral Step", "void", 30, 96, 26, 3, "gloom", "blink", "Step through their shadow and stab twice on arrival.", { form: "melee", react: "move", fail: 12, multi: { hits: 2, gap: 0.12, mult: 0.8 }, selfBuff: "swift" }),
+  x("pathfinder", "sx_stormvolley", "Storm Volley", "air", 30, 92, 12, 1, "none", "strike", "Six arrows in a fan; the far ones still bite.", { form: "ranged", multi: { hits: 3, gap: 0.12, mult: 0.6 }, splash: { radius: 48, mult: 0.5 }, fx: "barrage" }),
+  x("pathfinder", "sx_hunterstrap", "Hunter's Trap", "air", 36, 96, 10, 1, "root", "strike", "A snare arrow that pins the target and everyone beside it.", { form: "ranged", splash: { radius: 60, mult: 0.6 } }),
+  x("ironpalm", "sx_dragoncombo", "Dragon Combo", "normal", 24, 98, 14, 2, "none", "strike", "Jab, jab, palm, knee, uppercut: a five-step string.", { form: "melee", reach: 42, multi: { hits: 5, gap: 0.12, mult: 0.75 }, selfBuff: "swift" }),
+  x("ironpalm", "sx_shockwavepalm", "Shockwave Palm", "normal", 60, 88, 10, 0, "expose", "heavy", "One palm so heavy the air behind them breaks.", { form: "melee", reach: 48, splash: { radius: 70, mult: 0.55 }, fx: "wave" }),
+  x("bloodrager", "sx_carnage", "Carnage", "fire", 44, 88, 14, 1, "burn", "strike", "Three wide burning swings that chew through a crowd.", { form: "melee", reach: 60, nova: 68, multi: { hits: 3, gap: 0.2, mult: 0.55 } }),
+  x("bloodrager", "sx_skullsplitter", "Skullsplitter", "fire", 88, 78, 18, 0, "expose", "heavy", "Raise the axe high and bring it down through the guard.", { form: "melee", reach: 60, splash: { radius: 40, mult: 0.5 }, fx: "meteor" }),
+  x("ghoulknight", "sx_deathknell", "Death Knell", "ghoul", 50, 90, 10, 1, "leech", "strike", "The greatsword rings twice and the dead answer.", { form: "melee", reach: 58, echo: 0.7, nova: 60 }),
+  x("ghoulknight", "sx_marrowcleave", "Marrow Cleave", "ghoul", 72, 84, 12, 0, "leech", "heavy", "A slow cleave that drinks from everyone it touches.", { form: "melee", reach: 62, splash: { radius: 56, mult: 0.6 }, selfBuff: "shell" }),
+  x("frostblade", "sx_permafrost", "Permafrost", "ice", 48, 92, 8, 1, "root", "strike", "Plant the blade; ice spikes burst in a ring.", { form: "melee", reach: 56, nova: 84, fx: "pillar" }),
+  x("frostblade", "sx_avalanche", "Avalanche", "ice", 34, 90, 10, 1, "root", "lunge", "Crash forward like falling snow, three heavy blows.", { form: "melee", react: "move", fail: 18, multi: { hits: 3, gap: 0.16, mult: 0.6 } }),
+  x("pyromancer", "sx_firestorm", "Firestorm", "fire", 40, 90, 8, 0, "burn", "channel", "Meteors fall in waves around the target.", { form: "spell", multi: { hits: 4, gap: 0.25, mult: 0.45 }, splash: { radius: 64, mult: 0.6 }, fx: "meteor" }),
+  x("pyromancer", "sx_flamewhip", "Flame Whip", "fire", 38, 94, 10, 1, "burn", "strike", "A whip of fire that cracks across three foes.", { form: "spell", chain: { jumps: 2, range: 110, mult: 0.85 }, echo: 0.4 }),
+  x("tidecaller", "sx_tsunami", "Tsunami", "water", 50, 90, 6, 0, "soak", "strike", "A wall of water that rolls over everything in front of it.", { form: "spell", splash: { radius: 80, mult: 0.7 }, fx: "wave" }),
+  x("tidecaller", "sx_whirlpool", "Whirlpool", "water", 28, 100, 6, 1, "soak", "strike", "A whirlpool that keeps pulling, hit after hit.", { form: "spell", multi: { hits: 4, gap: 0.3, mult: 0.5 }, nova: 70, fx: "vortex" }),
+  x("stormrider", "sx_galeblades", "Gale Blades", "air", 30, 96, 16, 2, "none", "strike", "Four wind blades that boomerang back.", { form: "ranged", multi: { hits: 2, gap: 0.1, mult: 0.8 }, echo: 0.6, fx: "boomerang" }),
+  x("stormrider", "sx_jetstream", "Jetstream", "air", 26, 100, 12, 3, "none", "dash", "Ride the jetstream and cut a line through the pack.", { fail: 8, nova: 60, selfBuff: "swift" }),
+  x("briarmage", "sx_tectonicfury", "Tectonic Fury", "earth", 54, 86, 8, 0, "root", "heavy", "Three quakes, each wider than the last.", { form: "melee", reach: 64, nova: 96, multi: { hits: 3, gap: 0.3, mult: 0.5 }, fx: "fissure" }),
+  x("briarmage", "sx_bouldertoss", "Boulder Toss", "earth", 64, 84, 10, 0, "root", "strike", "Rip up a boulder and throw it. It shatters on landing.", { form: "ranged", splash: { radius: 70, mult: 0.6 }, fx: "meteor" }),
+  x("lightbringer", "sx_prism", "Prism Ray", "light", 40, 96, 18, 1, "expose", "strike", "A ray that splits through a prism to four more foes.", { form: "spell", chain: { jumps: 4, range: 140, mult: 0.75 } }),
+  x("lightbringer", "sx_daybreak", "Daybreak", "light", 46, 92, 14, 1, "expose", "strike", "The sun rises in a ring around you, twice.", { form: "spell", nova: 96, echo: 0.6, fx: "nova" }),
+  x("voidwalker", "sx_eventhorizon", "Event Horizon", "void", 44, 90, 12, 0, "gloom", "channel", "A small black hole that chews everything near it.", { form: "spell", multi: { hits: 4, gap: 0.22, mult: 0.45 }, splash: { radius: 66, mult: 0.6 }, fx: "vortex" }),
+  x("voidwalker", "sx_mirrorrift", "Mirror Rift", "void", 30, 96, 18, 3, "gloom", "blink", "Blink, leaving a rift that cuts on both ends.", { form: "spell", react: "move", fail: 12, echo: 0.8 }),
+  x("absolver", "sx_sanctuary", "Sanctuary", "light", 44, 100, 0, 2, "mend", "heal", "A long mend that keeps knitting after the prayer.", { selfBuff: "shell" }),
+  x("absolver", "sx_judgmentbell", "Judgment Bell", "light", 34, 98, 8, 1, "silence", "strike", "A bell rings out over everyone close and silences them.", { form: "spell", nova: 92, fx: "pillar" }),
+  x("vigilant", "sx_wardingcircle", "Warding Circle", "spirit", 30, 100, 6, 1, "gloom", "strike", "A circle of lanterns that frightens and then flares.", { form: "spell", nova: 100, echo: 0.5, selfBuff: "shell" }),
+  x("vigilant", "sx_sentinelshot", "Sentinel Shot", "spirit", 40, 96, 14, 2, "gloom", "strike", "A watchfire bolt that jumps to two more foes.", { form: "spell", chain: { jumps: 2, range: 120, mult: 0.8 } }),
+  x("coinmaster", "sx_jackpot", "Jackpot", "normal", 18, 96, 20, 2, "none", "strike", "Seven coins, fired so fast they sound like one.", { form: "ranged", multi: { hits: 7, gap: 0.06, mult: 0.6 }, fx: "barrage" }),
+  x("coinmaster", "sx_goldrush", "Gold Rush", "normal", 32, 100, 10, 3, "expose", "dash", "Dash through the crowd scattering sharp coins.", { fail: 8, nova: 64, selfBuff: "swift" }),
+  x("hexbinder", "sx_hexchain", "Hex Chain", "spirit", 36, 94, 10, 1, "leech", "strike", "A cursed chain that binds four foes together.", { form: "spell", chain: { jumps: 3, range: 110, mult: 0.9 } }),
+  x("hexbinder", "sx_voodoo", "Voodoo Doll", "spirit", 24, 100, 8, 1, "gloom", "strike", "Pins in the doll, one at a time.", { form: "spell", multi: { hits: 4, gap: 0.2, mult: 0.7 }, fx: "sigil" }),
+  x("corsair", "sx_broadside", "Broadside", "water", 40, 88, 12, 0, "soak", "strike", "A pistol volley and a cutlass slash in one motion.", { form: "ranged", multi: { hits: 3, gap: 0.14, mult: 0.6 }, splash: { radius: 44, mult: 0.5 } }),
+  x("corsair", "sx_riptide", "Riptide Slash", "water", 30, 96, 18, 2, "soak", "strike", "A cross slash, then a reverse.", { form: "melee", reach: 50, multi: { hits: 2, gap: 0.1, mult: 0.9 }, echo: 0.5 }),
+  x("warlord", "sx_warpath", "Warpath", "normal", 44, 90, 10, 1, "expose", "lunge", "Lead the charge: a lunge, a cleave, a shoulder.", { form: "melee", react: "move", fail: 16, multi: { hits: 3, gap: 0.18, mult: 0.55 } }),
+  x("warlord", "sx_commandersarc", "Commander's Arc", "normal", 50, 92, 10, 1, "expose", "strike", "A wide sweeping cut that tells the line to follow.", { form: "melee", reach: 60, nova: 70, selfBuff: "swift" }),
+  x("nightlord", "sx_batswarm", "Bat Swarm", "ghoul", 22, 100, 8, 1, "leech", "strike", "A swarm that bites five times and returns the blood.", { form: "spell", multi: { hits: 5, gap: 0.12, mult: 0.6 }, chain: { jumps: 1, range: 100, mult: 0.7 } }),
+  x("nightlord", "sx_hemorrhage", "Hemorrhage", "ghoul", 58, 88, 10, 0, "leech", "channel", "Open every vein close by.", { form: "spell", nova: 88, fx: "bloom" }),
+  x("songweaver", "sx_crescendo", "Crescendo", "air", 26, 100, 8, 1, "gloom", "strike", "Each note louder than the last, four in all.", { form: "spell", multi: { hits: 4, gap: 0.18, mult: 0.7 }, nova: 80 }),
+  x("songweaver", "sx_lullaby", "Lullaby", "air", 20, 96, 0, 1, "sleep", "strike", "A soft tune that puts a whole ring to sleep.", { form: "spell", nova: 96, fx: "wave" }),
+  x("oathkeeper", "sx_divinesmite", "Divine Smite", "light", 70, 86, 14, 0, "expose", "heavy", "A pillar of light follows the blade down.", { form: "melee", reach: 58, splash: { radius: 56, mult: 0.6 }, fx: "pillar" }),
+  x("oathkeeper", "sx_crusade", "Crusade", "light", 36, 92, 12, 1, "expose", "lunge", "Charge, strike, strike again, then raise the shield.", { form: "melee", react: "move", fail: 16, multi: { hits: 2, gap: 0.16, mult: 0.8 }, selfBuff: "shell" }),
+  x("ronin", "sx_crescentmoon", "Crescent Moon", "fire", 38, 94, 30, 2, "burn", "strike", "A crescent arc of flame off the drawn blade.", { form: "melee", reach: 60, nova: 64, echo: 0.5 }),
+  x("ronin", "sx_eightfold", "Eightfold Cut", "fire", 18, 98, 34, 2, "burn", "strike", "Eight cuts in a single breath.", { form: "melee", reach: 48, multi: { hits: 8, gap: 0.06, mult: 0.55 } }),
+  x("seraph", "sx_featherstorm", "Feather Storm", "light", 24, 98, 14, 1, "expose", "strike", "A storm of razor feathers falling around the target.", { form: "spell", multi: { hits: 4, gap: 0.14, mult: 0.6 }, splash: { radius: 56, mult: 0.5 }, fx: "barrage" }),
+  x("seraph", "sx_divebomb", "Divebomb", "light", 50, 90, 16, 1, "expose", "lunge", "Climb, then dive wings-first into the crowd.", { form: "melee", react: "move", fail: 14, nova: 70 }),
+  x("moonhopper", "sx_lunarbarrage", "Lunar Barrage", "air", 22, 96, 20, 2, "none", "strike", "Moonbeam kicks from above, three hops in a row.", { form: "ranged", multi: { hits: 3, gap: 0.16, mult: 0.75 }, splash: { radius: 40, mult: 0.5 } }),
+  x("moonhopper", "sx_cratercrash", "Crater Crash", "air", 54, 88, 14, 0, "root", "heavy", "Hop to the moon and land on them.", { form: "melee", reach: 60, nova: 80, fx: "meteor" }),
+  x("bladedancer", "sx_veilstorm", "Veil Storm", "spirit", 26, 98, 16, 2, "gloom", "strike", "A spinning storm of silk and steel, six cuts around you.", { form: "melee", reach: 50, nova: 70, multi: { hits: 3, gap: 0.12, mult: 0.6 } }),
+  x("bladedancer", "sx_ribbonlunge", "Ribbon Lunge", "spirit", 30, 96, 18, 2, "gloom", "lunge", "Lunge on a ribbon and keep moving.", { form: "melee", react: "move", fail: 12, echo: 0.6, selfBuff: "swift" }),
+  x("sovereign", "sx_crownfall", "Crownfall", "light", 52, 90, 10, 0, "silence", "strike", "A golden crown falls from the sky and shatters.", { form: "spell", splash: { radius: 72, mult: 0.65 }, fx: "meteor" }),
+  x("sovereign", "sx_royalguard", "Royal Guard", "light", 30, 100, 6, 1, "expose", "strike", "Phantom guards strike every foe near the throne.", { form: "spell", nova: 92, multi: { hits: 2, gap: 0.2, mult: 0.7 }, selfBuff: "shell" }),
+  // Crying Girl
+  x("cryinggirl", "ck_tearlance", "Tear Lance", "water", 48, 94, 12, 1, "soak", "strike", "Crying Girl signature. A lance of tears that pierces three foes.", { form: "spell", chain: { jumps: 2, range: 120, mult: 0.85 } }),
+  x("cryinggirl", "ck_sobwave", "Sob Wave", "water", 30, 100, 6, 1, "soak", "strike", "One sob, and a wave rolls out around her.", { form: "spell", nova: 90, fx: "wave" }),
+  x("cryinggirl", "ck_sorrowmend", "Sorrow Mend", "water", 36, 100, 0, 2, "mend", "heal", "Crying it out. It helps."),
+  x("cryinggirl", "ck_puddlestep", "Puddle Step", "water", 10, 100, 8, 3, "soak", "blink", "Sink into a puddle and come up somewhere else.", { form: "spell", react: "move", fail: 14 }),
+  x("cryinggirl", "sx_monsoon", "Monsoon", "water", 22, 98, 8, 1, "soak", "channel", "The sky cries with her: five falling waves.", { form: "spell", multi: { hits: 5, gap: 0.2, mult: 0.55 }, splash: { radius: 70, mult: 0.5 }, fx: "barrage" }),
+  x("cryinggirl", "sx_weepingblade", "Weeping Blade", "water", 26, 98, 16, 2, "soak", "strike", "A blade of tears: three quick cuts, then she weeps again.", { form: "melee", reach: 52, multi: { hits: 3, gap: 0.12, mult: 0.7 } }),
+  x("cryinggirl", "sx_heartbreak", "Heartbreak", "water", 66, 86, 18, 0, "gloom", "heavy", "Everything she held in, all at once.", { form: "spell", nova: 80, echo: 0.5, fx: "bloom" }),
 ];
+
+const SIGNATURE_BATCH = KIT_MOVES.filter((m) => m.cls);
 
 export const STARTER_KITS: Record<string, string[]> = {
   warden: ["shieldbash", "ck_rampart", "ck_walldrop", "ck_bulwarkward", "ck_shieldrush"],
@@ -213,4 +296,9 @@ export const STARTER_KITS: Record<string, string[]> = {
   moonhopper: ["moonhop", "ck_bouncecut", "ck_moonkick", "ck_fliproll", "ck_hopdash"],
   bladedancer: ["whirlingveil", "ck_stepcut", "ck_tempo", "ck_silkroll", "ck_spinlunge"],
   sovereign: ["royaldecree", "ck_edict", "ck_levy", "ck_crownward", "ck_courtstep"],
+  cryinggirl: ["ck_tearlance", "ck_sobwave", "ck_sorrowmend", "ck_puddlestep"],
 };
+for (const m of SIGNATURE_BATCH) {
+  const kit = STARTER_KITS[m.cls!];
+  if (kit && !kit.includes(m.id)) kit.push(m.id);
+}
