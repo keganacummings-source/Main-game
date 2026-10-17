@@ -4,6 +4,7 @@ import { motifOf, paintMotif, paintSetAura } from "./fx-paint";
 import { fxGene } from "./fx-gene";
 import { drawCreatureSprite } from "./creature-sprites";
 import { tryDrawActorSprite } from "./actor-sprites";
+import { drawCryingLady } from "./crying-lady";
 
 export type Pal = { d: string; m: string; l: string; h: string; a: string };
 
@@ -105,6 +106,9 @@ function paintFitted(ctx: CanvasRenderingContext2D, piece: WornPiece | undefined
 }
 
 export function drawActor(ctx: CanvasRenderingContext2D, a: ActorDraw): void {
+  // Revamped character model test: the Crying Lady uses the new layered pixel-sprite paper-doll
+  // (nude base + element/rarity-tinted clothing per slot) instead of the charset/procedural body.
+  if ((a as ActorDraw & { classId?: string }).classId === "cryinggirl") { drawCryingLady(ctx, a); return; }
   if (tryDrawActorSprite(ctx, a)) return;
   const s = (a.scale ?? 1) * (a.tall ?? 1);
   const skin = SKIN[a.skin] ?? SKIN[0]!;
