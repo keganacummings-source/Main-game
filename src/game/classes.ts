@@ -172,7 +172,7 @@ export type PerkHook =
   | "standStill" | "thorns" | "critHaste" | "sparkBack" | "gimmickTime" | "killHeal" | "dodge" | "firstStrike" | "farPower"
   | "combatSpeed" | "hitHaste" | "echoHit" | "bossPower" | "lowHpPower" | "killShield" | "execute" | "rootOnHit" | "burnOnHit"
   | "gimmickPower" | "soakOnHit" | "critHeal" | "gimmickHaste" | "lowHpGuard" | "gloomOnHit" | "kyoOnHit" | "ghostPower" | "formSpeed";
-export type PerkDef = { id: string; name: string; cls: string; about: string; stats: StatMods; immune?: readonly ImmuneId[]; hook?: { kind: PerkHook; v: number }; legacy?: boolean };
+export type PerkDef = { id: string; name: string; cls: string; about: string; stats: StatMods; immune?: readonly ImmuneId[]; hook?: { kind: PerkHook; v: number; form?: "melee" | "spell" | "ranged" }; legacy?: boolean };
 
 const NEW_PERKS: PerkDef[] = [
   { id: "iron_footing", name: "Iron Footing", cls: "warden", about: "Standing still cuts damage taken by 20%.", stats: { guard: 6 }, hook: { kind: "standStill", v: 20 } },
@@ -186,7 +186,7 @@ const NEW_PERKS: PerkDef[] = [
   { id: "eagle_eye", name: "Eagle Eye", cls: "pathfinder", about: "+25% damage to foes more than 120px away.", stats: { crit: 3 }, hook: { kind: "farPower", v: 25 } },
   { id: "trail_sense", name: "Trail Sense", cls: "pathfinder", about: "+15% movement speed while in a fight.", stats: { might: 4 }, hook: { kind: "combatSpeed", v: 15 } },
   { id: "iron_breath", name: "Iron Breath", cls: "ironpalm", about: "Every hit you land trims 0.15s off all verse cooldowns.", stats: { haste: 4 }, hook: { kind: "hitHaste", v: 15 } },
-  { id: "palm_chain", name: "Palm Chain", cls: "ironpalm", about: "Melee hits have a 20% chance to strike again at half power.", stats: { might: 4 }, hook: { kind: "echoHit", v: 20 } },
+  { id: "palm_chain", name: "Palm Chain", cls: "ironpalm", about: "Melee hits have a 20% chance to strike again at half power.", stats: { might: 4 }, hook: { kind: "echoHit", v: 20, form: "melee" } },
   { id: "trophy_hunger", name: "Trophy Hunger", cls: "bloodrager", about: "+30% damage to bosses, and boss forms last 25% longer.", stats: { might: 5 }, hook: { kind: "bossPower", v: 30 } },
   { id: "red_mist", name: "Red Mist", cls: "bloodrager", about: "Below 40% health you deal 35% more damage.", stats: { hp: 5 }, hook: { kind: "lowHpPower", v: 35 } },
   { id: "grave_plate", name: "Grave Plate", cls: "ghoulknight", about: "Each kill wraps you in a shield worth 6% of your health.", stats: { guard: 5 }, hook: { kind: "killShield", v: 6 } },
@@ -220,7 +220,7 @@ const NEW_PERKS: PerkDef[] = [
   { id: "crimson_tide", name: "Crimson Tide", cls: "nightlord", about: "Crits heal you for 4% of your health.", stats: { leech: 3 }, hook: { kind: "critHeal", v: 4 } },
   { id: "old_blood", name: "Old Blood", cls: "nightlord", about: "Below 40% health you deal 30% more damage.", stats: { arcana: 4 }, hook: { kind: "lowHpPower", v: 30 } },
   { id: "grace_note", name: "Grace Note", cls: "songweaver", about: "Your gimmick comes back 30% sooner.", stats: { haste: 4 }, hook: { kind: "gimmickHaste", v: 30 } },
-  { id: "encore", name: "Encore", cls: "songweaver", about: "Spells have a 20% chance to echo at half power.", stats: { xp: 6 }, hook: { kind: "echoHit", v: 20 } },
+  { id: "encore", name: "Encore", cls: "songweaver", about: "Spells have a 20% chance to echo at half power.", stats: { xp: 6 }, hook: { kind: "echoHit", v: 20, form: "spell" } },
   { id: "sworn_plate", name: "Sworn Plate", cls: "oathkeeper", about: "18% of damage taken is thrown back at the nearest foe.", stats: { guard: 5 }, hook: { kind: "thorns", v: 18 } },
   { id: "penance", name: "Penance", cls: "oathkeeper", about: "+30% damage to foes under 35% health.", stats: { might: 4 }, hook: { kind: "execute", v: 30 } },
   { id: "first_light", name: "First Light", cls: "ronin", about: "+45% damage against foes at full health.", stats: { crit: 4 }, hook: { kind: "firstStrike", v: 45 } },
@@ -230,7 +230,7 @@ const NEW_PERKS: PerkDef[] = [
   { id: "moon_luck", name: "Moon Luck", cls: "moonhopper", about: "Transformed, you move 25% faster still.", stats: { crit: 4 }, hook: { kind: "formSpeed", v: 25 } },
   { id: "soft_landing", name: "Soft Landing", cls: "moonhopper", about: "15% chance to slip any hit entirely.", stats: { speed: 4 }, hook: { kind: "dodge", v: 15 } },
   { id: "silk_flow", name: "Silk Flow", cls: "bladedancer", about: "+20% movement speed while in a fight.", stats: { haste: 4 }, hook: { kind: "combatSpeed", v: 20 } },
-  { id: "dancers_edge", name: "Dancer's Edge", cls: "bladedancer", about: "Melee hits have a 20% chance to strike again at half power.", stats: { crit: 3 }, hook: { kind: "echoHit", v: 20 } },
+  { id: "dancers_edge", name: "Dancer's Edge", cls: "bladedancer", about: "Melee hits have a 20% chance to strike again at half power.", stats: { crit: 3 }, hook: { kind: "echoHit", v: 20, form: "melee" } },
   { id: "royal_purse", name: "Royal Purse", cls: "sovereign", about: "Hits have a 25% chance to shake loose 1-3 kyo.", stats: { kyo: 6 }, hook: { kind: "kyoOnHit", v: 25 } },
   { id: "divine_right", name: "Divine Right", cls: "sovereign", about: "Your gimmick lasts 30% longer.", stats: { guard: 4 }, hook: { kind: "gimmickTime", v: 30 } },
 ];

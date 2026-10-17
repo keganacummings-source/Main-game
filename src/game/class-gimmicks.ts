@@ -61,6 +61,12 @@ export class Gimmicks {
     }
     return this.hookCache.sums[kind] ?? 0;
   }
+  /** Like hook(), but perks tied to an attack form (melee, spell) only count for hits of that form. */
+  hookFor(kind: PerkHook, form?: string): number {
+    let v = 0;
+    for (const p of classPerks(this.g.save?.classId)) if (p.hook?.kind === kind && (!p.hook.form || p.hook.form === form)) v += p.hook.v;
+    return v;
+  }
   chan(id: string): number { return Math.max(0, this.g.chan?.(id) ?? 0); }
   transformed(): boolean { return this.t > 0 && FORM_KINDS.has(this.id); }
   power(): number { return 1 + (this.hook("gimmickPower") + this.chan("gimmick_power")) / 100; }
@@ -333,7 +339,7 @@ export class Gimmicks {
   isGhost(m: any): boolean { return !!(m?.ghost || m?.enemyGhost || m?.bountySpirit); }
 
   /** Multiplier on damage you deal to `mob`. 0 means the hit cannot land. */
-  dealMult(mob: any): number {
+  dealMult(mob: any, crit = false): number {
     const save = this.g.save;
     let k = 1;
     if (this.active("phase") && !this.isGhost(mob)) return 0;
@@ -344,13 +350,14 @@ export class Gimmicks {
     if (save.hp < this.g.maxHp() * 0.4) k *= 1 + this.hook("lowHpPower") / 100;
     if (dist(mob, save) > 120) k *= 1 + this.hook("farPower") / 100;
     if (this.transformed()) k *= 1 + this.chan("form_fury") / 100;
+    if (crit && classPerks(save.classId).some((p) => p.id === "arc_memory")) k *= 1.15;
     if (this.active("bossform")) k *= 1.35 + (this.data.boss?.level ?? 0) * 0.004;
     if (this.active("banner") && dist(save, this.data.at) < 130) k *= 1.3;
     if (this.active("decree") && this.data.marked?.has(mob.id)) k *= 1.3;
     if (this.pounce > 0 && !this.inGim) { k *= 2; this.pounce = 0; this.g.float(mob.x, mob.y - 52, "CAT STRIKE ×2", "#c9a6ff"); }
     return k;
   }
-  onHit(mob: any, dmg: number, crit: boolean) {
+  onHit(mob: any, dmg: number, crit: boolean, form?: string) {
     const save = this.g.save;
     const roll = (v: number) => v > 0 && Math.random() * 100 < v;
     if (crit) {
@@ -362,7 +369,7 @@ export class Gimmicks {
     if (roll(this.hook("kyoOnHit"))) { const n = 1 + Math.floor(Math.random() * 3); save.kyo = (save.kyo ?? 0) + n; this.g.float(mob.x, mob.y - 58, `+${n} kyo`, "#e6c15a"); }
     if (this.active("bloodmoon")) save.hp = Math.min(this.g.maxHp(), save.hp + dmg * 0.4);
     if (this.inGim) return;
-    if (roll(this.hook("echoHit"))) this.g.later(0.14, () => { if (mob.alive) this.g.applyMobDamage(mob, Math.max(1, Math.floor(dmg * 0.5)), false); });
+    if (roll(this.hookFor("echoHit", form))) this.g.later(0.14, () => { if (mob.alive) this.g.applyMobDamage(mob, Math.max(1, Math.floor(dmg * 0.5)), false); });
     if (this.active("overload")) {
       const near = this.foes(mob, 140).filter((m: any) => m !== mob).slice(0, 2);
       for (const m of near) { this.g.cfx?.link(mob.x, mob.y - 14, m.x, m.y - 14, "electric"); this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.45 * this.power())), false); }
@@ -450,7 +457,8 @@ export class Gimmicks {
       const row = a.moving ? 0 : 1;
       ctx.save();
       ctx.translate(Math.round(a.x), Math.round(a.y));
-      if (left) ctx.scale(-1, 1);
+      // The cat sheet is drawn facing LEFT, so flip it when she walks right.
+      if (!left) ctx.scale(-1, 1);
       ctx.fillStyle = "rgba(0,0,0,.35)"; ctx.fillRect(-24, -3, 48, 6);
       ctx.drawImage(catImg, f * 40, row * 34, 40, 34, -38, -64, 76, 65);
       ctx.restore();

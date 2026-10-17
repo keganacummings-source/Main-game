@@ -4288,9 +4288,9 @@ export class TurbzGame {
 			hits = 3;
 			dmg *= .55;
 		}
-		this.damageMob(mob, dmg, crit);
+		this.damageMob(mob, dmg, crit, form);
 		// Extra strikes (double strike, volleys) land one after another instead of all at once.
-		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false); });
+		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false, form); });
 		this.applyEffect(move, mob, true);
 		if (!fromPet && mob.alive && this.chan("ghost_burn") > 0 && Math.random() * 100 < this.chan("ghost_burn")) this.applyMobStatus(mob, "burn", 4);
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
@@ -4330,8 +4330,8 @@ export class TurbzGame {
 			}
 		}
 	}
-	damageMob(mob, dmg, crit) {
-		const gm = this.gim ? this.gim.dealMult(mob) : 1;
+	damageMob(mob, dmg, crit, form?) {
+		const gm = this.gim ? this.gim.dealMult(mob, !!crit) : 1;
 		if (gm <= 0) { this.float(mob.x, mob.y - 30, "PHASED", "#9ad8ff"); return; }
 		const amount = Math.floor(dmg * gm);
 		if (this.role === "guest") {
@@ -4345,7 +4345,7 @@ export class TurbzGame {
 			return;
 		}
 		this.applyMobDamage(mob, amount, crit);
-		this.gim?.onHit(mob, amount, crit);
+		this.gim?.onHit(mob, amount, crit, form);
 		// Thorned foes bite back, at most 4% of your health a hit and three times a second.
 		if (mob.enchants?.includes("thorned") && (mob.thornT ?? 0) <= 0 && !this.dead && this.save) {
 			mob.thornT = .33;
