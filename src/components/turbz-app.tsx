@@ -490,6 +490,24 @@ const ShinyDropAlert = memo(function ShinyDropAlert() {
   );
 });
 
+const SetCompleteAlert = memo(function SetCompleteAlert() {
+  const n = useSnapValue("setAlert");
+  const name = useSnapValue("setAlertName");
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    if (!n) { setShown(0); return; }
+    setShown(n);
+    const t = setTimeout(() => setShown(0), SHINY_ALERT_MS);
+    return () => clearTimeout(t);
+  }, [n]);
+  if (!shown) return null;
+  return (
+    <div className="shiny-drop-alert" key={shown} role="status" aria-live="polite" data-testid="set-complete-alert" style={{ color: "#ffe08a" }}>
+      <span>★ SET COMPLETED{name ? ` — ${name}` : ""} ★</span>
+    </div>
+  );
+});
+
 const Overlays = memo(function Overlays({ game }: GameProp) {
   const { panel, hint, menu, duel, hover } = useSnapPick(["panel", "hint", "menu", "duel", "hover"] as const);
   return (
@@ -497,6 +515,7 @@ const Overlays = memo(function Overlays({ game }: GameProp) {
       {hint && !hover && !menu && !panel && <div className="hint-chip px-panel">{hint}</div>}
       <HudHover />
       <ShinyDropAlert />
+      <SetCompleteAlert />
       {duel && <DuelBanner duel={duel} />}
       <ContextMenu game={game} />
       {panel === "died" && <DiedOverlay game={game} />}

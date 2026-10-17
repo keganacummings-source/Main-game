@@ -72,6 +72,33 @@ function tintParams(type: TypeId, rarity: number): { color: string; glow: string
   return { color, glow, amt };
 }
 
+function hslHex(h: number, s: number, l: number): string {
+  h = ((h % 360) + 360) % 360; s /= 100; l /= 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0]; else if (h < 120) [r, g, b] = [x, c, 0]; else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c]; else if (h < 300) [r, g, b] = [x, 0, c]; else [r, g, b] = [c, 0, x];
+  const to = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
+  return `#${to(r)}${to(g)}${to(b)}`;
+}
+
+/**
+ * Per-SET unique outfit palette (only for this character). A worn set's `variant` seeds a distinct
+ * two-tone scheme, and each slot takes a slightly different shade of it, so all 100 sets read as
+ * their own cohesive, hunt-worthy design rather than a recolour of one element.
+ */
+const SLOT_ORDER = ["suit", "belt", "boot", "glove", "shawl", "hairband"];
+function setLayerTint(variant: number, layer: LayerName): { color: string; glow: string | null; amt: number } {
+  const hue = (variant * 47) % 360;
+  const accent = (hue + 150) % 360; // complementary accent for trims/accessories
+  const idx = Math.max(0, SLOT_ORDER.indexOf(layer));
+  const accessory = layer === "shawl" || layer === "hairband" || layer === "glove";
+  const h = accessory ? accent : hue;
+  const sat = 55 + ((variant >> 2) % 25);
+  const light = 48 + ((idx * 6 + (variant % 3) * 4) % 22) - 8; // spread slots across a tonal range
+  return { color: hslHex(h, sat, Math.max(30, Math.min(70, light))), glow: hslHex(h, 90, 62), amt: 0.92 };
+}
+
 /** Cache of tinted greyscale layer sheets, keyed by layer+colour+amt. */
 const tintCache = new Map<string, HTMLCanvasElement>();
 function tintedSheet(name: LayerName, img: HTMLImageElement, color: string, amt: number): HTMLCanvasElement | null {
@@ -164,11 +191,14 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
       ctx.drawImage(img, sx, sy, CELL, CELL, dx, dy, destW, destH);
       continue;
     }
-    // Clothing layer: only when its slot is worn, tinted by element + rarity.
+    // Clothing layer: only when its slot is worn. A full set gets its own unique per-set palette;
+    // otherwise each piece is tinted by its element + rarity.
     const slot = slotForLayer(name);
     const piece = slot ? worn.get(slot) : undefined;
     if (!piece) continue;
-    const { color, glow, amt } = tintParams(piece.type, piece.quality);
+    const { color, glow, amt } = (a.setOn && a.setVariant)
+      ? setLayerTint(a.setVariant, name)
+      : tintParams(piece.type, piece.quality);
     const sheet = tintedSheet(name, img, color, amt) ?? img;
     if (glow) {
       ctx.save();

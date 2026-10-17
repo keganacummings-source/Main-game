@@ -107,6 +107,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (!save) return;
     save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
+    save.mergeArmor = true; // TURBZ: duplicate pieces merge/level up instead of cluttering the bag.
     save.skills = Object.fromEntries(SKILLS.map((sk) => [sk.id, { level: 1, xp: 0 }]));
     save.perks = {};
     save.perkPoints = 0;

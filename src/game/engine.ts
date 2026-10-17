@@ -123,6 +123,32 @@ export function verseAreaNote(mv: Move, hit = 0): string {
 /** Each set gets its own aura variant (tint, spin, size, crest) so the 10 aura kinds look like 100. */
 const SET_VARIANT: Record<string, number> = Object.fromEntries(SETS.map((s, i) => [s.id, i * 7 + s.style + 1]));
 const SET_PIECES = ["head", "chest", "legs", "feet", "relic"];
+/**
+ * Full-set bonuses by the set's signature effect (fx). Completing a 5-piece set grants this themed
+ * package of core stats (percent mods) plus (via _chan) a couple of enchant-channel bonuses. Tuned
+ * strong on purpose — a full set is a real grind, so it should define a build.
+ */
+const SET_FX_MODS: Record<string, Record<string, number>> = {
+	bloodmoon: { leech: 20, might: 12, hp: 6 },
+	solarnova: { crit: 16, arcana: 16 },
+	tidalsurge: { regen: 28, hp: 12 },
+	briarburst: { guard: 24, hp: 10 },
+	whitestorm: { arcana: 22, haste: 10 },
+	gravepulse: { leech: 14, arcana: 16 },
+	stormcrown: { haste: 20, crit: 10 },
+	lanternwake: { might: 20, crit: 8 },
+	featherfall: { speed: 24, dodge: 10 },
+	voidring: { arcana: 22, speed: 8 },
+};
+/** A light enchant-channel bundle layered on top of the stat package, using channels combat reads. */
+const SET_FX_CHAN: Record<string, Record<string, number>> = {
+	solarnova: { crit_edge: 10 },
+	stormcrown: { crit_edge: 8 },
+	tidalsurge: { vitality: 24 },
+	briarburst: { ward: 14 },
+	whitestorm: { ward: 10 },
+	voidring: { gimmick_power: 14 },
+};
 /** Helpful effects a Cleanse keeps. */
 const GOOD_STATUS = new Set(["swift", "shell"]);
 const MAX_EQUIPPED = 9;
@@ -343,6 +369,9 @@ export type Snap = {
   duel: null | { phase: "answer" | "yours"; attacker: string; move: string; about: string; beat: string };
   /** Counts up each time a shiny drops for you; the screen pops a short "SHINY DROPPED" banner on every change. 0 = none yet. */
   shinyAlert: number;
+  /** Counts up each time you complete a 5-piece set; pops a "SET COMPLETED" banner. */
+  setAlert: number;
+  setAlertName: string;
   classId: string;
   sheet: Sheet | null;
   clock: { phase: "day" | "night"; label: string; left: string; dark: number; active: boolean };
@@ -698,6 +727,8 @@ const emptySnap = (): Snap => ({
 	rules: "hunt",
 	duel: null,
 	shinyAlert: 0,
+	setAlert: 0,
+	setAlertName: "",
 	classId: "",
 	sheet: null,
 	clock: { phase: "day", label: "Day", left: "", dark: 0, active: false },
@@ -5139,7 +5170,33 @@ export class TurbzGame {
 	// ---------- Loot chests (Hardcore) ----------
 	/** Hardcore drops go into a chest where the foe fell. Other modes hand loot straight to you. */
 	chestsOn() {
-		return this.rules === "hardcore";
+		// TURBZ uses autopickup (loot comes straight to you, then merges), so no chests there.
+		return this.rules === "hardcore" && !this.turbz;
+	}
+	/** Merge armor: a duplicate piece enhances the one you own instead of cluttering your bag. On in TURBZ. */
+	mergeArmorOn() {
+		return this.turbz || !!this.save?.mergeArmor;
+	}
+	/** True when two pieces are "the same" armor for merging: same slot, set and style. */
+	sameArmor(a, b) {
+		return a && b && a.uid !== b.uid && a.slot === b.slot && (a.setId ?? "") === (b.setId ?? "") && (a.style ?? 0) === (b.style ?? 0);
+	}
+	/** Pours a duplicate into the piece you already own: +1 level (more from a high-level dupe) and stronger enchants. */
+	mergeGear(dup, g) {
+		const save = this.save;
+		if (!save) return;
+		const cap = Math.max(dup.level ?? 1, save.level ?? 1);
+		dup.level = Math.min(cap, (dup.level ?? 1) + 1 + Math.floor((g.level ?? 1) / 25));
+		dup.gx = 0;
+		dup.enchants = dup.enchants ?? [];
+		for (const e of g.enchants ?? []) {
+			const ex = dup.enchants.find((x) => x.id === e.id);
+			if (ex) ex.power = Math.min(ENCHANT_BY_ID[ex.id]?.max ?? ex.power + 1, ex.power + 1);
+			else if (dup.enchants.length < MAX_GEAR_ENCHANTS) dup.enchants.push({ ...e });
+		}
+		dup.price = gearPrice(dup);
+		this.float(save.x, save.y - 72, `MERGED → Lv ${dup.level}`, "#e6c15a");
+		this.say(`${g.name} merged into your ${dup.name}. Now level ${dup.level}.`);
 	}
 	/** The chest this kill's loot goes into (made on first use). */
 	chestFor(mob) {
@@ -8056,14 +8113,24 @@ export class TurbzGame {
 	receiveGear(g) {
 		const save = this.save;
 		if (!save) return;
+		// Merge armor: a duplicate (same slot/set/style) enhances what you own instead of a new piece.
+		if (this.mergeArmorOn()) {
+			const dup = (save.gear ?? []).find((x) => this.sameArmor(x, g));
+			if (dup) {
+				this.mergeGear(dup, g);
+				this.checkSetBanner();
+				return;
+			}
+		}
 		save.gear.push(g);
 		this.noteFound(g);
-		// Hardcore never dresses you: pick what to wear in the Bag (double-click a piece).
-		if (this.rules === "hardcore") return;
+		// Hardcore never dresses you — EXCEPT TURBZ, where autopickup wears your best so sets can complete.
+		if (this.rules === "hardcore" && !this.turbz) return;
 		const worn = this.piece(g.slot);
 		if (!worn || gearScore(g) > gearScore(worn)) {
 			save.equipped[g.slot] = g.uid;
-			this.say(`Wore ${g.name}. Score ${gearScore(g)}.`);
+			if (!this.turbz) this.say(`Wore ${g.name}. Score ${gearScore(g)}.`);
+			this.checkSetBanner();
 		}
 	}
 	/** Task toggles for autoplay. Every mode can turn a job off. */
@@ -9502,6 +9569,7 @@ export class TurbzGame {
 		n += save.perks[id] ?? 0;
 		for (const a of this.activeAuras()) n += a.chan?.[id] ?? 0;
 		n += this.ghostAgg?.chan?.[id] ?? 0;
+		n += this.setBonusChan(id);
 		return n;
 	}
 	// ---------- Auras ----------
@@ -9586,6 +9654,39 @@ export class TurbzGame {
 			fx: set?.fx ?? null
 		};
 	}
+	/**
+	 * REAL full-set bonuses (reworked for the new meta). A completed 5-piece set grants a themed
+	 * package of core stats (plus a little element affinity), based on the set's signature effect,
+	 * feeding straight into mod()/chan(). Cached per frame so mod()/chan() stay cheap.
+	 */
+	setBonusMods() {
+		if (!this.save) return null;
+		if (this._setBonusT === this.clock) return this._setBonusVal;
+		this._setBonusT = this.clock;
+		const set = this.setInfo();
+		if (!set.on || !set.id) { this._setBonusVal = null; return null; }
+		const def = SET_BY_ID[set.id];
+		const base = SET_FX_MODS[def?.fx ?? ""] ?? { might: 14, guard: 14 };
+		const val = { ...base, affinity: (base.affinity ?? 0) + 10, _chan: SET_FX_CHAN[def?.fx ?? ""] ?? {} };
+		this._setBonusVal = val;
+		return val;
+	}
+	setBonusMod(id) { const v = this.setBonusMods(); return v ? (v[id] ?? 0) : 0; }
+	setBonusChan(id) { const v = this.setBonusMods(); return v ? (v._chan?.[id] ?? 0) : 0; }
+	/** Pops the "SET COMPLETED" banner once, the moment a new 5-piece set comes together. */
+	checkSetBanner() {
+		const set = this.setInfo();
+		const id = set.on ? set.id : null;
+		if (id && id !== this._lastFullSet) { this._lastFullSet = id; this.announceSetComplete(set.name); }
+		else if (!id) this._lastFullSet = null;
+	}
+	announceSetComplete(name) {
+		if (!name || !this.save) return;
+		publish({ setAlert: getSnap().setAlert + 1, setAlertName: name });
+		this.float(this.save.x, this.save.y - 96, "SET COMPLETE", "#ffe08a");
+		this.cue?.("sparkle", { rate: 1.6, len: 1.2, vol: 0.35 }, [720, .2, "triangle"]);
+		this.say(`SET COMPLETED — ${name}. Its full-set bonus is now active.`);
+	}
 	maxHp() {
 		const save = this.save;
 		if (!save) return 80;
@@ -9637,6 +9738,7 @@ export class TurbzGame {
 		if (!this.save) return 0;
 		let n = this.profile().stats[id] ?? 0;
 		for (const a of this.activeAuras()) n += a.mod?.[id] ?? 0;
+		n += this.setBonusMod(id);
 		return n;
 	}
 	speedMult() {
@@ -10111,6 +10213,7 @@ export class TurbzGame {
 		this.hudAt = now;
 		const save = this.save;
 		if (!save) return;
+		this.checkSetBanner();
 		// Fast fields refresh every 120 ms. Slow fields (bag, perks, spirits, boards…) only on a real
 		// change (force) or once a second. The character sheet is only built while it is on screen.
 		const slow = !!force || now - (this.slowAt ?? 0) > 1000 || snap.mode !== "play";
