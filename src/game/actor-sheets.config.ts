@@ -59,7 +59,8 @@ const SHEET_SRC: Record<SheetId, string> = {
   second: "/sprites/charsets_16x18-2.png",
   third: "/sprites/charsets_12_3rd_sheet.png",
   fourth: "/sprites/charsets_12_4th_sheet.png",
-  warrior: "/sprites/class_warriors.png",
+  // ?v= busts the 24h /sprites/* cache (public/_headers) when the sheet changes; bump it on each redraw.
+  warrior: "/sprites/class_warriors.png?v=2",
 };
 
 /** One character block: origin of its up-row, first frame, and its frame size. */

@@ -8,9 +8,10 @@ type Layer = "back" | "front";
 type C = CanvasRenderingContext2D;
 type Pal4 = readonly [string, string, string, string];
 
-// Sprite-local anchors on the 16x18 frame (bottom-center origin, before scale).
+// Sprite-local anchors (bottom-center origin, before scale). drawGearFx is called with a scale already
+// fitted to the 27px class sprites (see GEAR_FIT in actor-sprites.ts): head top ~-19, hands ~-6.5, hips ~-6.
 const ANCHOR: Record<string, [number, number]> = {
-  head: [0, -16], chest: [0, -10], legs: [0, -5], feet: [0, -1], weapon: [7, -8], relic: [-7, -9],
+  head: [0, -16], chest: [0, -10], legs: [0, -5], feet: [0, -1], weapon: [5, -6.5], relic: [-5, -7],
 };
 const hash = (n: number) => {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;

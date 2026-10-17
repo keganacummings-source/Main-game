@@ -19,6 +19,9 @@ import {
 import { CLASS_BY_ID, type ClassId } from "./classes";
 import { drawGearFx } from "./gear-fx";
 
+/** Gear effects were tuned for an 18-unit body; class sprites are ~27px tall (27 / 19). */
+const GEAR_FIT = 1.4;
+
 let atlases: Partial<Record<SheetId, Atlas>> = {};
 let ready = false;
 
@@ -71,7 +74,13 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
 
   if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE, a.setVariant ?? 0);
 
-  if (a.pieces?.length) drawGearFx(ctx, a, fxT, s, "back");
+  // Gear effects are authored for a ~18 unit body; the class sprites are ~27px tall, so scale them to fit.
+  const gs = s * (sheet === "warrior" ? GEAR_FIT : 1);
+  const dir = a.direction ?? "down";
+  // Rows are real facings now: take left/right from the row, and draw "behind the body" effects
+  // (wings, tail, ground ring) over the sprite when we are looking at the wearer's back.
+  const gearActor = dir === "left" || dir === "right" ? { ...a, facing: dir === "left" ? -1 : 1 } : a;
+  if (a.pieces?.length && dir !== "up") drawGearFx(ctx, gearActor, fxT, gs, "back");
   const step = actorWalkFrame(a.walk, a.moving ?? a.walk > 0.2);
   const key = spriteKey(charId, ACTOR_DIRECTION_ROWS[a.direction ?? "down"], Math.abs(step));
 
@@ -98,11 +107,14 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
   if (a.hurt > 0) {
     ctx.globalAlpha = a.hurt * 0.55;
     ctx.fillStyle = "#fff";
-    ctx.fillRect(-8 * s, -18 * s, 16 * s, 18 * s);
+    ctx.fillRect(-7 * s, -29 * s, 14 * s, 28 * s);
     ctx.globalAlpha = 1;
   }
 
   ctx.restore();
-  if (a.pieces?.length) drawGearFx(ctx, a, fxT, s, "front");
+  if (a.pieces?.length) {
+    if (dir === "up") drawGearFx(ctx, gearActor, fxT, gs, "back");
+    drawGearFx(ctx, gearActor, fxT, gs, "front");
+  }
   return true;
 }
