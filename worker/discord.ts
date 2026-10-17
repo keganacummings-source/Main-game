@@ -25,6 +25,21 @@ export const TURBZ_COMMANDS = [
     description: "Show a TURBZ player's Shiny collection as a GIF.",
     options: [{ type: 3, name: "username", description: "Their TURBZ username", required: true, min_length: 3, max_length: 16 }],
   },
+  {
+    name: "turbzboard",
+    description: "Show the top of a leaderboard. Defaults to the TURBZ mode.",
+    options: [{
+      type: 3,
+      name: "mode",
+      description: "Which board",
+      required: false,
+      choices: [
+        { name: "TURBZ", value: "turbz" },
+        { name: "Hunt", value: "hunt" },
+        { name: "Hardcore", value: "hardcore" },
+      ],
+    }],
+  },
 ];
 
 /** What /shiny shows for one account. */
@@ -53,10 +68,14 @@ function reply(content: string, ephemeral = false): Response {
   });
 }
 
+type BoardLine = { name: string; username: string; level: number; score: number; className?: string };
+
 type ChannelStore = {
   setChannel(guildId: string, channelId: string, by: string): Promise<void> | void;
   /** Looks up an account's Shiny collection by username (null: no such account). */
   shinies?(username: string): Promise<ShinyCard | null> | ShinyCard | null;
+  /** Top of one leaderboard, best score first. */
+  board?(mode: string): Promise<BoardLine[]> | BoardLine[];
 };
 
 /** The /shiny answer: an embed with the collection GIF attached (multipart), or a plain line. */
@@ -96,7 +115,7 @@ export async function handleInteraction(request: Request, env: Env, store: Chann
     const by = msg.member?.user?.username ?? msg.user?.username ?? "someone";
     await store.setChannel(String(msg.guild_id), String(msg.channel_id), String(by));
     const warn = env.DISCORD_BOT_TOKEN ? "" : "\n(The bot token is not set up on the game server yet, so posts start once it is.)";
-    return reply(`🪦 TURBZ deaths will be posted here. Every witch who falls shows up with a GIF, her level and her effects.${warn}`);
+    return reply(`🪦 Deaths will be posted here, tagged Hunt, Hardcore, or TURBZ. Every witch who falls shows up with a GIF, her level and her effects. /turbzboard shows the board.${warn}`);
   }
   if (msg.type === 2 && msg.data?.name === "shiny") {
     const opt = (msg.data?.options ?? []).find((o: { name?: string }) => o?.name === "username");
@@ -104,6 +123,12 @@ export async function handleInteraction(request: Request, env: Env, store: Chann
     if (!name) return reply("Usage: /shiny username", true);
     const card = store.shinies ? await store.shinies(name) : null;
     return shinyReply(name, card);
+  }
+  if (msg.type === 2 && msg.data?.name === "turbzboard") {
+    const opt = (msg.data?.options ?? []).find((o: { name?: string }) => o?.name === "mode");
+    const mode = opt?.value === "hunt" || opt?.value === "hardcore" || opt?.value === "turbz" ? opt.value : "turbz";
+    const rows = store.board ? await store.board(mode) : [];
+    return boardReply(mode, rows);
   }
   if (msg.type === 2 && msg.data?.name === "tm") return reply("TURBZ global chat is closed right now; live play happens in lobbies inside the game.", true);
   return reply("Unknown command.", true);
@@ -127,13 +152,39 @@ export type DeathPost = {
 
 const QUALITY_COLOR: Record<string, number> = { legendary: 0xffa53a, epic: 0xb46aff, rare: 0x4aa8ff, fine: 0x6ecf6a };
 
+export function modeLabel(mode: string): string {
+  if (mode === "turbz") return "TURBZ";
+  if (mode === "hardcore") return "Hardcore";
+  return "Hunt";
+}
+
+export function boardReply(mode: string, rows: BoardLine[]): Response {
+  const label = modeLabel(mode);
+  const color = mode === "turbz" ? 0x7a5cff : mode === "hardcore" ? 0xc4473a : 0xe6c15a;
+  if (!rows.length) return reply(`The **${label}** board is empty. No one has fallen there yet.`);
+  const lines = rows.slice(0, 10).map((r, i) => {
+    const who = `${r.className ? `${r.className} · ` : ""}**${r.name}** Lv ${r.level} · ${r.score.toLocaleString("en-US")} · ${r.username}`;
+    return `**${i + 1}.** ${who}`;
+  });
+  const embed = {
+    title: `${label} leaderboard`,
+    description: lines.join("\n").slice(0, 4000),
+    color,
+    footer: { text: "TURBZ · dreamdaw.com" },
+  };
+  return new Response(JSON.stringify({ type: 4, data: { embeds: [embed], allowed_mentions: { parse: [] } } }), {
+    headers: { "content-type": "application/json" },
+  });
+}
+
 export function deathEmbed(d: DeathPost, hasGif: boolean): Record<string, unknown> {
   const best = d.gear.find((g) => g.quality.toLowerCase() === "legendary") ?? d.gear.find((g) => g.quality.toLowerCase() === "epic") ?? d.gear[0];
-  const color = d.mode === "hardcore" ? 0xc4473a : QUALITY_COLOR[best?.quality.toLowerCase() ?? ""] ?? 0xe6c15a;
+  const color = d.mode === "turbz" ? 0x7a5cff : d.mode === "hardcore" ? 0xc4473a : QUALITY_COLOR[best?.quality.toLowerCase() ?? ""] ?? 0xe6c15a;
   const fields: { name: string; value: string; inline?: boolean }[] = [
     { name: "Level", value: String(d.level), inline: true },
     { name: "Class", value: `${d.className || "Witch"} · ${d.race}`, inline: true },
     { name: "Score", value: d.score.toLocaleString("en-US"), inline: true },
+    { name: "Mode", value: modeLabel(d.mode), inline: true },
   ];
   if (d.cause) fields.push({ name: "Cause of death", value: d.cause.slice(0, 200), inline: false });
   if (d.place) fields.push({ name: "Fell in", value: d.place.slice(0, 100), inline: true });
@@ -143,7 +194,7 @@ export function deathEmbed(d: DeathPost, hasGif: boolean): Record<string, unknow
   if (d.topSkills.length) fields.push({ name: "Best skills", value: d.topSkills.slice(0, 5).map((s) => `${s.name} ${s.level}`).join(" · ").slice(0, 1000), inline: false });
   return {
     title: `🪦 ${d.name} has fallen`,
-    description: `${d.mode === "hardcore" ? "**Hardcore** · " : ""}Played by **${d.username}**`,
+    description: `**${modeLabel(d.mode)}** · Played by **${d.username}**`,
     color,
     fields,
     ...(hasGif ? { image: { url: "attachment://death.gif" } } : {}),
@@ -196,7 +247,7 @@ export function shinySeenEmbed(d: ShinySeenPost, hasGif: boolean): Record<string
     fields: [
       { name: "Level", value: String(d.level), inline: true },
       ...(d.type ? [{ name: "Element", value: d.type.slice(0, 16), inline: true }] : []),
-      ...(d.mode === "hardcore" ? [{ name: "Mode", value: "Hardcore", inline: true }] : []),
+      { name: "Mode", value: modeLabel(d.mode), inline: true },
     ],
     ...(hasGif ? { image: { url: "attachment://shiny.gif" } } : {}),
     footer: { text: "TURBZ · dreamdaw.com" },

@@ -28,7 +28,6 @@ import {
 import type { ClassId } from "./classes";
 import { generateWorld } from "./map-gen";
 import { lmsSpawns } from "./lms";
-import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
 import { nearestShore } from "./survival";
 import { combatRate } from "./pools";
@@ -57,7 +56,7 @@ type Brain = {
   level: number; xp: number; sp: number; ranks: Record<string, number>; known: string[];
   gear: Partial<Record<(typeof SLOTS)[number], Gear>>;
   bag: Record<string, number>; spirits: number; team: number;
-  state: string; goalX: number; goalY: number; think: number; simT: number;
+  state: string; goalX: number; goalY: number; think: number; simT: number; stuck: number;
   castCd: Record<string, number>; foe: string; foeT: number; dodgeCd: number; wanderT: number; age: number;
 };
 
@@ -93,6 +92,9 @@ export function installTurbz(game: any): void {
     save.perks = {};
     save.perkPoints = 0;
     save.accountLevel = 1;
+    save.accountXp = 0;
+    save.accountScore = 0;
+    save.skillPoints = 0;
     save.level = 1;
     save.xp = 0;
     save.spirits = [];
@@ -140,7 +142,8 @@ export function installTurbz(game: any): void {
     this.turbzRoster = [];
     this.witchGraves = [];
     this.plantTurbzHunts();
-    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are grinding. Spells drink mana, melee drinks stamina. What you are wearing, and the ghosts out with you, fall back to level 1 if you die.`);
+    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are grinding. Spells drink mana, melee drinks stamina. Die and you start over: worn gear and party ghosts come back at level 1, enchants kept. This run's skills do not touch Hunt or Hardcore.`);
+    this.giveTurbzHeirloom();
     this.syncHud(true);
   };
 
@@ -202,14 +205,75 @@ export function installTurbz(game: any): void {
   };
 
   game.gearToLevelOne = function (g: any) {
-    const from = Math.max(1, g.level || 1);
     g.level = 1;
     g.gx = 0;
-    for (const e of g.enchants ?? []) {
-      const cap = ENCHANT_BY_ID[e.id]?.max ?? e.power;
-      e.power = Math.max(1, Math.min(cap, Math.round(e.power / from)));
-    }
     g.price = gearPrice(g);
+  };
+
+  /** Copies worn gear and the party, at level 1, without touching enchants. Does not write the shared account. */
+  game.stashTurbzKit = function () {
+    const save = this.save;
+    if (!save) return;
+    const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
+    const gear: any[] = [];
+    const equipped: Record<string, string> = {};
+    for (const g of save.gear ?? []) {
+      if (!worn.has(g.uid)) continue;
+      const copy = { ...g, level: 1, gx: 0, enchants: (g.enchants ?? []).map((e: any) => ({ ...e })), moves: [...(g.moves ?? [])] };
+      copy.price = gearPrice(copy);
+      gear.push(copy);
+      for (const [slot, uid] of Object.entries(save.equipped ?? {})) if (uid === g.uid) equipped[slot] = g.uid;
+    }
+    const spirits = (save.spirits ?? []).map((s: any) => ({
+      ...s,
+      level: 1,
+      xp: 0,
+      task: null,
+      taskT: 0,
+      max: 38,
+      hp: 38,
+      speed: 9,
+      abilities: (s.abilities ?? []).map((a: any) => ({ ...a })),
+      known: [...(s.known ?? [])],
+      slots: [...(s.slots ?? [])],
+    }));
+    this.turbzHeirloom = { gear, equipped, spirits };
+  };
+
+  game.giveTurbzHeirloom = function () {
+    const kit = this.turbzHeirloom;
+    const save = this.save;
+    if (!kit || !save) return;
+    if (kit.gear?.length) {
+      const starter = (save.gear ?? []).find((g: any) => g.slot === "weapon");
+      const gear = kit.gear.map((g: any) => ({ ...g, enchants: (g.enchants ?? []).map((e: any) => ({ ...e })), moves: [...(g.moves ?? [])] }));
+      save.equipped = { ...kit.equipped };
+      if (!save.equipped.weapon && starter) {
+        gear.unshift(starter);
+        save.equipped.weapon = starter.uid;
+      }
+      save.gear = gear;
+    }
+    if (kit.spirits?.length) {
+      const cap = typeof this.spiritCap === "function" ? this.spiritCap() : 3;
+      let out = 0;
+      save.spirits = kit.spirits.map((s: any) => {
+        const active = !!s.active && out < cap;
+        if (active) out += 1;
+        return { ...s, active, level: 1, xp: 0, max: 38, hp: 38, speed: 9 };
+      });
+      save.ghostStore = [];
+      save.companion = null;
+      save.box = [];
+    }
+    save.hp = this.maxHp();
+    const caps = this.poolCaps?.();
+    if (caps && this.pools) {
+      this.pools.maxMana = caps.maxMana;
+      this.pools.maxStam = caps.maxStam;
+      this.pools.mana = caps.maxMana;
+      this.pools.stam = caps.maxStam;
+    }
   };
 
   game.growWornGear = function (grant: number) {
@@ -234,42 +298,7 @@ export function installTurbz(game: any): void {
   };
 
   game.turbzDeath = function () {
-    const save = this.save;
-    if (!save || this.dead) return;
-    const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
-    for (const g of save.gear ?? []) if (worn.has(g.uid)) this.gearToLevelOne(g);
-    save.gear = (save.gear ?? []).filter((g: any) => worn.has(g.uid));
-    const out = (save.spirits ?? []).filter((s: any) => s.active);
-    for (const s of out) {
-      const was = Math.max(1, s.level || 1);
-      s.level = 1;
-      s.xp = 0;
-      s.max = Math.max(16, Math.round((s.max || 16) / was));
-      s.hp = s.max;
-    }
-    save.spirits = out;
-    save.ghostStore = [];
-    if (save.level > 1) { save.level -= 1; save.xp = 0; }
-    else save.xp = 0;
-    save.hp = Math.max(1, Math.floor(this.maxHp() * 0.5));
-    this.status = [];
-    this.shield = 0;
-    this.wardT = 0;
-    this.castLock = 0;
-    this.lunge = null;
-    this.rush = null;
-    this.orbit = null;
-    this.incoming = [];
-    this.dest = null;
-    this.path = [];
-    if (typeof save.map === "string" && save.map.startsWith("rift-")) {
-      const portal = save.dungeons?.portals?.find((p: any) => p.id === save.map);
-      this.switchTo(TURBZ_MAP, portal ? { x: portal.x, y: portal.y + 36 } : { x: save.x, y: save.y });
-    }
-    this.say("You fall. The gear you wore and the ghosts at your side drop to level 1. Everything else is gone.");
-    this.float(save.x, save.y - 70, "LEVEL 1 KIT", "#c4473a");
-    this.cue?.("boom", { rate: 0.6 }, [80, 0.3, "sawtooth"]);
-    this.syncHud(true);
+    this.turbzFell?.();
   };
 
   game.makeTwitch = function (i: number, x: number, y: number, name: string, level = 1) {
@@ -281,7 +310,7 @@ export function installTurbz(game: any): void {
     const brain: Brain = {
       level, xp: 0, sp: Math.max(0, (level - 1) * 3), ranks: {}, known: [...cls.starterMoves].filter((id) => MOVE_BY_ID[id]),
       gear: { weapon }, bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: 1 }, spirits: 0, team: 0,
-      state: "grind", goalX: x, goalY: y, think: rand() * 0.4, simT: rand() * SIM, castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 8, age: 0,
+      state: "grind", goalX: x, goalY: y, think: rand() * 0.4, simT: rand() * SIM, castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 8, age: 0, stuck: 0,
     };
     Object.assign(m, {
       twitch: true, witch: true, rival: false, classId: cls.id, race: raceId, female: rand() < 0.6,
@@ -528,7 +557,10 @@ export function installTurbz(game: any): void {
   game.witchPlay = function (m: any, far: boolean) {
     const r: Brain = m.rv;
     const act = this.witchAct(m);
-    const go = (x: number, y: number) => { r.goalX = x; r.goalY = y; };
+    const go = (x: number, y: number) => {
+      const s = this.witchLandSpot(x, y, m.x, m.y);
+      r.goalX = s.x; r.goalY = s.y;
+    };
     if (act.kind === "flee" || act.kind === "wander" || act.kind === "sleep") { go(act.x, act.y); if (far) this.witchStep(m); return; }
     if (act.kind === "potion") {
       if ((r.bag.potion ?? 0) > 0) {
@@ -553,22 +585,25 @@ export function installTurbz(game: any): void {
       return;
     }
     if (act.kind === "gather") {
-      if (Math.hypot(act.x - m.x, act.y - m.y) < 40) {
+      const spot = this.witchLandSpot(act.x, act.y, m.x, m.y);
+      if (Math.hypot(spot.x - m.x, spot.y - m.y) < 28 || Math.hypot(act.x - m.x, act.y - m.y) < 36) {
         if (act.node === "tree") r.bag.timber = (r.bag.timber ?? 0) + 1;
         else if (act.node === "ore") r.bag.ore = (r.bag.ore ?? 0) + 1;
         else r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
         this.float(m.x, m.y - 44, act.node === "tree" ? "CHOPS" : act.node === "ore" ? "MINES" : "FORAGES", "#9ad8c8");
         this.twitchXp(m, 4);
-      } else { go(act.x, act.y); if (far) this.witchStep(m); }
+      } else { go(spot.x, spot.y); if (far) this.witchStep(m); }
       return;
     }
     if (act.kind === "fish") {
-      if (Math.hypot(act.x - m.x, act.y - m.y) < 36) { r.bag.fish = (r.bag.fish ?? 0) + 1; this.float(m.x, m.y - 44, "FISHES", "#7eb6d8"); this.twitchXp(m, 4); }
-      else { go(act.x, act.y); if (far) this.witchStep(m); }
+      const spot = this.witchLandSpot(act.x, act.y, m.x, m.y);
+      if (Math.hypot(spot.x - m.x, spot.y - m.y) < 28 || Math.hypot(act.x - m.x, act.y - m.y) < 36) { r.bag.fish = (r.bag.fish ?? 0) + 1; this.float(m.x, m.y - 44, "FISHES", "#7eb6d8"); this.twitchXp(m, 4); }
+      else { go(spot.x, spot.y); if (far) this.witchStep(m); }
       return;
     }
     if (act.kind === "rift") {
-      if (Math.hypot(act.x - m.x, act.y - m.y) < 80) {
+      const spot = this.witchLandSpot(act.x, act.y, m.x, m.y);
+      if (Math.hypot(spot.x - m.x, spot.y - m.y) < 36 || Math.hypot(act.x - m.x, act.y - m.y) < 80) {
         m.hp -= m.max * (0.08 + rand() * 0.1);
         this.float(m.x, m.y - 46, "DELVES", "#e7d9ff");
         if (m.hp <= 0) { m.alive = false; m.hp = 0; this.queueWitch(); return; }
@@ -578,7 +613,7 @@ export function installTurbz(game: any): void {
           if (!r.gear[slot] || gearScore(g) > gearScore(r.gear[slot]!)) { r.gear[slot] = g; this.scaleTwitch(m); }
         }
         this.twitchXp(m, 14 + r.level);
-      } else { go(act.x, act.y); if (far) this.witchStep(m); }
+      } else { go(spot.x, spot.y); if (far) this.witchStep(m); }
       return;
     }
     if (act.kind === "fight") {
@@ -617,24 +652,148 @@ export function installTurbz(game: any): void {
     return (m.rv.known as string[]).map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
   };
 
+  /** Overworld the witches actually walk. Swimming is on for the player, not for them. */
+  game.witchWorld = function () {
+    return this.turbzWorld || this.world;
+  };
+
+  /** Dry land, inset from the rim. Water and walls are closed even though the player can swim. */
+  game.witchLand = function (x: number, y: number) {
+    const w = this.witchWorld();
+    if (!w?.tiles) return false;
+    const tx = Math.floor(x / 32);
+    const ty = Math.floor(y / 32);
+    if (tx < 4 || ty < 4 || tx >= w.w - 4 || ty >= w.h - 4) return false;
+    if (w.solids?.has(ty * w.w + tx)) return false;
+    const t = w.tiles[ty * w.w + tx];
+    if (!t || t.floor === 1 || t.floor === 2 || t.block === 1) return false;
+    return true;
+  };
+
+  /** Nearest dry tile to (x, y). Prefers land toward the middle of the map over the rim. */
+  game.witchLandSpot = function (x: number, y: number, fromX: number, fromY: number) {
+    if (this.witchLand(x, y)) return { x, y };
+    const w = this.witchWorld();
+    if (!w) return { x: fromX, y: fromY };
+    const midX = w.w * 16;
+    const midY = w.h * 16;
+    const tx = Math.floor(x / 32);
+    const ty = Math.floor(y / 32);
+    let best: { x: number; y: number } | null = null;
+    let score = Infinity;
+    for (let r = 1; r <= 14; r++) {
+      for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const px = (tx + dx) * 32 + 16;
+        const py = (ty + dy) * 32 + 16;
+        if (!this.witchLand(px, py)) continue;
+        const s = Math.hypot(px - x, py - y) + Math.hypot(px - midX, py - midY) * 0.04;
+        if (s < score) { score = s; best = { x: px, y: py }; }
+      }
+      if (best && r >= 2) return best;
+    }
+    return best ?? { x: fromX, y: fromY };
+  };
+
+  game.witchClear = function (x0: number, y0: number, x1: number, y1: number) {
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.max(1, Math.ceil(d / 16));
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      if (!this.witchLand(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)) return false;
+    }
+    return true;
+  };
+
+  /** One step toward a point. Turns aside at a wall instead of sliding along it. */
+  game.witchNudge = function (m: any, gx: number, gy: number, step: number) {
+    const d = Math.hypot(gx - m.x, gy - m.y);
+    if (d < 3) return false;
+    const dist = Math.min(step, d);
+    const ang = Math.atan2(gy - m.y, gx - m.x);
+    for (const extra of [0, 0.55, -0.55, 1.15, -1.15, 1.8, -1.8]) {
+      const nx = m.x + Math.cos(ang + extra) * dist;
+      const ny = m.y + Math.sin(ang + extra) * dist;
+      if (!this.witchClear(m.x, m.y, nx, ny)) continue;
+      m.facing = nx < m.x ? -1 : 1;
+      m.x = nx;
+      m.y = ny;
+      m.moving = true;
+      return true;
+    }
+    return false;
+  };
+
+  /** Already in the sea or the rim: put her on the nearest dry ground, marching inland if the water is wide. */
+  game.witchUnstick = function (m: any) {
+    if (this.witchLand(m.x, m.y)) return;
+    const w = this.witchWorld();
+    if (!w) return;
+    const midX = w.w * 16;
+    const midY = w.h * 16;
+    let x = m.x;
+    let y = m.y;
+    for (let i = 0; i < 40; i++) {
+      const spot = this.witchLandSpot(x, y, x, y);
+      if (this.witchLand(spot.x, spot.y)) {
+        m.x = spot.x;
+        m.y = spot.y;
+        m.rv.goalX = spot.x;
+        m.rv.goalY = spot.y;
+        m.rv.stuck = 0;
+        return;
+      }
+      const d = Math.hypot(midX - x, midY - y) || 1;
+      x += ((midX - x) / d) * 128;
+      y += ((midY - y) / d) * 128;
+    }
+  };
+
+  /** The last goal was a wall or the ocean. Pick dry ground inland. */
+  game.witchRepick = function (m: any) {
+    const r: Brain = m.rv;
+    const w = this.witchWorld();
+    const midX = (w?.w ?? 64) * 16;
+    const midY = (w?.h ?? 64) * 16;
+    const ang = rand() * Math.PI * 2;
+    const dist = 80 + rand() * 160;
+    const toward = 0.45;
+    const gx = m.x * (1 - toward) + midX * toward + Math.cos(ang) * dist;
+    const gy = m.y * (1 - toward) + midY * toward + Math.sin(ang) * dist;
+    const spot = this.witchLandSpot(gx, gy, m.x, m.y);
+    r.goalX = spot.x;
+    r.goalY = spot.y;
+    r.stuck = 0;
+  };
+
   game.witchStep = function (m: any) {
     const r: Brain = m.rv;
-    const d = Math.hypot(r.goalX - m.x, r.goalY - m.y) || 1;
-    const step = Math.min(90, d);
-    const nx = m.x + ((r.goalX - m.x) / d) * step;
-    const ny = m.y + ((r.goalY - m.y) / d) * step;
-    if (this.world && !blocked(this.world, nx, ny)) { m.x = nx; m.y = ny; }
+    this.witchUnstick(m);
+    const spot = this.witchLandSpot(r.goalX, r.goalY, m.x, m.y);
+    r.goalX = spot.x;
+    r.goalY = spot.y;
+    let moved = false;
+    for (let i = 0; i < 3; i++) if (this.witchNudge(m, r.goalX, r.goalY, 32)) moved = true;
+    if (!moved) this.witchRepick(m);
   };
 
   game.liveTwitch = function (m: any, dt: number) {
     const r: Brain = m.rv;
     const save = this.save;
     r.think -= dt;
-    if (r.think <= 0) { r.think = 0.28; this.twitchThink(m); }
+    if (r.think <= 0) { r.think = 0.35; this.twitchThink(m); }
+    this.witchUnstick(m);
+    const spot = this.witchLandSpot(r.goalX, r.goalY, m.x, m.y);
+    r.goalX = spot.x;
+    r.goalY = spot.y;
     const d = Math.hypot(r.goalX - m.x, r.goalY - m.y);
-    if (d > 8) {
-      const sp = 78 + Math.min(36, r.level);
-      this.moveMob(m, ((r.goalX - m.x) / d) * sp * dt, ((r.goalY - m.y) / d) * sp * dt);
+    if (d > 10) {
+      const step = Math.min(d, (72 + Math.min(28, r.level)) * dt);
+      if (this.witchNudge(m, r.goalX, r.goalY, step)) r.stuck = 0;
+      else {
+        r.stuck = (r.stuck ?? 0) + dt;
+        if (r.stuck > 0.55) this.witchRepick(m);
+      }
     }
     if (!this.dead && r.foe === "player") m.facing = save.x < m.x ? -1 : 1;
   };

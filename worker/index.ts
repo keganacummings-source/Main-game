@@ -263,7 +263,7 @@ async function handleGraves(request: Request, env: Env, url: URL, ctx?: Executio
 
     if (request.method === "GET") {
       const modeRaw = url.searchParams.get("mode") ?? "hunt";
-      if (modeRaw !== "hunt" && modeRaw !== "hardcore") {
+      if (modeRaw !== "hunt" && modeRaw !== "hardcore" && modeRaw !== "turbz") {
         return json([]);
       }
       const rows = await stub.list(modeRaw);
@@ -279,7 +279,7 @@ async function handleGraves(request: Request, env: Env, url: URL, ctx?: Executio
       if (raw instanceof Response) return raw;
       if (!raw || typeof raw !== "object") return json({ error: "bad grave" }, 400);
       const body = raw as Record<string, unknown>;
-      const mode = body.mode === "hunt" || body.mode === "hardcore" ? body.mode : null;
+      const mode = body.mode === "hunt" || body.mode === "hardcore" || body.mode === "turbz" ? body.mode : null;
       if (body.mode === "arena") return json({ ok: true });
       if (!mode) return json({ error: "unknown board" }, 400);
       const name = String(body.name ?? "").slice(0, 24).trim();
@@ -336,7 +336,15 @@ export default {
     const url = new URL(request.url);
     if (url.pathname === "/api/discord/interactions") {
       const stub = gravesStub(env);
-      return handleInteraction(request, env, { setChannel: (g, c, by) => stub.setChannel(g, c, by), shinies: (name) => shinyCard(env, name) });
+      return handleInteraction(request, env, {
+        setChannel: (g, c, by) => stub.setChannel(g, c, by),
+        shinies: (name) => shinyCard(env, name),
+        board: async (mode) => {
+          if (mode !== "hunt" && mode !== "hardcore" && mode !== "turbz") return [];
+          const rows = await stub.list(mode);
+          return rows.slice(0, 10).map((r) => ({ name: r.name, username: r.username, level: r.level, score: r.score, className: r.className || "" }));
+        },
+      });
     }
     if (url.pathname.startsWith("/api/account/")) return handleAccount(request, env, url);
     if (url.pathname === "/api/save") return handleSave(request, env, url);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Sets the Discord bot's slash commands to exactly the TURBZ ones (/turbzhere, /shiny). Every other global
+ * Sets the Discord bot's slash commands to exactly the TURBZ ones (/turbzhere, /shiny, /turbzboard). Every other global
  * command is removed, and every server-level command (old copies, /tm…) is cleared.
  *
  *   DISCORD_BOT_TOKEN=... node scripts/discord/register.mjs
@@ -20,6 +20,21 @@ const configured = toml.match(/^DISCORD_APP_ID\s*=\s*"(\d+)"/m)?.[1] ?? "";
 const COMMANDS = [
   { name: "turbzhere", description: "Post TURBZ deaths and shiny ghost sightings (with GIFs) in this channel.", default_member_permissions: "32", dm_permission: false },
   { name: "shiny", description: "Show a TURBZ player's Shiny collection as a GIF.", options: [{ type: 3, name: "username", description: "Their TURBZ username", required: true, min_length: 3, max_length: 16 }] },
+  {
+    name: "turbzboard",
+    description: "Show the top of a leaderboard. Defaults to the TURBZ mode.",
+    options: [{
+      type: 3,
+      name: "mode",
+      description: "Which board",
+      required: false,
+      choices: [
+        { name: "TURBZ", value: "turbz" },
+        { name: "Hunt", value: "hunt" },
+        { name: "Hardcore", value: "hardcore" },
+      ],
+    }],
+  },
 ];
 
 async function call(method, path, body) {

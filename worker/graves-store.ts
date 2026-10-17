@@ -1,4 +1,4 @@
-export type GraveMode = "hunt" | "arena" | "hardcore";
+export type GraveMode = "hunt" | "arena" | "hardcore" | "turbz";
 
 export type GraveBody = {
   mode: GraveMode;

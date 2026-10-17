@@ -47,6 +47,10 @@ test("death embeds carry level, class, cause and effects; GIF uploads are checke
   assert.ok(e.fields.some((f: any) => f.name === "Level" && f.value === "42"));
   assert.ok(e.fields.some((f: any) => f.name === "Effects" && /Demon Wings/.test(f.value)));
   assert.equal(e.image.url, "attachment://death.gif");
+  const turbz = deathEmbed({ mode: "turbz", name: "Vell", username: "kegan", className: "Bulwark", race: "Vesper", level: 12, score: 800, cause: "Killed by a witch", place: "TURBZ", effects: [], ghosts: [], topSkills: [], gear: [] }, false) as any;
+  assert.match(turbz.description, /TURBZ/);
+  assert.equal(turbz.color, 0x7a5cff);
+  assert.ok(turbz.fields.some((f: any) => f.name === "Mode" && f.value === "TURBZ"));
   assert.equal(decodeGif(Buffer.from("GIF89a-not-really-but-header-ok").toString("base64"))?.[0], 0x47);
   assert.equal(decodeGif(Buffer.from("PNG nope nope nope nope").toString("base64")), null);
 });
@@ -78,6 +82,11 @@ test("the new season wipes every old grave once, and death channels are kept per
   assert.deepEqual(s2.channels(), [{ guildId: "g1", channelId: "c2" }], "one channel per server, latest wins");
   s2.dropChannel("c2");
   assert.deepEqual(s2.channels(), []);
+  s2.post("kegan", { mode: "turbz", score: 40, name: "Mira", race: "Vesper", level: 6, accountScore: 0, skills: [], gear: [], note: "Died in TURBZ.", className: "Bulwark" }, 20_000);
+  const board = s2.list("turbz");
+  assert.equal(board.length, 1);
+  assert.equal(board[0]!.name, "Mira");
+  assert.equal(s2.list("hunt").length, 1, "TURBZ does not land on the Hunt board");
 });
 
 test("/shiny username answers with the collection GIF, or says who has none", async () => {
@@ -102,6 +111,28 @@ test("/shiny username answers with the collection GIF, or says who has none", as
   assert.equal(new Uint8Array(await file.arrayBuffer())[0], 0x47);
   assert.match(((await (await ask("empty")).json()) as any).data.content, /not caught a shiny/);
   assert.match(((await (await ask("nobody")).json()) as any).data.content, /No TURBZ account/);
+});
+
+test("/turbzboard lists the TURBZ board, and defaults to it", async () => {
+  const { pub, sign } = await keys();
+  const env = { DISCORD_PUBLIC_KEY: pub } as any;
+  const store = {
+    setChannel: () => {},
+    board: (mode: string) => mode === "turbz" ? [{ name: "Mira", username: "kegan", level: 8, score: 420, className: "Bulwark" }] : [],
+  };
+  const ask = async (mode?: string) => {
+    const data: { name: string; options?: { name: string; type: number; value: string }[] } = { name: "turbzboard" };
+    if (mode) data.options = [{ name: "mode", type: 3, value: mode }];
+    const body = JSON.stringify({ type: 2, data });
+    return handleInteraction(new Request("https://x/api/discord/interactions", { method: "POST", body, headers: { "x-signature-ed25519": await sign("8", body), "x-signature-timestamp": "8" } }), env, store);
+  };
+  const top = (await (await ask()).json()) as any;
+  assert.match(top.data.embeds[0].title, /TURBZ/);
+  assert.match(top.data.embeds[0].description, /Mira/);
+  assert.match(top.data.embeds[0].description, /420/);
+  const empty = (await (await ask("hardcore")).json()) as any;
+  assert.match(empty.data.content, /Hardcore/);
+  assert.match(empty.data.content, /empty/);
 });
 
 test("a shiny sighting embed says who saw which ghost, with its GIF", async () => {

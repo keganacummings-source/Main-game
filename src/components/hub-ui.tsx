@@ -316,7 +316,7 @@ export function ShiniesScreen({ onBack, username }: { onBack: () => void; userna
           <div key={s.uid} className="ui-card" title={`${s.name} · ${s.species}`}>
             <ShinyCanvas s={s} />
             <p className="text-kyo">✦ {s.name}</p>
-            <p className="text-dim">Lv {s.level} · {s.type}{s.mode === "hardcore" ? " · Hardcore" : ""}</p>
+            <p className="text-dim">Lv {s.level} · {s.type}{s.mode === "hardcore" ? " · Hardcore" : s.mode === "turbz" ? " · TURBZ" : ""}</p>
             <p className="text-dim">{s.by ? `${s.by}, ` : ""}{new Date(s.at).toLocaleDateString()}</p>
           </div>
         ))}
@@ -331,6 +331,7 @@ export function ShiniesScreen({ onBack, username }: { onBack: () => void; userna
 const BOARDS: { id: GraveMode; label: string }[] = [
   { id: "hunt", label: "Hunt" },
   { id: "hardcore", label: "Hardcore" },
+  { id: "turbz", label: "TURBZ" },
 ];
 
 type BoardSort = "score" | "level" | "account" | "recent";
@@ -594,7 +595,7 @@ function GraveCard({ row, rank, now }: { row: GraveRow; rank: number; now: numbe
       <div className="board-detail-top">
         <GravePortrait row={row} />
         <div className="min-w-0">
-          <p className="board-detail-rank">#{rank} · {row.mode === "hardcore" ? "Hardcore" : "Hunt"}</p>
+          <p className="board-detail-rank">#{rank} · {row.mode === "turbz" ? "TURBZ" : row.mode === "hardcore" ? "Hardcore" : "Hunt"}</p>
           <h2>{row.name}</h2>
           <p>{row.className ? `${row.className} · ` : ""}{row.race} · level {row.level}</p>
           <p className="board-score-big">{commas(row.score)}</p>

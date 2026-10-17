@@ -470,11 +470,11 @@ const TINY_SCALE = 0.25;
  * how they move there; trail: how far they lag when you walk; jitter/kick: random darts (shinies).
  */
 const GHOST_DRIFT = {
-	normal: { near: 58, far: 100, flat: 0.45, lift: 4, hold: [1.6, 3.8], arrive: 8, restless: 0.4, spring: 7, drag: 2.6, max: 150, trail: 26, bob: 3, bobRate: 2.1, jitter: 0, kick: 0 },
-	shiny: { near: 48, far: 86, flat: 0.5, lift: -8, hold: [0.25, 0.9], arrive: 6, restless: 3, spring: 22, drag: 3.4, max: 290, trail: 12, bob: 4, bobRate: 5.3, jitter: 2.2, kick: 120 },
-	tiny: { near: 6, far: 18, flat: 0.5, lift: 0, hold: [0.8, 2.2], arrive: 2, restless: 1, spring: 14, drag: 3.2, max: 140, trail: 6, bob: 1.5, bobRate: 2.6, jitter: 0, kick: 0 },
-	tinyShiny: { near: 4, far: 20, flat: 0.55, lift: 0, hold: [0.2, 0.7], arrive: 2, restless: 4, spring: 30, drag: 4, max: 220, trail: 4, bob: 2, bobRate: 6, jitter: 3, kick: 70 },
-	perch: { near: 0, far: 2.5, flat: 0.6, lift: 0, hold: [1, 3], arrive: 1, restless: 1, spring: 40, drag: 7, max: 200, trail: 2, bob: 0.6, bobRate: 3, jitter: 0, kick: 0 },
+	normal: { near: 58, far: 100, flat: 0.45, lift: 4, hold: [2.2, 4.4], arrive: 10, restless: 0.15, spring: 5, drag: 3.1, max: 110, trail: 22, bob: 2, bobRate: 1.6, jitter: 0, kick: 0 },
+	shiny: { near: 48, far: 86, flat: 0.5, lift: -8, hold: [0.7, 1.8], arrive: 8, restless: 0.8, spring: 8, drag: 3.2, max: 160, trail: 14, bob: 3, bobRate: 2.4, jitter: 0.45, kick: 36 },
+	tiny: { near: 6, far: 16, flat: 0.5, lift: 0, hold: [1.1, 2.4], arrive: 3, restless: 0.35, spring: 8, drag: 3.4, max: 90, trail: 6, bob: 1.2, bobRate: 2, jitter: 0, kick: 0 },
+	tinyShiny: { near: 4, far: 16, flat: 0.55, lift: 0, hold: [0.6, 1.4], arrive: 3, restless: 0.8, spring: 9, drag: 3.6, max: 110, trail: 4, bob: 1.4, bobRate: 2.6, jitter: 0.4, kick: 22 },
+	perch: { near: 0, far: 2, flat: 0.6, lift: 0, hold: [1.4, 3], arrive: 1.5, restless: 0.2, spring: 8, drag: 4, max: 70, trail: 2, bob: 0.5, bobRate: 2, jitter: 0, kick: 0 },
 };
 /** How wide a ghost is, so it can stand beside you instead of on you. */
 function ghostHalfWidth(spirit) {
@@ -1301,8 +1301,8 @@ export class TurbzGame {
 	}
 	begin(name, race: RaceId, as, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true) {
 		const prevSave = this.peekRuleSave();
-		this.captureProgress(prevSave);
-		const inherited = this.inheritGhosts(prevSave, classId);
+		if (!this.turbz) this.captureProgress(prevSave);
+		const inherited = this.turbz ? { spirits: [], ghostStore: [] } : this.inheritGhosts(prevSave, classId);
 		const seed = Math.random() * 1e9 | 0;
 		const rng = mulberry32(seed ^ 91);
 		const type = CLASS_BY_ID[classId].type;
@@ -1377,7 +1377,7 @@ export class TurbzGame {
 			quick: ["potion"]
 		};
 		this.boot(save);
-		if (inherited.spirits.length || inherited.ghostStore.length) this.say(`Your ghosts found you: ${inherited.spirits.length} in your party${inherited.ghostStore.length ? `, ${inherited.ghostStore.length} waiting in the Ghost Box` : ""}.`);
+		if (!this.turbz && (inherited.spirits.length || inherited.ghostStore.length)) this.say(`Your ghosts found you: ${inherited.spirits.length} in your party${inherited.ghostStore.length ? `, ${inherited.ghostStore.length} waiting in the Ghost Box` : ""}.`);
 		save.hp = this.maxHp();
 		this.say(this.rules === "hardcore" ? `${save.name} wakes in the frontier. Hunt, gather water, and build a fire. Wounds only mend with healing spells, potions and meals.` : `${save.name} wakes at the hearth.`);
 		this.cue("swell", {}, [220, .12]);
@@ -1879,7 +1879,7 @@ export class TurbzGame {
 		}
 		if (this.role !== "guest") this.tickContract(dt);
 		this.tickUnstuck(dt);
-		if (snap.panel === "pause" || snap.panel === "death") {
+		if (snap.panel === "pause" || snap.panel === "death" || this.dead) {
 			this.vx = 0;
 			this.vy = 0;
 			if (this.unstuckT > 0 || this.liveBounty()) this.syncHud(false);
@@ -4665,7 +4665,7 @@ export class TurbzGame {
 		const added = noteShiny({
 			uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"),
 			template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10,
-			look: spirit.look ?? null, at: Date.now(), mode: this.rules, by: this.save.name, palette: spirit.palette,
+			look: spirit.look ?? null, at: Date.now(), mode: this.turbz ? "turbz" : this.rules, by: this.save.name, palette: spirit.palette,
 		});
 		if (added) { this.say(`✦ ${spirit.name} joins your Shiny collection.`); this.shinyFn?.(); }
 	}
@@ -4675,7 +4675,7 @@ export class TurbzGame {
 		// Big on-screen "SHINY DROPPED" pop-up (see ShinyDropAlert in turbz-app.tsx).
 		publish({ shinyAlert: getSnap().shinyAlert + 1 });
 		this.shinySeenFn?.({
-			entry: { uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"), template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10, look: spirit.look ?? null, at: Date.now(), mode: this.rules, by: this.save.name, palette: spirit.palette },
+			entry: { uid: String(spirit.uid), species: String(spirit.species ?? ""), name: String(spirit.name ?? "Ghost"), type: String(spirit.type ?? "spirit"), template: Number(spirit.template) || 0, rarity: Number(spirit.rarity) || 0, level: Number(spirit.level) || 1, speed: Number(spirit.speed) || 10, max: Number(spirit.max) || 10, look: spirit.look ?? null, at: Date.now(), mode: this.turbz ? "turbz" : this.rules, by: this.save.name, palette: spirit.palette },
 			witch: this.save.name,
 			place: this.mapRegion?.name ?? (this.save.map === "world" ? this.customFile?.name ?? "the wilds" : this.customFile?.name ?? "a dungeon"),
 		});
@@ -5795,9 +5795,9 @@ export class TurbzGame {
 		}
 	}
 	die() {
-		if (this.turbz) { this.turbzDeath?.(); return; }
-		const save = this.save;
 		if (this.lms) { this.lmsDefeat?.(); return; }
+		if (this.turbz) { this.turbzFell(); return; }
+		const save = this.save;
 		if (this.rules !== "hardcore" && (this.shrine || save.map !== "world")) {
 			this.knockOut();
 			return;
@@ -5826,6 +5826,29 @@ export class TurbzGame {
 		this.playYouDied();
 		this.syncHud(true);
 	}
+	/** TURBZ death: the run ends. Worn gear and party ghosts are kept for the next start, at level 1. Shared Hunt and Hardcore skills are not touched. */
+	turbzFell() {
+		const save = this.save;
+		if (!save || this.dead) return;
+		this.stashTurbzKit?.();
+		let score = save.level * 50 + (save.xp | 0) + Math.floor((save.kyo | 0) / 2);
+		for (const g of save.gear ?? []) score += gearScore(g);
+		for (const sk of Object.values(save.skills ?? {})) score += Math.max(0, ((sk.level ?? 1) - 1) * 8);
+		score = Math.max(1, Math.floor(score));
+		this.emitGrave(save, score);
+		this.dead = true;
+		this.dest = null;
+		this.lunge = null;
+		this.rush = null;
+		this.orbit = null;
+		save.hp = 0;
+		save.lastDeath = this.deathReport(save, score, save.kyo | 0);
+		if (save.lastDeath) save.lastDeath.accountScore = 0;
+		publish({ panel: "died", died: save.lastDeath });
+		this.say("You died. Play again to start over. What you wore, and the ghosts in your party, come back at level 1 with their enchants. This run's skills are wiped. Hunt and Hardcore keep theirs.");
+		this.playYouDied();
+		this.syncHud(true);
+	}
 	/** What the You Died screen shows. */
 	deathReport(save, scored, kyo): DeathReport {
 		const c = CLASS_BY_ID[save.classId];
@@ -5833,7 +5856,7 @@ export class TurbzGame {
 		const t = Math.floor(save.lifeT ?? 0);
 		return {
 			world: save.world?.name || mainWorldFile()?.name || "Veilreach", seed: save.world?.seed ?? 0,
-			name: save.name, className: c?.name ?? "Witch", focus: c?.focus ?? "", level: save.level, mode: this.rules,
+			name: save.name, className: c?.name ?? "Witch", focus: c?.focus ?? "", level: save.level, mode: this.turbz ? "turbz" : this.rules,
 			cause: this.causeOfDeath?.() ?? "", kills: save.lifeKills ?? 0, survived: t >= 3600 ? `${Math.floor(t / 3600)}h ${Math.floor((t % 3600) / 60)}m` : `${Math.floor(t / 60)}m ${t % 60}s`,
 			kyo, score: scored, accountScore: save.accountScore ?? 0, spirits: (save.spirits ?? []).length, shinies: [...(save.spirits ?? []), ...(save.ghostStore ?? [])].filter((x) => x?.shiny).length,
 			gear: (save.gear ?? []).filter((g) => Object.values(save.equipped ?? {}).includes(g.uid)).map((g) => g.name).slice(0, 6), skills,
@@ -5888,6 +5911,10 @@ export class TurbzGame {
 	rebirth(name, race: RaceId, setId, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true) {
 		const save = this.save;
 		if (!save || !this.dead) return;
+		if (this.turbz) {
+			this.startTurbz?.(name, race, classId, traitId, female);
+			return;
+		}
 		const set = setId ? SET_BY_ID[setId] : null;
 		const wear = set && this.isUnlocked(set.id, classId) ? set.id : null;
 		save.name = (name || "Huntress").slice(0, 16);
@@ -6291,37 +6318,52 @@ export class TurbzGame {
 	 */
 	moveGhost(spirit, at, i, dt) {
 		const save = this.save;
-		at.t = (at.t ?? Math.random() * 10) + dt;
-		if (Math.hypot(at.x - save.x, at.y - save.y) > 640) { at.x = save.x; at.y = save.y; at.vx = 0; at.vy = 0; }
-		const foe = spirit.shiny ? null : this.fightTarget();
-		if (foe || at.dashT > 0) {
-			let tx, ty, k = 5;
-			if (foe) {
-				const reach = Math.max(40, Math.min(150, ...((spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && !spiritAidsPlayer(m)).map((m) => (attackForm(m) === "melee" ? 50 : attackRange(m) * .6)))));
-				const ang = this.clock * 1.3 + i * 2.05;
-				const rad = Number.isFinite(reach) ? reach : 60;
-				tx = foe.x + Math.cos(ang) * rad;
-				ty = foe.y + Math.sin(ang) * rad * .5 + Math.sin(at.t * 3 + i) * 3;
-			} else { tx = at.x; ty = at.y; }
-			if (at.dashT > 0) {
-				at.dashT -= dt;
-				const p = Math.max(0, at.dashT / .38);
-				const out = Math.sin(p * Math.PI);
-				tx = tx + (at.dashX - tx) * out;
-				ty = ty + (at.dashY - ty) * out;
-				k = 14;
+		const h = Math.min(Math.max(dt, 0), 0.05);
+		at.t = (at.t ?? Math.random() * 10) + h;
+		const far = Math.hypot(at.x - save.x, at.y - save.y);
+		if (far > 1600) {
+			at.x = save.x + (i % 2 === 0 ? -52 : 52);
+			at.y = save.y + 12;
+			at.vx = 0;
+			at.vy = 0;
+		} else if (far > 340) {
+			const catchUp = Math.min(0.35, h * 2.4);
+			at.x += (save.x - at.x) * catchUp;
+			at.y += (save.y - at.y) * catchUp;
+			at.vx = (at.vx ?? 0) * 0.5;
+			at.vy = (at.vy ?? 0) * 0.5;
+		}
+		let foe = spirit.shiny ? null : this.fightTarget();
+		if (foe) { at.fightT = 0.4; at.foeId = foe.id; }
+		else if ((at.fightT ?? 0) > 0) {
+			at.fightT -= h;
+			const held = this.mobs.find((m) => m.id === at.foeId && m.alive);
+			if (held && Math.hypot(held.x - save.x, held.y - save.y) < 260) foe = held;
+			else at.fightT = 0;
+		}
+		if (foe || (at.dashT ?? 0) > 0) {
+			at.ang = (at.ang ?? i * 2.05) + h * 0.55;
+			const reaches = (spirit.slots ?? []).map((id) => MOVE_BY_ID[id]).filter((m) => m && !spiritAidsPlayer(m)).map((m) => (attackForm(m) === "melee" ? 52 : attackRange(m) * 0.55));
+			const reach = Math.max(44, Math.min(140, reaches.length ? Math.min(...reaches) : 64));
+			let tx = foe ? foe.x + Math.cos(at.ang) * reach : at.x;
+			let ty = foe ? foe.y + Math.sin(at.ang) * reach * 0.42 : at.y;
+			if ((at.dashT ?? 0) > 0) {
+				at.dashT -= h;
+				if (at.dashT > 0.12) { tx = at.dashX ?? tx; ty = at.dashY ?? ty; }
 			}
-			const px = at.x, py = at.y;
-			at.x += (tx - at.x) * Math.min(1, dt * k);
-			at.y += (ty - at.y) * Math.min(1, dt * k);
-			at.vx = (at.x - px) / Math.max(dt, 1e-3);
-			at.vy = (at.y - py) / Math.max(dt, 1e-3);
-			if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
+			const k = 1 - Math.exp(-h * ((at.dashT ?? 0) > 0.12 ? 8 : 3.5));
+			const px = at.x;
+			const py = at.y;
+			at.x += (tx - at.x) * k;
+			at.y += (ty - at.y) * k;
+			at.vx = (at.x - px) / Math.max(h, 1e-3);
+			at.vy = (at.y - py) / Math.max(h, 1e-3);
+			if (Math.abs(at.x - px) > 0.05) at.facing = at.x > px ? 1 : -1;
 			at.spin = 0;
 			return;
 		}
-		this.driftGhost(at, i, dt, spirit.shiny ? GHOST_DRIFT.shiny : GHOST_DRIFT.normal, save.x, save.y);
-		at.spin = spirit.shiny && Math.sin(at.t * .45) > .9 ? (at.spin ?? 0) + dt * 12 : 0;
+		this.driftGhost(at, i, h, spirit.shiny ? GHOST_DRIFT.shiny : GHOST_DRIFT.normal, save.x, save.y);
+		at.spin = 0;
 	}
 	/**
 	 * Free-floating pet motion around (cx, cy): wander targets, spring + drag, a speed cap, a lag when the
@@ -6343,45 +6385,56 @@ export class TurbzGame {
 		const trail = this.moving ? -this.facing * d.trail : 0;
 		const tx = cx + at.wx + trail;
 		const ty = cy + at.wy + Math.sin(at.t * d.bobRate + i * 1.7) * d.bob;
-		const pull = dist > d.far * 2.2 ? d.spring * 2.5 : d.spring;
-		at.vx = (at.vx ?? 0) + (tx - at.x) * pull * dt;
-		at.vy = (at.vy ?? 0) + (ty - at.y) * pull * dt;
-		// Shiny sparks get random kicks: little darts and loops.
-		if (d.jitter && Math.random() < dt * d.jitter) { const a = Math.random() * Math.PI * 2; at.vx += Math.cos(a) * d.kick; at.vy += Math.sin(a) * d.kick * .7; }
-		const drag = Math.exp(-dt * d.drag);
-		at.vx *= drag;
-		at.vy *= drag;
-		const cap = d.max * (dist > d.far * 2 ? 2 : 1);
+		const pull = dist > d.far * 2.2 ? d.spring * 1.35 : d.spring;
+		const gain = Math.min(0.28, pull * dt);
+		at.vx = (at.vx ?? 0) * Math.exp(-dt * d.drag) + (tx - at.x) * gain;
+		at.vy = (at.vy ?? 0) * Math.exp(-dt * d.drag) + (ty - at.y) * gain;
+		if (d.jitter && Math.random() < dt * d.jitter) { const a = Math.random() * Math.PI * 2; at.vx += Math.cos(a) * d.kick; at.vy += Math.sin(a) * d.kick * .6; }
+		const cap = d.max * (dist > d.far * 2 ? 1.35 : 1);
 		const sp = Math.hypot(at.vx, at.vy);
 		if (sp > cap) { at.vx *= cap / sp; at.vy *= cap / sp; }
+		const maxStep = cap * dt;
+		let dx = at.vx * dt;
+		let dy = at.vy * dt;
+		const step = Math.hypot(dx, dy);
+		if (step > maxStep) { dx *= maxStep / step; dy *= maxStep / step; }
 		const px = at.x;
-		at.x += at.vx * dt;
-		at.y += at.vy * dt;
+		at.x += dx;
+		at.y += dy;
 		if (Math.abs(at.vx) > 4) at.facing = at.vx > 0 ? 1 : -1;
 		else if (Math.abs(at.x - px) > .05) at.facing = at.x > px ? 1 : -1;
 	}
-	/** Shove a follower out of the hunter's sprite. The class art is tall, so close in x covers the body. */
+	/** Nudge a follower off the hunter. A few pixels a frame, never a snap. */
 	clearOfHunter(at, half) {
 		const save = this.save;
 		if (!save || !at) return;
-		const need = 36 + (half ?? 22);
+		const needX = 30 + (half ?? 18) * 0.35;
 		const dx = at.x - save.x;
 		const dy = at.y - save.y;
-		const onBody = Math.abs(dx) < need && dy > -92 && dy < 16;
-		if (!onBody) return;
-		const side = dx < -1 ? -1 : dx > 1 ? 1 : (at.facing || this.facing || 1);
-		at.x = save.x + side * need;
+		const nx = dx / needX;
+		const ny = (dy + 34) / 56;
+		const e = nx * nx + ny * ny;
+		if (e >= 1 || e < 1e-4) return;
+		const depth = 1 - Math.sqrt(e);
+		const side = dx < -0.4 ? -1 : dx > 0.4 ? 1 : (at.facing || this.facing || 1);
+		at.x += side * Math.min(4, depth * needX);
+		at.y += (dy > -8 ? 1 : -1) * Math.min(2.5, depth * 8);
+		if ((at.vx ?? 0) * side < 8) at.vx = side * 28;
 	}
-	/** Keeps ghosts from piling onto the same spot. */
+	/** Keeps ghosts from piling onto the same spot. A short nudge, not a teleport. */
 	spreadGhosts(list, gap) {
 		for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) {
 			const p = list[a], q = list[b];
 			if (!p || !q) continue;
-			const dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
-			if (d >= gap || d < .01) continue;
-			const push = (gap - d) * .5;
-			p.x -= (dx / d) * push * .5; p.y -= (dy / d) * push * .5;
-			q.x += (dx / d) * push * .5; q.y += (dy / d) * push * .5;
+			let dx = q.x - p.x, dy = q.y - p.y, d = Math.hypot(dx, dy);
+			if (d >= gap) continue;
+			if (d < 0.5) { dx = a % 2 === 0 ? -1 : 1; dy = 0.2; d = Math.hypot(dx, dy); }
+			const nx = dx / d, ny = dy / d;
+			const push = Math.min(4, (gap - d) * 0.2);
+			p.x -= nx * push; p.y -= ny * push;
+			q.x += nx * push; q.y += ny * push;
+			p.vx = (p.vx ?? 0) - nx * 16; p.vy = (p.vy ?? 0) - ny * 16;
+			q.vx = (q.vx ?? 0) + nx * 16; q.vy = (q.vy ?? 0) + ny * 16;
 		}
 	}
 	// ---------- Ghost abilities ----------
@@ -6521,22 +6574,32 @@ export class TurbzGame {
 	tickTinies(dt) {
 		const save = this.save;
 		if (!save) return;
+		const h = Math.min(Math.max(dt, 0), 0.05);
 		const list = this.taggedGhosts();
-		this.tinies = this.tinies ?? [];
-		while (this.tinies.length < list.length) this.tinies.push({ x: save.x, y: save.y - 30, vx: 0, vy: 0 });
-		this.tinies.length = list.length;
+		this.tinyBy = this.tinyBy ?? {};
+		const live = new Set();
+		this.tinies = list.map((g, i) => {
+			live.add(g.uid);
+			let at = this.tinyBy[g.uid];
+			if (!at || !Number.isFinite(at.x)) at = this.tinyBy[g.uid] = { x: save.x + (i % 2 === 0 ? -20 : 20), y: save.y - 36, vx: 0, vy: 0 };
+			return at;
+		});
+		for (const id of Object.keys(this.tinyBy)) if (!live.has(id)) delete this.tinyBy[id];
 		list.forEach((g, i) => {
 			const at = this.tinies[i];
-			if (Math.hypot(at.x - save.x, at.y - save.y) > 400) { at.x = save.x; at.y = save.y - 30; at.vx = 0; at.vy = 0; }
-			// Some perch on a shoulder, the rest bob in a little cloud over your head.
+			const far = Math.hypot(at.x - save.x, at.y - save.y);
+			if (far > 1200) { at.x = save.x; at.y = save.y - 36; at.vx = 0; at.vy = 0; }
+			else if (far > 240) {
+				at.x += (save.x - at.x) * Math.min(0.3, h * 2.5);
+				at.y += (save.y - 36 - at.y) * Math.min(0.3, h * 2.5);
+			}
 			const perch = i < 2 && !g.shiny;
 			if (perch) {
 				const side = i === 0 ? -1 : 1;
-				this.driftGhost(at, i, dt, GHOST_DRIFT.perch, save.x + side * 48, save.y - 8);
-			} else this.driftGhost(at, i, dt, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x + ((i % 2 === 0 ? -1 : 1) * 36), save.y - 108);
-			this.clearOfHunter(at, 16);
+				this.driftGhost(at, i, h, GHOST_DRIFT.perch, save.x + side * 48, save.y - 8);
+			} else this.driftGhost(at, i, h, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x + ((i % 2 === 0 ? -1 : 1) * 36), save.y - 108);
 		});
-		this.spreadGhosts(this.tinies, 7);
+		this.spreadGhosts(this.tinies, 8);
 	}
 	drawTinies(ctx) {
 		const save = this.save;
@@ -6753,30 +6816,42 @@ export class TurbzGame {
 	tickSpirits(dt: number) {
 		const save = this.save;
 		if (!save) return;
+		const step = Math.min(Math.max(dt, 0), 0.05);
 		const list = this.activeSpirits();
-		while (this.mates.length < list.length) this.mates.push({ x: save.x, y: save.y, swing: 0 });
-		this.mates.length = list.length;
+		this.mateBy = this.mateBy ?? {};
+		const live = new Set();
+		this.mates = list.map((spirit, i) => {
+			live.add(spirit.uid);
+			let at = this.mateBy[spirit.uid];
+			if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.y)) {
+				const side = i % 2 === 0 ? -1 : 1;
+				at = { x: save.x + side * (46 + i * 6), y: save.y + 8, swing: 0, vx: 0, vy: 0 };
+				this.mateBy[spirit.uid] = at;
+			}
+			return at;
+		});
+		for (const id of Object.keys(this.mateBy)) if (!live.has(id)) delete this.mateBy[id];
 		list.forEach((spirit, i) => {
 			const at = this.mates[i]!;
-			at.swing = Math.max(0, at.swing - dt * 3);
+			at.swing = Math.max(0, at.swing - step * 3);
 			if (spirit.hp <= 0) {
-				at.x += (save.x - this.facing * 18 - at.x) * Math.min(1, dt * 2);
-				at.y += (save.y + 14 - at.y) * Math.min(1, dt * 2);
+				at.x += (save.x - this.facing * 28 - at.x) * Math.min(1, step * 2);
+				at.y += (save.y + 16 - at.y) * Math.min(1, step * 2);
+				at.vx = 0;
+				at.vy = 0;
 				return;
 			}
 			if (this.holdActive()) {
-				// Home in bed: a slow drift over its own bed.
 				const bed = this.bedSpot(i);
-				at.x += (bed.x + Math.sin(this.clock * .6 + i) * 3 - at.x) * Math.min(1, dt * 4);
-				at.y += (bed.y - 6 + Math.cos(this.clock * .5 + i) * 2 - at.y) * Math.min(1, dt * 4);
+				at.x += (bed.x + Math.sin(this.clock * .6 + i) * 3 - at.x) * Math.min(1, step * 3);
+				at.y += (bed.y - 6 + Math.cos(this.clock * .5 + i) * 2 - at.y) * Math.min(1, step * 3);
 				return;
 			}
-			this.moveGhost(spirit, at, i, dt);
-			this.clearOfHunter(at, ghostHalfWidth(spirit));
+			this.moveGhost(spirit, at, i, step);
 		});
-		if (!this.fightTarget()) this.spreadGhosts(this.mates, 44);
+		if (!this.fightTarget()) this.spreadGhosts(this.mates, 40);
 		list.forEach((spirit, i) => { if (spirit.hp > 0) this.clearOfHunter(this.mates[i], ghostHalfWidth(spirit)); });
-		this.tickTinies(dt);
+		this.tickTinies(step);
 	}
 	tickParty(dt) {
 		const save = this.save;
@@ -11587,7 +11662,7 @@ export class TurbzGame {
 		if (ghosts.some((g) => g.shiny)) effects.push("Shiny ghost");
 		const look = this.graveLook(save);
 		const body: GraveBody = {
-			mode: this.rules === "hardcore" ? "hardcore" : "hunt",
+			mode: this.turbz ? "turbz" : this.rules === "hardcore" ? "hardcore" : "hunt",
 			score,
 			name: save.name,
 			race: RACES.find((r) => r.id === save.race)?.name ?? save.race,
@@ -11595,7 +11670,7 @@ export class TurbzGame {
 			accountScore: save.accountScore ?? 0,
 			skills: SKILLS.map((sk) => ({ name: sk.name, level: save.skills[sk.id]?.level ?? 1 })),
 			gear,
-			note: this.rules === "hardcore" ? "Died grinding the hardcore wilds." : "Died on the hunt.",
+			note: this.turbz ? "Died in TURBZ. The wild kept what she was wearing, at level 1." : this.rules === "hardcore" ? "Died grinding the hardcore wilds." : "Died on the hunt.",
 			className: CLASS_BY_ID[save.classId]?.name ?? "",
 			cause: this.causeOfDeath(),
 			place: snap.region || "",

@@ -1081,20 +1081,24 @@ export function DiedOverlay({ game }: GameProp) {
     <div className="loot-overlay died-overlay" role="dialog" aria-label="You died" data-testid="died-screen">
       <div className="died-panel">
         <h2 className="died-title">YOU DIED</h2>
-        <p className="died-sub">{died.name} · {died.className}{died.focus ? ` (${died.focus})` : ""} · Level {died.level}{died.mode === "hardcore" ? " · Hardcore" : ""}</p>
+        <p className="died-sub">{died.name} · {died.className}{died.focus ? ` (${died.focus})` : ""} · Level {died.level}{died.mode === "turbz" ? " · TURBZ" : died.mode === "hardcore" ? " · Hardcore" : ""}</p>
         {died.cause && <p className="text-blood">{died.cause}</p>}
         <div className="px-panel died-stats">
           {row("Level reached", died.level)}
           {row("Foes defeated", died.kills.toLocaleString())}
           {row("Survived", died.survived)}
-          {row("Kyo carried", died.kyo.toLocaleString())}
+          {died.mode !== "turbz" && row("Kyo carried", died.kyo.toLocaleString())}
           {row("Spirits in party", `${died.spirits}${died.shinies ? ` (✦ ${died.shinies} shiny)` : ""}`)}
-          {row("Account Score gained", <span className="text-kyo">+{died.score.toLocaleString()}</span>)}
-          {row("Account Score total", died.accountScore.toLocaleString())}
+          {died.mode !== "turbz" && row("Account Score gained", <span className="text-kyo">+{died.score.toLocaleString()}</span>)}
+          {died.mode !== "turbz" && row("Account Score total", died.accountScore.toLocaleString())}
+          {died.mode === "turbz" && row("Life score", died.score.toLocaleString())}
           {died.skills.length > 0 && row("Best skills", died.skills.map((k) => `${k.name} ${k.level}`).join(" · "))}
           {died.gear.length > 0 && row("Wore", died.gear.join(", "))}
         </div>
-        <p className="text-dim">Skills, account level and permanent bonuses stay with you.</p>
+        <p className="text-dim">{died.mode === "turbz"
+          ? "Play again to start a new witch. Worn gear and party ghosts return at level 1, enchants kept. This run's skills, account level and pockets are wiped. Hunt and Hardcore are not."
+          : "Skills, account level and permanent bonuses stay with you."}</p>
+        {died.mode !== "turbz" && (
         <div className="px-panel died-stats" data-testid="died-world">
           <p>World: <span className="text-kyo">{died.world}</span>{died.seed ? <span className="text-dim"> · seed {died.seed}</span> : null}</p>
           <p className="text-dim">{keepWorld ? "Your next life wakes in this same world." : "Your next life wakes in a brand-new world, unless you keep this one."}</p>
@@ -1102,6 +1106,7 @@ export function DiedOverlay({ game }: GameProp) {
             {keepWorld ? "✓ Keeping Current World" : "Keep Current World"}
           </button>
         </div>
+        )}
         <div className="screen-actions">
           <button type="button" className="px-btn" data-testid="died-menu-btn" onClick={() => game?.toTitle()}>Go to menu</button>
           <button type="button" className="px-btn px-btn-kyo" data-testid="died-again-btn" onClick={() => game?.toRebirth()}>Play again</button>
@@ -1126,7 +1131,8 @@ function RebirthWorldNote({ game }: GameProp) {
 }
 
 export function RebirthOverlay({ game }: GameProp) {
-  const { unlocked, classId: lastClass } = useSnapPick(["unlocked", "classId"] as const);
+  const { unlocked, classId: lastClass, died } = useSnapPick(["unlocked", "classId", "died"] as const);
+  const turbz = died?.mode === "turbz";
   const [name, setName] = useState("Mira");
   // Start on the class that just died: that is where its finished sets live.
   const [pick, setPick] = useState<Pick>(() => ({ classId: (CLASS_BY_ID[lastClass as ClassId] ? lastClass : "warden") as ClassId, traitId: null, female: true }));
@@ -1140,8 +1146,10 @@ export function RebirthOverlay({ game }: GameProp) {
       <div className="px-panel loot-panel" data-testid="rebirth-screen">
         <p className="screen-kicker">THE VEIL</p>
         <h2 className="screen-title">Choose the next witch</h2>
-        <p className="text-dim">This body is gone. Account Score, skills, perks, finished sets and every ghost stay. In TurboHunt you wake at a tavern; in Hardcore, at the world's starting point.</p>
-        <RebirthWorldNote game={game} />
+        <p className="text-dim">{turbz
+          ? "A new witch, level 1, on a new wild. The gear you were wearing and the ghosts in your party come with you at level 1, enchants kept. Skills from this run are gone. Hunt and Hardcore skills stay where they were."
+          : "This body is gone. Account Score, skills, perks, finished sets and every ghost stay. In TurboHunt you wake at a tavern; in Hardcore, at the world's starting point."}</p>
+        {!turbz && <RebirthWorldNote game={game} />}
         <Field label="Name"><input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" /></Field>
         <ClassPicker
           pick={pick}
@@ -1152,6 +1160,7 @@ export function RebirthOverlay({ game }: GameProp) {
           }}
           game={game}
         />
+        {!turbz && (
         <Section title={`SPAWN GEAR · ${CLASS_BY_ID[pick.classId]?.name ?? ""}`}>
           <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
             <button type="button" className={`ui-card verse-pick ${setId === null ? "ui-card-hl" : ""}`} onClick={() => setSetId(null)}>Default witch robes</button>
@@ -1164,6 +1173,7 @@ export function RebirthOverlay({ game }: GameProp) {
           {owned.length === 0 && <Empty>No finished set for this class yet. Collect all five pieces (helm, raiment, skirt, boots, relic) of one set while playing it.</Empty>}
           {others.length > 0 && <p className="text-dim">Sets are saved on: {others.map((c) => `${CLASS_BY_ID[c as ClassId].name} (${counts[c]})`).join(", ")}.</p>}
         </Section>
+        )}
         <button type="button" className="px-btn px-btn-kyo" data-testid="rebirth-go-btn" onClick={() => game?.rebirth(name, race, setId, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true)}>
           Wake as this witch
         </button>
