@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOVE_BY_ID, SKILLS, TYPES, moveTactic, type TypeId } from "@/game/content";
-import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, type ClassId, type Role } from "@/game/classes";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, CRY_RSKILLS, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, type ClassId, type Role } from "@/game/classes";
 import { actorSpritesReady } from "@/game/actor-sprites";
 import type { Sheet, TurbzGame } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -413,7 +413,7 @@ function PerkBuilder({ onChange }: { onChange: () => void }) {
 }
 
 /** The Crying Girl's own element, role, fight style and stat lean. Saved on this browser. */
-function CryingCustomizer({ onChange }: { onChange: () => void }) {
+export function CryingCustomizer({ onChange }: { onChange: () => void }) {
   const cfg = getCryingConfig();
   const spent = leanSpent(cfg.lean);
   const set = (next: Parameters<typeof setCryingConfig>[0]) => { setCryingConfig(next); onChange(); };
@@ -442,6 +442,12 @@ function CryingCustomizer({ onChange }: { onChange: () => void }) {
         <span className="verse-filter-label">STYLE</span>
         {(["melee", "ranged", "mixed"] as const).map((st) => (
           <button key={st} type="button" data-testid={`cry-style-${st}`} className={`verse-chip ${cfg.fightStyle === st ? "verse-chip-on" : ""}`} onClick={() => set({ fightStyle: st })}>{st}</button>
+        ))}
+      </div>
+      <div className="verse-filter-row" data-testid="cry-rskill">
+        <span className="verse-filter-label">R SKILL</span>
+        {CRY_RSKILLS.map((g) => (
+          <button key={g.id} type="button" data-testid={`cry-rskill-${g.id}`} title={g.from ? `From ${g.from} · ${g.tags.join(", ")}` : g.tags.join(", ")} className={`verse-chip ${cfg.rSkill === g.id ? "verse-chip-on" : ""}`} onClick={() => set({ rSkill: g.id })}>{g.name}</button>
         ))}
       </div>
       <p className="text-dim" data-testid="cry-lean-budget">Stat lean: <span className={spent > LEAN_BUDGET ? "text-blood" : "text-kyo"}>{spent}/{LEAN_BUDGET}</span> points. Lower a stat (to {LEAN_MIN}%) to free points for another (up to +{LEAN_MAX}%).</p>

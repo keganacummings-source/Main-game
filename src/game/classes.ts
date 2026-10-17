@@ -112,9 +112,9 @@ export const LEAN_BUDGET = 40;
 export const LEAN_MAX = 30;
 export const LEAN_MIN = -20;
 export const LEAN_STEP = 2;
-export type CryingConfig = { type: TypeId; role: Role; fightStyle: FightStyle; lean: StatMods };
+export type CryingConfig = { type: TypeId; role: Role; fightStyle: FightStyle; lean: StatMods; rSkill: string };
 const CRY_KEY = "turbz.cryingConfig";
-const CRY_DEFAULT: CryingConfig = { type: "water", role: "Support", fightStyle: "mixed", lean: { arcana: 10, regen: 10, affinity: 5 } };
+const CRY_DEFAULT: CryingConfig = { type: "water", role: "Support", fightStyle: "mixed", lean: { arcana: 10, regen: 10, affinity: 5 }, rSkill: "tearstorm" };
 
 export function leanSpent(lean: StatMods): number {
   return Object.values(lean).reduce((n: number, v) => n + (v ?? 0), 0);
@@ -128,17 +128,22 @@ function cleanCry(raw: Partial<CryingConfig> | null | undefined): CryingConfig {
     const v = Math.round(Number(raw?.lean?.[k] ?? 0));
     if (Number.isFinite(v) && v) lean[k] = Math.max(LEAN_MIN, Math.min(LEAN_MAX, v));
   }
-  return { type, role, fightStyle, lean: leanSpent(lean) <= LEAN_BUDGET && raw?.lean ? lean : { ...CRY_DEFAULT.lean } };
+  // rSkill is validated against the gimmick registry lazily (GIMMICKS is defined later in this module),
+  // so here we only coerce to a non-empty string; an unknown id simply yields no R skill at use time.
+  const rSkill = typeof raw?.rSkill === "string" && raw.rSkill ? raw.rSkill : CRY_DEFAULT.rSkill;
+  return { type, role, fightStyle, lean: leanSpent(lean) <= LEAN_BUDGET && raw?.lean ? lean : { ...CRY_DEFAULT.lean }, rSkill };
 }
 let cryConfig: CryingConfig = (() => {
   try { return cleanCry(typeof localStorage !== "undefined" ? JSON.parse(localStorage.getItem(CRY_KEY) ?? "null") : null); } catch { return cleanCry(null); }
 })();
 function applyCry() {
-  const c = CLASS_BY_ID.cryinggirl as unknown as { type: TypeId; role: Role; fightStyle: FightStyle; stats: StatMods };
+  const c = CLASS_BY_ID.cryinggirl as unknown as { type: TypeId; role: Role; fightStyle: FightStyle; stats: StatMods; gimmick: string };
   c.type = cryConfig.type;
   c.role = cryConfig.role;
   c.fightStyle = cryConfig.fightStyle;
   c.stats = { ...cryConfig.lean };
+  // Her R skill is whatever gimmick she chose (classGimmick reads this live).
+  c.gimmick = cryConfig.rSkill || "tearstorm";
   (CLASS_RACE as Record<string, RaceId>).cryinggirl = TYPE_RACE[cryConfig.type] ?? "vesper";
   // Her verses take her element, and her attacks take her style (melee cuts, ranged shots or spells).
   const form = cryConfig.fightStyle === "melee" ? "melee" : cryConfig.fightStyle === "ranged" ? "ranged" : "spell";
@@ -318,6 +323,15 @@ export function classGimmick(classId: string | null | undefined): GimmickDef | n
   const id = classId ? (CLASS_BY_ID[classId as ClassId] as { gimmick?: string } | undefined)?.gimmick : undefined;
   return id ? GIMMICKS[id] ?? null : null;
 }
+
+/** Every R skill the Crying Girl can equip, with the class it came from (for the customizer picker). */
+export const CRY_RSKILLS: { id: string; name: string; from: string; tags: readonly string[] }[] =
+  Object.values(GIMMICKS).map((g) => ({
+    id: g.id,
+    name: g.name,
+    from: CLASSES.find((c) => c.gimmick === g.id)?.name ?? "",
+    tags: g.tags,
+  }));
 
 export function classGendered(id: ClassId): boolean {
   return false;

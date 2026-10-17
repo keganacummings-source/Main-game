@@ -95,14 +95,18 @@ export function installTurbz(game: any): void {
   game.pools = null;
   game.orders = null;
 
-  game.startTurbz = function (name: string, race: string, classId: string, traitId: string | null, female: boolean) {
+  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean) {
     this.turbz = true;
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
     this.swapRules("hardcore");
+    // TURBZ is the Crying Lady's mode only — always her, with the race her chosen element implies.
+    const classId = "cryinggirl";
+    const race = (CLASS_RACE as Record<string, string>).cryinggirl ?? _race ?? "tide";
     this.begin(name, race, undefined, classId, traitId, female);
     const save = this.save;
     if (!save) return;
+    save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
     save.skills = Object.fromEntries(SKILLS.map((sk) => [sk.id, { level: 1, xp: 0 }]));
     save.perks = {};
     save.perkPoints = 0;

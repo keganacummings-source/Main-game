@@ -11,7 +11,7 @@ import { Empty, Meter, Tabs } from "./ui-kit";
 const typeClass = (t: TypeId) => `type-${t}`;
 
 /** A live, animated portrait of a ghost in its rarity colours or shiny palette. */
-export const GhostPortrait = memo(function GhostPortrait({ g, size = 112 }: { g: Pick<GhostDetail, "uid" | "type" | "template" | "rarity" | "shiny" | "palette" | "look" | "level" | "speed" | "max">; size?: number }) {
+export const GhostPortrait = memo(function GhostPortrait({ g, size = 112 }: { g: Pick<GhostDetail, "uid" | "type" | "template" | "rarity" | "shiny" | "palette" | "look" | "level" | "speed" | "max" | "spriteSpecies" | "skin" | "types">; size?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const canvas = ref.current;
@@ -30,7 +30,7 @@ export const GhostPortrait = memo(function GhostPortrait({ g, size = 112 }: { g:
       const fx = { x: 22, y: 38, type: g.type, rarity: g.rarity, level: g.level, speed: g.speed, max: g.max, shiny: g.shiny, seed: g.uid, palette: g.palette };
       try {
         drawGhostFx(ctx, fx, t, "back");
-        drawMonster(ctx, { x: 22, y: 38, template: g.template, type: g.type, facing: 1, walk: t * 2, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: g.shiny, palette: g.palette, look: (g.look as GhostLook | null) ?? null, time: t });
+        drawMonster(ctx, { x: 22, y: 38, template: g.template, type: g.type, facing: 1, walk: t * 2, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: g.shiny, palette: g.palette, species: g.spriteSpecies, skin: g.skin ?? null, types: g.types ?? null, look: (g.look as GhostLook | null) ?? null, time: t });
         drawGhostFx(ctx, fx, t, "front");
       } catch {
         /* a portrait never breaks the window */

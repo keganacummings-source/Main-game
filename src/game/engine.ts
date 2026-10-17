@@ -193,6 +193,8 @@ export type LootView = { title: string; kyo: number; items: { name: string; coun
 /** Everything the Spirits window and the lingering-ghost window show about one ghost. */
 export type GhostDetail = {
   uid: string; name: string; species: string; type: TypeId; template: number; look: GhostLook | null;
+  /** Raw species id + inherited skin/elements, so the portrait draws the real foe in ghost form. */
+  spriteSpecies?: string; skin?: string | null; types?: TypeId[] | null;
   level: number; levelCap: number; xp: number; xpNeed: number;
   rarity: number; rarityName: string; shiny: boolean; palette: string | null; paletteName: string;
   hp: number; max: number; speed: number;
@@ -1737,7 +1739,9 @@ export class TurbzGame {
 		const def = MONSTER_BY_ID[species] ?? ANIMAL_BY_ID[species] ?? MONSTER_BY_ID.onibi;
 		const animal = !!(s.animal || def.animal);
 		const spiritKind = def.type === "spirit" || def.template === 16 || def.template === 23;
-		const ghost = !animal && (spiritKind || this.lms || Math.random() < 0.55);
+		// Living overworld foes wear their solid base sprite. They only turn into a ghost once killed
+		// (the catchable spirit is made on death). Last Man Standing stays ghost-only by design.
+		const ghost = !animal && this.lms;
 		const hunter = Math.max(1, this.save?.level ?? s.level ?? 1);
 		const hc = this.rules === "hardcore" ? this.threat().lv : 0;
 		const near = this.rules === "hardcore" ? Math.max(hunter - 1, levelNearHunter(hunter, Math.random())) + hc : levelNearHunter(hunter, Math.random());
@@ -1968,7 +1972,7 @@ export class TurbzGame {
 		m.speed = Math.max(1, Math.round((this.playerSpeed() + t.speedOffset) * stats.speed * (m.enraged ? 1.25 : 1) * (bountyRage ? BOUNTY_ENRAGE.speed : 1)));
 	}
 	step(dt) {
-		if (!this.save || snap.mode !== "play" || this.dead) {
+		if (!this.save || snap.mode !== "play" || this.dead || snap.panel === "cryrebuild") {
 			this.vx = 0;
 			this.vy = 0;
 			return;
@@ -4776,7 +4780,7 @@ export class TurbzGame {
 		const rarity = clampRarity(sp.rarity);
 		const on = where === "out" || where === "tagged";
 		return {
-			uid: sp.uid, name: sp.name, species: (MONSTER_BY_ID[sp.species] ?? ANIMAL_BY_ID[sp.species])?.name ?? sp.species ?? "", type: sp.type, template: sp.template ?? 0, look: sp.look ?? null,
+			uid: sp.uid, name: sp.name, species: (MONSTER_BY_ID[sp.species] ?? ANIMAL_BY_ID[sp.species])?.name ?? sp.species ?? "", spriteSpecies: sp.species, skin: sp.skin ?? null, types: sp.types ?? null, type: sp.type, template: sp.template ?? 0, look: sp.look ?? null,
 			level: lv, levelCap: this.ghostLevelCap(), xp: Math.floor(sp.xp ?? 0), xpNeed: ghostXpNeed(lv),
 			rarity, rarityName: rarityName(rarity), shiny: !!sp.shiny, palette: sp.shiny ? sp.palette ?? DEFAULT_PALETTE : null, paletteName: sp.shiny ? shinyPalette(sp.palette).name : "",
 			hp: Math.max(0, Math.ceil(sp.hp ?? 0)), max: Math.max(1, Math.ceil(sp.max ?? 1)), speed: sp.speed ?? 10,
@@ -5430,6 +5434,25 @@ export class TurbzGame {
 			ups += 1;
 			need = xpNeed(save.level);
 		}
+		// TURBZ: every 50 levels, pause and offer to rebuild the Crying Lady (stats, R skill, abilities).
+		if (this.turbz && ups > 0) {
+			const mark = Math.floor(save.level / 50);
+			if (mark > (save.cryRebuildMark ?? 0)) {
+				save.cryRebuildMark = mark;
+				this.openCryRebuild?.();
+			}
+		}
+	}
+	/** Pause the run and show the Crying Lady rebuild prompt. */
+	openCryRebuild() {
+		this.say(`Level ${this.save?.level ?? 0}. Catch your breath — want to rebuild her?`);
+		publish({ panel: "cryrebuild" });
+	}
+	/** Close the rebuild prompt and resume. */
+	endCryRebuild() {
+		if (snap.panel === "cryrebuild") publish({ panel: null });
+		this.persist();
+		this.syncHud(true);
 	}
 	maybeEvilWitch() {
 		const save = this.save;
@@ -10506,10 +10529,24 @@ export class TurbzGame {
 			if (!m.alive) continue;
 			if (Math.abs(m.x - this.cam.x) > w / this.zoom * 0.62 + 140) continue;
 			if (Math.abs(m.y - this.cam.y) > h / this.zoom * 0.62 + 160) continue;
-			{
-				// Every foe — witches and bounties included — now draws from its random skin, tinted by
-				// its elements. (This retired the old procedural actor body, so no more floating weapons
-				// or broken arms and heads on witches.)
+			if ((m.witch || m.bounty || m.hunter) && (m.classId || m.race)) {
+				// Witches, bounties and hunters look and act like player classes: they draw with the
+				// class actor model (a cryinggirl witch uses the Lidia model) and wear their own gear.
+				const cls = m.classId ? CLASS_BY_ID[m.classId] : null;
+				const raceId = m.race ?? (cls ? CLASS_RACE[cls.id] : null) ?? "vesper";
+				const rr = RACES.find((r) => r.id === raceId) ?? RACES[0];
+				const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
+				drawActor(ctx, {
+					x: m.x, y: m.y, race: raceId, classId: m.classId,
+					direction: m.direction ?? "down", moving: !!m.moving,
+					female: m.female !== false, hair: rr?.hair ?? 0, skin: 2,
+					facing: m.facing, walk: m.walk, attack: m.swing > 0 ? .4 : 0, hurt: m.hurt,
+					tall: rr?.tall ?? 1, time: this.clock,
+					pieces: (m.lootGear ?? []).map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) })),
+					setFx: null, setOn: false,
+				});
+			} else {
+				// Monsters, animals and bosses draw from their random greyscale skin, tinted by element(s).
 				const gfx = m.enemyGhost ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
 				if (gfx) drawGhostFx(ctx, gfx, this.clock, "back");
 				drawMonster(ctx, {

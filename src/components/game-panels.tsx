@@ -154,10 +154,12 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
     return s.abilities
       .filter((m) => (type === "all" || m.type === type) && (show === "all" || (show === "aura" ? !!m.aura : show === "new" ? !!m.fx : show === "owned" ? m.rank > 0 : m.rank === 0)))
       .filter((m) => !roles.length || roles.includes(ROLE_OF(m)))
-      .filter((m) => !effects.length || effects.includes(m.effect))
+      // EFFECT chips: match the literal effect, and also catch heals/wards that carry the tactic
+      // rather than the effect string, so "mend" shows every mending verse and "shell" every ward.
+      .filter((m) => !effects.length || effects.some((e) => m.effect === e || (e === "mend" && moveTactic(m) === "heal") || (e === "shell" && moveTactic(m) === "ward")))
       .filter((m) => shapes.every((id) => SHAPES.find((x) => x.id === id)!.has(m)))
       .filter((m) => source === "any" || (source === "mine" ? (m.cls === myClass || CLASS_BY_ID[myClass as ClassId]?.starterMoves.includes(m.id)) : source === "signature" ? !!m.cls : !!m.fx))
-      .filter((m) => !f || m.name.toLowerCase().includes(f) || m.effect.includes(f) || m.about.toLowerCase().includes(f))
+      .filter((m) => !f || m.name.toLowerCase().includes(f) || m.effect.includes(f) || moveTactic(m).includes(f) || m.type.includes(f) || m.about.toLowerCase().includes(f))
       .sort((a, b) => sort === "name" ? (desc ? 1 : -1) * a.name.localeCompare(b.name) : sort === "type" ? (desc ? 1 : -1) * (a.type.localeCompare(b.type) || a.name.localeCompare(b.name)) : !desc && (!!a.aura !== !!b.aura) ? (a.aura ? 1 : -1) : dir * (num(b) - num(a)) || a.name.localeCompare(b.name));
   }, [s.abilities, filter, type, sort, show, roles, effects, shapes, source, desc, myClass]);
   const filtersOn = roles.length + effects.length + shapes.length + (source !== "any" ? 1 : 0) + (type !== "all" ? 1 : 0) + (show !== "all" ? 1 : 0) + (filter ? 1 : 0);
