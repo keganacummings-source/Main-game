@@ -286,6 +286,63 @@ export const KIT_MOVES: KitMove[] = [
   x("veilsinger", "ck_ghoststep", "Ghost Step", "spirit", 10, 100, 6, 3, "expose", "blink", "Veilsinger starter. Step along a veil-thread to a new spot.", { form: "spell", react: "move", fail: 10 }),
   x("veilsinger", "sx_crescendo", "Crescendo", "spirit", 64, 86, 18, 0, "expose", "heavy", "Veilsinger bonus. The final note — a wave that slams every foe on screen.", { form: "spell", nova: 160, echo: 0.45, fx: "wave" }),
   x("veilsinger", "sx_echopulse", "Echo Pulse", "spirit", 26, 98, 8, 1, "expose", "strike", "Veilsinger bonus. An echo of the last spell you cast, rebounding back.", { form: "spell", echo: 0.7, fx: "bloom" }),
+  // Embermage — fire burn-stacking caster
+  x("embermage", "ck_emberblast", "Ember Blast", "fire", 54, 92, 14, 1, "burn", "strike", "Embermage signature. A concentrated fireball that ignites on impact and lingers.", { form: "spell", splash: { radius: 64, mult: 0.6 }, fx: "meteor" }),
+  x("embermage", "ck_cinderward", "Cinder Ward", "fire", 0, 100, 0, 3, "shell", "ward", "Embermage starter. A ward of smouldering ash that blunts the next blow."),
+  x("embermage", "ck_scorchbeam", "Scorch Beam", "fire", 38, 94, 10, 1, "burn", "channel", "Embermage starter. A sustained fire beam — each second adds another burn stack.", { form: "spell", multi: { hits: 4, gap: 0.2, mult: 0.7 } }),
+  x("embermage", "ck_ashpulse", "Ash Pulse", "fire", 28, 100, 8, 2, "burn", "strike", "Embermage starter. A ring of hot ash pulses outward.", { form: "spell", nova: 84, fx: "bloom" }),
+  x("embermage", "ck_flashstep", "Flash Step", "fire", 14, 100, 10, 3, "burn", "blink", "Embermage starter. Blink through the flames to a new spot, scorching the path.", { form: "spell", react: "move", fail: 12 }),
+  x("embermage", "ck_embermend", "Ember Mend", "fire", 28, 100, 0, 2, "mend", "heal", "Embermage starter. Draw heat back inward. Painful, but it knits the flesh."),
+  x("embermage", "sx_pyroclasm", "Pyroclasm", "fire", 76, 80, 20, 0, "burn", "heavy", "Embermage bonus. A volcanic detonation. Sets everything in range alight.", { form: "spell", splash: { radius: 104, mult: 0.65 }, fx: "meteor" }),
+  x("embermage", "sx_firetorrent", "Fire Torrent", "fire", 22, 98, 8, 1, "burn", "channel", "Embermage bonus. A rapid torrent of fireballs sprays forward.", { form: "spell", multi: { hits: 6, gap: 0.11, mult: 0.55 }, fx: "barrage" }),
+  // Tidewitch — water flooding area caster
+  x("tidewitch", "ck_tidecrash", "Tide Crash", "water", 50, 94, 12, 1, "soak", "strike", "Tidewitch signature. A crashing wave that rolls forward and soaks everything it crosses.", { form: "spell", chain: { jumps: 2, range: 130, mult: 0.8 }, fx: "wave" }),
+  x("tidewitch", "ck_brineward", "Brine Ward", "water", 0, 100, 0, 3, "shell", "ward", "Tidewitch starter. A ward of salt water that hardens the body."),
+  x("tidewitch", "ck_deluge", "Deluge", "water", 36, 96, 8, 1, "soak", "strike", "Tidewitch starter. Open the floodgates — water fills a wide ring.", { form: "spell", nova: 96, fx: "wave" }),
+  x("tidewitch", "ck_tidalmend", "Tidal Mend", "water", 34, 100, 0, 2, "mend", "heal", "Tidewitch starter. The tide pulls the hurt out. Heals a steady amount."),
+  x("tidewitch", "ck_currentstep", "Current Step", "water", 12, 100, 6, 3, "soak", "blink", "Tidewitch starter. Ride a current to a new position.", { form: "spell", react: "move", fail: 10 }),
+  x("tidewitch", "sx_maelstromring", "Maelstrom Ring", "water", 30, 96, 10, 0, "soak", "channel", "Tidewitch bonus. A spiralling vortex pulls and hammers every foe in range.", { form: "spell", multi: { hits: 5, gap: 0.18, mult: 0.6 }, nova: 112 }),
+  x("tidewitch", "sx_undertow", "Undertow Surge", "water", 62, 86, 16, 0, "soak", "heavy", "Tidewitch bonus. A massive undertow pulls all nearby foes into the blast.", { form: "spell", splash: { radius: 98, mult: 0.7 }, fx: "meteor" }),
+  // Stonecaller — earth root-and-crush caster
+  x("stonecaller", "ck_stonecall", "Stone Call", "earth", 56, 88, 12, 0, "root", "heavy", "Stonecaller signature. A boulder called from the ground — roots whatever it lands on.", { form: "spell", splash: { radius: 72, mult: 0.65 }, fx: "meteor" }),
+  x("stonecaller", "ck_earthward", "Earth Ward", "earth", 0, 100, 0, 3, "shell", "ward", "Stonecaller starter. Wrap the body in packed earth. Blocks the next hit."),
+  x("stonecaller", "ck_rockspike", "Rock Spike", "earth", 40, 94, 10, 1, "root", "strike", "Stonecaller starter. A spike of stone punches up from below.", { form: "spell", chain: { jumps: 1, range: 120, mult: 0.7 } }),
+  x("stonecaller", "ck_stonemend", "Stone Mend", "earth", 30, 100, 0, 2, "mend", "heal", "Stonecaller starter. Draw the earth's strength inward. Steady mend."),
+  x("stonecaller", "ck_groundstep", "Ground Step", "earth", 12, 100, 6, 3, "root", "blink", "Stonecaller starter. Sink into the stone and surface nearby.", { form: "spell", react: "move", fail: 14 }),
+  x("stonecaller", "sx_quakeburst", "Quake Burst", "earth", 68, 84, 16, 0, "root", "heavy", "Stonecaller bonus. The ground cracks in a wide circle, rooting everything inside.", { form: "spell", splash: { radius: 108, mult: 0.6 }, fx: "meteor" }),
+  x("stonecaller", "sx_landslide", "Landslide", "earth", 26, 96, 8, 1, "root", "channel", "Stonecaller bonus. A torrent of stones rains down, each one rooting on contact.", { form: "spell", multi: { hits: 5, gap: 0.16, mult: 0.65 }, fx: "barrage" }),
+  // Stormwitch — air volley rapid-fire caster
+  x("stormwitch", "ck_stormvolley", "Storm Volley", "air", 36, 96, 12, 1, "none", "strike", "Stormwitch signature. Three air bolts fired in a rapid spread.", { form: "spell", multi: { hits: 3, gap: 0.1, mult: 0.8 } }),
+  x("stormwitch", "ck_galeward", "Gale Ward", "air", 0, 100, 0, 3, "shell", "ward", "Stormwitch starter. A rotating wind shield deflects the next hit."),
+  x("stormwitch", "ck_windlance", "Wind Lance", "air", 44, 92, 10, 1, "none", "strike", "Stormwitch starter. A piercing lance of compressed air.", { form: "spell", chain: { jumps: 2, range: 140, mult: 0.75 } }),
+  x("stormwitch", "ck_windmend", "Wind Mend", "air", 28, 100, 0, 2, "mend", "heal", "Stormwitch starter. The wind clears the head and mends the body."),
+  x("stormwitch", "ck_gustblink", "Gust Blink", "air", 14, 100, 8, 3, "none", "blink", "Stormwitch starter. A burst of wind propels her to a new spot.", { form: "spell", react: "move", fail: 8 }),
+  x("stormwitch", "sx_stormfury", "Storm Fury", "air", 24, 98, 10, 1, "none", "channel", "Stormwitch bonus. Unleash a storm — eight bolts in two seconds, sweeping across the field.", { form: "spell", multi: { hits: 8, gap: 0.1, mult: 0.5 }, fx: "barrage" }),
+  x("stormwitch", "sx_cycloneburst", "Cyclone Burst", "air", 58, 88, 18, 0, "none", "heavy", "Stormwitch bonus. Compress the storm into one place, then release it.", { form: "spell", nova: 100, echo: 0.4, fx: "bloom" }),
+  // Frostweaver — ice freeze-and-shatter caster
+  x("frostweaver", "ck_frostweave", "Frost Weave", "ice", 46, 94, 14, 1, "none", "strike", "Frostweaver signature. Threads of ice that wrap around foes and slow them.", { form: "spell", chain: { jumps: 2, range: 128, mult: 0.8 } }),
+  x("frostweaver", "ck_iceward", "Ice Ward", "ice", 0, 100, 0, 3, "shell", "ward", "Frostweaver starter. A shell of ice plate that absorbs the next blow."),
+  x("frostweaver", "ck_blizzardneedle", "Blizzard Needle", "ice", 34, 96, 12, 1, "none", "strike", "Frostweaver starter. A volley of ice needles fired in a cone.", { form: "spell", multi: { hits: 3, gap: 0.12, mult: 0.7 } }),
+  x("frostweaver", "ck_frostmend", "Frost Mend", "ice", 30, 100, 0, 2, "mend", "heal", "Frostweaver starter. Draw the cold inward, numbing the pain and sealing wounds."),
+  x("frostweaver", "ck_iceblink", "Ice Blink", "ice", 12, 100, 8, 3, "none", "blink", "Frostweaver starter. Crystallise and reform at a new point.", { form: "spell", react: "move", fail: 10 }),
+  x("frostweaver", "sx_blizzard", "Blizzard", "ice", 28, 96, 10, 1, "none", "channel", "Frostweaver bonus. A sustained blizzard bombards the area with ice.", { form: "spell", multi: { hits: 6, gap: 0.15, mult: 0.6 }, fx: "barrage" }),
+  x("frostweaver", "sx_glacialburst", "Glacial Burst", "ice", 72, 82, 20, 0, "none", "heavy", "Frostweaver bonus. A glacial spike erupts, shattering into shards on impact.", { form: "spell", splash: { radius: 88, mult: 0.65 }, echo: 0.5, fx: "meteor" }),
+  // Radiant — light high-accuracy spell sniper
+  x("radiant", "ck_radiantburst", "Radiant Burst", "light", 52, 100, 16, 1, "expose", "strike", "Radiant signature. A burst of pure light — never misses, always exposes.", { form: "spell", splash: { radius: 60, mult: 0.7 }, fx: "bloom" }),
+  x("radiant", "ck_lightward", "Light Ward", "light", 0, 100, 0, 3, "shell", "ward", "Radiant starter. A ward of pure light that blinds the next attacker."),
+  x("radiant", "ck_solarbeam", "Solar Beam", "light", 42, 100, 12, 1, "expose", "channel", "Radiant starter. A steady beam of light that exposes everything it touches.", { form: "spell", multi: { hits: 4, gap: 0.18, mult: 0.72 } }),
+  x("radiant", "ck_lightmend", "Light Mend", "light", 36, 100, 0, 2, "mend", "heal", "Radiant starter. The light heals cleanly. No side effects."),
+  x("radiant", "ck_dawnstep", "Dawn Step", "light", 14, 100, 8, 3, "expose", "blink", "Radiant starter. Phase through a ray of light to reposition.", { form: "spell", react: "move", fail: 8 }),
+  x("radiant", "sx_novalance", "Nova Lance", "light", 66, 88, 20, 0, "expose", "heavy", "Radiant bonus. A single lance of pure light that pierces every foe in a line.", { form: "spell", chain: { jumps: 5, range: 160, mult: 0.75 }, fx: "orbit" }),
+  x("radiant", "sx_sunstorm", "Sunstorm", "light", 28, 100, 10, 1, "expose", "channel", "Radiant bonus. Call down a storm of light bolts — nothing on the field is spared.", { form: "spell", multi: { hits: 6, gap: 0.12, mult: 0.55 }, splash: { radius: 50, mult: 0.5 } }),
+  // Gravemage — ghoul death-curse caster
+  x("gravemage", "ck_gravecurse", "Grave Curse", "ghoul", 48, 90, 12, 1, "gloom", "strike", "Gravemage signature. A death curse that eats health over ten seconds.", { form: "spell", chain: { jumps: 2, range: 128, mult: 0.8 } }),
+  x("gravemage", "ck_graveward", "Grave Ward", "ghoul", 0, 100, 0, 3, "shell", "ward", "Gravemage starter. A shield woven from the boundary between living and dead."),
+  x("gravemage", "ck_deathpulse", "Death Pulse", "ghoul", 36, 92, 10, 1, "gloom", "strike", "Gravemage starter. A pulse of death energy radiates outward.", { form: "spell", nova: 88, fx: "bloom" }),
+  x("gravemage", "ck_gravemend", "Grave Mend", "ghoul", 32, 100, 0, 2, "mend", "heal", "Gravemage starter. Drain a little life from the dark between worlds."),
+  x("gravemage", "ck_shadowstep", "Shadow Step", "ghoul", 14, 100, 8, 3, "gloom", "blink", "Gravemage starter. Step through the grave-dark to a new spot.", { form: "spell", react: "move", fail: 12 }),
+  x("gravemage", "sx_deathstorm", "Death Storm", "ghoul", 62, 84, 18, 0, "gloom", "heavy", "Gravemage bonus. A storm of death magic crashes down on every foe nearby.", { form: "spell", splash: { radius: 100, mult: 0.65 }, fx: "meteor" }),
+  x("gravemage", "sx_cursecascade", "Curse Cascade", "ghoul", 22, 96, 8, 1, "gloom", "channel", "Gravemage bonus. Curses cascade — each hit jumps to a new target.", { form: "spell", multi: { hits: 5, gap: 0.18, mult: 0.6 }, chain: { jumps: 2, range: 120, mult: 0.65 } }),
 ];
 
 const SIGNATURE_BATCH = KIT_MOVES.filter((m) => m.cls);
@@ -324,6 +381,13 @@ export const STARTER_KITS: Record<string, string[]> = {
   arcanist: ["ck_arcprism", "ck_manaveil", "ck_leybeam", "ck_spellpulse", "ck_arcblink"],
   ruinmage: ["ck_ruinstrike", "ck_darkward", "ck_voidcrack", "ck_abyssdrain", "ck_riftslip"],
   veilsinger: ["ck_veilsong", "ck_spiritmend", "ck_veilward", "ck_harmonystrike", "ck_ghoststep"],
+  embermage: ["ck_emberblast", "ck_cinderward", "ck_scorchbeam", "ck_ashpulse", "ck_flashstep", "ck_embermend"],
+  tidewitch: ["ck_tidecrash", "ck_brineward", "ck_deluge", "ck_tidalmend", "ck_currentstep"],
+  stonecaller: ["ck_stonecall", "ck_earthward", "ck_rockspike", "ck_stonemend", "ck_groundstep"],
+  stormwitch: ["ck_stormvolley", "ck_galeward", "ck_windlance", "ck_windmend", "ck_gustblink"],
+  frostweaver: ["ck_frostweave", "ck_iceward", "ck_blizzardneedle", "ck_frostmend", "ck_iceblink"],
+  radiant: ["ck_radiantburst", "ck_lightward", "ck_solarbeam", "ck_lightmend", "ck_dawnstep"],
+  gravemage: ["ck_gravecurse", "ck_graveward", "ck_deathpulse", "ck_gravemend", "ck_shadowstep"],
 };
 for (const m of SIGNATURE_BATCH) {
   const kit = STARTER_KITS[m.cls!];
