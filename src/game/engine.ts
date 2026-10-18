@@ -4886,11 +4886,13 @@ export class TurbzGame {
 		return view;
 	}
 	/** A caught ghost: a witch draws as that witch, everything else as the foe's own sprite and elements. */
-	drawCaughtSpirit(ctx, sp, x, y, facing = 1, walk = 0) {
+	drawCaughtSpirit(ctx, sp, x, y, facing = 1, walk = 0, direction = null) {
 		if (sp?.classId) {
+			// A witch's ghost wears the class sprite, which has real up/down/left/right rows.
+			// Use the direction it is actually moving or looking; fall back to its left/right facing.
 			drawActor(ctx, {
 				x, y, race: sp.race || "vesper", classId: sp.classId, female: sp.female !== false,
-				hair: 0, skin: 2, facing, direction: "down", moving: walk > 0, walk, attack: 0, hurt: 0,
+				hair: 0, skin: 2, facing, direction: direction ?? (facing < 0 ? "left" : "right"), moving: walk > 0, walk, attack: 0, hurt: 0,
 				pieces: sp.pieces ?? [], setFx: null, setOn: false, time: this.clock, scale: 1, tall: 1,
 			});
 			return;
@@ -4900,6 +4902,29 @@ export class TurbzGame {
 			rarity: sp.rarity ?? 0, ghost: true, shiny: !!sp.shiny, palette: sp.palette, spin: 0,
 			species: sp.species, skin: sp.skin ?? null, types: sp.types ?? null, look: sp.look, time: this.clock,
 		});
+	}
+	/**
+	 * Which way a floating ghost is looking, from its velocity. Sticks to the current axis until the
+	 * other one clearly wins, so a ghost drifting diagonally does not flicker between rows.
+	 */
+	ghostDirection(at, fallbackFacing = 1) {
+		const vx = at?.vx ?? 0, vy = at?.vy ?? 0;
+		const face = at?.facing ?? fallbackFacing;
+		if (Math.hypot(vx, vy) < 6) {
+			if (at) at.dir = face < 0 ? "left" : "right";
+			return face < 0 ? "left" : "right";
+		}
+		const horiz = !at?.dir || at.dir === "left" || at.dir === "right";
+		const goHoriz = horiz ? Math.abs(vy) <= Math.abs(vx) * 1.5 : Math.abs(vx) > Math.abs(vy) * 0.75;
+		const dir = goHoriz ? (vx < 0 ? "left" : "right") : (vy < 0 ? "up" : "down");
+		if (at) at.dir = dir;
+		return dir;
+	}
+	/** The row a stationary ghost uses to look at a point (the player). */
+	lookDirection(fromX, fromY, toX, toY) {
+		const dx = toX - fromX, dy = toY - fromY;
+		if (Math.abs(dy) > Math.abs(dx) * 1.25) return dy < 0 ? "up" : "down";
+		return dx < 0 ? "left" : "right";
 	}
 	paintWildGhost(ctx, g) {
 		const sp = g.spirit;
@@ -4911,7 +4936,9 @@ export class TurbzGame {
 		ctx.beginPath(); ctx.ellipse(g.x, g.y + 2, 18, 6, 0, 0, Math.PI * 2); ctx.fill();
 		const gfx = { x: g.x, y: g.y + bob, type: sp.type, rarity: sp.rarity, level: sp.level, speed: sp.speed, max: sp.max, shiny: !!sp.shiny, seed: sp.uid, palette: sp.palette };
 		drawGhostFx(ctx, gfx, this.clock, "back");
-		this.drawCaughtSpirit(ctx, sp, g.x, g.y + bob, 1, 0);
+		// It turns to look at you as you move around it (left, right, toward you or away).
+		const look = this.lookDirection(g.x, g.y, this.save.x, this.save.y);
+		this.drawCaughtSpirit(ctx, sp, g.x, g.y + bob, this.save.x < g.x ? -1 : 1, 0, look);
 		drawGhostFx(ctx, gfx, this.clock, "front");
 		ctx.restore();
 		const near = Math.hypot(g.x - this.save.x, g.y - this.save.y) <= WILD_REACH;
@@ -7004,7 +7031,7 @@ export class TurbzGame {
 			ctx.save();
 			ctx.translate(at.x, at.y);
 			ctx.scale(TINY_SCALE, TINY_SCALE);
-			this.drawCaughtSpirit(ctx, g, 0, 0, at.facing ?? 1, this.walk + i);
+			this.drawCaughtSpirit(ctx, g, 0, 0, at.facing ?? 1, this.walk + i, this.ghostDirection(at, this.facing));
 			ctx.restore();
 			if (g.shiny && Math.floor(this.clock * 4 + i) % 3 === 0) {
 				ctx.fillStyle = `hsl(${(this.clock * 160 + i * 40) % 360},95%,75%)`;
@@ -7319,7 +7346,7 @@ export class TurbzGame {
 			const u = i / n;
 			let a = u * Math.PI * 2, sp = 120, vy0 = 0, life = .5, size = 4;
 			if (style === 1) { a += u * Math.PI * 2; sp = 60 + u * 120; }
-			else if (style === 2) { sp = i % 2 ? 160 : 70; size = i % 2 ? 3 : 5; }
+			else if (style === 2) { sp = i % 2 ? 160 : 70; size = i % 2 ? 2 : 4; }
 			else if (style === 3) { a = -Math.PI / 2 + (u - .5) * 1.6; sp = 110 + (i % 5) * 18; vy0 = -40; life = .7; }
 			else if (style === 4) { sp = i % 2 ? 140 : 80; life = i % 2 ? .45 : .6; }
 			this.parts.push({
@@ -10864,7 +10891,7 @@ export class TurbzGame {
 			if (!at || spirit.hp <= 0) return;
 			const gfx = { x: at.x, y: at.y, type: spirit.type, rarity: spirit.rarity, level: spirit.level, speed: spirit.speed, max: spirit.max, shiny: !!spirit.shiny, seed: spirit.uid, palette: spirit.palette };
 			drawGhostFx(ctx, gfx, this.clock, "back");
-			this.drawCaughtSpirit(ctx, spirit, at.x, at.y, at.facing ?? this.facing, this.walk + i);
+			this.drawCaughtSpirit(ctx, spirit, at.x, at.y, at.facing ?? this.facing, this.walk + i, this.ghostDirection(at, this.facing));
 			drawGhostFx(ctx, gfx, this.clock, "front");
 			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - ghostNameLift(spirit), spirit.shiny ? (shinyPalette(spirit.palette).kind === "rainbow" ? `hsl(${(this.clock * 120) % 360},90%,70%)` : shinyPalette(spirit.palette).badge) : TYPES[spirit.type].color);
 		});

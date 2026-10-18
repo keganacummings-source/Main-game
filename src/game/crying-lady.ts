@@ -167,19 +167,27 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   ctx.ellipse(a.x, a.y - 1, 10 * scale, 3.3 * scale, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Full-set epic aura behind her.
+  // Full-set glow behind her: a dithered pixel halo (the animated Full Gear FX aura is drawn by drawActor).
   if (fullSet) {
     const t = a.time ?? a.walk ?? 0;
     const auraType = worn.get("chest")?.type ?? "light";
     const auraCol = TYPES[auraType as TypeId]?.color ?? "#fff1a8";
     const pulse = 0.5 + 0.5 * Math.sin(t * 2.2);
+    const cx = Math.round(a.x / 2) * 2;
+    const cy = Math.round((a.y - destH * 0.45) / 2) * 2;
+    const hx = Math.round((destW * 0.6) / 2);
+    const hy = Math.round((destH * 0.6) / 2);
     ctx.save();
-    ctx.globalCompositeOperation = "lighter";
-    ctx.globalAlpha = 0.18 + 0.12 * pulse;
     ctx.fillStyle = auraCol;
-    ctx.beginPath();
-    ctx.ellipse(a.x, a.y - destH * 0.45, destW * 0.6, destH * 0.6, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.globalAlpha = 0.2 + 0.14 * pulse;
+    for (let j = -hy; j <= hy; j++) {
+      for (let i = -hx; i <= hx; i++) {
+        if ((i + j) & 1) continue; // checkerboard dither
+        const e = (i / hx) ** 2 + (j / hy) ** 2;
+        if (e > 1 || e < 0.25 * (1 - pulse)) continue;
+        ctx.fillRect(cx + i * 2, cy + j * 2, 2, 2);
+      }
+    }
     ctx.restore();
   }
 
