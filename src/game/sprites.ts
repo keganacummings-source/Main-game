@@ -106,15 +106,17 @@ function paintFitted(ctx: CanvasRenderingContext2D, piece: WornPiece | undefined
 }
 
 export function drawActor(ctx: CanvasRenderingContext2D, a: ActorDraw): void {
+  const s = (a.scale ?? 1) * (a.tall ?? 1);
+  const fxT = a.time ?? a.walk;
+  // Full-gear FX runs for EVERY body model when the five-piece set is worn — paper-doll
+  // Crying Lady included. Drawn behind the body so the aura reads around the silhouette.
+  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s, a.setVariant ?? 0);
   // Revamped character model test: the Crying Lady uses the new layered pixel-sprite paper-doll
   // (nude base + element/rarity-tinted clothing per slot) instead of the charset/procedural body.
   if ((a as ActorDraw & { classId?: string }).classId === "cryinggirl") { drawCryingLady(ctx, a); return; }
   if (tryDrawActorSprite(ctx, a)) return;
-  const s = (a.scale ?? 1) * (a.tall ?? 1);
   const skin = SKIN[a.skin] ?? SKIN[0]!;
   const hair = HAIR[a.hair] ?? "#241830";
-  const fxT = a.time ?? a.walk;
-  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s, a.setVariant ?? 0);
   ctx.save();
   ctx.translate(a.x, a.y);
   ctx.scale(a.facing < 0 ? -s * WIDE : s * WIDE, s * SQUAT);
