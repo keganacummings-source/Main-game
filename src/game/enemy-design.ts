@@ -142,11 +142,11 @@ function readFlags(raw: Partial<EnemyDesign> | null, biomes: BiomeId[]): EnemyFl
 export function parseEnemyDesign(raw: unknown): EnemyDesign {
   const d = raw as Partial<EnemyDesign> | null;
   if (!d || typeof d !== "object") throw Error("Not an enemy design.");
-  if (typeof d.id !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(d.id)) throw Error("Enemy ID: 1-40 letters, numbers, - or _. ");
+  if (typeof d.id !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(d.id)) throw Error("Enemy ID: 1-40 letters, numbers, - or _.");
   if (typeof d.name !== "string" || !d.name.trim() || d.name.length > 40) throw Error("Enemy name: 1-40 characters.");
   if (!d.type || !Object.hasOwn(TYPES, d.type)) throw Error("Pick an element.");
   const replaces = typeof d.replaces === "string" && (MONSTER_BY_ID[d.replaces] || ANIMAL_BY_ID[d.replaces]) ? d.replaces : null;
-  if (!replaces && (MONSTER_BY_ID[d.id] && !(MONSTER_BY_ID[d.id] as MonsterDef & { custom?: boolean }).custom || ANIMAL_BY_ID[d.id])) throw Error(`\"${d.id}\" is a built-in enemy. Use \"Replaces\" or a different ID.`);
+  if (!replaces && (MONSTER_BY_ID[d.id] && !(MONSTER_BY_ID[d.id] as MonsterDef & { custom?: boolean }).custom || ANIMAL_BY_ID[d.id])) throw Error(`"${d.id}" is a built-in enemy. Use "Replaces" or a different ID.`);
   let sprite: EnemySprite;
   if (d.sprite?.kind === "pixels" && Array.isArray(d.sprite.pixels) && d.sprite.pixels.length === 256) {
     sprite = { kind: "pixels", pixels: d.sprite.pixels.map((p) => (typeof p === "string" && /^#[0-9a-f]{6}$/i.test(p) ? p : null)) };
@@ -368,7 +368,6 @@ export function autoPickStats(d: EnemyDesign, options: StatOption[]): EnemyStats
   if (d.flags?.worldBoss || d.flags?.dungeonBoss || d.boss) {
     s.hp *= 1.45;
     s.dmg *= 1.25;
-    s.levelBonus = Math.max(d.levelBonus, 4);
   }
   if (d.flags?.witch) {
     s.spellRes += 0.1;
