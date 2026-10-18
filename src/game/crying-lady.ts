@@ -145,13 +145,17 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   const drawScale = 0.72 * scale;
   const destW = CELL * drawScale, destH = CELL * drawScale;
 
-  const moving = a.moving !== false && (a.walk ?? 0) > 0.05;
+  const moving = !!a.moving;
   const col = moving ? Math.floor(Math.abs(a.walk)) % SHEET_COLS : 0;
   const sx = (col % SHEET_COLS) * CELL, sy = (row % SHEET_ROWS) * CELL;
 
+  // Walk bob and attack lunge — match the same offsets other character models use.
+  const bob = moving ? Math.sin(a.walk * 8) * 1.2 * scale : 0;
+  const lunge = a.attack > 0 ? 4 * a.attack * scale : 0;
+
   // Feet near a.y, body centred on a.x.
-  const dx = Math.round(a.x - destW / 2);
-  const dy = Math.round(a.y - destH + 4 * drawScale);
+  const dx = Math.round(a.x - destW / 2 + lunge);
+  const dy = Math.round(a.y - destH + 4 * drawScale + bob);
 
   const pieces: Piece[] = (a.pieces ?? []) as Piece[];
   const worn = new Map<string, Piece>();
@@ -200,7 +204,8 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   const gearActor = (dir === "left" || dir === "right")
     ? { ...a, facing: dir === "left" ? -1 : 1 }
     : a;
-  if (pieces.length && dir !== "up") drawGearFx(ctx, gearActor, fxT, gearScale, "back");
+  // Back-layer gear FX always runs (wings/trails/ground rings need to show every facing).
+  if (pieces.length) drawGearFx(ctx, gearActor, fxT, gearScale, "back");
 
   const slotForLayer = (name: LayerName): string | null => {
     for (const [slot, ly] of Object.entries(SLOT_LAYER)) if (ly === name) return slot;
@@ -264,10 +269,7 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
 
   ctx.restore();
 
-  // Front-layer Gear FX (and back-layer when facing away) go after the body so trails,
-  // wings, hats and crown-glows sit on top of the sprite.
-  if (pieces.length) {
-    if (dir === "up") drawGearFx(ctx, gearActor, fxT, gearScale, "back");
-    drawGearFx(ctx, gearActor, fxT, gearScale, "front");
-  }
+  // Front-layer Gear FX goes after the body so trails, wings, hats and crown-glows
+  // sit on top of the sprite.
+  if (pieces.length) drawGearFx(ctx, gearActor, fxT, gearScale, "front");
 }
