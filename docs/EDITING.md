@@ -15,6 +15,7 @@ A navigator for the codebase. "I want to change X — where do I go?"
 | What a gimmick (R-skill) actually does | `src/game/class-gimmicks.ts` | Each gimmick has its own function. |
 | A verse / spell / weapon ability | `src/game/class-kits.ts` + `src/game/content.ts` (`MOVES`) | `KIT_MOVES` for assignments, `MOVES` for stats. |
 | Enemy stats, moves, or loot | `src/game/content.ts` | `MONSTERS`, `ENEMY_MATS`, `SCRAP_LOOT`. |
+| Enemy Designer roles | `src/components/enemy-designer.tsx` | Flags: Witch, World Boss, Dungeon Boss, Overworld, Ghost, Animal. Stored on `flags` in `src/game/enemy-design.ts`. |
 | Boss sprites or scale | `src/game/boss-sprites.ts` | `BOSS_SHEETS` map. |
 | Boss who shows up as which type | `src/game/boss-sprites.ts` | `BOSS_BY_TYPE`, `BOSS_BY_ENEMY`. |
 | Items, potions, consumables | `src/game/content.ts` (`ITEMS`) + `src/game/item-use.ts` | Content list and the eat/drink effect. |

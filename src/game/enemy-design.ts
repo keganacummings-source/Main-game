@@ -19,6 +19,22 @@ export const SHEET_ROWS = 9;
 export type EnemySprite = { kind: "sheet"; cell: [number, number] } | { kind: "pixels"; pixels: (string | null)[] };
 export type EnemyBehaviour = "hunt" | "drift" | "flee";
 
+/** What kind of foe this design is. More than one can be on (a witch who is also a world boss).
+ *  World Boss and Dungeon Boss cannot both be on: a dungeon boss is the fight at the end of a dungeon,
+ *  a world boss walks the wild. */
+export type EnemyFlags = {
+  witch: boolean;
+  worldBoss: boolean;
+  dungeonBoss: boolean;
+  overworld: boolean;
+  ghost: boolean;
+  animal: boolean;
+};
+
+export const EMPTY_FLAGS: EnemyFlags = {
+  witch: false, worldBoss: false, dungeonBoss: false, overworld: true, ghost: false, animal: false,
+};
+
 export type EnemyDesign = {
   version: 1;
   id: string;
@@ -31,7 +47,10 @@ export type EnemyDesign = {
   /** 1 = one tile, 2 = twice the size, up to 3. */
   scale: number;
   behaviour: EnemyBehaviour;
+  /** True when the design is a world boss or a dungeon boss. Kept so older readers still see a boss. */
   boss: boolean;
+  /** Witch, world boss, dungeon boss, overworld, ghost, animal. */
+  flags: EnemyFlags;
   /** Multipliers (hp, dmg, speed) and chances (crit, dodge, resistances) on top of normal scaling. */
   stats: EnemyStats;
   /** Enchantments it always has. */
@@ -64,6 +83,7 @@ export function newEnemyDesign(): EnemyDesign {
     scale: 1,
     behaviour: "hunt",
     boss: false,
+    flags: { ...EMPTY_FLAGS },
     stats: { ...DEFAULT_STATS },
     enchants: [],
     extraEnchants: 1,
@@ -81,6 +101,8 @@ export function designFromBuiltin(species: string): EnemyDesign {
   const base = newEnemyDesign();
   if (!def) return base;
   const cell = CREATURE_CELLS[species];
+  const animal = !!def.animal;
+  const boss = !!def.boss;
   return {
     ...base,
     id: `${species}-remix`,
@@ -89,13 +111,32 @@ export function designFromBuiltin(species: string): EnemyDesign {
     replaces: species,
     type: def.type,
     sprite: cell ? { kind: "sheet", cell: [cell[0], cell[1]] } : base.sprite,
-    behaviour: def.animal ? "flee" : "hunt",
+    behaviour: animal ? "flee" : "hunt",
+    boss,
+    flags: { witch: false, worldBoss: boss, dungeonBoss: false, overworld: false, ghost: false, animal },
     moves: base.moves.filter((id) => MOVE_BY_ID[id]?.type === def.type),
     biomes: [],
   };
 }
 
 const clamp = (n: unknown, lo: number, hi: number, fallback: number) => (typeof n === "number" && Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback);
+
+/** Old saves only had `boss`. A missing flag falls back to that, and to biomes for Overworld. */
+function readFlags(raw: Partial<EnemyDesign> | null, biomes: BiomeId[]): EnemyFlags {
+  const src: Partial<EnemyFlags> = raw?.flags && typeof raw.flags === "object" ? raw.flags : {};
+  const set = (k: keyof EnemyFlags) => typeof src[k] === "boolean";
+  let worldBoss = set("worldBoss") ? !!src.worldBoss : !!raw?.boss;
+  const dungeonBoss = set("dungeonBoss") ? !!src.dungeonBoss : false;
+  if (worldBoss && dungeonBoss) worldBoss = false;
+  return {
+    witch: !!src.witch,
+    worldBoss,
+    dungeonBoss,
+    overworld: set("overworld") ? !!src.overworld : biomes.length > 0,
+    ghost: !!src.ghost,
+    animal: !!src.animal,
+  };
+}
 
 /** Validates and repairs a design. Throws only when it cannot be repaired. */
 export function parseEnemyDesign(raw: unknown): EnemyDesign {
@@ -115,6 +156,8 @@ export function parseEnemyDesign(raw: unknown): EnemyDesign {
   const moves = (Array.isArray(d.moves) ? d.moves : []).filter((id) => typeof id === "string" && MOVE_BY_ID[id]).slice(0, 4);
   if (!moves.length) throw Error("Give the enemy at least one move.");
   const s = (d.stats ?? {}) as Partial<EnemyStats>;
+  const biomes = (Array.isArray(d.biomes) ? d.biomes : []).filter((b): b is BiomeId => BIOME_IDS.includes(b as BiomeId));
+  const flags = readFlags(d, biomes);
   return {
     version: 1,
     id: d.id,
@@ -125,7 +168,8 @@ export function parseEnemyDesign(raw: unknown): EnemyDesign {
     sprite,
     scale: clamp(d.scale, 0.5, 6, 1),
     behaviour: d.behaviour === "drift" || d.behaviour === "flee" ? d.behaviour : "hunt",
-    boss: !!d.boss,
+    boss: flags.worldBoss || flags.dungeonBoss,
+    flags,
     stats: {
       hp: clamp(s.hp, 0.05, 50, 1),
       dmg: clamp(s.dmg, 0.05, 50, 1),
@@ -139,7 +183,7 @@ export function parseEnemyDesign(raw: unknown): EnemyDesign {
     extraEnchants: Math.round(clamp(d.extraEnchants, 0, 12, 0)),
     moves,
     levelBonus: Math.round(clamp(d.levelBonus, 0, 200, 0)),
-    biomes: (Array.isArray(d.biomes) ? d.biomes : []).filter((b): b is BiomeId => BIOME_IDS.includes(b as BiomeId)),
+    biomes,
     weight: Math.round(clamp(d.weight, 1, 20, 2)),
     loot: clamp(d.loot, 0.1, 40, 1),
   };
@@ -232,17 +276,17 @@ export function installEnemyDesigns(list: EnemyDesign[] = allEnemyDesigns()): nu
       const base = MONSTER_BY_ID[d.replaces];
       if (base) {
         originals.set(d.replaces, base);
-        const def = { ...base, name: d.name, type: d.type, about: d.about || base.about, boss: d.boss || base.boss };
+        const def = { ...base, name: d.name, type: d.type, about: d.about || base.about, boss: d.boss || base.boss, animal: d.flags.animal || base.animal };
         MONSTER_BY_ID[d.replaces] = def;
         const i = MONSTERS.findIndex((m) => m.id === d.replaces);
         if (i >= 0) MONSTERS[i] = def;
       }
     } else {
-      const def: MonsterDef & { custom?: boolean } = { id: d.id, name: d.name, type: d.type, template: 0, about: d.about, boss: d.boss, custom: true };
+      const def: MonsterDef & { custom?: boolean } = { id: d.id, name: d.name, type: d.type, template: 0, about: d.about, boss: d.boss, animal: d.flags.animal, custom: true };
       MONSTER_BY_ID[d.id] = def;
       MONSTERS.push(def);
       added.add(d.id);
-      for (const b of d.biomes) for (let n = 0; n < d.weight; n++) BIOME_MONSTERS[b].push(d.id);
+      if (d.flags.overworld) for (const b of d.biomes) for (let n = 0; n < d.weight; n++) BIOME_MONSTERS[b].push(d.id);
     }
     registerSprite(species, d);
     active.set(species, d);

@@ -1772,6 +1772,8 @@ export class TurbzGame {
 	 */
 	rollOverworld(spec) {
 		if (!spec || this.lms || spec.boss || spec.dungeonBoss || spec.bossId || spec.witch || spec.name) return spec;
+		// A designed enemy stays itself. The random overworld swap is for generic camps.
+		if (enemyDesignFor(spec.baseSpecies ?? spec.species)) return spec;
 		const map = this.save?.map ?? "";
 		const file = map.startsWith("custom-") ? this.customFile : null;
 		if (map !== "world" && !(file && (file.kind ?? "world") === "world")) return spec;
@@ -1803,26 +1805,30 @@ export class TurbzGame {
 			s = { ...s, species, animal: false, type: undefined, template: undefined, name: undefined };
 		}
 		const def = MONSTER_BY_ID[species] ?? ANIMAL_BY_ID[species] ?? MONSTER_BY_ID.onibi;
-		const animal = !!(s.animal || def.animal);
+		const designNow = enemyDesignFor(species);
+		const flags = designNow?.flags;
+		const animal = !!(s.animal || def.animal || flags?.animal);
 		const spiritKind = def.type === "spirit" || def.template === 16 || def.template === 23;
 		// Living overworld foes wear their solid base sprite. They only turn into a ghost once killed
 		// (the catchable spirit is made on death). Last Man Standing stays ghost-only by design.
-		const ghost = !animal && this.lms;
+		// Enemy Designer "Ghost" walks the world already a ghost.
+		const ghost = !!(flags?.ghost) || (!animal && this.lms);
 		const hunter = Math.max(1, this.save?.level ?? s.level ?? 1);
 		const hc = this.rules === "hardcore" ? this.threat().lv : 0;
 		const near = this.rules === "hardcore" ? Math.max(hunter - 1, levelNearHunter(hunter, Math.random())) + hc : levelNearHunter(hunter, Math.random());
-		const level = s.fixedLevel ? Math.max(1, Math.min(1000, s.level | 0)) : s.dungeonBoss ? Math.max(1, s.level) + hc : s.boss ? Math.max(s.level, hunter + 1 + (Math.random() * 4 | 0)) + hc : near;
-		const rarity = s.dungeonBoss ? 0 : rarityForLevel(level, Math.random(), !!s.boss);
+		const dungeonBoss = !!(s.dungeonBoss || flags?.dungeonBoss);
+		const boss = dungeonBoss || !!(s.boss || flags?.worldBoss || designNow?.boss);
+		const level = s.fixedLevel ? Math.max(1, Math.min(1000, s.level | 0)) : dungeonBoss ? Math.max(1, s.level) + hc : boss ? Math.max(s.level, hunter + 1 + (Math.random() * 4 | 0)) + hc : near;
+		const rarity = dungeonBoss ? 0 : rarityForLevel(level, Math.random(), boss);
 		const threat = this.threat();
-		const max0 = animal ? Math.floor(14 + level * 7) : Math.floor((26 + level * 16) * (s.dungeonBoss ? 3.0 : s.boss ? 6.5 : 1) * (1 + rarity * 0.45));
+		const max0 = animal ? Math.floor(14 + level * 7) : Math.floor((26 + level * 16) * (dungeonBoss ? 3.0 : boss ? 6.5 : 1) * (1 + rarity * 0.45));
 		const max = Math.floor(max0 * threat.hp);
 		const baseType = s.type || def.type;
 		// A "wild" foe is a generic overworld/dungeon spawn (no fixed name, not a boss/witch/hunter,
 		// no Enemy-Designer design). Those get a random skin, a silly random name, and 1-4 random
 		// elements. Everything else keeps its own identity but still wears a skin so it reads as part
 		// of the same world and its ghost can inherit the look.
-		const designNow = enemyDesignFor(species);
-		const kindNow = animal ? "animal" : s.boss || s.dungeonBoss || designNow?.boss ? "boss" : "normal";
+		const kindNow = flags?.witch ? "witch" : animal ? "animal" : boss || dungeonBoss ? "boss" : "normal";
 		// TURBZ overworld (custom-turbz) zone spawns carry fixedLevel so they keep their zone level band,
 		// but the player wants them to roll the same multi-type + silly Name identity as dungeon enemies.
 		const turbzOverworldWild = !!(this.turbz && (this.save?.map ?? "") === "custom-turbz" && !this.isDungeonMap(this.save?.map ?? ""));
@@ -1836,8 +1842,8 @@ export class TurbzGame {
 		const spell = moves.filter((m) => attackForm(m) === "spell");
 		const picked = animal ? "measured" : (ranged[rarity % Math.max(1, ranged.length)] ?? spell[0] ?? moves[0] ?? MOVES[0]).id;
 		const lookRng = mulberry32(((s.x * 13 + s.y * 97 + level * 17 + rarity * 41 + Math.floor(Math.random() * 1e6)) >>> 0) || 1);
-		const look = ghost ? rollGhostLook(lookRng, rarity, picked, s.boss ? "hunt" : undefined) : null;
-		const speed = 8 + level + rarity * 4 + (look?.aggression === "hunt" ? 3 : 0) + (s.boss ? 6 : 0);
+		const look = ghost ? rollGhostLook(lookRng, rarity, picked, boss ? "hunt" : undefined) : null;
+		const speed = 8 + level + rarity * 4 + (look?.aggression === "hunt" ? 3 : 0) + (boss ? 6 : 0);
 		// Every foe rolls its own stat line, enchantments and moves (balance.ts).
 		const design = designNow;
 		const kind = kindNow;
@@ -1855,8 +1861,8 @@ export class TurbzGame {
 			hp: max,
 			max,
 			level,
-			boss: !!s.boss,
-			dungeonBoss: !!s.dungeonBoss,
+			boss,
+			dungeonBoss,
 			bossId: s.bossId,
 			homeX: s.x,
 			homeY: s.y,
@@ -1872,7 +1878,7 @@ export class TurbzGame {
 			swing: 0,
 			move: picked,
 			animal,
-			witch: false,
+			witch: !!flags?.witch,
 			race: null,
 			lootGear: [],
 			lootBag: {},
@@ -1907,7 +1913,12 @@ export class TurbzGame {
 			mob.flee = design.behaviour === "flee";
 			mob.drift = design.behaviour === "drift";
 			mob.aggro = design.behaviour === "hunt" && !mob.flee;
-			if (design.boss) mob.boss = true;
+			if (flags?.animal) mob.animal = true;
+			if (flags?.ghost) mob.ghost = true;
+			if (flags?.witch) mob.witch = true;
+			if (flags?.dungeonBoss) { mob.boss = true; mob.dungeonBoss = true; }
+			else if (flags?.worldBoss || design.boss) { mob.boss = true; if (!s.dungeonBoss) mob.dungeonBoss = false; }
+			if ((flags?.worldBoss || flags?.dungeonBoss) && design.behaviour !== "flee") mob.aggro = true;
 		}
 		if (this.save) this.scaleMob(mob, true);
 		return mob;
@@ -1915,7 +1926,7 @@ export class TurbzGame {
 	/** Re-rolls a foe's kit after it becomes a bounty, hunter, witch or minion. */
 	rekitMob(m, extra = {}) {
 		const rng = mulberry32(((Math.random() * 1e9) >>> 0) || 5);
-		const design = !m.bounty && !m.hunter && !m.witch ? enemyDesignFor(m.species) : null;
+		const design = !m.bounty && !m.hunter && !(m.witch && !m.designId) ? enemyDesignFor(m.species) : null;
 		const kit = rollEnemyKit(rng, { species: m.species, type: m.type, kind: this.enemyKind(m), rarity: m.rarity, playerLevel: this.save?.level ?? 1, hardcore: this.rules === "hardcore", signature: m.move, design: design ?? undefined, ...extra });
 		m.kit = kit.moves;
 		m.kcd = {};

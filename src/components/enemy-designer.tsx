@@ -5,7 +5,7 @@ import { drawCreatureSprite } from "@/game/creature-sprites";
 import { BIOME_LABEL } from "@/game/world";
 import {
   BIOME_IDS, SHEET_COLS, SHEET_ROWS, allEnemyDesigns, designFromBuiltin, installEnemyDesigns, localEnemyDesigns, newEnemyDesign, parseEnemyDesign, registerSprite, saveLocalEnemyDesigns,
-  type EnemyBehaviour, type EnemyDesign,
+  type EnemyBehaviour, type EnemyDesign, type EnemyFlags,
 } from "@/game/enemy-design";
 import { Chips, ConfirmButton, Empty, Field, Section, Tabs } from "./ui-kit";
 
@@ -43,7 +43,7 @@ function Preview({ design }: { design: EnemyDesign }) {
       ctx.fillStyle = "#26361f";
       for (let y = 0; y < canvas.height; y += 32) for (let x = (y / 32) % 2 ? 0 : 32; x < canvas.width; x += 64) ctx.fillRect(x, y, 32, 32);
       ctx.scale(2, 2);
-      drawCreatureSprite(ctx, { x: canvas.width / 4, y: canvas.height / 4 + 22, template: 0, type: design.type, facing: Math.sin(t * 0.6) > 0 ? 1 : -1, walk: t, hurt: 0, boss: design.boss, rarity: 0, species: PREVIEW_ID, time: t });
+      drawCreatureSprite(ctx, { x: canvas.width / 4, y: canvas.height / 4 + 22, template: 0, type: design.type, facing: Math.sin(t * 0.6) > 0 ? 1 : -1, walk: t, hurt: 0, boss: !!(design.flags?.worldBoss || design.flags?.dungeonBoss || design.boss), ghost: !!design.flags?.ghost, animal: !!design.flags?.animal, rarity: 0, species: PREVIEW_ID, time: t });
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -150,6 +150,28 @@ function overFmt(knee: number, text: (v: number) => string) {
   return (v: number) => (v > knee + 1e-6 ? `${text(v)} overmax` : text(v));
 }
 
+const ROLE_FLAGS: { id: keyof EnemyFlags; label: string; hint: string }[] = [
+  { id: "witch", label: "Witch", hint: "Fights like a witch and always leaves a ghost that matches her." },
+  { id: "worldBoss", label: "World Boss", hint: "A long fight on the wild. Legendary drop, and she always leaves a matching ghost." },
+  { id: "dungeonBoss", label: "Dungeon Boss", hint: "The fight at the end of a dungeon. Chunkier than a world boss, epic drop." },
+  { id: "overworld", label: "Overworld", hint: "Spawns in the biomes you pick. Off means it only appears where a map places it." },
+  { id: "ghost", label: "Ghost", hint: "Already a ghost while it walks. It is not a solid body that becomes one on death." },
+  { id: "animal", label: "Animal", hint: "A beast. Less health, and it drops meat and hide." },
+];
+
+function roleText(x: EnemyDesign): string {
+  const f = x.flags;
+  if (!f) return x.boss ? "boss" : "";
+  return [
+    f.witch && "witch",
+    f.worldBoss && "world boss",
+    f.dungeonBoss && "dungeon boss",
+    f.overworld && "overworld",
+    f.ghost && "ghost",
+    f.animal && "animal",
+  ].filter(Boolean).join(" · ");
+}
+
 export function EnemyDesigner({ onBack }: { onBack: () => void }) {
   const [d, setD] = useState<EnemyDesign>(newEnemyDesign);
   const [saved, setSaved] = useState<EnemyDesign[]>(() => localEnemyDesigns());
@@ -162,6 +184,12 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
   const input = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<EnemyDesign>) => setD((x) => ({ ...x, ...patch }));
   const setStat = (k: keyof EnemyStats, v: number) => setD((x) => ({ ...x, stats: { ...x.stats, [k]: v } }));
+  const toggleFlag = (id: keyof EnemyFlags, on: boolean) => setD((x) => {
+    const flags: EnemyFlags = { ...(x.flags ?? { witch: false, worldBoss: !!x.boss, dungeonBoss: false, overworld: x.biomes.length > 0, ghost: false, animal: false }), [id]: on };
+    if (id === "worldBoss" && on) flags.dungeonBoss = false;
+    if (id === "dungeonBoss" && on) flags.worldBoss = false;
+    return { ...x, flags, boss: flags.worldBoss || flags.dungeonBoss, behaviour: id === "animal" && on ? "flee" : x.behaviour };
+  });
   useEffect(() => () => { try { installEnemyDesigns(); } catch { /* ignore */ } }, []);
 
   const moves = useMemo(() => {
@@ -170,7 +198,8 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
   }, [moveFilter, onlyType, d.type]);
 
   const sample = (hardcore: boolean) => {
-    const t = enemyTargets({ kind: d.boss ? "boss" : d.behaviour === "flee" ? "animal" : "normal", hardcore });
+    const kind = d.flags?.witch ? "witch" : d.flags?.worldBoss || d.flags?.dungeonBoss || d.boss ? "boss" : d.flags?.animal ? "animal" : "normal";
+    const t = enemyTargets({ kind, hardcore });
     return { hits: t.hits * d.stats.hp, pct: t.frac * d.stats.dmg * 100, lv: t.levelOffset + d.levelBonus };
   };
   const std = sample(false), hc = sample(true);
@@ -216,7 +245,7 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
             {saved.map((x) => (
               <button key={x.id} type="button" className={`ui-card verse-pick ${x.id === d.id ? "ui-card-hl" : ""}`} onClick={() => { setD(structuredClone(x)); setSpriteTab(x.sprite.kind); setStatus(`Editing ${x.name}.`); }}>
                 <span className={`type-${x.type}`}>{x.name}</span>
-                <span className="text-dim">{x.replaces ? `replaces ${BUILTINS.find((b) => b.id === x.replaces)?.name ?? x.replaces}` : "new"}{x.boss ? " · boss" : ""}</span>
+                <span className="text-dim">{x.replaces ? `replaces ${BUILTINS.find((b) => b.id === x.replaces)?.name ?? x.replaces}` : "new"}{roleText(x) ? ` · ${roleText(x)}` : ""}</span>
               </button>
             ))}
             {!saved.length && <Empty>Nothing saved yet.</Empty>}
@@ -281,9 +310,19 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
                 </select>
               </Field>
               <Field label="Behaviour">
-                <Chips value={d.behaviour} onChange={(v: EnemyBehaviour) => set({ behaviour: v })} options={[{ id: "hunt", label: "Hunts you" }, { id: "drift", label: "Only if provoked" }, { id: "flee", label: "Flees (beast)" }]} />
+                <Chips value={d.behaviour} onChange={(v: EnemyBehaviour) => set({ behaviour: v })} options={[{ id: "hunt", label: "Hunts you" }, { id: "drift", label: "Only if provoked" }, { id: "flee", label: "Flees" }]} />
               </Field>
-              <label className="chip chip-check"><input type="checkbox" checked={d.boss} onChange={(e) => set({ boss: e.target.checked })} /> Boss (long fight, epic drop)</label>
+              <Section title="FLAGS">
+                <div className="ench-grid">
+                  {ROLE_FLAGS.map((f) => (
+                    <label key={f.id} className={`chip chip-check ${d.flags?.[f.id] ? "chip-on" : ""}`} title={f.hint}>
+                      <input type="checkbox" checked={!!d.flags?.[f.id]} onChange={(e) => toggleFlag(f.id, e.target.checked)} />
+                      {f.label}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-dim">World Boss and Dungeon Boss cannot both be on. Witch, Ghost and Animal can stack with either.</p>
+              </Section>
               <Field label="Description"><textarea className="px-input" rows={3} maxLength={200} value={d.about} onChange={(e) => set({ about: e.target.value })} /></Field>
             </>
           )}
@@ -337,8 +376,8 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
             <>
               <Section title="WHERE IT SPAWNS">
                 {d.replaces ? (
-                  <p className="text-dim">It replaces {BUILTINS.find((b) => b.id === d.replaces)?.name}, so it appears wherever that enemy did.</p>
-                ) : (
+                  <p className="text-dim">It replaces {BUILTINS.find((b) => b.id === d.replaces)?.name}, so it appears wherever that enemy did. The flags still change how that enemy fights.</p>
+                ) : d.flags?.overworld ? (
                   <>
                     <div className="ench-grid">
                       {BIOME_IDS.map((b: BiomeId) => (
@@ -349,8 +388,10 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
                       ))}
                     </div>
                     <Slider label="How common" value={d.weight} min={1} max={20} step={1} onChange={(v) => set({ weight: v })} fmt={overFmt(5, (v) => ["", "Rare", "Uncommon", "Common", "Very common", "Everywhere"][v] ?? String(v))} />
-                    <p className="text-dim">It can also be placed in Map Builder spawn zones. With no biome ticked it only appears where you place it.</p>
+                    <p className="text-dim">Overworld is on. It can also be placed in Map Builder spawn zones. With no biome ticked it only appears where you place it.</p>
                   </>
+                ) : (
+                  <p className="text-dim">Overworld is off, so this enemy does not wander the wild. Place it in Map Builder, or turn Overworld on and pick biomes.</p>
                 )}
               </Section>
               <Section title="LOOT">
