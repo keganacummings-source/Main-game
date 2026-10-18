@@ -10804,7 +10804,7 @@ export class TurbzGame {
 			if (Math.abs(m.y - this.cam.y) > h / this.zoom * 0.62 + 160) continue;
 			if ((m.witch || m.bounty || m.hunter) && (m.classId || m.race)) {
 				// Witches, bounties and hunters look and act like player classes: they draw with the
-				// class actor model (a cryinggirl witch uses the Lidia model) and wear their own gear.
+				// class actor model and wear their own gear.
 				const cls = m.classId ? CLASS_BY_ID[m.classId] : null;
 				const raceId = m.race ?? (cls ? CLASS_RACE[cls.id] : null) ?? "vesper";
 				const rr = RACES.find((r) => r.id === raceId) ?? RACES[0];

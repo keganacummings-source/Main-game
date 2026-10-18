@@ -1,12 +1,11 @@
 # Patch Notes
 
-## V7 — Cleanup, Terraria-style armor, visible set bonuses
+## V7 — Cleanup, original Crying Girl sprite, visible set bonuses
 
 - **No more "legacy" content.** Every V6 update is now base behaviour. The old `legacy_*` perks are promoted into the main perk pool as "`<ClassName>'s Signature`" and listed alongside new perks (no separate tab). Old saves that stored `legacy_<classId>` are remapped automatically.
 - **Dead compatibility paths removed:** `legacyMoveFx` (unused engine FX), `legacyMaps()` (pre-IndexedDB map migration), `LegacyNpcQuest` (ancient map-file quest shape), `migrateEquipment` + `previousEquipment` (V5 enchantment restoration). Modern gear carries its own enchantments.
 - **Lighter repo.** 49 orphan assets dropped (one unused music track, one unused sprite, 47 unreferenced `MapAssets` tiles). `public/` went from 29 MB to 21 MB.
-- **Crying Girl armor is Terraria-style now.** Her paper-doll used to recolour the same six clothing layers for every set. V7 adds a procedural pixel-art overlay (`src/game/crying-armor.ts`): each gear slot has a kit of ~8 silhouettes (crowns, horns, veils, pauldrons, buckles, boot heights, mantles, bracers), and each worn piece paints its own silhouette in its own element colour on top of the Lidia base. Wear a chest from set A, legs from set B and boots from set C and all three stack as distinct silhouettes, each in its own tint — no palette-sharing between pieces.
-- **Full Gear FX is back on the Crying Girl.** `drawSetAura` used to be skipped by the Crying Girl's draw path; now every body model (paper-doll included) gets the five-piece aura behind the sprite when the set is complete. The aura signals the completed set, not a shared piece palette.
+- **Crying Girl is back on her original sprite.** The Lidia paper-doll and the per-piece armor silhouettes are removed. She draws from `warrior:cryinggirl` like the other classes. Gear FX and the full-set aura still play on her.
 - **Set bonuses are visible everywhere.** Previously the set-bonus text was hidden in a `title=` hover tooltip and inside a collapsed `<details>` disclosure. Now the active set's bonus is pinned under the WORN block, each gear card shows its own set's bonus as a visible line, and every set-progress row shows the bonus side by side with the name.
 - **Editing guide.** `docs/EDITING.md` is a lookup table: "I want to change X, where do I go?" (classes, perks, enemies, items, bosses, music, sprites, map builder, …). Top-of-file guide comments on `engine.ts` and `content.ts` point to data files rather than making you dig through the 12.5k-line engine.
 - **Version bumped to 7.0.0.**
