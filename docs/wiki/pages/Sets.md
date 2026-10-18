@@ -8,6 +8,18 @@ There are **100 armor sets**: 20 for each race. Every armor drop (head, chest, l
 - **Collect** all five pieces of a set while playing a class and that set is **unlocked for that class**.
 - When a witch of that class dies, the next one can **wake wearing a level-1 copy** of the set, bonus included.
 
+## Reading a set's bonus
+
+- The **active set's** bonus is pinned under the WORN block in the Bag.
+- Every **gear card** shows the bonus for that card's set as a visible line under its tags.
+- Every **set-progress row** (under *Set & enchant totals*) shows the bonus beside the set name.
+
+## Per-piece armor silhouettes (Crying Girl)
+
+The Crying Girl draws through a paper-doll instead of a static sprite. Each gear slot — head, chest, legs, feet, relic, hands — paints its own pixel-art silhouette on top of her base body, in that piece's element colour. The slot kit covers crowns / horns / veils / tiaras for the head; round / spiked / winged pauldrons and chest sashes for the chest; round, diamond, double and chain belts for the legs; ankle through thigh-high boots with cuffs and greaves for the feet; short / long / hooded capes and wing mantles for the relic; and bracers, gauntlets, claws and bandage wraps for the hands.
+
+Pieces **stack visually, like Terraria**: wear a chest from one set, legs from another and boots from a third and all three silhouettes read at once, each in its own tint. The five-piece set aura is the signal that a full set is on, drawn behind her sprite — the piece visuals themselves do not change when the set completes.
+
 ## Set auras
 
 Each set uses one of ten aura kinds, which decides its pulse. The written bonus on each set is its flavour; the pulse is what it actually does.

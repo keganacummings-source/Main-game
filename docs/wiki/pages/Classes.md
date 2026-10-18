@@ -9,6 +9,7 @@ Your class decides your **element**, your **stats**, a **passive**, any **immuni
 - Each class belongs to a **race** (from its element). That race's armor sets are more likely to drop for you.
 - Finished armor sets unlock **per class**. See [Sets](Sets).
 - Class names were updated in V6: Frostguard → **Vanguard**, Emberheart → **Channeler**, Tideshaper → **Wellspring**, Galeborn → **Outrider**, Radiant → **Beacon**, Umbral → **Phasewalker**.
+- Every class also has a **signature perk** (its original V5 passive): a small stat package named "`<ClassName>'s Signature`" that lives in the main perk pool. The Crying Girl can pick from signatures the same way she picks from any other perk.
 
 ## Stats
 
