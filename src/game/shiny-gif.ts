@@ -11,31 +11,53 @@ import type { ShinyEntry } from "./account-save";
 
 const CELL_W = 56, CELL_H = 60, COLS = 6, MAX_ROWS = 5, FRAMES = 14, DELAY_CS = 9, SCALE = 2;
 
-/** Draws one shiny ghost centred at (x, y). Shared by the GIF and the Shinys Seen screen. */
-export function drawShiny(ctx: CanvasRenderingContext2D, s: ShinyEntry, x: number, y: number, t: number): void {
-  const fx = { x, y, type: s.type as TypeId, rarity: s.rarity, level: s.level, speed: s.speed, max: s.max, shiny: true, seed: s.uid, palette: s.palette };
-  drawGhostFx(ctx, fx, t, "back");
+/** Anything the shiny record, death GIF, or leaderboard needs to redraw a ghost with the live sprite systems. */
+export type RecordGhost = {
+  uid?: string;
+  name?: string;
+  type: string;
+  template?: number;
+  rarity?: number;
+  level?: number;
+  speed?: number;
+  max?: number;
+  shiny?: boolean;
+  palette?: string | null;
+  species?: string;
+  skin?: string | null;
+  types?: string[] | null;
+  look?: unknown;
+  classId?: string;
+  race?: string | null;
+  female?: boolean;
+  pieces?: { slot: string; style: number; type: string; fxSeed: number; quality: number; gene?: number }[];
+};
 
-  // Witch replicas draw as the full actor sprite (class/race identity).
-  const isWitchReplica = !!(s.classId || s.race);
-  let drawn = false;
-  if (isWitchReplica) {
+/** Draws one ghost (shiny or not) centred at (x, y), using class sheets, skins, and element tints. */
+export function drawRecordGhost(ctx: CanvasRenderingContext2D, g: RecordGhost, x: number, y: number, t: number): void {
+  const shiny = !!g.shiny;
+  const fx = { x, y, type: g.type as TypeId, rarity: g.rarity ?? 0, level: g.level ?? 1, speed: g.speed ?? 10, max: g.max ?? 20, shiny, seed: g.uid ?? g.name ?? "ghost", palette: g.palette };
+  drawGhostFx(ctx, fx, t, "back");
+  if (g.classId) {
     const actor: any = {
-      x, y, race: s.race ?? "vesper", female: !!s.female, hair: 0, skin: 0,
-      facing: 1, direction: "down", walk: t, swing: 0, hurt: 0, moving: true,
-      classId: s.classId, time: t,
+      x, y, race: g.race ?? "vesper", female: g.female !== false, hair: 0, skin: 2,
+      facing: 1, direction: "down", walk: t, attack: 0, hurt: 0, moving: true,
+      classId: g.classId, time: t, pieces: g.pieces ?? [], setFx: null, setOn: false, scale: 1,
     };
-    if (tryDrawActorSprite(ctx, actor)) drawn = true;
-    else { drawActor(ctx, actor); drawn = true; }
-  }
-  if (!drawn) {
+    if (!tryDrawActorSprite(ctx, actor)) drawActor(ctx, actor);
+  } else {
     drawMonster(ctx, {
-      x, y, template: s.template, type: s.type as TypeId, facing: 1, walk: t * 3, hurt: 0, boss: false, rarity: s.rarity,
-      ghost: true, shiny: true, palette: s.palette, spin: 0, species: s.species,
-      skin: s.skin ?? null, types: s.types as any, look: (s.look as GhostLook | null) ?? null, time: t,
+      x, y, template: g.template ?? 0, type: g.type as TypeId, facing: 1, walk: t * 3, hurt: 0, boss: false, rarity: g.rarity ?? 0,
+      ghost: true, shiny, palette: g.palette, spin: 0, species: g.species,
+      skin: g.skin ?? null, types: (g.types ?? null) as TypeId[] | null, look: (g.look as GhostLook | null) ?? null, time: t,
     });
   }
   drawGhostFx(ctx, fx, t, "front");
+}
+
+/** Draws one shiny ghost centred at (x, y). Shared by the GIF and the Shinys Seen screen. */
+export function drawShiny(ctx: CanvasRenderingContext2D, s: ShinyEntry, x: number, y: number, t: number): void {
+  drawRecordGhost(ctx, { ...s, shiny: true }, x, y, t);
 }
 
 /** Renders the collection (newest first, up to 30 ghosts) as a looping GIF. Returns base64, or null. */

@@ -12,7 +12,24 @@ export type GraveGear = {
   fx?: string;
 };
 
-export type GraveGhost = { name: string; type: string; level: number; rarity: number; shiny: boolean };
+export type GraveGhost = {
+  name: string;
+  type: string;
+  level: number;
+  rarity: number;
+  shiny: boolean;
+  /** Visual identity so the board draws the same sprite the ghost had in game. */
+  species?: string;
+  template?: number;
+  skin?: string | null;
+  types?: string[] | null;
+  look?: unknown;
+  palette?: string | null;
+  classId?: string;
+  race?: string | null;
+  female?: boolean;
+  pieces?: { slot: string; style: number; type: string; fxSeed: number; quality: number; gene?: number }[];
+};
 
 /** How she looked: race, class, worn pieces with their FX genes and set aura. */
 export type GraveLook = {

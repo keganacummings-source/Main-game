@@ -339,6 +339,8 @@ export type ShinyEntry = {
   classId?: string;
   race?: string | null;
   female?: boolean;
+  /** Witch ghosts keep the kit they fell in, so the record draws the same body. */
+  pieces?: { slot: string; style: number; type: string; fxSeed: number; quality: number; gene?: number }[];
 };
 export const SHINY_MAX = 400;
 

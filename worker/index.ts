@@ -162,17 +162,30 @@ async function handleSave(request: Request, env: Env, url: URL): Promise<Respons
   }
 }
 
-/** Cleans one uploaded shiny entry down to what the bot and the menu show. */
+/** Cleans one uploaded shiny entry down to what the bot and the menu show. Keeps the sprite identity (skin, every element, witch body). */
 function cleanShiny(v: unknown) {
   if (!v || typeof v !== "object") return null;
   const s = v as Record<string, unknown>;
   const uid = str(s.uid, 40);
   if (!uid) return null;
+  const types = cleanTypes(s.types);
+  const pieces = cleanPieces(s.pieces);
+  const classId = str(s.classId, 24);
+  const palette = str(s.palette, 24);
+  const skin = str(s.skin, 64);
+  const race = str(s.race, 16);
   return {
     uid, species: str(s.species, 32), name: str(s.name, 32) || "Ghost", type: str(s.type, 16), template: Math.floor(Number(s.template) || 0),
-    rarity: Math.max(0, Math.min(4, Math.floor(Number(s.rarity) || 0))), level: Math.max(1, Math.min(100000, Math.floor(Number(s.level) || 1))),
-    speed: Number(s.speed) || 10, max: Number(s.max) || 10, look: s.look && typeof s.look === "object" && JSON.stringify(s.look).length < 3000 ? s.look : null,
+    rarity: Math.max(0, Math.min(5, Math.floor(Number(s.rarity) || 0))), level: Math.max(1, Math.min(100000, Math.floor(Number(s.level) || 1))),
+    speed: Number(s.speed) || 10, max: Number(s.max) || 10, look: smallLook(s.look, 3000),
     at: Math.max(0, Math.floor(Number(s.at) || 0)), mode: str(s.mode, 12), by: str(s.by, 24),
+    ...(palette ? { palette } : {}),
+    ...(skin ? { skin } : {}),
+    ...(types ? { types } : {}),
+    ...(classId ? { classId } : {}),
+    ...(race ? { race } : {}),
+    ...(typeof s.female === "boolean" ? { female: s.female } : {}),
+    ...(pieces ? { pieces } : {}),
   };
 }
 
@@ -224,7 +237,7 @@ async function handleShinySeen(request: Request, env: Env, url: URL, ctx?: Execu
     const gif = decodeGif(body.gif);
     const post = {
       username: me.displayName || me.id, witch: str(body.witch, 24) || "A witch", name, species: str(body.species, 32),
-      level: Math.max(1, Math.min(100000, Math.floor(Number(body.level) || 1))), type: str(body.type, 16), place: str(body.place, 60), mode: str(body.mode, 12),
+      level: Math.max(1, Math.min(100000, Math.floor(Number(body.level) || 1))), type: str(body.type, 64), place: str(body.place, 60), mode: str(body.mode, 12),
     };
     const send = (async () => {
       const channels = await stub.channels();
@@ -245,9 +258,18 @@ async function shinyCard(env: Env, username: string): Promise<ShinyCard | null> 
   if (!/^[a-z0-9_]{3,16}$/.test(key)) return null;
   const row = await accountStub(env, key).getShinies();
   if (!row) return null;
-  let list: { name?: string; species?: string; level?: number; at?: number }[] = [];
+  let list: { name?: string; level?: number; at?: number; mode?: string; type?: string; types?: string[] }[] = [];
   try { list = JSON.parse(row.list); } catch { list = []; }
-  return { display: row.display, count: list.length, names: list.slice().sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).map((s) => `${s.name ?? "Ghost"} Lv ${s.level ?? 1}`), gif: row.gif ? decodeGif(row.gif) : null };
+  return {
+    display: row.display,
+    count: list.length,
+    names: list.slice().sort((a, b) => (b.at ?? 0) - (a.at ?? 0)).map((s) => {
+      const elems = Array.isArray(s.types) && s.types.length ? s.types.join("/") : (s.type ?? "");
+      const tag = s.mode === "turbz" ? " · TURBZ" : "";
+      return `${s.name ?? "Ghost"} Lv ${s.level ?? 1}${elems ? ` · ${elems}` : ""}${tag}`;
+    }),
+    gif: row.gif ? decodeGif(row.gif) : null,
+  };
 }
 
 function gravesStub(env: Env) {
@@ -256,6 +278,45 @@ function gravesStub(env: Env) {
 
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
 const strList = (v: unknown, n: number, max: number) => (Array.isArray(v) ? v.filter((x) => typeof x === "string").slice(0, n).map((x) => (x as string).slice(0, max)) : []);
+const TYPE_IDS = new Set(["normal", "fire", "water", "earth", "air", "electric", "ice", "void", "light", "spirit", "ghoul"]);
+
+function cleanTypes(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out = v.filter((t): t is string => typeof t === "string" && TYPE_IDS.has(t)).slice(0, 4);
+  return out.length ? out : undefined;
+}
+
+function cleanPieces(v: unknown) {
+  if (!Array.isArray(v)) return undefined;
+  const out: { slot: string; style: number; type: string; fxSeed: number; quality: number; gene?: number }[] = [];
+  for (const raw of v.slice(0, 6)) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw as Record<string, unknown>;
+    const slot = str(p.slot, 12);
+    if (!slot) continue;
+    const gene = Number(p.gene);
+    const fx = Number(p.fxSeed);
+    out.push({
+      slot,
+      style: Math.max(0, Math.min(64, Math.floor(Number(p.style) || 0))),
+      type: str(p.type, 16) || "normal",
+      fxSeed: Number.isFinite(fx) ? Math.trunc(fx) : 0,
+      quality: Math.max(0, Math.min(5, Math.floor(Number(p.quality) || 0))),
+      ...(Number.isFinite(gene) ? { gene: Math.trunc(gene) } : {}),
+    });
+  }
+  return out.length ? out : undefined;
+}
+
+function smallLook(v: unknown, max: number): unknown {
+  if (!v || typeof v !== "object") return null;
+  try {
+    const s = JSON.stringify(v);
+    return s && s.length < max ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 async function handleGraves(request: Request, env: Env, url: URL, ctx?: ExecutionContext): Promise<Response> {
   try {
@@ -301,7 +362,32 @@ async function handleGraves(request: Request, env: Env, url: URL, ctx?: Executio
         cause: str(body.cause, 160),
         place: str(body.place, 80),
         effects: strList(body.effects, 16, 60),
-        ghosts: Array.isArray(body.ghosts) ? body.ghosts.slice(0, 6).map((g: any) => ({ name: str(g?.name, 32), type: str(g?.type, 16), level: Math.max(1, Math.floor(Number(g?.level) || 1)), rarity: Math.max(0, Math.min(4, Math.floor(Number(g?.rarity) || 0))), shiny: !!g?.shiny })) : [],
+        ghosts: Array.isArray(body.ghosts) ? body.ghosts.slice(0, 6).map((g: any) => {
+          const types = cleanTypes(g?.types);
+          const pieces = cleanPieces(g?.pieces);
+          const classId = str(g?.classId, 24);
+          const skin = str(g?.skin, 64);
+          const race = str(g?.race, 16);
+          const palette = str(g?.palette, 24);
+          const species = str(g?.species, 32);
+          return {
+            name: str(g?.name, 32),
+            type: str(g?.type, 64),
+            level: Math.max(1, Math.floor(Number(g?.level) || 1)),
+            rarity: Math.max(0, Math.min(5, Math.floor(Number(g?.rarity) || 0))),
+            shiny: !!g?.shiny,
+            ...(species ? { species } : {}),
+            template: Math.max(0, Math.floor(Number(g?.template) || 0)),
+            ...(skin ? { skin } : {}),
+            ...(types ? { types } : {}),
+            look: smallLook(g?.look, 2000),
+            ...(palette ? { palette } : {}),
+            ...(classId ? { classId } : {}),
+            ...(race ? { race } : {}),
+            ...(typeof g?.female === "boolean" ? { female: g.female } : {}),
+            ...(pieces ? { pieces } : {}),
+          };
+        }) : [],
         look: body.look && typeof body.look === "object" && JSON.stringify(body.look).length < 4000 ? body.look : null,
       };
       const who = me.displayName || me.id;
@@ -310,7 +396,7 @@ async function handleGraves(request: Request, env: Env, url: URL, ctx?: Executio
       const gif = decodeGif(body.gif);
       const post: DeathPost = {
         mode, name, username: who, className: grave.className, race, level, score, cause: grave.cause, place: grave.place, effects: grave.effects,
-        ghosts: grave.ghosts.map((g) => ({ name: g.name, level: g.level, shiny: g.shiny })),
+        ghosts: grave.ghosts.map((g) => ({ name: g.name, level: g.level, shiny: g.shiny, type: g.type })),
         topSkills: (grave.skills as { name?: unknown; level?: unknown }[]).map((s) => ({ name: str(s?.name, 32), level: Math.floor(Number(s?.level) || 1) })).filter((s) => s.level > 1).sort((a, b) => b.level - a.level).slice(0, 5),
         gear: (grave.gear as { slot?: unknown; name?: unknown; quality?: unknown }[]).map((g) => ({ slot: str(g?.slot, 12), name: str(g?.name, 60), quality: str(g?.quality, 16) })),
       };

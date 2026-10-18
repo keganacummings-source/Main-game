@@ -5,12 +5,12 @@ import type { FriendRow, GraveMode, GraveRow } from "@/game/social-types";
 import type { TypeId } from "@/game/content";
 import type { RaceId } from "@/game/content";
 import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
-import { drawMonster } from "@/game/sprites";
-import { drawGhostFx } from "@/game/ghost-fx";
+import { drawActor } from "@/game/sprites";
 import type { ActorDraw } from "@/game/sprites";
+import { installEnemySkins } from "@/game/enemy-skins";
 import { Chips, Empty, Screen, Tabs, Tile } from "./ui-kit";
 import { ascensionCount, readShinies, type ShinyEntry } from "@/game/account-save";
-import { drawShiny } from "@/game/shiny-gif";
+import { drawRecordGhost, drawShiny } from "@/game/shiny-gif";
 
 const Q_NUM: Record<string, number> = {
   worn: 1,
@@ -107,6 +107,7 @@ function GravePortrait({ row }: { row: GraveRow }) {
     void initActorSprites()
       .catch(() => {})
       .finally(() => {
+        try { installEnemySkins(); } catch { /* skins are optional */ }
         const tick = (now: number) => {
           if (stop) return;
           const t = (now - t0) / 1000;
@@ -126,16 +127,28 @@ function GravePortrait({ row }: { row: GraveRow }) {
             depth: i === 2 ? -1 : 1,
           }));
           const ghost = (o: (typeof orbit)[number]) => {
-            const fx = { x: o.x, y: o.y, type: typeId(o.g.type), rarity: o.g.rarity, level: o.g.level, speed: 10 + o.g.level, max: 20 + o.g.level * 10, shiny: o.g.shiny, seed: `${row.id}-${o.g.name}` };
-            drawGhostFx(ctx, fx, t, "back");
-            drawMonster(ctx, { x: o.x, y: o.y, template: 0, type: typeId(o.g.type), facing: o.x < W / 2 ? 1 : -1, walk: t * 3, hurt: 0, boss: false, rarity: o.g.rarity, ghost: true, shiny: o.g.shiny, time: t });
-            drawGhostFx(ctx, fx, t, "front");
+            const g = o.g;
+            const elems = (g.types && g.types.length ? g.types : String(g.type ?? "").split("/")).filter(Boolean);
+            drawRecordGhost(ctx, {
+              name: g.name,
+              type: typeId(elems[0] || g.type || "spirit"),
+              template: g.template ?? 0,
+              rarity: g.rarity,
+              level: g.level,
+              shiny: g.shiny,
+              palette: g.palette,
+              species: g.species,
+              skin: g.skin,
+              types: elems.length ? elems : null,
+              look: g.look,
+              classId: g.classId,
+              race: g.race,
+              female: g.female,
+              pieces: g.pieces,
+            }, o.x, o.y, t);
           };
           for (const o of orbit) if (o.depth < 0) ghost(o);
-          if (!tryDrawActorSprite(ctx, actor)) {
-            ctx.fillStyle = "#6a5a70";
-            ctx.fillRect(W / 2 - 10, H - 80, 20, 48);
-          }
+          if (!tryDrawActorSprite(ctx, actor)) drawActor(ctx, actor);
           for (const o of orbit) if (o.depth >= 0) ghost(o);
           raf = requestAnimationFrame(tick);
         };
@@ -198,10 +211,27 @@ export function Hub(props: {
   const [ascend, setAscend] = useState<0 | 1 | 2>(0);
   const [typed, setTyped] = useState("");
   const [asc, setAsc] = useState(() => ascensionCount());
+  const [news, setNews] = useState(() => {
+    try { return sessionStorage.getItem("turbz-news-yougonnacry") !== "1"; } catch { return true; }
+  });
   const shinyCount = readShinies().length;
+  const dismissNews = () => {
+    setNews(false);
+    try { sessionStorage.setItem("turbz-news-yougonnacry", "1"); } catch { /* private mode */ }
+  };
   return (
     <Screen kicker={`V.2COMBAT · SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="V.2COMBAT">
       <p className="text-dim">Pick a veil. The dead keep the score.</p>
+      {news && ascend === 0 && (
+        <div className="loot-overlay" role="dialog" aria-label="Update" data-testid="update-popup">
+          <div className="px-panel loot-panel ui-stack">
+            <p className="font-display">YOUGONNACRY update out now!</p>
+            <div className="screen-actions">
+              <button type="button" className="px-btn px-btn-kyo" data-testid="update-ok" onClick={dismissNews}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
       {ascend > 0 && (
         <div className="loot-overlay" role="dialog" aria-label="Ascension" data-testid="ascend-dialog">
           <div className="px-panel loot-panel ui-stack">
@@ -276,23 +306,30 @@ function ShinyCanvas({ s }: { s: ShinyEntry }) {
     const c = ref.current;
     const ctx = c?.getContext("2d");
     if (!c || !ctx) return;
+    let stop = false;
     let raf = 0;
     const t0 = performance.now();
-    const draw = (now: number) => {
-      const t = (now - t0) / 1000;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, c.width, c.height);
-      ctx.imageSmoothingEnabled = false;
-      ctx.setTransform(2, 0, 0, 2, 0, 0);
-      ctx.fillStyle = "#241814";
-      ctx.beginPath();
-      ctx.ellipse(32, 52, 14, 4, 0, 0, Math.PI * 2);
-      ctx.fill();
-      drawShiny(ctx, s, 32, 42 + Math.sin(t * 2) * 2.5, t);
+    void initActorSprites().catch(() => {}).finally(() => {
+      const draw = (now: number) => {
+        if (stop) return;
+        const t = (now - t0) / 1000;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, c.width, c.height);
+        ctx.imageSmoothingEnabled = false;
+        ctx.setTransform(2, 0, 0, 2, 0, 0);
+        ctx.fillStyle = "#241814";
+        ctx.beginPath();
+        ctx.ellipse(32, 52, 14, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        drawShiny(ctx, s, 32, 42 + Math.sin(t * 2) * 2.5, t);
+        raf = requestAnimationFrame(draw);
+      };
       raf = requestAnimationFrame(draw);
+    });
+    return () => {
+      stop = true;
+      cancelAnimationFrame(raf);
     };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
   }, [s]);
   return <canvas ref={ref} width={128} height={120} className="w-full bg-ink" style={{ imageRendering: "pixelated" }} />;
 }
@@ -302,6 +339,7 @@ export function ShiniesScreen({ onBack, username }: { onBack: () => void; userna
   const [sort, setSort] = useState<"new" | "old" | "level" | "name">("new");
   const list = readShinies().slice().sort((a, b) => (sort === "new" ? b.at - a.at : sort === "old" ? a.at - b.at : sort === "level" ? b.level - a.level : a.name.localeCompare(b.name)));
   const species = new Set(list.map((s) => s.species)).size;
+  useEffect(() => { try { installEnemySkins(); } catch { /* skins are optional */ } }, []);
   return (
     <Screen kicker={`SHINYS SEEN · ${username}`} title={`✦ ${list.length} shiny ghost${list.length === 1 ? "" : "s"}`} wide>
       <p className="text-dim">Every shiny you have picked up on this account, in any mode. {list.length ? `${species} different kind${species === 1 ? "" : "s"}.` : ""} On Discord, <span className="text-kyo">/shiny {username}</span> shows this collection as a GIF.</p>
@@ -316,7 +354,7 @@ export function ShiniesScreen({ onBack, username }: { onBack: () => void; userna
           <div key={s.uid} className="ui-card" title={`${s.name} · ${s.species}`}>
             <ShinyCanvas s={s} />
             <p className="text-kyo">✦ {s.name}</p>
-            <p className="text-dim">Lv {s.level} · {s.type}{s.mode === "hardcore" ? " · Hardcore" : s.mode === "turbz" ? " · TURBZ" : ""}</p>
+            <p className="text-dim">Lv {s.level} · {(s.types && s.types.length ? s.types : [s.type]).join("/")}{s.mode === "hardcore" ? " · Hardcore" : s.mode === "turbz" ? " · TURBZ" : ""}</p>
             <p className="text-dim">{s.by ? `${s.by}, ` : ""}{new Date(s.at).toLocaleDateString()}</p>
           </div>
         ))}
@@ -618,12 +656,15 @@ function GraveCard({ row, rank, now }: { row: GraveRow; rank: number; now: numbe
         <>
           <h3>GHOSTS</h3>
           <ul className="board-skills">
-            {row.ghosts!.map((g, i) => (
+            {row.ghosts!.map((g, i) => {
+              const elems = (g.types && g.types.length ? g.types : String(g.type ?? "").split("/")).filter(Boolean);
+              return (
               <li key={`${g.name}-${i}`}>
-                <span className={g.shiny ? "shiny-name" : `type-${typeId(g.type)}`}>{g.shiny ? "✦ " : ""}{g.name}</span>
+                <span className={g.shiny ? "shiny-name" : `type-${typeId(elems[0] || g.type)}`}>{g.shiny ? "✦ " : ""}{g.name}{elems.length ? ` · ${elems.join("/")}` : ""}</span>
                 <b>{g.level}</b>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </>
       )}

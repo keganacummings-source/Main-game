@@ -26,6 +26,7 @@ import {
   type Move,
 } from "./content";
 import type { ClassId } from "./classes";
+import { cryingElements } from "./classes";
 import { enemyTargets, expectedHunterPower } from "./balance";
 import { generateWorld } from "./map-gen";
 import { lmsSpawns } from "./lms";
@@ -394,6 +395,7 @@ export function installTurbz(game: any): void {
       save.ghostStore = [];
       save.companion = null;
       save.box = [];
+      for (const s of save.spirits) if (s?.shiny && this.recordShiny) this.recordShiny(s);
     }
     save.hp = this.maxHp();
     const caps = this.poolCaps?.();
@@ -560,6 +562,10 @@ export function installTurbz(game: any): void {
       moving: false,
       walk: 0,
     });
+    // The ghost she drops has to match her elements: a Crying Lady carries both of hers, everyone else her class element.
+    const elems = classId === "cryinggirl" ? cryingElements() : [cls?.type ?? m.type];
+    m.type = elems[0] ?? m.type;
+    m.types = elems.slice();
 
     this.scaleTwitch(m, true);
     if (witchLevel > 1) this.twitchSpend(m);

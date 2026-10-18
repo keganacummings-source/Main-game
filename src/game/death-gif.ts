@@ -2,14 +2,14 @@
  * The death GIF posted to Discord: the fallen witch in her real gear, with her gear FX (wings, tails,
  * crowns…), her set aura and her ghosts circling her, walking in place for about two seconds.
  */
-import type { ActorDraw, MonsterDraw } from "./sprites";
-import { drawActor, drawMonster } from "./sprites";
-import { drawGhostFx } from "./ghost-fx";
+import type { ActorDraw } from "./sprites";
+import { drawActor } from "./sprites";
+import { drawRecordGhost, type RecordGhost } from "./shiny-gif";
 import { bytesToBase64, encodeGif, type GifFrame } from "./gif-encode";
 import type { GhostLook, TypeId } from "./content";
 
 export type DeathLook = Omit<ActorDraw, "x" | "y" | "walk" | "attack" | "hurt" | "facing" | "time">;
-export type DeathGhost = { type: TypeId; rarity: number; level: number; speed: number; max: number; shiny: boolean; uid: string; template: number; look: GhostLook | null; palette?: string | null };
+export type DeathGhost = RecordGhost & { type: TypeId; look: GhostLook | null };
 
 const W = 120, H = 112, SCALE = 2, FRAMES = 24, DELAY_CS = 7;
 
@@ -47,11 +47,7 @@ export function captureDeathGif(look: DeathLook, ghosts: DeathGhost[]): string |
       depth: i === 2 ? -1 : 1,
     }));
     const ghost = (o: (typeof orbit)[number]) => {
-      const fx = { x: o.x, y: o.y, type: o.g.type, rarity: o.g.rarity, level: o.g.level, speed: o.g.speed, max: o.g.max, shiny: o.g.shiny, seed: o.g.uid, palette: o.g.palette };
-      drawGhostFx(sctx, fx, t, "back");
-      const m: MonsterDraw = { x: o.x, y: o.y, template: o.g.template, type: o.g.type, facing: o.x < cx ? 1 : -1, walk: t * 4, hurt: 0, boss: false, rarity: o.g.rarity, ghost: true, shiny: o.g.shiny, palette: o.g.palette, look: o.g.look, time: t };
-      drawMonster(sctx, m);
-      drawGhostFx(sctx, fx, t, "front");
+      drawRecordGhost(sctx, o.g, o.x, o.y, t);
     };
     for (const o of orbit) if (o.depth < 0) ghost(o);
     drawActor(sctx, { ...look, scale: 1.25, x: cx, y: cy, walk: t * 4, moving: true, attack: 0, hurt: 0, facing: 1, direction: look.direction ?? "down", time: t });

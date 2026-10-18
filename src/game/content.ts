@@ -495,10 +495,12 @@ export function spiritAidsPlayer(m: Move): boolean {
   return m.effect === "mend" || m.effect === "shell" || m.effect === "cleanse" || tactic === "heal" || tactic === "ward" || tactic === "surge";
 }
 
-/** Up to 10 known verses from the spirit's type. Three of them start readied. */
-export function rollSpiritKit(type: TypeId, rng: Rng, prefer?: string): { known: string[]; slots: string[] } {
-  const attacks = MOVES.filter((m) => !spiritAidsPlayer(m) && (m.type === type || m.type === "spirit"));
-  const aid = MOVES.filter((m) => spiritAidsPlayer(m) && (m.target === "player" || m.type === type || m.type === "spirit"));
+/** Up to 10 known verses from the spirit's element or elements. Three of them start readied. */
+export function rollSpiritKit(type: TypeId | readonly TypeId[], rng: Rng, prefer?: string): { known: string[]; slots: string[] } {
+  const elems = (Array.isArray(type) ? type : [type]) as TypeId[];
+  const mine = (m: Move) => elems.includes(m.type) || m.type === "spirit";
+  const attacks = MOVES.filter((m) => !spiritAidsPlayer(m) && mine(m));
+  const aid = MOVES.filter((m) => spiritAidsPlayer(m) && (m.target === "player" || mine(m)));
   const known: string[] = [];
   const add = (id?: string) => {
     if (!id || !MOVE_BY_ID[id] || known.includes(id) || known.length >= 10) return;

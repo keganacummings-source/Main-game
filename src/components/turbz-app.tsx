@@ -15,6 +15,8 @@ import { ArenaScreen } from "@/components/arena-ui";
 import { Boards, DuelBanner, Hub, Options, ShiniesScreen } from "@/components/hub-ui";
 import { readShinies } from "@/game/account-save";
 import { captureShinyGif, captureShinySeenGif } from "@/game/shiny-gif";
+import { initActorSprites } from "@/game/actor-sprites";
+import { installEnemySkins } from "@/game/enemy-skins";
 import { postShinySeen, writeShinies } from "@/game/cloud-client";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
@@ -101,9 +103,12 @@ function uploadShinies(): void {
   const list = readShinies();
   if (!list.length) return;
   setTimeout(() => {
-    let gif: string | null = null;
-    try { gif = captureShinyGif(list); } catch { gif = null; }
-    void writeShinies(list, gif);
+    void initActorSprites().catch(() => {}).finally(() => {
+      try { installEnemySkins(); } catch { /* skins are optional */ }
+      let gif: string | null = null;
+      try { gif = captureShinyGif(list); } catch { gif = null; }
+      void writeShinies(list, gif);
+    });
   }, 50);
 }
 
@@ -151,9 +156,21 @@ function Hunt() {
     game.attachShiny(() => uploadShinies());
     game.attachShinySeen((seen: { entry: import("@/game/account-save").ShinyEntry; witch: string; place: string }) => {
       setTimeout(() => {
-        let gif: string | null = null;
-        try { gif = captureShinySeenGif(seen.entry); } catch { gif = null; }
-        void postShinySeen({ name: seen.entry.name, species: seen.entry.species, level: seen.entry.level, type: seen.entry.type, witch: seen.witch, place: seen.place, mode: seen.entry.mode, gif });
+        void initActorSprites().catch(() => {}).finally(() => {
+          try { installEnemySkins(); } catch { /* skins are optional */ }
+          let gif: string | null = null;
+          try { gif = captureShinySeenGif(seen.entry); } catch { gif = null; }
+          void postShinySeen({
+            name: seen.entry.name,
+            species: seen.entry.species,
+            level: seen.entry.level,
+            type: (seen.entry.types && seen.entry.types.length ? seen.entry.types : [seen.entry.type]).join("/"),
+            witch: seen.witch,
+            place: seen.place,
+            mode: seen.entry.mode,
+            gif,
+          });
+        });
       }, 30);
     });
     game.start();

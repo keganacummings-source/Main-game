@@ -145,7 +145,7 @@ export type DeathPost = {
   cause: string;
   place: string;
   effects: string[];
-  ghosts: { name: string; level: number; shiny: boolean }[];
+  ghosts: { name: string; level: number; shiny: boolean; type?: string }[];
   topSkills: { name: string; level: number }[];
   gear: { slot: string; name: string; quality: string }[];
 };
@@ -189,7 +189,7 @@ export function deathEmbed(d: DeathPost, hasGif: boolean): Record<string, unknow
   if (d.cause) fields.push({ name: "Cause of death", value: d.cause.slice(0, 200), inline: false });
   if (d.place) fields.push({ name: "Fell in", value: d.place.slice(0, 100), inline: true });
   if (d.effects.length) fields.push({ name: "Effects", value: d.effects.slice(0, 10).join(" · ").slice(0, 1000), inline: false });
-  if (d.ghosts.length) fields.push({ name: "Ghosts", value: d.ghosts.slice(0, 6).map((g) => `${g.shiny ? "✦ " : ""}${g.name} Lv ${g.level}`).join(" · ").slice(0, 1000), inline: false });
+  if (d.ghosts.length) fields.push({ name: "Ghosts", value: d.ghosts.slice(0, 6).map((g) => `${g.shiny ? "✦ " : ""}${g.name} Lv ${g.level}${g.type ? ` · ${g.type}` : ""}`).join(" · ").slice(0, 1000), inline: false });
   if (d.gear.length) fields.push({ name: "Wore", value: d.gear.slice(0, 6).map((g) => `${g.name} (${g.quality})`).join("\n").slice(0, 1000), inline: false });
   if (d.topSkills.length) fields.push({ name: "Best skills", value: d.topSkills.slice(0, 5).map((s) => `${s.name} ${s.level}`).join(" · ").slice(0, 1000), inline: false });
   return {
@@ -246,7 +246,7 @@ export function shinySeenEmbed(d: ShinySeenPost, hasGif: boolean): Record<string
     color: 0xff7ae0,
     fields: [
       { name: "Level", value: String(d.level), inline: true },
-      ...(d.type ? [{ name: "Element", value: d.type.slice(0, 16), inline: true }] : []),
+      ...(d.type ? [{ name: "Element", value: d.type.slice(0, 64), inline: true }] : []),
       { name: "Mode", value: modeLabel(d.mode), inline: true },
     ],
     ...(hasGif ? { image: { url: "attachment://shiny.gif" } } : {}),

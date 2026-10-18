@@ -1,7 +1,9 @@
 import { memo, useEffect, useRef, useState, type ReactNode } from "react";
-import { TYPES, type GhostLook, type TypeId } from "@/game/content";
-import { drawMonster } from "@/game/sprites";
-import { drawGhostFx, ghostFxLabel } from "@/game/ghost-fx";
+import { TYPES, type TypeId } from "@/game/content";
+import { ghostFxLabel } from "@/game/ghost-fx";
+import { drawRecordGhost } from "@/game/shiny-gif";
+import { initActorSprites } from "@/game/actor-sprites";
+import { ENEMY_SKIN_IDS, installEnemySkins } from "@/game/enemy-skins";
 import { rarityStyle, shinyPalette } from "@/game/ghost-style";
 import type { GhostDetail } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -11,35 +13,45 @@ import { Empty, Meter, Tabs } from "./ui-kit";
 const typeClass = (t: TypeId) => `type-${t}`;
 
 /** A live, animated portrait of a ghost in its rarity colours or shiny palette. */
-export const GhostPortrait = memo(function GhostPortrait({ g, size = 112 }: { g: Pick<GhostDetail, "uid" | "type" | "template" | "rarity" | "shiny" | "palette" | "look" | "level" | "speed" | "max" | "spriteSpecies" | "skin" | "types">; size?: number }) {
+export const GhostPortrait = memo(function GhostPortrait({ g, size = 112 }: { g: Pick<GhostDetail, "uid" | "name" | "type" | "template" | "rarity" | "shiny" | "palette" | "look" | "level" | "speed" | "max" | "spriteSpecies" | "skin" | "types" | "classId" | "race" | "female" | "pieces">; size?: number }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const sig = `${g.classId ?? ""}|${g.race ?? ""}|${g.female ? 1 : 0}|${g.skin ?? ""}|${g.spriteSpecies ?? ""}|${(g.types ?? []).join(",")}|${(g.pieces ?? []).map((p) => `${p.slot}${p.style}${p.type}`).join(",")}`;
   useEffect(() => {
     const canvas = ref.current;
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx) return;
     let raf = 0;
+    let stop = false;
     const t0 = performance.now();
-    const tick = (now: number) => {
-      const t = (now - t0) / 1000;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.imageSmoothingEnabled = false;
-      // The ghost body is about 32px tall: fill most of the frame with it.
-      const s = canvas.width / 44;
-      ctx.scale(s, s);
-      const fx = { x: 22, y: 38, type: g.type, rarity: g.rarity, level: g.level, speed: g.speed, max: g.max, shiny: g.shiny, seed: g.uid, palette: g.palette };
-      try {
-        drawGhostFx(ctx, fx, t, "back");
-        drawMonster(ctx, { x: 22, y: 38, template: g.template, type: g.type, facing: 1, walk: t * 2, hurt: 0, boss: false, rarity: g.rarity, ghost: true, shiny: g.shiny, palette: g.palette, species: g.spriteSpecies, skin: g.skin ?? null, types: g.types ?? null, look: (g.look as GhostLook | null) ?? null, time: t });
-        drawGhostFx(ctx, fx, t, "front");
-      } catch {
-        /* a portrait never breaks the window */
-      }
+    void initActorSprites().catch(() => {}).finally(() => {
+      if (!ENEMY_SKIN_IDS.length) { try { installEnemySkins(); } catch { /* skins are optional */ } }
+      const tick = (now: number) => {
+        if (stop) return;
+        const t = (now - t0) / 1000;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+        // The ghost body is about 32px tall: fill most of the frame with it.
+        const s = canvas.width / 44;
+        ctx.scale(s, s);
+        try {
+          drawRecordGhost(ctx, {
+            uid: g.uid, name: g.name, type: g.type, template: g.template, rarity: g.rarity, level: g.level, speed: g.speed, max: g.max,
+            shiny: g.shiny, palette: g.palette, species: g.spriteSpecies, skin: g.skin, types: g.types, look: g.look,
+            classId: g.classId, race: g.race, female: g.female, pieces: g.pieces,
+          }, 22, 38, t);
+        } catch {
+          /* a portrait never breaks the window */
+        }
+        raf = requestAnimationFrame(tick);
+      };
       raf = requestAnimationFrame(tick);
+    });
+    return () => {
+      stop = true;
+      cancelAnimationFrame(raf);
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [g.uid, g.type, g.template, g.rarity, g.shiny, g.palette, g.look, g.level, g.speed, g.max]);
+  }, [g.uid, g.name, g.type, g.template, g.rarity, g.shiny, g.palette, g.look, g.level, g.speed, g.max, sig]);
   const st = rarityStyle(g.rarity);
   return <canvas ref={ref} className="ghost-portrait" width={size * 2} height={size * 2} style={{ width: size, height: size, ["--rc" as string]: st.color }} aria-label="Ghost portrait" />;
 });
@@ -97,8 +109,9 @@ export function AbilityList({ g }: { g: Pick<GhostDetail, "abilities" | "abiliti
 }
 
 export function GhostStats({ g }: { g: GhostDetail }) {
+  const elems = (g.types && g.types.length ? g.types : [g.type]) as TypeId[];
   const rows: [string, string][] = [
-    ["Element", TYPES[g.type]?.name ?? g.type],
+    ["Element", elems.map((t) => TYPES[t]?.name ?? t).join(" / ")],
     ["Kind", g.species || "Ghost"],
     ["Rarity", g.rarityName],
     ["Speed", String(g.speed)],
@@ -170,7 +183,9 @@ export function GhostDetailCard({ g, onClose, onToggleMove, tasks, actions, head
               <span className="ui-row-gap">
                 <RarityBadge rarity={g.rarity} />
                 {g.shiny && <PaletteBadge palette={g.palette} />}
-                <span className={`ghost-badge ${typeClass(g.type)}`}>{TYPES[g.type]?.name ?? g.type}</span>
+                {((g.types && g.types.length ? g.types : [g.type]) as TypeId[]).map((t) => (
+                  <span key={t} className={`ghost-badge ${typeClass(t)}`}>{TYPES[t]?.name ?? t}</span>
+                ))}
                 <span className={`ghost-badge ${g.abilitiesOn ? "ghost-badge-on" : ""}`}>{g.abilitiesOn ? "Abilities on" : "Abilities off"}</span>
               </span>
             </div>
