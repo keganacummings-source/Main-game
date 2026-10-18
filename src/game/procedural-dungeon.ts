@@ -1,5 +1,6 @@
 import { MONSTER_BY_ID, POIS, TILE, mulberry32 } from "./content";
 import type { Spawn, Tile, WorldData } from "./world";
+import { allEnemyDesigns } from "./enemy-design";
 export const DUNGEON_INTERVAL = 600;
 export type DungeonPortal = {
   id: `rift-${number}`;
@@ -140,12 +141,24 @@ export function buildProceduralDungeon(seed: number, level: number): WorldData {
       carve(b.x + 1, y);
     }
   }
-  const bosses = POIS.filter((p) => p.kind === "boss");
-  const boss = bosses[Math.floor(rng() * bosses.length)]!;
-  if (boss.kind !== "boss") throw Error("Missing world boss");
-  const def =
-    Object.values(MONSTER_BY_ID).find((m) => m.template === boss.template) ?? MONSTER_BY_ID.onibi!;
-  const species = def.id;
+  // Prefer any enemy designs explicitly flagged as Dungeon Boss (especially useful in TURBZ).
+  const designedBosses = allEnemyDesigns().filter((d) => d.flags?.dungeonBoss);
+  let species: string;
+  let bossId: string;
+  if (designedBosses.length) {
+    const pick = designedBosses[Math.floor(rng() * designedBosses.length)]!;
+    species = pick.replaces ?? pick.id;
+    bossId = pick.id;
+  } else {
+    const bosses = POIS.filter((p) => p.kind === "boss");
+    const boss = bosses[Math.floor(rng() * bosses.length)]!;
+    if (boss.kind !== "boss") throw Error("Missing world boss");
+    const def =
+      Object.values(MONSTER_BY_ID).find((m) => m.template === boss.template) ?? MONSTER_BY_ID.onibi!;
+    species = def.id;
+    bossId = boss.id;
+  }
+  const def = MONSTER_BY_ID[species] ?? MONSTER_BY_ID.onibi!;
   const pool = Object.values(MONSTER_BY_ID).filter((m) => m.type === def.type);
   const spawns: Spawn[] = [];
   rooms.slice(1, -1).forEach((r, i) => {
@@ -167,7 +180,7 @@ export function buildProceduralDungeon(seed: number, level: number): WorldData {
     kind: "mob",
     species,
     boss: true,
-    bossId: boss.id,
+    bossId,
     level: Math.max(1, level),
     x: (end.x + 0.5) * TILE,
     y: (end.y + 0.5) * TILE,
