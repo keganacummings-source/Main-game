@@ -13,6 +13,7 @@
 import type { TypeId } from "./content";
 import { TYPES } from "./content";
 import { drawArmorOverlay, type ArmorPalette } from "./crying-armor";
+import { drawGearFx } from "./gear-fx";
 
 const SHEET_COLS = 9;
 const SHEET_ROWS = 4;
@@ -182,6 +183,17 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
     ctx.restore();
   }
 
+  // Per-piece Gear FX (Fine+ pieces only). Same system other classes use — authored for
+  // an ~18-unit body, so we scale by ~2.5 to match the Lidia paper-doll's visible size.
+  // `drawGearFx` reads `a.facing` as ±1 for horizontal mirroring, but Lidia drives direction
+  // via `.direction`; synthesise the right facing so left-facing FX don't come out backwards.
+  const fxT = a.time ?? a.walk ?? 0;
+  const gearScale = scale * 2.5;
+  const gearActor = (dir === "left" || dir === "right")
+    ? { ...a, facing: dir === "left" ? -1 : 1 }
+    : a;
+  if (pieces.length && dir !== "up") drawGearFx(ctx, gearActor, fxT, gearScale, "back");
+
   const slotForLayer = (name: LayerName): string | null => {
     for (const [slot, ly] of Object.entries(SLOT_LAYER)) if (ly === name) return slot;
     return null;
@@ -243,4 +255,11 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   }
 
   ctx.restore();
+
+  // Front-layer Gear FX (and back-layer when facing away) go after the body so trails,
+  // wings, hats and crown-glows sit on top of the sprite.
+  if (pieces.length) {
+    if (dir === "up") drawGearFx(ctx, gearActor, fxT, gearScale, "back");
+    drawGearFx(ctx, gearActor, fxT, gearScale, "front");
+  }
 }
