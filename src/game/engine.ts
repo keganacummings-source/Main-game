@@ -1945,9 +1945,12 @@ export class TurbzGame {
 		if (!m) return false;
 		if (kind === "boss" || kind === "witch" || kind === "bounty" || kind === "hunter") return true;
 		if (m.dungeonBoss) return true;
+		if (m.turbzBoss) return true;
 		if (typeof m.id === "string" && m.id.startsWith("shrine")) return true;
 		const map = this.save?.map ?? "";
 		if (this.isDungeonMap(map)) return true;
+		// TURBZ overworld: all enemies outside dungeons get full dangerous scaling, matching dungeon pressure.
+		if (this.turbz && map === "custom-turbz") return true;
 		return false;
 	}
 	/**
@@ -1991,8 +1994,10 @@ export class TurbzGame {
 		const shrineHp = shrineRound ? (kind === "boss" ? 1.2 : 1.15 + shrineRound * 0.35) : 1;
 		const shrineDmg = shrineRound ? 1.1 + shrineRound * 0.12 : 1;
 		// Dungeon rooms stack: trash is chunkier than the road, and the boss at the end is chunkier than a world boss.
-		const dungeonHp = inDungeon ? (m.dungeonBoss || kind === "boss" ? 1.35 : 1.4) : 1;
-		const dungeonDmg = inDungeon ? (m.dungeonBoss || kind === "boss" ? 1.18 : 1.12) : 1;
+		// TURBZ overworld enemies match dungeon pressure so they're as lethal as indoor foes.
+		const turbzOverworld = !!(this.turbz && (this.save?.map ?? "") === "custom-turbz" && !inDungeon);
+		const dungeonHp = (inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.35 : 1.4) : 1;
+		const dungeonDmg = (inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.18 : 1.12) : 1;
 		const base = Math.max(floorHp, hitRef * t.hits) * stats.hp * party * shrineHp * dungeonHp;
 		const bountyRage = m.enraged && (m.bounty || m.bountySpirit);
 		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1) * (bountyRage ? BOUNTY_ENRAGE.hp : 1);

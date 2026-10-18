@@ -298,6 +298,14 @@ export function installTurbz(game: any): void {
         fixedLevel: true, boss: true, bossId: `turbz-boss-${i}`, name: b.name,
       });
       m.turbzBoss = true;
+      // TURBZ world bosses: always hunt the player when in range, never idle.
+      // Their aggro radius is very wide so they come looking for you.
+      m.aggro = true;
+      m.aggroRange = 2400;
+      m.homeX = p.x;
+      m.homeY = p.y;
+      // Bosses respawn on the wild (never permanently gone): long timer but they come back.
+      m.respawnDelay = 600; // 10 min
       this.mobs.push(m);
     });
     this.say("Six dungeons are open, and five world bosses walk the wild. That is where the good gear is.");
@@ -474,26 +482,87 @@ export function installTurbz(game: any): void {
   };
 
   game.makeTwitch = function (i: number, x: number, y: number, name: string, level = 1) {
-    const cls = pick(CLASSES);
-    const raceId = CLASS_RACE[cls.id] ?? "vesper";
     const rng = mulberry32(((rand() * 1e9) | 0) || 9);
     // A TURBZ witch is born at least at your level with gear to match, so she is never a pushover.
     level = Math.max(level, this.save?.level ?? 1);
-    const weapon = rollGear(rng, { level, slot: "weapon", floor: level >= 8 ? "fine" : "common", typeBias: cls.type, raceBias: raceId });
-    const m = this.makeMob({ id: `twitch-${i}-${nextUid()}`, species: "muma", x, y, level, fixedLevel: true, template: 20, type: cls.type, name });
+
+    // 50% chance: a real playerclass witch (any class, full player-style model, battle-heavy AI).
+    // 50% chance: a custom-built higher-level cryingGirl (always at least 2 levels above you,
+    //             all six gear slots filled, stacked offense spells, relentless hunter AI).
+    const isCryingBuild = rand() < 0.5;
+
+    let cls: (typeof CLASSES)[number];
+    let raceId: string;
+    let classId: string;
+    let witchLevel: number;
+
+    if (isCryingBuild) {
+      // cryingGirl build: always a few levels above the player so she is never a fair fight.
+      classId = "cryinggirl";
+      raceId = (CLASS_RACE as Record<string, string>).cryinggirl ?? "tide";
+      witchLevel = level + 2 + Math.floor(rand() * 3); // +2 to +4 levels above player
+      cls = CLASSES.find((c) => c.id === "cryinggirl") ?? CLASSES[0]!;
+    } else {
+      // Real playerclass witch: picks any class, uses its race, looks and fights like a player.
+      cls = pick(CLASSES);
+      classId = cls.id;
+      raceId = CLASS_RACE[cls.id] ?? "vesper";
+      witchLevel = level;
+    }
+
+    const weapon = rollGear(rng, { level: witchLevel, slot: "weapon", floor: witchLevel >= 8 ? "fine" : "common", typeBias: cls?.type ?? "spirit", raceBias: raceId });
+
+    // Build a full gear loadout — all six slots, quality scales with level.
+    const gearFloor = witchLevel >= 20 ? "rare" : witchLevel >= 10 ? "fine" : "common";
+    const fullGear: Partial<Record<(typeof SLOTS)[number], ReturnType<typeof rollGear>>> = { weapon };
+    for (const slot of SLOTS) {
+      if (slot === "weapon") continue;
+      fullGear[slot] = rollGear(mulberry32(((rand() * 1e9) | 0) || 3), { level: witchLevel, slot, floor: gearFloor, typeBias: cls?.type ?? "spirit", raceBias: raceId });
+    }
+
+    const m = this.makeMob({ id: `twitch-${i}-${nextUid()}`, species: "muma", x, y, level: witchLevel, fixedLevel: true, template: 20, type: cls?.type ?? "spirit", name });
+
+    // BATTLE-HEAVY AI: seed the brain with more offense, fewer idle moments, relentless pursuit.
     const brain: Brain = {
-      level, xp: 0, sp: Math.max(0, (level - 1) * 3), ranks: {}, known: [...cls.starterMoves].filter((id) => MOVE_BY_ID[id]),
-      gear: { weapon }, bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: 1 }, spirits: 0, team: 0,
-      state: "grind", goalX: x, goalY: y, think: rand() * 0.4, simT: rand() * SIM, castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 8, age: 0, stuck: 0,
+      level: witchLevel, xp: 0, sp: Math.max(0, (witchLevel - 1) * 3),
+      ranks: {}, known: [...(cls?.starterMoves ?? [])].filter((id) => MOVE_BY_ID[id]),
+      gear: fullGear,
+      bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: isCryingBuild ? 3 : 2 },
+      spirits: isCryingBuild ? Math.min(3, Math.floor(witchLevel / 10)) : 0,
+      team: 0,
+      state: "hunt", // starts in hunt state, not idle grind
+      goalX: x, goalY: y, think: rand() * 0.2, simT: rand() * SIM,
+      castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 4, age: 0, stuck: 0,
     };
+
+    // lootGear = all worn pieces so the chest after killing her is rewarding.
+    const lootGear = Object.values(fullGear).filter(Boolean) as ReturnType<typeof rollGear>[];
+
     Object.assign(m, {
-      twitch: true, witch: true, rival: false, classId: cls.id, race: raceId, female: rand() < 0.6,
-      ghost: false, aggro: false, seen: true, huntIn: 0, enchants: [], fromSpawn: false,
-      stats: { hp: 1, dmg: 1.1, speed: 1, crit: 0.08, dodge: 0.08, physRes: 0, spellRes: 0 },
-      rarity: 2, lootKyo: 8 + level * 4, rv: brain, homeX: x, homeY: y,
+      twitch: true, witch: true, rival: false,
+      classId,
+      race: raceId,
+      female: rand() < 0.65,
+      ghost: false,
+      aggro: true, // always aggressive — these witches hunt, they do not wander
+      seen: true, huntIn: 0, enchants: [], fromSpawn: false,
+      // cryingGirl builds are scarier: more HP, higher crit, better dodge.
+      stats: isCryingBuild
+        ? { hp: 1.25, dmg: 1.3, speed: 1.05, crit: 0.14, dodge: 0.12, physRes: 0.08, spellRes: 0.08 }
+        : { hp: 1.0,  dmg: 1.1, speed: 1.0,  crit: 0.08, dodge: 0.08, physRes: 0,    spellRes: 0    },
+      rarity: isCryingBuild ? 3 : 2,
+      lootKyo: 8 + witchLevel * 5,
+      lootGear,
+      rv: brain,
+      homeX: x, homeY: y,
+      // Direction animation state for smooth movement rendering.
+      direction: "down" as const,
+      moving: false,
+      walk: 0,
     });
+
     this.scaleTwitch(m, true);
-    if (level > 1) this.twitchSpend(m);
+    if (witchLevel > 1) this.twitchSpend(m);
     return m;
   };
 
@@ -516,7 +585,9 @@ export function installTurbz(game: any): void {
     const hpRef = Math.max(liveHp, exp.maxHp);
     const floorHp = (20 + r.level * 8) * 2.5;
     const night = this.isNightNow?.() ? 1.2 : 1;
-    const base = Math.max(floorHp, hitRef * t.hits) * (1 + armor / 240) * (1 + r.spirits * 0.03);
+    // cryingGirl builds are custom-tuned killing machines: extra health and damage to match.
+    const cryingMult = m.classId === "cryinggirl" ? 1.35 : 1;
+    const base = Math.max(floorHp, hitRef * t.hits) * (1 + armor / 240) * (1 + r.spirits * 0.03) * cryingMult;
     const max = Math.max(1, Math.floor(base * night));
     const ratio = fresh || !(m.max > 0) ? 1 : Math.max(0, Math.min(1, m.hp / m.max));
     m.level = r.level;
@@ -524,7 +595,9 @@ export function installTurbz(game: any): void {
     m.baseMax = Math.floor(base);
     if (m.alive !== false) m.hp = Math.max(1, Math.ceil(max * ratio));
     // Fraction of your health one clean hit removes — the dangerous-witch share (≈0.38-0.58, bent).
-    m.frac = (hpRef * t.frac) / liveHp;
+    // cryingGirl builds hit harder — their power is their identity.
+    const fracMult = m.classId === "cryinggirl" ? 1.25 : 1;
+    m.frac = (hpRef * t.frac * fracMult) / liveHp;
     m.dmgMult = 1.15 + Math.min(0.4, r.spirits * 0.03);
     m.nightScaled = !!this.isNightNow?.();
     m.speed = Math.max(1, Math.round(((this.playerSpeed?.() ?? 14) + t.speedOffset)));
@@ -567,6 +640,9 @@ export function installTurbz(game: any): void {
     const r: Brain = m?.rv;
     if (!r) return;
     const cls = CLASS_BY_ID[m.classId as ClassId];
+    // cryingGirl builds and all TURBZ hunter witches prioritise offense: learn more attacks faster,
+    // rank them up higher, and pick heal/ward last so every skill point makes her hit harder.
+    const battleHeavy = m.classId === "cryinggirl" || m.aggro;
     const learn = (filter: (mv: Move) => boolean) => {
       const pool = MOVES.filter((mv) => !r.known.includes(mv.id) && filter(mv));
       const own = pool.filter((mv) => mv.type === cls?.type);
@@ -576,16 +652,33 @@ export function installTurbz(game: any): void {
       r.ranks[choice.id] = 1;
       return true;
     };
-    let guard = 30;
+    // Max spell rank scales with level so high-level witches are genuinely devastating.
+    const maxRank = battleHeavy ? Math.max(3, Math.floor(r.level / 8) + 2) : Math.max(2, Math.floor(r.level / 12) + 1);
+    let guard = 60;
     while (r.sp > 0 && guard-- > 0) {
       const k = r.known.map((id) => MOVE_BY_ID[id]).filter(Boolean) as Move[];
-      if (!k.some(isHeal) && learn(isHeal)) { r.sp--; continue; }
-      if (r.level >= 3 && !k.some(isWard) && learn(isWard)) { r.sp--; continue; }
-      if (k.filter(isOffense).length < 4 && learn((mv) => isOffense(mv) && mv.power <= 28 + r.level * 3)) { r.sp--; continue; }
-      const best = k.filter(isOffense).sort((a, b) => (r.ranks[a.id] ?? 1) - (r.ranks[b.id] ?? 1))[0];
-      if (!best) break;
-      r.ranks[best.id] = (r.ranks[best.id] ?? 1) + 1;
-      r.sp--;
+      if (battleHeavy) {
+        // Battle-heavy order: offense first, then rank up aggressively, heal/ward only at low HP budgets.
+        if (k.filter(isOffense).length < 4 && learn((mv) => isOffense(mv) && mv.power <= 30 + r.level * 3)) { r.sp--; continue; }
+        const offenseK = k.filter(isOffense);
+        const toRank = offenseK.filter((mv) => (r.ranks[mv.id] ?? 1) < maxRank)
+          .sort((a, b) => b.power - a.power)[0]; // rank up the hardest-hitting move first
+        if (toRank) { r.ranks[toRank.id] = (r.ranks[toRank.id] ?? 1) + 1; r.sp--; continue; }
+        if (k.filter(isOffense).length < 6 && learn((mv) => isOffense(mv))) { r.sp--; continue; }
+        if (!k.some(isHeal) && learn(isHeal)) { r.sp--; continue; }
+        if (r.level >= 5 && !k.some(isWard) && learn(isWard)) { r.sp--; continue; }
+      } else {
+        // Standard order: heal, ward, then offense, then rank up.
+        if (!k.some(isHeal) && learn(isHeal)) { r.sp--; continue; }
+        if (r.level >= 3 && !k.some(isWard) && learn(isWard)) { r.sp--; continue; }
+        if (k.filter(isOffense).length < 4 && learn((mv) => isOffense(mv) && mv.power <= 28 + r.level * 3)) { r.sp--; continue; }
+        const best = k.filter(isOffense)
+          .filter((mv) => (r.ranks[mv.id] ?? 1) < maxRank)
+          .sort((a, b) => (r.ranks[a.id] ?? 1) - (r.ranks[b.id] ?? 1))[0];
+        if (!best) break;
+        r.ranks[best.id] = (r.ranks[best.id] ?? 1) + 1;
+        r.sp--;
+      }
     }
     this.scaleTwitch(m);
   };
@@ -688,7 +781,8 @@ export function installTurbz(game: any): void {
       const wy = save.y + Math.sin(ang) * dist;
       if (this.witchLand(wx, wy)) { sx = wx; sy = wy; break; }
     }
-    // Level: within 2 of the player — a real match, not a stomp.
+    // Level: hunter witches are a real threat — within 2 of the player for playerclass builds,
+    // or up to +4 for cryingGirl builds (handled inside makeTwitch via the isCryingBuild branch).
     const lv = Math.max(1, save.level + Math.floor(rand() * 3) - 1);
     let nm = pick(WITCH_NAMES);
     const used = new Set<string>((this.mobs ?? []).map((m: any) => m.name));
