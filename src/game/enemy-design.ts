@@ -142,11 +142,11 @@ function readFlags(raw: Partial<EnemyDesign> | null, biomes: BiomeId[]): EnemyFl
 export function parseEnemyDesign(raw: unknown): EnemyDesign {
   const d = raw as Partial<EnemyDesign> | null;
   if (!d || typeof d !== "object") throw Error("Not an enemy design.");
-  if (typeof d.id !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(d.id)) throw Error("Enemy ID: 1-40 letters, numbers, - or _.");
+  if (typeof d.id !== "string" || !/^[a-z0-9_-]{1,40}$/i.test(d.id)) throw Error("Enemy ID: 1-40 letters, numbers, - or _. ");
   if (typeof d.name !== "string" || !d.name.trim() || d.name.length > 40) throw Error("Enemy name: 1-40 characters.");
   if (!d.type || !Object.hasOwn(TYPES, d.type)) throw Error("Pick an element.");
   const replaces = typeof d.replaces === "string" && (MONSTER_BY_ID[d.replaces] || ANIMAL_BY_ID[d.replaces]) ? d.replaces : null;
-  if (!replaces && (MONSTER_BY_ID[d.id] && !(MONSTER_BY_ID[d.id] as MonsterDef & { custom?: boolean }).custom || ANIMAL_BY_ID[d.id])) throw Error(`"${d.id}" is a built-in enemy. Use "Replaces" or a different ID.`);
+  if (!replaces && (MONSTER_BY_ID[d.id] && !(MONSTER_BY_ID[d.id] as MonsterDef & { custom?: boolean }).custom || ANIMAL_BY_ID[d.id])) throw Error(`\"${d.id}\" is a built-in enemy. Use \"Replaces\" or a different ID.`);
   let sprite: EnemySprite;
   if (d.sprite?.kind === "pixels" && Array.isArray(d.sprite.pixels) && d.sprite.pixels.length === 256) {
     sprite = { kind: "pixels", pixels: d.sprite.pixels.map((p) => (typeof p === "string" && /^#[0-9a-f]{6}$/i.test(p) ? p : null)) };
@@ -324,4 +324,71 @@ export function autoPickMoves(d: EnemyDesign): string[] {
     if (!picked.includes(m.id)) picked.push(m.id);
   }
   return picked.length ? picked : ["thorn"];
+}
+
+/** Options for the AutoStat Picker. */
+export type StatOption = "melee" | "ranged" | "spell" | "fast" | "slow" | "highDamage" | "tanky" | "physical" | "spellResist" | "crit" | "dodge";
+
+export const STAT_OPTIONS: { id: StatOption; label: string; hint: string }[] = [
+  { id: "melee", label: "Melee", hint: "Prefers close combat. A bit tankier." },
+  { id: "ranged", label: "Ranged", hint: "Keeps distance. Slightly faster and harder-hitting." },
+  { id: "spell", label: "Magic", hint: "Spell-focused. Better spell resistance." },
+  { id: "fast", label: "Fast", hint: "High turn speed, lower health." },
+  { id: "slow", label: "Slow", hint: "Low speed, higher health." },
+  { id: "highDamage", label: "High Damage", hint: "Hits much harder, a bit squishier." },
+  { id: "tanky", label: "Tanky", hint: "Lots of health, a bit slower." },
+  { id: "physical", label: "Physical", hint: "Higher physical resistance." },
+  { id: "spellResist", label: "Spell Resist", hint: "Higher spell resistance." },
+  { id: "crit", label: "Crit", hint: "Higher crit chance." },
+  { id: "dodge", label: "Dodge", hint: "Higher dodge chance." },
+];
+
+/**
+ * AutoStat Picker. Builds a stats line from selected combat styles.
+ * Role flags (boss, witch, animal) also influence the result.
+ */
+export function autoPickStats(d: EnemyDesign, options: StatOption[]): EnemyStats {
+  const has = (o: StatOption) => options.includes(o);
+  const s: EnemyStats = { hp: 1, dmg: 1, speed: 1, crit: 0.05, dodge: 0, physRes: 0, spellRes: 0 };
+
+  if (has("tanky")) { s.hp *= 1.65; s.speed *= 0.82; }
+  if (has("highDamage")) { s.dmg *= 1.55; s.hp *= 0.82; }
+  if (has("fast")) { s.speed *= 1.45; s.hp *= 0.88; }
+  if (has("slow")) { s.speed *= 0.68; s.hp *= 1.25; }
+  if (has("physical")) { s.physRes += 0.18; s.hp *= 1.08; }
+  if (has("spellResist")) { s.spellRes += 0.18; }
+  if (has("crit")) { s.crit += 0.14; s.dmg *= 1.08; }
+  if (has("dodge")) { s.dodge += 0.12; s.speed *= 1.08; }
+
+  if (has("melee")) { s.physRes += 0.06; s.hp *= 1.1; }
+  if (has("ranged")) { s.speed *= 1.06; s.dmg *= 1.06; }
+  if (has("spell")) { s.spellRes += 0.08; s.dmg *= 1.05; }
+
+  // Role influence
+  if (d.flags?.worldBoss || d.flags?.dungeonBoss || d.boss) {
+    s.hp *= 1.45;
+    s.dmg *= 1.25;
+    s.levelBonus = Math.max(d.levelBonus, 4);
+  }
+  if (d.flags?.witch) {
+    s.spellRes += 0.1;
+    s.dmg *= 1.12;
+    s.hp *= 1.1;
+  }
+  if (d.flags?.animal) {
+    s.hp *= 0.75;
+    s.speed *= 1.12;
+    s.dmg *= 0.9;
+  }
+
+  // Soft clamps so values stay in the useful range
+  s.hp = Math.max(0.4, Math.min(6, s.hp));
+  s.dmg = Math.max(0.5, Math.min(5, s.dmg));
+  s.speed = Math.max(0.4, Math.min(2.5, s.speed));
+  s.crit = Math.max(0, Math.min(0.45, s.crit));
+  s.dodge = Math.max(0, Math.min(0.35, s.dodge));
+  s.physRes = Math.max(0, Math.min(0.55, s.physRes));
+  s.spellRes = Math.max(0, Math.min(0.55, s.spellRes));
+
+  return s;
 }
