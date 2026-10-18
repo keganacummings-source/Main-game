@@ -1795,7 +1795,10 @@ export class TurbzGame {
 		// of the same world and its ghost can inherit the look.
 		const designNow = enemyDesignFor(species);
 		const kindNow = animal ? "animal" : s.boss || s.dungeonBoss || designNow?.boss ? "boss" : "normal";
-		const wildFoe = !designNow && (kindNow === "normal" || kindNow === "animal") && !s.name && !s.boss && !s.bossId && !s.fixedLevel;
+		// TURBZ overworld (custom-turbz) zone spawns carry fixedLevel so they keep their zone level band,
+		// but the player wants them to roll the same multi-type + silly Name identity as dungeon enemies.
+		const turbzOverworldWild = !!(this.turbz && (this.save?.map ?? "") === "custom-turbz" && !this.isDungeonMap(this.save?.map ?? ""));
+		const wildFoe = !designNow && (kindNow === "normal" || kindNow === "animal") && !s.name && !s.boss && !s.bossId && (!s.fixedLevel || turbzOverworldWild);
 		const mobTypes = designNow ? [designNow.type] : wildFoe ? rollEnemyTypes() : [baseType];
 		const type = mobTypes[0] ?? baseType;
 		const mobSkin = designNow ? null : rollEnemySkin();
