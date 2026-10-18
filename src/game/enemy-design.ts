@@ -6,7 +6,7 @@
  * `installEnemyDesigns()` folds them into the monster tables before a world is built,
  * and `enemyDesignFor(species)` is read by the engine whenever a foe is made.
  */
-import { ANIMAL_BY_ID, BIOME_MONSTERS, MONSTERS, MONSTER_BY_ID, MOVE_BY_ID, TYPES, type BiomeId, type MonsterDef, type TypeId } from "./content";
+import { ANIMAL_BY_ID, BIOME_MONSTERS, MONSTERS, MONSTER_BY_ID, MOVE_BY_ID, TYPES, type BiomeId, type MonsterDef, type TypeId, MOVES, attackForm, moveTactic } from "./content";
 import { MOB_ENCHANT_IDS, type EnemyStats, type MobEnchantId } from "./balance";
 import { CREATURE_CELLS, setCustomSprite, clearCustomSprites } from "./creature-sprites";
 import shipped from "./enemies/custom-enemies.json";
@@ -297,4 +297,31 @@ export function installEnemyDesigns(list: EnemyDesign[] = allEnemyDesigns()): nu
 /** The design that controls this species, if any. */
 export function enemyDesignFor(species: string): EnemyDesign | null {
   return active.get(species) ?? null;
+}
+
+/**
+ * AutoMove Picker — similar to how the Crying Girl / CryingWitch kit is built.
+ * Picks 1-4 moves based on the design's element, stats, and assigned role (witch, boss, tanky, etc.).
+ */
+export function autoPickMoves(d: EnemyDesign): string[] {
+  const pool = MOVES.filter((m) => m.type === d.type || m.type === "normal" || (d.flags.witch && (m.type === "spirit" || m.type === "water")));
+  const score = (m: typeof MOVES[number]): number => {
+    let s = m.power * 0.4;
+    if (d.stats.dmg > 1.3 && attackForm(m) !== "melee") s += 12;
+    if (d.stats.hp > 1.4 && (moveTactic(m) === "ward" || m.effect === "shell")) s += 18;
+    if (d.flags.witch && (moveTactic(m) === "heal" || m.effect === "mend")) s += 22;
+    if (d.flags.dungeonBoss || d.flags.worldBoss) s += m.power > 40 ? 10 : 0;
+    if (d.stats.crit > 0.12 && m.crit > 10) s += 8;
+    if (d.stats.speed > 1.2 && (moveTactic(m) === "dash" || moveTactic(m) === "blink")) s += 10;
+    if (d.flags.animal && attackForm(m) === "melee") s += 6;
+    return s;
+  };
+  const ranked = [...pool].sort((a, b) => score(b) - score(a));
+  const want = d.flags.witch || d.flags.dungeonBoss || d.flags.worldBoss ? 4 : 3;
+  const picked: string[] = [];
+  for (const m of ranked) {
+    if (picked.length >= want) break;
+    if (!picked.includes(m.id)) picked.push(m.id);
+  }
+  return picked.length ? picked : ["thorn"];
 }
