@@ -12,6 +12,7 @@
  */
 import type { TypeId } from "./content";
 import { TYPES } from "./content";
+import { drawArmorOverlay, type ArmorPalette } from "./crying-armor";
 
 const SHEET_COLS = 9;
 const SHEET_ROWS = 4;
@@ -83,23 +84,6 @@ function hslHex(h: number, s: number, l: number): string {
   return `#${to(r)}${to(g)}${to(b)}`;
 }
 
-/**
- * Per-SET unique outfit palette (only for this character). A worn set's `variant` seeds a distinct
- * two-tone scheme, and each slot takes a slightly different shade of it, so all 100 sets read as
- * their own cohesive, hunt-worthy design rather than a recolour of one element.
- */
-const SLOT_ORDER = ["suit", "belt", "boot", "glove", "shawl", "hairband"];
-function setLayerTint(variant: number, layer: LayerName): { color: string; glow: string | null; amt: number } {
-  const hue = (variant * 47) % 360;
-  const accent = (hue + 150) % 360; // complementary accent for trims/accessories
-  const idx = Math.max(0, SLOT_ORDER.indexOf(layer));
-  const accessory = layer === "shawl" || layer === "hairband" || layer === "glove";
-  const h = accessory ? accent : hue;
-  const sat = 55 + ((variant >> 2) % 25);
-  const light = 48 + ((idx * 6 + (variant % 3) * 4) % 22) - 8; // spread slots across a tonal range
-  return { color: hslHex(h, sat, Math.max(30, Math.min(70, light))), glow: hslHex(h, 90, 62), amt: 0.92 };
-}
-
 /** Cache of tinted greyscale layer sheets, keyed by layer+colour+amt. */
 const tintCache = new Map<string, HTMLCanvasElement>();
 function tintedSheet(name: LayerName, img: HTMLImageElement, color: string, amt: number): HTMLCanvasElement | null {
@@ -132,7 +116,26 @@ function tintedSheet(name: LayerName, img: HTMLImageElement, color: string, amt:
   return c;
 }
 
-type Piece = { slot: string; type: TypeId; quality: number };
+type Piece = { slot: string; type: TypeId; quality: number; style?: number; fxSeed?: number };
+
+/** Shape palette for the procedural armor overlay. Terraria-style: every piece paints with its OWN
+ *  element colour, no palette-sharing between pieces. The main fill is the element colour (boosted
+ *  for rarity), the trim is a complementary hue, and epic+ pieces get a glow in their element colour. */
+function armorPalette(piece: Piece): ArmorPalette {
+  const typeHex = TYPES[piece.type]?.color ?? "#c8c0b0";
+  const color = piece.quality >= 2 ? shade(typeHex, 15) : shade(typeHex, -10);
+  const trim = shade(typeHex, piece.quality >= 2 ? 60 : -40);
+  const glow = piece.quality >= 4 ? typeHex : null;
+  return { color, trim, glow };
+}
+
+/** Per-piece shape seed. Mix (style, slot, fxSeed) so same-slot pieces from different sets look
+ *  different and same-slot pieces from the same set look the same (style is per-set, not per-slot). */
+function pieceShapeVariant(piece: Piece): number {
+  const style = (piece.style ?? 0) | 0;
+  const seed = (piece.fxSeed ?? 0) | 0;
+  return (Math.abs(style) * 97 + Math.abs(seed) * 11 + 1) | 0;
+}
 
 export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   const dir = ((a.direction ?? "down") as "up" | "down" | "left" | "right");
@@ -192,14 +195,13 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
       ctx.drawImage(img, sx, sy, CELL, CELL, dx, dy, destW, destH);
       continue;
     }
-    // Clothing layer: only when its slot is worn. A full set gets its own unique per-set palette;
-    // otherwise each piece is tinted by its element + rarity.
+    // Clothing layer: only when its slot is worn. Terraria-style: each piece is tinted by
+    // its OWN element + rarity, even when the five-piece set is complete — the completed set
+    // is signalled by the Full Gear FX aura (drawn behind the body) rather than a shared palette.
     const slot = slotForLayer(name);
     const piece = slot ? worn.get(slot) : undefined;
     if (!piece) continue;
-    const { color, glow, amt } = (a.setOn && a.setVariant)
-      ? setLayerTint(a.setVariant, name)
-      : tintParams(piece.type, piece.quality);
+    const { color, glow, amt } = tintParams(piece.type, piece.quality);
     const sheet = tintedSheet(name, img, color, amt) ?? img;
     if (glow) {
       ctx.save();
@@ -209,6 +211,17 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
       ctx.restore();
     } else {
       ctx.drawImage(sheet, sx, sy, CELL, CELL, dx, dy, destW, destH);
+    }
+
+    // V7+ per-piece armor silhouette (Terraria-style). Each worn piece paints its OWN overlay
+    // in its OWN element colour — no palette-sharing between pieces. Wearing a chest from one
+    // set and legs from another shows both silhouettes stacked, each in its own tint. When all
+    // five pieces of a set are worn, the Full Gear FX aura (drawn behind the body) signals the
+    // completed set; the piece visuals themselves don't change.
+    if (slot && (slot === "head" || slot === "chest" || slot === "legs" || slot === "feet" || slot === "relic" || slot === "weapon")) {
+      const shapeVariant = pieceShapeVariant(piece);
+      const pal = armorPalette(piece);
+      drawArmorOverlay(ctx, shapeVariant, slot, dir, pal, dx, dy, destW, destH);
     }
   }
 

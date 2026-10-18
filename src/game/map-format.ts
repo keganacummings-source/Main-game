@@ -59,9 +59,6 @@ export type MapQuest = {
   done?: string;
 };
 
-/** Legacy single-quest shape (older map files). Migrated into MapFile.quests on load. */
-type LegacyNpcQuest = { id: string; name: string; about: string; rewardKyo?: number; steps: MapQuestStep[] };
-
 /** Custom NPC for quest maps: dialogue lines and a look. Quests live in MapFile.quests. */
 export type MapNpc = {
   id: string;
@@ -74,8 +71,6 @@ export type MapNpc = {
   /** Appearance. */
   outfit?: number;
   hair?: number;
-  /** @deprecated read-only: old files stored one quest here. */
-  quest?: LegacyNpcQuest;
 };
 
 export type MapTile = WorldTile & {
@@ -106,7 +101,14 @@ export function onDesignerStore(fn: (event: { error?: string }) => void): () => 
 }
 const emitStore = (event: { error?: string }) => { for (const fn of storeListeners) fn(event); };
 
-function legacyMaps(): MapFile[] {
+/**
+ * Loads what's on disk into the in-memory cache.
+ *
+ * IndexedDB has no practical size limit and is the primary store. When it's not available
+ * (private tabs, old mobile browsers), the designer falls back to localStorage under
+ * DESIGNER_KEY. loadFallback() reads that fallback at startup; writeFallback() persists to it.
+ */
+function loadFallback(): MapFile[] {
   try {
     const list = JSON.parse(localStorage.getItem(DESIGNER_KEY) ?? "[]");
     return Array.isArray(list) ? list.flatMap((m) => { try { return [parseMapJson(m)]; } catch { return []; } }) : [];
@@ -118,12 +120,12 @@ function legacyMaps(): MapFile[] {
 function cache(): Map<string, MapFile> {
   if (!mapCache) {
     mapCache = new Map();
-    for (const m of legacyMaps()) mapCache.set(m.id, m);
+    for (const m of loadFallback()) mapCache.set(m.id, m);
   }
   return mapCache;
 }
 
-/** Loads every saved map into memory (and moves old localStorage maps into IndexedDB). Safe to call twice. */
+/** Loads every saved map into memory. Safe to call twice. */
 export async function initDesignerStore(): Promise<void> {
   const c = cache();
   if (idbReady || !idbAvailable()) return;
@@ -135,18 +137,13 @@ export async function initDesignerStore(): Promise<void> {
         c.set(m.id, m);
       } catch { /* skip a damaged map */ }
     }
-    const legacy = legacyMaps();
-    for (const m of legacy) {
-      if (!rows.some((r) => (r as { id?: string })?.id === m.id)) await idbPut(STORE_MAPS, m.id, packMap(m));
-    }
-    if (legacy.length) localStorage.removeItem(DESIGNER_KEY);
     idbReady = true;
   } catch {
     /* IndexedDB unavailable (private mode): fall back to localStorage */
   }
 }
 
-function writeLegacy(): string | null {
+function writeFallback(): string | null {
   try {
     localStorage.setItem(DESIGNER_KEY, JSON.stringify([...cache().values()].map(packMap)));
     return null;
@@ -169,7 +166,7 @@ export function saveDesignerMap(map: MapFile): string | null {
     idbPut(STORE_MAPS, clean.id, packMap(clean)).then(() => emitStore({}), (err) => emitStore({ error: `Saving to this device failed: ${err instanceof Error ? err.message : "unknown error"}. Export the map as a file to keep it.` }));
     return null;
   }
-  const err = writeLegacy();
+  const err = writeFallback();
   if (err) cache().delete(clean.id);
   return err;
 }
@@ -177,7 +174,7 @@ export function saveDesignerMap(map: MapFile): string | null {
 export function deleteDesignerMap(id: string): void {
   cache().delete(id);
   if (idbReady) void idbDelete(STORE_MAPS, id).catch(() => undefined);
-  else writeLegacy();
+  else writeFallback();
 }
 
 /** Designer maps saved on this device. Treat the returned maps as read-only; copy one before editing it. */
@@ -489,7 +486,7 @@ function parseStep(s: unknown): MapQuestStep {
   throw new Error("Unknown quest step type.");
 }
 
-function parseQuests(raw: unknown, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapQuest[] {
+function parseQuests(raw: unknown): MapQuest[] {
   if (raw != null && (!Array.isArray(raw) || raw.length > LIMITS.quests)) throw new Error(`Invalid quests (maximum ${LIMITS.quests}).`);
   const ids = new Set<string>();
   const out: MapQuest[] = [];
@@ -520,18 +517,12 @@ function parseQuests(raw: unknown, legacy: { giver: string; quest: LegacyNpcQues
     if (!q || typeof q !== "object") throw new Error("Invalid quest.");
     add(q);
   }
-  for (const { giver, quest } of legacy) {
-    let id = quest.id;
-    while (ids.has(id)) id += "_";
-    add({ id, name: quest.name, about: quest.about, giver, steps: quest.steps, reward: quest.rewardKyo ? { kyo: quest.rewardKyo } : undefined });
-  }
   return out;
 }
 
 function questsAndNpcs(m: Partial<MapFile>, w: number, h: number): { npcs: MapNpc[]; quests: MapQuest[] } {
-  const legacy: { giver: string; quest: LegacyNpcQuest }[] = [];
-  const npcs = parseNpcs(m.npcs, w, h, legacy);
-  return { npcs, quests: parseQuests(m.quests, legacy) };
+  const npcs = parseNpcs(m.npcs, w, h);
+  return { npcs, quests: parseQuests(m.quests) };
 }
 
 function parseInteractables(raw: unknown, w: number, h: number): MapInteractable[] {
@@ -561,7 +552,7 @@ function parseInteractables(raw: unknown, w: number, h: number): MapInteractable
   });
 }
 
-function parseNpcs(raw: unknown, w: number, h: number, legacy: { giver: string; quest: LegacyNpcQuest }[]): MapNpc[] {
+function parseNpcs(raw: unknown, w: number, h: number): MapNpc[] {
   if (raw == null) return [];
   if (!Array.isArray(raw) || raw.length > LIMITS.npcs) throw new Error(`Invalid NPCs (maximum ${LIMITS.npcs}).`);
   const ids = new Set<string>();
@@ -574,8 +565,6 @@ function parseNpcs(raw: unknown, w: number, h: number, legacy: { giver: string; 
     if (typeof n.name !== "string" || !n.name.trim()) throw new Error("NPC needs a name.");
     if (!inMap(n.tx, n.ty)) throw new Error("NPC is outside the map.");
     const lines = Array.isArray(n.lines) ? n.lines.filter((l) => typeof l === "string").map((l) => l.slice(0, 200)).slice(0, 12) : [];
-    const quest = n.quest && typeof n.quest === "object" ? n.quest : undefined;
-    legacy.push(...(quest ? [{ giver: n.id, quest }] : []));
     return {
       id: n.id,
       name: n.name.slice(0, 40),

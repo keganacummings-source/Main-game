@@ -1144,6 +1144,10 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .set-progress-pips { display: inline-flex; gap: 3px; }
 .set-progress-pips i { width: 9px; height: 9px; border: 1px solid #ffffff44; background: #00000040; }
 .set-progress-pips i.on { background: var(--kyo, #e6c15a); border-color: #00000066; }
+.set-progress-name { display: inline-flex; gap: 6px; align-items: baseline; min-width: 0; }
+.set-progress-bonus { font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 24em; }
+.set-bonus-active { font-size: 0.9em; margin: 2px 0 4px; }
+.gear-card-setbonus { display: block; font-size: 0.85em; margin-top: 2px; padding-left: 2px; }
 
 /* ---------------------------------------------------------------------------
    Combat info: target panel, hover card, trait chips (pixel style, match the sprites)
@@ -1343,4 +1347,3 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .verse-tags { display: flex; flex-wrap: wrap; gap: 3px; }
 .verse-tag { font-size: 13px; padding: 0 4px; border: 1px solid #5a4038; color: #c9b8a0; }
 .perk-pick { text-align: left; }
-.perk-pick-legacy { border-style: dashed; }

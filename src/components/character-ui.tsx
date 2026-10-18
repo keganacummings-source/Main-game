@@ -109,7 +109,7 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
           <div data-testid="class-perks">
             <p className="font-display text-[9px] text-kyo">CLASS PERKS</p>
             {perks.map((p) => <p key={p.id}><span className="text-kyo">{p.name}:</span> {p.about}</p>)}
-            {c.legacyPassive && <p className="text-dim">Old perk (now only in the Crying Girl's build): {c.legacyPassive}</p>}
+            {c.basePassive && <p className="text-dim"><span className="text-kyo">Signature:</span> {c.basePassive}</p>}
           </div>
         )}
         {c.id === "cryinggirl" && <CryingCustomizer onChange={() => bump((n) => n + 1)} />}
@@ -374,13 +374,12 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
   );
 }
 
-/** The Crying Girl's custom build: any 4 perks from every class perk plus every legacy perk. */
+/** The Crying Girl's custom build: any 4 perks from the full pool. */
 function PerkBuilder({ onChange }: { onChange: () => void }) {
-  const [kind, setKind] = useState<"all" | "new" | "legacy">("all");
   const [q, setQ] = useState("");
   const picked = getCustomBuild();
   const f = q.trim().toLowerCase();
-  const shown = PERKS.filter((p) => (kind === "all" || (kind === "legacy" ? p.legacy : !p.legacy)) && (!f || p.name.toLowerCase().includes(f) || p.about.toLowerCase().includes(f) || (CLASS_BY_ID[p.cls as ClassId]?.name ?? "").toLowerCase().includes(f)));
+  const shown = PERKS.filter((p) => !f || p.name.toLowerCase().includes(f) || p.about.toLowerCase().includes(f) || (CLASS_BY_ID[p.cls as ClassId]?.name ?? "").toLowerCase().includes(f));
   const toggle = (id: string) => {
     setCustomBuild(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
     onChange();
@@ -389,10 +388,7 @@ function PerkBuilder({ onChange }: { onChange: () => void }) {
     <div className="grid gap-2" data-testid="perk-builder">
       <p className="font-display text-[9px] text-kyo">BUILD HER · {picked.length}/{CUSTOM_BUILD_MAX} PERKS</p>
       <div className="flex flex-wrap gap-1">
-        {(["all", "new", "legacy"] as const).map((k) => (
-          <button key={k} type="button" data-testid={`perk-kind-${k}`} className={`px-btn ui-btn-sm ${kind === k ? "px-btn-kyo" : ""}`} onClick={() => setKind(k)}>{k === "all" ? "Every perk" : k === "new" ? "New perks" : "Legacy perks"}</button>
-        ))}
-        <input className="px-input" data-testid="perk-search" placeholder="Search perks or class" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="px-input flex-1" data-testid="perk-search" placeholder="Search perks or class" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
       <div className="grid gap-1 sm:grid-cols-2" style={{ maxHeight: 260, overflowY: "auto" }}>
         {shown.map((p) => {
@@ -400,7 +396,7 @@ function PerkBuilder({ onChange }: { onChange: () => void }) {
           const l = buffLines(p.stats, (p.immune ?? []) as never);
           return (
             <button key={p.id} type="button" data-testid={`perk-pick-${p.id}`} disabled={!on && picked.length >= CUSTOM_BUILD_MAX}
-              className={`class-card perk-pick ${p.legacy ? "perk-pick-legacy" : ""} ${on ? "class-card-on" : ""}`} onClick={() => toggle(p.id)}>
+              className={`class-card perk-pick ${on ? "class-card-on" : ""}`} onClick={() => toggle(p.id)}>
               <span className="block text-lg">{on ? "✔ " : ""}{p.name} <span className="text-dim text-sm">· {CLASS_BY_ID[p.cls as ClassId]?.name}</span></span>
               <span className="block text-base text-dim">{p.about}</span>
               <span className="block text-sm">{l.buffs.map((b) => <span key={b} className="stat-up">▲ {b} </span>)}{l.debuffs.map((b) => <span key={b} className="stat-down">▼ {b} </span>)}</span>
