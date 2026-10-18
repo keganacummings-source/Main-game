@@ -12,6 +12,7 @@
  */
 import type { TypeId } from "./content";
 import { TYPES } from "./content";
+import { drawArmorOverlay, type ArmorPalette } from "./crying-armor";
 
 const SHEET_COLS = 9;
 const SHEET_ROWS = 4;
@@ -132,7 +133,21 @@ function tintedSheet(name: LayerName, img: HTMLImageElement, color: string, amt:
   return c;
 }
 
-type Piece = { slot: string; type: TypeId; quality: number };
+type Piece = { slot: string; type: TypeId; quality: number; style?: number };
+
+/** Shape palette for the procedural armor overlay. Different composition than the layer tint:
+ *  `color` is the main fill (vivid), `trim` is a complementary accent, `glow` appears on epic+. */
+function armorPalette(piece: Piece, setVariant: number | null): ArmorPalette {
+  const typeHex = TYPES[piece.type]?.color ?? "#c8c0b0";
+  // Core: tinted type color, boosted for rarity.
+  const color = piece.quality >= 2 ? shade(typeHex, 15) : shade(typeHex, -10);
+  // Accent: when a set is worn, use the set's complementary hue; else just a lightened/darkened trim.
+  const trim = setVariant != null
+    ? hslHex(((setVariant * 47) % 360 + 180) % 360, 90, 65)
+    : shade(typeHex, piece.quality >= 2 ? 60 : -40);
+  const glow = piece.quality >= 4 ? typeHex : null;
+  return { color, trim, glow };
+}
 
 export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
   const dir = ((a.direction ?? "down") as "up" | "down" | "left" | "right");
@@ -209,6 +224,16 @@ export function drawCryingLady(ctx: CanvasRenderingContext2D, a: any): void {
       ctx.restore();
     } else {
       ctx.drawImage(sheet, sx, sy, CELL, CELL, dx, dy, destW, destH);
+    }
+
+    // V7+ per-set armor silhouette. One procedural pixel overlay on top of the tinted
+    // layer, keyed by `setVariant` (full set worn) or the piece's own `style` (mix-and-match)
+    // + the slot. Each slot has a kit of distinct shapes, so a given set reads as its own
+    // outfit at a glance — not just a recolour.
+    if (slot && (slot === "head" || slot === "chest" || slot === "legs" || slot === "feet" || slot === "relic" || slot === "weapon")) {
+      const shapeVariant = (a.setOn && a.setVariant) ? Number(a.setVariant) : Number(piece.style ?? 0) + 1;
+      const pal = armorPalette(piece, (a.setOn && a.setVariant) ? Number(a.setVariant) : null);
+      drawArmorOverlay(ctx, shapeVariant, slot, dir, pal, dx, dy, destW, destH);
     }
   }
 

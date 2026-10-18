@@ -65,6 +65,11 @@ function GearCard({ snap, g, selected, onPick, onEquip, children }: { snap: Snap
           {locked && <span className="gear-tag">LOCKED</span>}
           {!worn && <span className="gear-tag gear-tag-kyo">{gearSellValue(gearPrice(g), snap.sellMult)} kyo</span>}
         </span>
+        {g.setId && SET_BY_ID[g.setId]?.bonus && (
+          <span className="gear-card-setbonus text-dim" data-testid="gear-set-bonus">
+            Set bonus: {SET_BY_ID[g.setId]!.bonus}
+          </span>
+        )}
       </button>
       {children}
     </div>
@@ -265,6 +270,7 @@ export function GearInventory({ snap, game }: Props) {
       <div className="bag-body">
         <aside className="bag-worn" aria-label="Equipped">
           <p className="font-display text-[9px] text-kyo">WORN · {snap.setLabel}</p>
+          {snap.setBonus && <p className="set-bonus-active" data-testid="worn-set-bonus"><span className="text-kyo">Set bonus:</span> {snap.setBonus}</p>}
           <div className="worn-grid">
             {SLOTS.map((s) => {
               const g = wornIn(snap, s);
@@ -289,17 +295,23 @@ export function GearInventory({ snap, game }: Props) {
             {(snap.setProgress ?? []).length > 0 && (
               <div className="set-progress" data-testid="set-progress">
                 <p className="text-dim">Sets found by this class (all 5 pieces unlocks it as level-1 spawn gear):</p>
-                {snap.setProgress.map((row) => (
-                  <div key={row.id} className="set-progress-row">
-                    <span>{row.name}</span>
-                    <span className="set-progress-pips">
-                      {(["head", "chest", "legs", "feet", "relic"] as const).map((sl) => (
-                        <i key={sl} title={SLOT_LABEL[sl]} className={row.slots.includes(sl) ? "on" : ""} />
-                      ))}
-                    </span>
-                    <span className={row.have >= 5 ? "text-kyo" : "text-dim"}>{row.have >= 5 ? "Unlocked" : `${row.have}/5`}</span>
-                  </div>
-                ))}
+                {snap.setProgress.map((row) => {
+                  const def = SET_BY_ID[row.id];
+                  return (
+                    <div key={row.id} className="set-progress-row">
+                      <span className="set-progress-name">
+                        <span>{row.name}</span>
+                        {def?.bonus && <span className="text-dim set-progress-bonus">· {def.bonus}</span>}
+                      </span>
+                      <span className="set-progress-pips">
+                        {(["head", "chest", "legs", "feet", "relic"] as const).map((sl) => (
+                          <i key={sl} title={SLOT_LABEL[sl]} className={row.slots.includes(sl) ? "on" : ""} />
+                        ))}
+                      </span>
+                      <span className={row.have >= 5 ? "text-kyo" : "text-dim"}>{row.have >= 5 ? "Unlocked" : `${row.have}/5`}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             {snap.totals.length ? (

@@ -8,6 +8,8 @@ A navigator for the codebase. "I want to change X — where do I go?"
 | --- | --- | --- |
 | A class's stats, element, role, or signature R-skill | `src/game/classes.ts` | The `CLASSES` array near the top. One line per class. |
 | A class's two class perks | `src/game/classes.ts` | `NEW_PERKS` array. Each perk's `cls:` says which class owns it. |
+| An armor-set silhouette (Crying Girl's paper-doll) | `src/game/crying-armor.ts` | `SHAPES_*` arrays — add a drawer function and append to the slot's list. See the top-of-file comment. |
+| An armor set's set-bonus text | `src/game/content.ts` | `SET_ROWS` — third string in each `[name, fx, bonus]` row. |
 | A class's signature (ex-"legacy") passive | `src/game/classes.ts` | `basePassive:` on that class's row. |
 | The Crying Girl's R-skill menu | `src/game/classes.ts` | `GIMMICKS` registry + `CRY_RSKILLS` list. |
 | What a gimmick (R-skill) actually does | `src/game/class-gimmicks.ts` | Each gimmick has its own function. |
@@ -51,6 +53,18 @@ V7 merged the old "legacy perks" into the base perk pool.
 3. Add its R-skill to `GIMMICKS` and implement it in `src/game/class-gimmicks.ts`.
 4. Add its starter kit to `STARTER_KITS` in `src/game/class-kits.ts`.
 5. Pick an existing sprite id for `sprite: one("warrior:yourid")` or add one to `src/game/actor-sheets.config.ts`.
+
+## Crying Girl's armor silhouettes
+
+The Crying Girl draws through a paper-doll (`src/game/crying-lady.ts`): one base body sprite plus six greyscale clothing layers (hairband/suit/belt/boot/glove/shawl) that get tinted at draw time. On top of each tinted layer, `src/game/crying-armor.ts` draws a **procedural pixel-art detail** unique to the set the piece belongs to.
+
+- Each slot (`head`, `chest`, `legs`, `feet`, `relic`, `weapon`) has a kit of ~8 shape variants (crowns vs horns vs veils vs tiaras for head, pauldrons vs sashes vs sigils for chest, etc.).
+- A set's `variant` number (seeded in `SET_VARIANT`, see `src/game/content.ts`) hashes into each slot's kit, so one set always gets the same silhouette combination (deterministic, no PNGs).
+- A mix-and-match piece — i.e. you're wearing one piece from a set and the rest from somewhere else — uses the piece's own `style` number for its shape and the piece's element for colour. Wear the full set and all six slots re-tune to the set's cohesive palette and glow.
+- To add a new silhouette (say a bone-tiara head): add a drawer function to `SHAPES_HEAD` in `crying-armor.ts`, append it to the array, and extend `SHAPE_NAMES.head`. The next time any set hashes to that index it'll use the new shape.
+- The system is CPU-free at steady state: each (variant, slot, facing, palette) overlay is baked into a 64×64 canvas and cached in `overlayCache`.
+
+Set bonuses live in `SET_ROWS` in `content.ts` as the third string of each row. They're displayed in three places now: the WORN block of the inventory (active set), each gear card (that gear's set), and each row of the set-progress list (name · bonus).
 
 ## Adding a new boss
 
