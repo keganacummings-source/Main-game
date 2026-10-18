@@ -117,7 +117,7 @@ export function Screen({ kicker, title, children, wide, roomy, aside }: { kicker
       <div className={`screen-frame ${wide ? "screen-frame-wide" : ""} ${roomy ? "screen-frame-roomy" : ""}`}>
         <div className="screen-brand" aria-hidden="true">
           <span className="screen-logo">TURBZ</span>
-          <span className="screen-sub">V6</span>
+          <span className="screen-sub">V7</span>
         </div>
         <div className="px-panel screen-card">
           <p className="screen-kicker">{kicker}</p>

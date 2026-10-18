@@ -1,5 +1,5 @@
 /**
- * Balance patch (V6.1).
+ * Balance (V7, carried forward from the V6.1 pass).
  *
  * Three ideas hold the difficulty together:
  *

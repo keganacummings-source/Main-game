@@ -1343,4 +1343,3 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .verse-tags { display: flex; flex-wrap: wrap; gap: 3px; }
 .verse-tag { font-size: 13px; padding: 0 4px; border: 1px solid #5a4038; color: #c9b8a0; }
 .perk-pick { text-align: left; }
-.perk-pick-legacy { border-style: dashed; }

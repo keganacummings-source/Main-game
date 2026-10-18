@@ -1,4 +1,23 @@
-
+/*
+ * content.ts — the game's static data.
+ *
+ * Everything in here is tweakable without touching the engine. Lists you'll
+ * reach for most often:
+ *
+ *   TYPES         — the twelve elements and their colours
+ *   RACES         — starter-race rows (sprite set + stat lean)
+ *   MOVES         — every verse (attack/spell/skill) with power, cd, type, effect
+ *   MONSTERS      — every enemy stat line + sprite + loot
+ *   ITEMS         — every item (food, potion, materials, keys)
+ *   ALCHEMY_RECIPES — brewing recipes
+ *   ENCHANTS      — gear enchantments and their stat lines
+ *   SKILLS        — skill tree ids (hunting, cooking, etc.)
+ *   SETS          — gear-set bonuses
+ *   QUESTS        — hard-coded quest-giver conversations
+ *
+ * The engine.ts imports from here are read-only; this file never imports back
+ * from the engine.
+ */
 
 import { KIT_MOVES } from "./class-kits";
 
@@ -1003,11 +1022,10 @@ export type Gear = {
   /** FX gene: decides this piece's effect pattern, shape, accent colour, speed and size (see fx-gene.ts). */
   fxGene?: number;
   price: number;
-  /** Retained for compatibility with old equipment files; abilities belong to the character. */
+  /** Always empty on new pieces: abilities belong to the character, not to gear. */
   moves: string[];
   /** What the piece is built for (its enchantments mostly come from this). Older pieces work it out from their enchantments. */
   purpose?: GearPurpose;
-  previousEquipment?: { moves: string[]; enchants: EnchantRoll[] };
 };
 
 export type Rng = () => number;
@@ -1198,15 +1216,9 @@ export function gearPrice(g: Gear): number {
   return Math.max(12, Math.floor(20 + g.level * 6 * q + ep));
 }
 
-/** Restore enchantments that an older build stripped, and keep them on the piece. */
-export function migrateEquipment(g: Gear): void {
+/** Validate a Gear object on load: drop unknown enchantments, cap counts, clear stray moves, clamp level. */
+export function sanitizeGear(g: Gear): void {
   if (!Array.isArray(g.enchants)) g.enchants = [];
-  if (g.enchants.length === 0 && g.previousEquipment?.enchants?.length) {
-    g.enchants = g.previousEquipment.enchants
-      .filter((e) => e && ENCHANT_BY_ID[e.id] && e.power > 0)
-      .map((e) => ({ id: e.id, power: Math.max(1, Math.floor(e.power)) }))
-      .slice(0, MAX_GEAR_ENCHANTS);
-  }
   g.enchants = g.enchants.filter((e) => e && ENCHANT_BY_ID[e.id] && e.power > 0).slice(0, MAX_GEAR_ENCHANTS);
   g.moves = [];
   g.level = clampGearLevel(g.level || 1);

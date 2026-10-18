@@ -1,4 +1,27 @@
 // @ts-nocheck
+/*
+ * engine.ts — the game loop.
+ *
+ * This one file owns combat ticks, movement, FX, input routing, world ticks,
+ * save/load, HUD updates and arena/survival state. It is deliberately monolithic
+ * so one update step runs under one closure; splitting it would spread hot state
+ * across files.
+ *
+ * You usually DON'T need to edit this file to change the game. The data lives
+ * elsewhere — see docs/EDITING.md for the "I want to change X" table. Common
+ * cases:
+ *   - Class / perk / gimmick numbers →  src/game/classes.ts
+ *   - Enemies / items / moves         →  src/game/content.ts
+ *   - Base balance constants          →  src/game/balance.ts
+ *   - Survival + cooking              →  src/game/survival.ts
+ *   - Dungeon generation              →  src/game/procedural-dungeon.ts
+ *   - Visual effects                  →  src/game/combat-fx.ts, fx-paint.ts
+ *   - Sound effects                   →  src/game/sfx-bank.ts
+ *
+ * The imports immediately below are the engine's full dependency surface. If
+ * you're looking for something the engine does, start by scanning those imports
+ * — the file it came from almost certainly also exports the function you need.
+ */
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
@@ -56,7 +79,7 @@ import {
   huntMove,
   gearPrice,
   equipmentStats,
-  migrateEquipment,
+  sanitizeGear,
   gearScore,
   learnPool,
   mulberry32,
@@ -7282,49 +7305,6 @@ export class TurbzGame {
 		this.shake = Math.max(0, this.shake - dt * 18);
 		for (const id of Object.keys(this.nodeCd)) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
 	}
-	legacyMoveFx(move, x0, y0, x1, y1) {
-		const color = TYPES[move.type].color;
-		const n = 8 + Math.floor(move.power / 8) + (move.effect !== "none" ? 4 : 0) + move.priority;
-		for (let i = 0; i < n; i++) {
-			const kind = move.anim[i % move.anim.length] ?? "burst";
-			const ang = i / n * Math.PI * 2 + move.priority;
-			let x = x0;
-			let y = y0;
-			let vx = Math.cos(ang) * (40 + move.power);
-			let vy = Math.sin(ang) * (40 + move.power);
-			if (kind === "beam" || kind === "slash") {
-				const t = i / n;
-				x = x0 + (x1 - x0) * t;
-				y = y0 + (y1 - y0) * t;
-				vx = (x1 - x0) * 2;
-				vy = (y1 - y0) * 2 + (kind === "slash" ? Math.sin(t * 8) * 80 : 0);
-			} else if (kind === "rain") {
-				x = x1 + (Math.random() - .5) * 40;
-				y = y1 - 30 - Math.random() * 20;
-				vx = 0;
-				vy = 50 + move.power;
-			} else if (kind === "orbit" || kind === "spiral") {
-				vx = Math.cos(ang) * 70;
-				vy = Math.sin(ang) * 70;
-			} else if (kind === "shield") {
-				x = x0 + Math.cos(ang) * 16;
-				y = y0 + Math.sin(ang) * 16;
-				vx = 0;
-				vy = 0;
-			}
-			this.parts.push({
-				x,
-				y,
-				vx,
-				vy,
-				life: .25 + move.priority * .05 + (move.effect === "sleep" ? .2 : 0),
-				max: .45,
-				color: effectTint(move.effect, color),
-				size: kind === "burst" || move.power > 48 ? 4 : 2,
-				kind
-			});
-		}
-	}
 	procSet(fx, variant = 0) {
 		const save = this.save;
 		this.say(`Set: ${fx.replace(/([a-z])([A-Z])/g, "$1 $2")}.`);
@@ -9653,7 +9633,7 @@ export class TurbzGame {
 		if (save.map.startsWith("custom-") && save.map !== "custom-turbz" && !findMapFile(save.map.slice(7))) { save.map = "world"; Object.assign(save, hearthXY()); }
 		// The Green Cave is Hardcore only.
 		if (save.map === `custom-${GREEN_CAVE_ID}` && this.rules !== "hardcore") { save.map = "world"; Object.assign(save, hearthXY()); }
-		for (const g of save.gear) migrateEquipment(g);
+		for (const g of save.gear) sanitizeGear(g);
 		save.locked = Array.isArray(save.locked) ? save.locked.filter((id) => save.gear.some((g) => g.uid === id)) : [];
 		if (save.hunt) {
 			const h = save.hunt;
@@ -9665,7 +9645,7 @@ export class TurbzGame {
 			h.squads = Math.max(0, Math.floor(h.squads || 0));
 		}
 		if (save.pendingLoot && !Array.isArray(save.pendingLoot.gear)) save.pendingLoot = null;
-		if (save.pendingLoot) for (const g of save.pendingLoot.gear) migrateEquipment(g);
+		if (save.pendingLoot) for (const g of save.pendingLoot.gear) sanitizeGear(g);
 		this.foldAccount(save);
 		this.syncArsenal(save);
 	}
