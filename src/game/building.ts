@@ -166,12 +166,18 @@ export function checkPlaceLog(args: {
   needZone?: boolean;
   /** Floors may be laid on the campfire's own tile (the fire draws on top); other pieces may not. */
   allowCampfireTile?: boolean;
+  /** Allow this piece to be placed on top of an existing floor tile. */
+  allowOnFloor?: boolean;
 }): PlaceCheck {
   const { world, map, logs, camps, tx, ty, player, bag, terrainBlocked } = args;
   if (tx < 3 || ty < 3 || tx >= world.w - 3 || ty >= world.h - 3) return { ok: false, reason: "Too close to the edge of the world." };
   const cx = tx * TILE_PX + TILE_PX / 2, cy = ty * TILE_PX + TILE_PX / 2;
   if (Math.hypot(cx - player.x, cy - player.y) > BUILD_REACH) return { ok: false, reason: "Too far away. Move closer to build." };
-  if (logs.some((l) => l.map === map && l.tx === tx && l.ty === ty)) return { ok: false, reason: "There is already a log there." };
+  const existing = logs.find((l) => l.map === map && l.tx === tx && l.ty === ty);
+  if (existing) {
+    const existingFloor = existing.kind && FLOOR_KINDS.has(existing.kind);
+    if (!existingFloor || !args.allowOnFloor) return { ok: false, reason: "There is already a log there." };
+  }
   if (terrainBlocked(cx, cy)) return { ok: false, reason: "Something solid is already there." };
   const tile = world.tiles[ty * world.w + tx];
   if (!tile || tile.floor === 1 || tile.floor === 2) return { ok: false, reason: "You cannot build on water." };

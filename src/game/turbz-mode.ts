@@ -429,12 +429,17 @@ export function installTurbz(game: any): void {
     // own store (turbz-chest-store-v1) and are never touched here, so they survive death regardless.
     const chest = save.turbzChest && save.turbzChest.map === fire.map
       ? { dx: save.turbzChest.tx - bx, dy: save.turbzChest.ty - by } : null;
-    save.turbzCamp = { logs, beds, chest };
+    const ghostBox = save.ghostBox && save.ghostBox.map === fire.map
+      ? { dx: save.ghostBox.tx - bx, dy: save.ghostBox.ty - by } : null;
+    // Ghost box contents survive death with the camp.
+    const ghostStore = (save.ghostStore ?? []).map((s: any) => ({ ...s }));
+    save.turbzCamp = { logs, beds, chest, ghostBox, ghostStore };
     // Remove it from the world so nothing is left standing after death.
     save.survival.campfires = save.survival.campfires.filter((c: any) => c !== fire);
     save.survival.logs = (save.survival.logs ?? []).filter((l: any) => l.map !== fire.map);
     save.survival.beds = (save.survival.beds ?? []).filter((b: any) => b.map !== fire.map);
     save.turbzChest = null;
+    save.ghostBox = null;
     this.syncSolids?.(save.map);
     try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(save.turbzCamp)); } catch { /* private mode */ }
   };
@@ -465,6 +470,13 @@ export function installTurbz(game: any): void {
     if (camp.chest) {
       const tx = bx + camp.chest.dx, ty = by + camp.chest.dy;
       if (tx >= 2 && ty >= 2 && tx < w - 2 && ty < h - 2) save.turbzChest = { map: save.map, tx, ty };
+    }
+    if (camp.ghostBox) {
+      const tx = bx + camp.ghostBox.dx, ty = by + camp.ghostBox.dy;
+      if (tx >= 2 && ty >= 2 && tx < w - 2 && ty < h - 2) save.ghostBox = { map: save.map, tx, ty };
+    }
+    if (camp.ghostStore?.length) {
+      save.ghostStore = camp.ghostStore.map((s: any) => ({ ...s }));
     }
     save.turbzCamp = null;
     try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ }

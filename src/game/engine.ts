@@ -2298,15 +2298,20 @@ export class TurbzGame {
 		const save = this.save;
 		if (!this.buildOn() || !this.world) return;
 		const { tx, ty } = tileAt(x, y);
-		const placed = save.survival.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty);
-		if (placed) return this.removeLog(placed);
+		const allPlaced = save.survival.logs.filter((l) => l.map === save.map && l.tx === tx && l.ty === ty);
+		const placed = allPlaced.find((l) => !l.kind || !FLOOR_KINDS.has(l.kind)) || allPlaced[0];
+		const isFloorPlaced = placed && placed.kind && FLOOR_KINDS.has(placed.kind);
+		const piece = this.buildPiece ?? "wood";
+		const isFloorPiece = !!BUILD_PIECES[piece]?.kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind);
+		// Clicking an existing non-floor piece removes it. Floors stay so walls/doors/beds/chests can sit on top.
+		if (placed && !isFloorPlaced) return this.removeLog(placed);
+		if (isFloorPlaced && isFloorPiece) return this.removeLog(placed);
 		const bed = save.survival.beds.find((b) => b.map === save.map && b.tx === tx && b.ty === ty);
 		if (bed) return this.removeFurniture("bed", bed);
 		const box = save.ghostBox;
 		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
 		const chest = save.turbzChest;
 		if (chest && chest.map === save.map && chest.tx === tx && chest.ty === ty) return this.removeTurbzChest();
-		const piece = this.buildPiece ?? "wood";
 		// Clicking the campfire tile: lay a floor underneath it if a floor is selected, otherwise pick the fire up.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
 		if (fire) {
@@ -2316,6 +2321,7 @@ export class TurbzGame {
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
+		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
 	}
 	/** Shared placement rules for every camp piece. */
@@ -2336,6 +2342,7 @@ export class TurbzGame {
 			furniture,
 			needZone: piece === "bed" || piece === "ghostbox" || piece === "turbzchest",
 			allowCampfireTile: isFloor,
+			allowOnFloor: !isFloor,
 		});
 	}
 	/** Spends a piece's cost (kyo for blocks, materials for furniture). The Building skill may hand one back. */
@@ -10995,7 +11002,7 @@ export class TurbzGame {
 			} else {
 				// World and dungeon bosses wear the full directional creature sheets (boss-sprites.ts);
 					// drawBossSprite returns false until its sheet loads, so it falls through to the creature draw.
-					if ((m.boss || m.dungeonBoss) && !m.ghost && !m.skin && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
+					if (m.dungeonBoss && !m.turbzBoss && !m.ghost && !m.skin && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
 						this.queuePlate(m);
 						continue;
 					}
@@ -11298,13 +11305,12 @@ export class TurbzGame {
 	}
 	/** Pixel-sprite wooden wall: vertical planks with grain and a plated seam. */
 	paintWoodWall(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 28, 30, 4);
-		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 30);
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 32);
 		for (let c = 0; c < 4; c++) {
 			const bx = x + 1 + c * 8;
-			ctx.fillStyle = c % 2 ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx, y + 1, 7, 28);
-			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx, y + 1, 2, 28);
-			ctx.fillStyle = "#5a3a20"; ctx.fillRect(bx + 6, y + 1, 1, 28);
+			ctx.fillStyle = c % 2 ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx, y + 1, 7, 30);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx, y + 1, 2, 30);
+			ctx.fillStyle = "#5a3a20"; ctx.fillRect(bx + 6, y + 1, 1, 30);
 			ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(bx + 2, y + 9 + (c % 2) * 6, 3, 1); ctx.fillRect(bx + 1, y + 19, 4, 1);
 		}
 		ctx.fillStyle = "#4a3018"; ctx.fillRect(x, y + 13, 32, 3);
@@ -11312,19 +11318,19 @@ export class TurbzGame {
 	}
 	/** Pixel-sprite stone wall: staggered grey blocks with mortar. */
 	paintStoneWall(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.32)"; ctx.fillRect(x + 2, y + 28, 30, 4);
-		ctx.fillStyle = "#2c2e33"; ctx.fillRect(x, y, 32, 30);
-		for (let r = 0; r < 5; r++) {
-			const by = y + 1 + r * 6;
+		ctx.fillStyle = "#2c2e33"; ctx.fillRect(x, y, 32, 32);
+		for (let r = 0; r < 6; r++) {
+			const by = y + r * 5 + (r === 5 ? 2 : 0);
+			const h = r === 5 ? 2 : 5;
 			const off = r % 2 ? 0 : -6;
 			for (let c = -1; c < 4; c++) {
 				const bx = x + 1 + off + c * 11;
-				const x0 = Math.max(x + 1, bx), x1 = Math.min(x + 31, bx + 10);
+				const x0 = Math.max(x, bx), x1 = Math.min(x + 32, bx + 10);
 				if (x1 <= x0) continue;
 				ctx.fillStyle = (r + c) % 3 === 0 ? "#6c7076" : (r + c) % 3 === 1 ? "#7e8288" : "#5a5e64";
-				ctx.fillRect(x0, by, x1 - x0, 5);
+				ctx.fillRect(x0, by, x1 - x0, h);
 				ctx.fillStyle = "#9aa0a6"; ctx.fillRect(x0, by, x1 - x0, 1);
-				ctx.fillStyle = "rgba(0,0,0,.2)"; ctx.fillRect(x0, by + 4, x1 - x0, 1);
+				if (h > 2) ctx.fillStyle = "rgba(0,0,0,.2)"; ctx.fillRect(x0, by + h - 1, x1 - x0, 1);
 			}
 		}
 	}
@@ -11498,8 +11504,11 @@ export class TurbzGame {
 		const sv = save.survival;
 		if (!sv) return;
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
-		for (const l of sv.logs) {
-			if (l.map !== save.map) continue;
+		// Draw floors first so walls/doors sit on top of them.
+		const logsHere = sv.logs.filter((l) => l.map === save.map);
+		const floors = logsHere.filter((l) => l.kind && FLOOR_KINDS.has(l.kind));
+		const solids = logsHere.filter((l) => !l.kind || !FLOOR_KINDS.has(l.kind));
+		for (const l of [...floors, ...solids]) {
 			const x = l.tx * 32, y = l.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
 			if (l.kind === "stone") this.paintStoneWall(ctx, x, y);
