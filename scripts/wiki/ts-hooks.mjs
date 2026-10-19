@@ -13,6 +13,12 @@ export async function resolve(specifier, context, next) {
 }
 
 export async function load(url, context, next) {
+  // The game imports JSON the way Vite allows (`import data from "./x.json"`, no `with { type: "json" }`).
+  // Node refuses that (ERR_IMPORT_ATTRIBUTE_MISSING), so hand JSON over as a plain module with a default export.
+  if (url.startsWith("file:") && url.endsWith(".json")) {
+    const source = await readFile(new URL(url), "utf8");
+    return { format: "module", source: `export default ${JSON.stringify(JSON.parse(source))};`, shortCircuit: true };
+  }
   if (url.endsWith(".ts")) {
     const source = await readFile(new URL(url), "utf8");
     const out = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 }, fileName: fileURLToPath(url) });
