@@ -24,7 +24,7 @@ export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; op
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox";
+export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest";
 /** Kinds that block movement (floors never do; a door blocks only while closed). */
 export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
 export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
@@ -39,7 +39,10 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
   door: { name: "Door", cost: { kyo: BLOCK_KYO }, kind: "door", about: "A door. Press E beside it to open or close it." },
   bed: { name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here." },
   ghostbox: { name: "Ghost Box", cost: { timber: 4, ore: 4 }, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter." },
+  turbzchest: { name: "Storage Chest", cost: { kyo: 10000 }, about: "Stores any items safely. Its contents survive death — rebuild your camp and they are still inside. TURBZ only." },
 };
+/** TURBZ-only camp pieces (hidden from the build menu in other modes). */
+export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest"]);
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
 /** The placeable blocks (not furniture), for the campfire build menu. */
 export const BLOCK_PIECE_IDS: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door"];

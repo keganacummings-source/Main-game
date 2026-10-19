@@ -3,7 +3,7 @@ import { ALCHEMY_RECIPES, attackForm, ITEM_BY_ID, moveTactic, TYPES, type TypeId
 import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
-import { BUILD_PIECES, BUILD_PIECE_IDS } from "@/game/building";
+import { BUILD_PIECES, BUILD_PIECE_IDS, TURBZ_ONLY_PIECES } from "@/game/building";
 import { GhostCard, GhostDetailCard, GhostName } from "./ghost-ui";
 import { resetLayout } from "@/game/ui-layout";
 import type { BoardView } from "@/game/quest-board";
@@ -894,7 +894,7 @@ export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
-  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo"] as const);
+  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo", "turbz", "turbzChest"] as const);
   if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   // Blocks are bought with kyo, which lives outside the bag — count() resolves it so cost chips read right.
@@ -933,14 +933,22 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
           <button type="button" className="px-btn" data-testid="build-toggle-btn" onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build (F)"}</button>
           <button type="button" className="px-btn" data-testid="hold-followers-btn" disabled={!s.build.holding && !s.build.beds} onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Send followers to bed"}</button>
         </div>
+        {s.turbz && s.turbzChest.placed && (
+          <div className="gear-actions">
+            <button type="button" className="px-btn px-btn-kyo" data-testid="open-turbzchest" disabled={!s.turbzChest.near} onClick={() => game?.openTurbzChest()}>
+              {s.turbzChest.near ? `Open Storage Chest · ${s.turbzChest.count} stored` : `Storage Chest at camp · ${s.turbzChest.count} stored`}
+            </button>
+          </div>
+        )}
         <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="build-pieces">
-          {BUILD_PIECE_IDS.map((id) => {
+          {BUILD_PIECE_IDS.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id)).map((id) => {
             const def = BUILD_PIECES[id];
             const have = Object.entries(def.cost).every(([k, n]) => count(k) >= n);
             const on = s.build.on && s.build.piece === id;
+            const placedAlready = (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && s.turbzChest.placed);
             return (
-              <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={id === "ghostbox" && s.build.ghostBox} onClick={() => game?.setBuildPiece(id)}>
-                <span className="text-kyo">{def.name}{id === "ghostbox" && s.build.ghostBox ? " · placed" : ""}</span>
+              <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={placedAlready} onClick={() => game?.setBuildPiece(id)}>
+                <span className="text-kyo">{def.name}{placedAlready ? " · placed" : ""}</span>
                 <span className="cost-row">
                   {Object.entries(def.cost).map(([k, n]) => (
                     <span key={k} className={`cost-chip ${count(k) >= n ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[k]?.name ?? k} {count(k)}/{n}</span>
@@ -972,6 +980,49 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
             );
           })}
         </div>
+      </Section>
+    </div>
+  );
+});
+
+/** TURBZ storage chest: stash any bag items here and they survive death. Deposit from the bag, withdraw back. */
+export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp) {
+  const s = useSnapPick(["turbzChest", "bag"] as const);
+  if (!s.turbzChest.placed) return <Empty>Build a Storage Chest at your camp first.</Empty>;
+  if (!s.turbzChest.near) return <Empty>Walk to your Storage Chest to open it.</Empty>;
+  const bag = s.bag.filter((it) => it.count > 0);
+  return (
+    <div className="ui-stack">
+      <p className="text-dim">Anything you stash here stays safe when you die — rebuild your camp and it is still inside. Kyo and worn gear are not stored here.</p>
+      <Section title={`STORED · ${s.turbzChest.count}`}>
+        {s.turbzChest.items.length === 0
+          ? <p className="text-dim">Empty. Deposit items from your bag below.</p>
+          : <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="turbzchest-stored">
+              {s.turbzChest.items.map((it) => (
+                <div key={it.id} className="ui-card">
+                  <span className="text-kyo">{it.name} · {it.count}</span>
+                  <span className="cost-row">
+                    <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestWithdraw(it.id, 1)}>Take 1</button>
+                    <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestWithdraw(it.id, it.count)}>Take all</button>
+                  </span>
+                </div>
+              ))}
+            </div>}
+      </Section>
+      <Section title="YOUR BAG">
+        {bag.length === 0
+          ? <p className="text-dim">Your bag is empty.</p>
+          : <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="turbzchest-bag">
+              {bag.map((it) => (
+                <div key={it.id} className="ui-card">
+                  <span className="text-kyo">{it.name} · {it.count}</span>
+                  <span className="cost-row">
+                    <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestDeposit(it.id, 1)}>Store 1</button>
+                    <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestDeposit(it.id, it.count)}>Store all</button>
+                  </span>
+                </div>
+              ))}
+            </div>}
       </Section>
     </div>
   );

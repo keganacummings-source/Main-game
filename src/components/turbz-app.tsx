@@ -23,7 +23,7 @@ import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
 import { installTurbz, hasTurbzSave } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
-import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, VersesPanel, WildGhostPanel } from "@/components/game-panels";
+import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
 
@@ -123,6 +123,7 @@ function Hunt() {
   const [name, setName] = useState("Mira");
   const [pick, setPick] = useState<Pick>({ classId: "warden", traitId: null, female: true });
   const race = CLASS_RACE[pick.classId];
+  const [turbzPickClass, setTurbzPickClass] = useState(false);
   const [screen, setScreen] = useState<ScreenId>("hub");
   const [arenaSeed, setArenaSeed] = useState<unknown>(null);
   const [booted, setBooted] = useState(false);
@@ -286,7 +287,13 @@ function Hunt() {
               <Field label="Name">
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
               </Field>
-              <CryingCustomizer onChange={() => setPick((p) => ({ ...p }))} />
+              <label className="chip chip-check" title="Off: play the Crying Lady at full XP. On: wake as any class instead, but gain 50% less XP.">
+                <input type="checkbox" checked={turbzPickClass} onChange={(e) => setTurbzPickClass(e.target.checked)} data-testid="turbz-pick-class" />
+                Pick a class instead (−50% XP)
+              </label>
+              {turbzPickClass
+                ? <ClassPicker pick={pick} setPick={setPick} game={g()} />
+                : <CryingCustomizer onChange={() => setPick((p) => ({ ...p }))} />}
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
                 {hasTurbzSave() && (
@@ -294,9 +301,13 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, "cryinggirl", null, true)}>
-                  Wake as the Crying Lady
-                </button>
+                {turbzPickClass
+                  ? <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true)}>
+                      Wake as {CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
+                    </button>
+                  : <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, "cryinggirl", null, true, false)}>
+                      Wake as the Crying Lady
+                    </button>}
               </div>
             </div>
           </Screen>
@@ -383,11 +394,11 @@ function Create(props: { name: string; setName: (v: string) => void; pick: Pick;
 // In game
 // ---------------------------------------------------------------------------
 
-const PANEL_IDS = ["sheet", "gear", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost"] as const;
+const PANEL_IDS = ["sheet", "gear", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost", "turbzchest"] as const;
 type PanelId = (typeof PANEL_IDS)[number];
 const PANEL_TITLE: Record<PanelId, string> = {
   sheet: "Character Sheet", gear: "Gear Inventory", bag: "Bag", skills: "Skills & Perks", moves: "Verses", quests: "Quests",
-  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest", wildghost: "Lingering Ghost",
+  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest", wildghost: "Lingering Ghost", turbzchest: "Storage Chest",
 };
 /** Default window widths. Rebuilt windows use new layout keys so an old, cramped saved size does not carry over. */
 const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, bag: 620, gear: 960, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560 };
@@ -460,6 +471,7 @@ function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) 
     case "pause": return <PausePanel game={game} />;
     case "chest": return <ChestWin game={game} />;
     case "wildghost": return <WildGhostPanel game={game} />;
+    case "turbzchest": return <TurbzChestPanel game={game} />;
   }
 }
 

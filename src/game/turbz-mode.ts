@@ -98,16 +98,19 @@ export function installTurbz(game: any): void {
   game.pools = null;
   game.orders = null;
 
-  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean) {
-    this.turbz = true;
+  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false) {
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
+    // swapRules clears the turbz flag; set it true again afterwards, before begin, so the run is TURBZ.
     this.swapRules("hardcore");
-    // TURBZ is the Crying Lady's mode only — always her, with the race her chosen element implies.
-    const classId = "cryinggirl";
-    const race = (CLASS_RACE as Record<string, string>).cryinggirl ?? _race ?? "tide";
+    this.turbz = true;
+    // TURBZ is normally the Crying Lady's mode. With the class toggle on you may wake as any class instead,
+    // at a 50% XP penalty (see gainXp). Her own build keeps the full rate.
+    const classId = pickClass && _classId ? _classId : "cryinggirl";
+    const race = (CLASS_RACE as Record<string, string>)[classId] ?? _race ?? "tide";
     this.begin(name, race, undefined, classId, traitId, female);
     const save = this.save;
+    if (save) save.turbzPickedClass = pickClass && classId !== "cryinggirl";
     if (!save) return;
     save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
     save.mergeArmor = true; // TURBZ: duplicate pieces merge/level up instead of cluttering the bag.
@@ -215,10 +218,11 @@ export function installTurbz(game: any): void {
     let raw: any = null;
     try { raw = JSON.parse(localStorage.getItem(TURBZ_SAVE_KEY) ?? "null"); } catch { raw = null; }
     if (!raw || !raw.name) return false;
-    this.turbz = true;
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
+    // swapRules clears the turbz flag; set it true again afterwards so the resumed run is TURBZ.
     this.swapRules("hardcore");
+    this.turbz = true;
     const seed = (raw.turbzSeed as number) || ((Math.random() * 1e9) >>> 0 || 7);
     raw.turbzSeed = seed;
     // Rebuild the exact same wild from the saved seed before booting into it.
@@ -421,11 +425,16 @@ export function installTurbz(game: any): void {
       .map((l: any) => ({ dx: l.tx - bx, dy: l.ty - by, kind: l.kind, open: l.open }));
     const beds = (save.survival.beds ?? []).filter((b: any) => b.map === fire.map)
       .map((b: any) => ({ dx: b.tx - bx, dy: b.ty - by }));
-    save.turbzCamp = { logs, beds };
+    // The storage chest folds in by offset too, so it returns with the camp. Its CONTENTS live in their
+    // own store (turbz-chest-store-v1) and are never touched here, so they survive death regardless.
+    const chest = save.turbzChest && save.turbzChest.map === fire.map
+      ? { dx: save.turbzChest.tx - bx, dy: save.turbzChest.ty - by } : null;
+    save.turbzCamp = { logs, beds, chest };
     // Remove it from the world so nothing is left standing after death.
     save.survival.campfires = save.survival.campfires.filter((c: any) => c !== fire);
     save.survival.logs = (save.survival.logs ?? []).filter((l: any) => l.map !== fire.map);
     save.survival.beds = (save.survival.beds ?? []).filter((b: any) => b.map !== fire.map);
+    save.turbzChest = null;
     this.syncSolids?.(save.map);
     try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(save.turbzCamp)); } catch { /* private mode */ }
   };
@@ -452,6 +461,10 @@ export function installTurbz(game: any): void {
       if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2) continue;
       if (save.survival.beds.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty)) continue;
       save.survival.beds.push({ map: save.map, tx, ty });
+    }
+    if (camp.chest) {
+      const tx = bx + camp.chest.dx, ty = by + camp.chest.dy;
+      if (tx >= 2 && ty >= 2 && tx < w - 2 && ty < h - 2) save.turbzChest = { map: save.map, tx, ty };
     }
     save.turbzCamp = null;
     try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ }
