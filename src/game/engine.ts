@@ -1857,7 +1857,7 @@ export class TurbzGame {
 		// Every foe rolls its own stat line, enchantments and moves (balance.ts).
 		const design = designNow;
 		const kind = kindNow;
-		const kit = rollEnemyKit(lookRng, { species, type: design?.type ?? type, kind, rarity, playerLevel: hunter, hardcore: this.rules === "hardcore", signature: animal ? undefined : picked, design: design ?? undefined });
+		const kit = rollEnemyKit(lookRng, { species, type: design?.type ?? type, kind, rarity, playerLevel: hunter, hardcore: this.rules === "hardcore", signature: animal ? undefined : picked, design: design ?? undefined, dungeonBoss: dungeonBoss && !design });
 		const mob = {
 			id: s.id,
 			species,
@@ -1873,6 +1873,7 @@ export class TurbzGame {
 			level,
 			boss,
 			dungeonBoss,
+			overworldSprite: !!s.overworldSprite,
 			bossId: s.bossId,
 			homeX: s.x,
 			homeY: s.y,
@@ -1937,7 +1938,7 @@ export class TurbzGame {
 	rekitMob(m, extra = {}) {
 		const rng = mulberry32(((Math.random() * 1e9) >>> 0) || 5);
 		const design = !m.bounty && !m.hunter && !(m.witch && !m.designId) ? enemyDesignFor(m.species) : null;
-		const kit = rollEnemyKit(rng, { species: m.species, type: m.type, kind: this.enemyKind(m), rarity: m.rarity, playerLevel: this.save?.level ?? 1, hardcore: this.rules === "hardcore", signature: m.move, design: design ?? undefined, ...extra });
+		const kit = rollEnemyKit(rng, { species: m.species, type: m.type, kind: this.enemyKind(m), rarity: m.rarity, playerLevel: this.save?.level ?? 1, hardcore: this.rules === "hardcore", signature: m.move, design: design ?? undefined, dungeonBoss: !!m.dungeonBoss && !m.witch && !design, ...extra });
 		m.kit = kit.moves;
 		m.kcd = {};
 		m.enchants = kit.enchants;
@@ -2043,13 +2044,15 @@ export class TurbzGame {
 		const floorHp = (20 + level * 8) * (kind === "boss" ? 2.5 : kind === "bounty" || kind === "witch" ? 2.5 : kind === "hunter" ? 1.5 : 1) * (kind === "animal" ? .45 : 1);
 		const party = m.party ? .55 : m.summoner ? .7 : 1;
 		// Each shrine round is louder. The last round is already a boss, so it gets a smaller extra pile of health and a harder hit.
-		const shrineHp = shrineRound ? (kind === "boss" ? 1.2 : 1.15 + shrineRound * 0.35) : 1;
+		const shrineHp = shrineRound ? (kind === "boss" || shrineRound >= 3 ? 1.2 : 1.15 + shrineRound * 0.35) : 1;
 		const shrineDmg = shrineRound ? 1.1 + shrineRound * 0.12 : 1;
 		// Dungeon rooms stack: trash is chunkier than the road, and the boss at the end is chunkier than a world boss.
 		// TURBZ overworld enemies match dungeon pressure so they're as lethal as indoor foes.
 		const turbzOverworld = !!(this.turbz && (this.save?.map ?? "") === "custom-turbz" && !inDungeon);
-		const dungeonHp = (inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.35 : 1.4) : 1;
-		const dungeonDmg = (inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.18 : 1.12) : 1;
+		// TURBZ dungeons are a notch harder than the same rooms elsewhere: +15% health, +10% damage.
+		const turbzDungeon = !!(this.turbz && inDungeon);
+		const dungeonHp = ((inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.35 : 1.4) : 1) * (turbzDungeon ? 1.15 : 1);
+		const dungeonDmg = ((inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.18 : 1.12) : 1) * (turbzDungeon ? 1.1 : 1);
 		const base = Math.max(floorHp, hitRef * t.hits) * stats.hp * party * shrineHp * dungeonHp;
 		const bountyRage = m.enraged && (m.bounty || m.bountySpirit);
 		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1) * (bountyRage ? BOUNTY_ENRAGE.hp : 1);
@@ -4853,6 +4856,7 @@ export class TurbzGame {
 	 */
 	ghostDrop(mob) {
 		if (!this.save || !mob || this.lms) return;
+		if (typeof mob.id === "string" && mob.id.startsWith("shrine")) return;
 		const worldBoss = !!(mob.turbzBoss || (mob.boss && !mob.dungeonBoss));
 		const witch = !!mob.witch && !mob.party && !mob.enemyGhost;
 		if (witch || worldBoss) {
@@ -8092,22 +8096,31 @@ export class TurbzGame {
 		const save = this.save;
 		if (!this.shrine) return;
 		const list = MOVES.filter((m) => m.type === this.shrine.type);
-		const species = Object.values(MONSTER_BY_ID).find((m) => m.type === this.shrine.type)?.id ?? "hikari";
-		const def = MONSTER_BY_ID[species];
+		// Arenas field witches (never plain enemies), in every game mode. Each round is a witch of the shrine's element.
+		const sameType = RACES.filter((r) => r.type === this.shrine.type);
+		const racePool = sameType.length ? sameType : RACES;
+		const race = racePool[Math.floor(Math.random() * racePool.length)];
+		const witchName = WITCH_NAMES[Math.floor(Math.random() * WITCH_NAMES.length)];
 		const level = save.level + this.shrine.round * 2;
 		const mob = this.makeMob({
 			id: `shrine-${this.shrine.round}-${nextUid()}`,
-			species,
+			species: "muma",
 			x: save.x + 48,
 			y: save.y - 10,
 			level,
-			template: def.template,
+			template: 20,
 			type: this.shrine.type,
-			name: `${TYPES[this.shrine.type].name} Saint`
+			name: witchName
 		});
-		mob.name = `${TYPES[this.shrine.type].name} Saint ${this.shrine.round}`;
+		mob.witch = true;
+		mob.race = race.id;
+		mob.name = `${witchName} · ${TYPES[this.shrine.type].name} Round ${this.shrine.round}`;
 		mob.move = (list[this.shrine.round] ?? list[0] ?? MOVES[0]).id;
-		mob.boss = this.shrine.round === 3;
+		mob.aggro = true;
+		mob.huntIn = 0;
+		mob.seen = true;
+		mob.ghost = false;
+		mob.lootKyo = 10 + level * 2;
 		this.rekitMob(mob);
 		this.mobs.push(mob);
 		this.dest = {
@@ -11002,7 +11015,7 @@ export class TurbzGame {
 			} else {
 				// World and dungeon bosses wear the full directional creature sheets (boss-sprites.ts);
 					// drawBossSprite returns false until its sheet loads, so it falls through to the creature draw.
-					if (m.dungeonBoss && !m.turbzBoss && !m.ghost && !m.skin && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
+					if (m.dungeonBoss && !m.overworldSprite && !m.turbzBoss && !m.ghost && !m.skin && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
 						this.queuePlate(m);
 						continue;
 					}

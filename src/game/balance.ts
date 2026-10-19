@@ -330,6 +330,8 @@ export type KitOpts = {
   wanted?: number;
   /** A move the foe should always know (signature). */
   signature?: string;
+  /** Rift guardian: species traits (tanky, quick, fragile...) count extra. */
+  dungeonBoss?: boolean;
   /** Enemy Designer: exact stats, fixed enchantments plus N random ones, and an exact move list. */
   design?: { stats: EnemyStats; enchants: MobEnchantId[]; extraEnchants: number; moves: string[] };
 };
@@ -345,7 +347,10 @@ function offensive(m: Move): boolean {
 export function rollEnemyKit(rng: Rng, o: KitOpts): EnemyKit {
   if (o.design) return designKit(rng, o);
   const t = TYPE_ARCHETYPE[o.type] ?? TYPE_ARCHETYPE.normal;
-  const s = SPECIES_ARCHETYPE[o.species] ?? {};
+  const s0 = SPECIES_ARCHETYPE[o.species] ?? {};
+  // Dungeon bosses lean harder into what they are: a deviation from 1.0 counts 1.6x.
+  const amp = (v: number | undefined) => (o.dungeonBoss ? 1 + ((v ?? 1) - 1) * 1.6 : v ?? 1);
+  const s = o.dungeonBoss ? { ...s0, hp: amp(s0.hp), dmg: amp(s0.dmg), speed: amp(s0.speed) } : s0;
   const jitter = () => 0.9 + rng() * 0.2;
   const stats: EnemyStats = {
     hp: (t.hp ?? 1) * (s.hp ?? 1) * jitter(),

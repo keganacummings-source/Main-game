@@ -46,6 +46,8 @@ export type Spawn = {
     respawn: number;
   };
   boss?: boolean;
+  /** Dungeon boss wears a plain overworld enemy sprite instead of a boss sheet. */
+  overworldSprite?: boolean;
   dungeonBoss?: boolean;
   bossId?: string;
   template?: number;

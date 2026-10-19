@@ -2284,8 +2284,11 @@ export function generateDungeon(opts: DungeonGenOptions): WorldData {
   const bosses = POIS.filter((p) => p.kind === "boss");
   const riftBoss = kind === "rift" ? bosses[Math.floor(rng() * bosses.length)] : null;
   if (kind === "rift" && (!riftBoss || riftBoss.kind !== "boss")) throw Error("Missing world boss");
+  // Rift guardians are a random overworld enemy: it keeps that enemy's sprite, and its stats follow the species
+  // (balance.ts SPECIES_ARCHETYPE, sharpened for dungeon bosses), so a Tsuchi guardian is a wall and a Nobi one is quick and fragile.
+  const bossCandidates = Object.values(MONSTER_BY_ID).filter((m) => !m.animal && !m.boss);
   const bossDef = kind === "rift"
-    ? Object.values(MONSTER_BY_ID).find((m) => m.template === (riftBoss as { template: number }).template) ?? MONSTER_BY_ID.onibi!
+    ? (bossCandidates.length ? bossCandidates[Math.floor(rng() * bossCandidates.length)]! : MONSTER_BY_ID.onibi!)
     : null;
   // Everyday foes: the theme's own, plus a few drawn from another corner of the bestiary so no two days match.
   const guests = Object.values(MONSTER_BY_ID).filter((m) => !m.animal && !m.boss && m.id !== "saintling" && !theme.pool.includes(m.id));
@@ -2303,7 +2306,7 @@ export function generateDungeon(opts: DungeonGenOptions): WorldData {
     }
   });
   if (kind === "rift" && bossDef && riftBoss) {
-    spawns.push({ id: `${idPrefix}-boss`, kind: "mob", species: bossDef.id, boss: true, bossId: (riftBoss as { id: string }).id, level, x: (bossRoom.cx + 0.5) * TILE, y: (bossRoom.cy + 0.5) * TILE, dungeonBoss: true } as Spawn);
+    spawns.push({ id: `${idPrefix}-boss`, kind: "mob", species: bossDef.id, boss: true, bossId: (riftBoss as { id: string }).id, name: `${bossDef.name} Warden`, level, x: (bossRoom.cx + 0.5) * TILE, y: (bossRoom.cy + 0.5) * TILE, dungeonBoss: true, overworldSprite: true, template: bossDef.template, type: bossDef.type } as Spawn);
   } else if (kind === "crypt" || kind === "kiln") {
     spawns.push({ id: kind === "crypt" ? "bone_king" : "ash_regent", kind: "mob", species: kind === "crypt" ? "gaikotsu" : "kagaribi", boss: true, bossId: kind === "crypt" ? "bone_king" : "ash_regent", level: kind === "crypt" ? 18 : 16, template: kind === "crypt" ? 22 : 3, type: kind === "crypt" ? "ghoul" : "fire", x: (bossRoom.cx + 0.5) * TILE, y: (bossRoom.cy + 0.5) * TILE } as Spawn);
   }
