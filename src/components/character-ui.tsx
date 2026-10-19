@@ -189,13 +189,88 @@ function SourceLegend() {
   );
 }
 
-export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
-  const [tab, setTab] = useState<SheetTab>("overview");
-  const [open, setOpen] = useState<string | null>(null);
+/** Which real numbers belong to which part of a fight. Ids come from buildSheet() in engine.ts; unknown ids go to Other. */
+const NUMBER_GROUPS: { id: string; label: string; ids: string[] }[] = [
+  { id: "offense", label: "OFFENSE", ids: ["weapon", "basic", "crit", "cd"] },
+  { id: "defense", label: "DEFENSE", ids: ["hp", "armor", "taken"] },
+  { id: "utility", label: "UTILITY", ids: ["speed", "xp", "kyo"] },
+];
+const SHEET_TAB_KEY = "turbz-sheet-tab";
+const QUALITY_CLASS: Record<string, string> = { worn: "q-worn", common: "q-common", fine: "q-fine", rare: "q-rare", epic: "q-epic", legendary: "q-legendary" };
+function readTab(): SheetTab {
+  try { const v = localStorage.getItem(SHEET_TAB_KEY) as SheetTab | null; return v && SHEET_TABS.some((t) => t.id === v) ? v : "overview"; } catch { return "overview"; }
+}
+function groupNumbers(numbers: Sheet["numbers"]) {
+  const used = new Set(NUMBER_GROUPS.flatMap((g) => g.ids));
+  const out = NUMBER_GROUPS.map((g) => ({ ...g, list: g.ids.map((id) => numbers.find((n) => n.id === id)).filter((n): n is Sheet["numbers"][number] => !!n) }));
+  const other = numbers.filter((n) => !used.has(n.id));
+  if (other.length) out.push({ id: "other", label: "OTHER", ids: [], list: other });
+  return out.filter((g) => g.list.length);
+}
+
+/**
+ * The Character Sheet (C).
+ *   Overview      — who you are, your numbers grouped into offense / defense / utility, buffs and effects.
+ *   Real numbers  — every number with the sources adding up to it; search, expand or collapse all.
+ *   Bonuses       — gear enchants and account perks, sortable and searchable.
+ *   Skills        — every skill, sortable by level, name or how close it is to levelling.
+ *   Verses        — every verse, filter by kind and sort by damage, damage per second, cooldown or range.
+ *   Gear          — what you wear, by quality, with your set bonus.
+ */
+export function CharacterSheet({ sheet, game }: { sheet: Sheet | null; game?: TurbzGame | null }) {
+  const [tab, setTabRaw] = useState<SheetTab>(readTab);
+  const setTab = (t: SheetTab) => { setTabRaw(t); try { localStorage.setItem(SHEET_TAB_KEY, t); } catch { /* private mode */ } };
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
   const [filter, setFilter] = useState("");
+  const [skillSort, setSkillSort] = useState<"level" | "name" | "close" | "aptitude">("level");
+  const [verseSort, setVerseSort] = useState<"damage" | "dps" | "cd" | "range" | "name">("damage");
+  const [verseKind, setVerseKind] = useState<"all" | "damage" | "heal" | "ward" | "utility">("all");
+  const [bonusSort, setBonusSort] = useState<"total" | "name" | "gear" | "account">("total");
   if (!sheet) return <Empty>No character yet.</Empty>;
   const s = sheet;
   const q = filter.trim().toLowerCase();
+  const isOpen = (id: string) => open.has(id);
+  const toggle = (id: string) => setOpen((o) => { const n = new Set(o); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const setAll = (ids: string[], on: boolean) => setOpen(on ? new Set(ids) : new Set());
+  const groups = groupNumbers(s.numbers);
+  const numbersShown = s.numbers.filter((n) => !q || `${n.label} ${n.note} ${n.parts.map((p) => p.label).join(" ")}`.toLowerCase().includes(q));
+  const dps = (m: Sheet["moves"][number]) => (m.kind === "damage" && m.cd > 0 ? m.hit / m.cd : 0);
+  const verses = s.moves
+    .filter((m) => (verseKind === "all" || (verseKind === "utility" ? !["damage", "heal", "ward"].includes(m.kind) : m.kind === verseKind)) && (!q || `${m.name} ${m.tactic} ${TYPES[m.type]?.name ?? ""}`.toLowerCase().includes(q)))
+    .sort((a, b) => verseSort === "name" ? a.name.localeCompare(b.name)
+      : verseSort === "cd" ? a.cd - b.cd
+      : verseSort === "range" ? b.range - a.range
+      : verseSort === "dps" ? dps(b) - dps(a)
+      : (b.kind === "damage" ? b.hit : b.heal || b.shield) - (a.kind === "damage" ? a.hit : a.heal || a.shield));
+  const skills = s.skillsFull
+    .filter((a) => !q || a.name.toLowerCase().includes(q) || a.line.toLowerCase().includes(q))
+    .sort((a, b) => skillSort === "name" ? a.name.localeCompare(b.name)
+      : skillSort === "close" ? (b.xp / Math.max(1, b.need)) - (a.xp / Math.max(1, a.need))
+      : skillSort === "aptitude" ? b.mult - a.mult || b.level - a.level
+      : b.level - a.level || a.name.localeCompare(b.name));
+  const bonuses = s.bonuses
+    .filter((b) => !q || `${b.name} ${b.effect}`.toLowerCase().includes(q))
+    .sort((a, b) => bonusSort === "name" ? a.name.localeCompare(b.name) : bonusSort === "gear" ? b.gear - a.gear : bonusSort === "account" ? b.account - a.account : b.total - a.total);
+  const totalSkill = s.skillsFull.reduce((n, a) => n + a.level, 0);
+  const search = (placeholder: string) => (
+    <input className="px-input" placeholder={placeholder} aria-label={placeholder} value={filter} onChange={(e) => setFilter(e.target.value)} data-testid="sheet-search" />
+  );
+  const numberRow = (n: Sheet["numbers"][number]) => (
+    <div key={n.id} className="sheet-calc">
+      <button type="button" className="sheet-calc-head" aria-expanded={isOpen(n.id)} onClick={() => toggle(n.id)}>
+        <span>{isOpen(n.id) ? "▾" : "▸"} {n.label}</span>
+        <b className="text-kyo">{n.value}</b>
+      </button>
+      {isOpen(n.id) && (
+        <div className="sheet-calc-body">
+          {n.parts.map((p, i) => (
+            <div key={`${p.label}-${i}`} className="sheet-row"><span className={SRC_CLASS[p.src ?? "base"]}>{p.label}</span><span>{p.value}</span></div>
+          ))}
+          {n.note && <p className="text-dim">{n.note}</p>}
+        </div>
+      )}
+    </div>
+  );
   return (
     <div className="grid gap-3" data-testid="character-sheet">
       <div className="sheet-box">
@@ -203,21 +278,42 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
           <p className="font-display text-xs text-kyo" data-testid="sheet-name">{s.name}</p>
           <p className={typeClass(s.type)} data-testid="sheet-class">{s.className} · {TYPES[s.type].name} · {s.role}</p>
         </div>
+        {(s.blurb || s.specialty) && <p className="text-dim">{s.blurb}{s.specialty ? ` · ${s.specialty}` : ""}</p>}
         <div className="sheet-vitals mt-1">
           <div><span className="text-dim">Level</span> <b data-testid="sheet-level">{s.level}</b></div>
           <div><span className="text-dim">Health</span> <b data-testid="sheet-hp">{s.hp}/{s.maxHp}</b>{s.shield > 0 && <span className="stat-up"> +{s.shield}</span>}<Meter value={s.hp} max={s.maxHp} small kind="hp" detail="" /></div>
           <div><span className="text-dim">XP</span> <b>{s.xp}/{s.xpNeed}</b><Meter value={s.xp} max={s.xpNeed} small kind="xp" detail="" /></div>
-          <div><span className="text-dim">Kyo</span> <b>{s.kyo}</b></div>
-          <div><span className="text-dim">Skill points</span> <b>{s.skillPoints}</b></div>
+          <div><span className="text-dim">Kyo</span> <b>{s.kyo.toLocaleString()}</b></div>
+          <div><span className="text-dim">Skill points</span> <b className={s.skillPoints > 0 ? "text-kyo" : ""}>{s.skillPoints}</b></div>
           <div><span className="text-dim">Account</span> <b>Lv {s.account.level}</b> <span className="text-dim">· {s.account.perks} perks · score {s.account.score}</span></div>
         </div>
         {s.night.on && <p className={s.night.phase === "night" ? "stat-down" : "text-dim"}>{s.night.phase === "night" ? "It is night. " : "Day. "}{s.night.rules}</p>}
       </div>
 
-      <Tabs className="sheet-tabs" value={tab} onChange={setTab} label="Character sheet sections" tabs={SHEET_TABS.map((t) => ({ ...t, testid: `sheet-tab-${t.id}` }))} />
+      <Tabs className="sheet-tabs" value={tab} onChange={(t) => { setTab(t); setFilter(""); }} label="Character sheet sections" tabs={SHEET_TABS.map((t) => ({ ...t, testid: `sheet-tab-${t.id}` }))} />
 
       {tab === "overview" && (
         <>
+          <div className="sheet-groups" data-testid="sheet-glance">
+            {groups.map((g) => (
+              <div key={g.id} className="sheet-box sheet-group">
+                <p className="font-display text-[9px] text-kyo">{g.label}</p>
+                {g.list.map((n) => (
+                  <button key={n.id} type="button" className="sheet-row sheet-row-link" title={n.note || "Open in Real numbers"} onClick={() => { setTab("numbers"); setOpen(new Set([n.id])); }}>
+                    <span className="text-dim">{n.label}</span><b>{n.value}</b>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <div className="sheet-box">
+            <p className="font-display text-[9px] text-kyo">COMBAT</p>
+            <div className="sheet-grid mt-1">
+              {s.combat.map((row) => (
+                <div key={row.label} className="sheet-row"><span className="text-dim">{row.label}</span><span>{row.value}</span></div>
+              ))}
+            </div>
+          </div>
           <div className="sheet-box" data-testid="sheet-stats">
             <p className="font-display text-[9px] text-kyo">CLASS & TRAIT ATTRIBUTES</p>
             <p className="text-dim">Passive: <span className="text-bone">{s.passive}</span></p>
@@ -236,21 +332,10 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
             <p className="text-dim mt-1">Gear enchants and account perks are not in this table. See Real numbers and Bonuses for the final totals.</p>
           </div>
           <div className="sheet-box">
-            <p className="font-display text-[9px] text-kyo">AT A GLANCE</p>
-            <div className="sheet-grid mt-1">
-              {s.numbers.slice(0, 8).map((n) => (
-                <div key={n.id} className="sheet-row"><span className="text-dim">{n.label}</span><b>{n.value}</b></div>
-              ))}
-              {s.combat.filter((r) => ["Element", "Immunities", "Set"].includes(r.label)).map((row) => (
-                <div key={row.label} className="sheet-row"><span className="text-dim">{row.label}</span><span>{row.value}</span></div>
-              ))}
-            </div>
-          </div>
-          <div className="sheet-box">
             <Lines buffs={s.buffs} debuffs={s.debuffs} />
           </div>
           <div className="sheet-box" data-testid="sheet-effects">
-            <p className="font-display text-[9px] text-kyo">ACTIVE EFFECTS</p>
+            <p className="font-display text-[9px] text-kyo">ACTIVE EFFECTS · {s.effects.length}</p>
             {!s.effects.length && <Empty>Nothing is affecting you right now.</Empty>}
             {s.effects.map((e) => (
               <p key={e.id} className={e.good ? "stat-up" : "stat-down"}>{e.good ? "▲" : "▼"} {e.label}{e.t ? ` · ${e.t}s` : ""}</p>
@@ -262,22 +347,17 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
       {tab === "numbers" && (
         <div className="sheet-box" data-testid="sheet-numbers">
           <p className="font-display text-[9px] text-kyo">YOUR REAL NUMBERS</p>
-          <p className="text-dim">These are the values combat uses right now. Tap a row to see every source adding up to it.</p>
+          <p className="text-dim">The values combat uses right now. Open a row to see every source adding up to it.</p>
+          <div className="sheet-toolbar">
+            {search("Search numbers or sources")}
+            <button type="button" className="px-btn ui-btn-sm" onClick={() => setAll(s.numbers.map((n) => n.id), true)}>Expand all</button>
+            <button type="button" className="px-btn ui-btn-sm" onClick={() => setAll([], false)}>Collapse all</button>
+          </div>
           <SourceLegend />
-          {s.numbers.map((n) => (
-            <div key={n.id} className="sheet-calc">
-              <button type="button" className="sheet-calc-head" aria-expanded={open === n.id} onClick={() => setOpen(open === n.id ? null : n.id)}>
-                <span>{open === n.id ? "▾" : "▸"} {n.label}</span>
-                <b className="text-kyo">{n.value}</b>
-              </button>
-              {open === n.id && (
-                <div className="sheet-calc-body">
-                  {n.parts.map((p, i) => (
-                    <div key={`${p.label}-${i}`} className="sheet-row"><span className={SRC_CLASS[p.src ?? "base"]}>{p.label}</span><span>{p.value}</span></div>
-                  ))}
-                  {n.note && <p className="text-dim">{n.note}</p>}
-                </div>
-              )}
+          {q ? (numbersShown.length ? numbersShown.map(numberRow) : <Empty>No numbers match.</Empty>) : groups.map((g) => (
+            <div key={g.id} className="sheet-subgroup">
+              <p className="sheet-subhead">{g.label}</p>
+              {g.list.map(numberRow)}
             </div>
           ))}
         </div>
@@ -285,13 +365,21 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
 
       {tab === "bonuses" && (
         <div className="sheet-box" data-testid="sheet-bonuses">
-          <p className="font-display text-[9px] text-kyo">ENCHANTS & ACCOUNT PERKS</p>
+          <p className="font-display text-[9px] text-kyo">ENCHANTS & ACCOUNT PERKS · {s.bonuses.length}</p>
           <p className="text-dim">Every bonus you have, with gear and account split out. Total is what the game uses.</p>
-          <input className="px-input mt-1" placeholder="Search bonuses" aria-label="Search bonuses" value={filter} onChange={(e) => setFilter(e.target.value)} />
+          <div className="sheet-toolbar">
+            {search("Search bonuses")}
+            <select className="px-input" aria-label="Sort bonuses" value={bonusSort} onChange={(e) => setBonusSort(e.target.value as typeof bonusSort)}>
+              <option value="total">Biggest total</option>
+              <option value="gear">Most from gear</option>
+              <option value="account">Most from account</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
           {!s.bonuses.length && <p className="text-dim mt-2">No enchants on your gear and no perk points yet.</p>}
           <div className="sheet-table mt-2">
             <div className="sheet-table-head"><span>Bonus</span><span className="src-gear">Gear</span><span className="src-account">Account</span><span>Total</span></div>
-            {s.bonuses.filter((b) => !q || b.name.toLowerCase().includes(q)).map((b) => (
+            {bonuses.map((b) => (
               <div key={b.id} className="sheet-bonus">
                 <div className="sheet-table-row">
                   <span>{b.name}</span>
@@ -303,14 +391,25 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
                 {b.slots.length > 0 && <p className="text-dim sheet-effect">On: {b.slots.map((x) => `${x.slot} ${x.power}`).join(" · ")}</p>}
               </div>
             ))}
+            {s.bonuses.length > 0 && !bonuses.length && <Empty>No bonuses match.</Empty>}
           </div>
         </div>
       )}
 
       {tab === "skills" && (
         <div className="sheet-box" data-testid="sheet-skills">
-          <p className="font-display text-[9px] text-kyo">SKILLS · WHAT EACH ONE DOES AT YOUR LEVEL</p>
-          {s.skillsFull.map((a) => (
+          <p className="font-display text-[9px] text-kyo">SKILLS · {s.skillsFull.length} · {totalSkill} total levels</p>
+          <div className="sheet-toolbar">
+            {search("Search skills")}
+            <select className="px-input" aria-label="Sort skills" value={skillSort} onChange={(e) => setSkillSort(e.target.value as typeof skillSort)} data-testid="sheet-skill-sort">
+              <option value="level">Highest level</option>
+              <option value="close">Closest to next level</option>
+              <option value="aptitude">Your class's best</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+          {!skills.length && <Empty>No skills match.</Empty>}
+          {skills.map((a) => (
             <div key={a.id} className="sheet-calc">
               <div className="sheet-row">
                 <span>{a.name} <b>{a.level}</b></span>
@@ -318,7 +417,7 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
               </div>
               <Meter value={a.xp} max={a.need} small kind="xp" />
               <p className="text-dim sheet-effect">{a.line}</p>
-              <p className="text-dim sheet-effect">{a.xp}/{a.need} to next level</p>
+              <p className="text-dim sheet-effect">{a.xp}/{a.need} to next level · {Math.round((a.xp / Math.max(1, a.need)) * 100)}%</p>
             </div>
           ))}
         </div>
@@ -326,17 +425,36 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
 
       {tab === "verses" && (
         <div className="sheet-box" data-testid="sheet-moves">
-          <p className="font-display text-[9px] text-kyo">VERSES · ★ signature · » movement</p>
-          <p className="text-dim">Damage shown is against a neutral target your level. Element match, target weakness and bosses change it in the fight.</p>
-          {s.moves.map((m) => (
+          <p className="font-display text-[9px] text-kyo">VERSES · {s.moves.length} · ★ signature · » movement</p>
+          <p className="text-dim">Damage is against a neutral target your level. Element match, target weakness and bosses change it in the fight.</p>
+          <div className="sheet-toolbar">
+            {search("Search verses or elements")}
+            <select className="px-input" aria-label="Sort verses" value={verseSort} onChange={(e) => setVerseSort(e.target.value as typeof verseSort)} data-testid="sheet-verse-sort">
+              <option value="damage">Biggest hit</option>
+              <option value="dps">Damage per second</option>
+              <option value="cd">Shortest cooldown</option>
+              <option value="range">Longest range</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+          <div className="chip-row" role="group" aria-label="Verse kind">
+            {(["all", "damage", "heal", "ward", "utility"] as const).map((k) => (
+              <button key={k} type="button" className={`chip ${verseKind === k ? "chip-on" : ""}`} onClick={() => setVerseKind(k)}>
+                {k === "all" ? "All" : k[0]!.toUpperCase() + k.slice(1)} <span className="text-dim">{k === "all" ? s.moves.length : s.moves.filter((m) => (k === "utility" ? !["damage", "heal", "ward"].includes(m.kind) : m.kind === k)).length}</span>
+              </button>
+            ))}
+          </div>
+          {!verses.length && <Empty>No verses match.</Empty>}
+          {verses.map((m) => (
             <div key={m.id} className="sheet-calc">
-              <button type="button" className="sheet-calc-head" aria-expanded={open === `m:${m.id}`} onClick={() => setOpen(open === `m:${m.id}` ? null : `m:${m.id}`)} title={m.about}>
-                <span className={typeClass(m.type)}>{open === `m:${m.id}` ? "▾" : "▸"} {m.signature ? "★ " : m.movement ? "» " : ""}{m.name} <span className="text-dim">· {m.tactic} · {m.rank ? `rank ${m.rank}` : "locked"}</span></span>
+              <button type="button" className="sheet-calc-head" aria-expanded={isOpen(`m:${m.id}`)} onClick={() => toggle(`m:${m.id}`)} title={m.about}>
+                <span className={typeClass(m.type)}>{isOpen(`m:${m.id}`) ? "▾" : "▸"} {m.signature ? "★ " : m.movement ? "» " : ""}{m.name} <span className="text-dim">· {m.tactic} · {m.rank ? `rank ${m.rank}` : "locked"} · {m.cd}s</span></span>
                 <b className="text-kyo">
                   {m.kind === "damage" ? `${m.hit}${m.critHit > m.hit ? ` / ${m.critHit}` : ""}` : m.kind === "heal" ? `+${m.heal} hp` : m.kind === "ward" ? `${m.shield} shield` : "utility"}
+                  {m.kind === "damage" && m.cd > 0 && <span className="text-dim"> · {dps(m).toFixed(1)}/s</span>}
                 </b>
               </button>
-              {open === `m:${m.id}` && (
+              {isOpen(`m:${m.id}`) && (
                 <div className="sheet-calc-body">
                   <div className="sheet-row"><span className="text-dim">Cooldown</span><span>{m.cd}s</span></div>
                   <div className="sheet-row"><span className="text-dim">Accuracy</span><span>{m.acc}%</span></div>
@@ -360,14 +478,17 @@ export function CharacterSheet({ sheet }: { sheet: Sheet | null }) {
 
       {tab === "gear" && (
         <div className="sheet-box" data-testid="sheet-gear">
-          <p className="font-display text-[9px] text-kyo">EQUIPMENT</p>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="font-display text-[9px] text-kyo">EQUIPMENT · {s.gear.filter((g) => g.name && g.name !== "Empty").length}/{s.gear.length} slots</p>
+            {game && <button type="button" className="px-btn ui-btn-sm" onClick={() => game.toggle("gear")}>Open Gear (I)</button>}
+          </div>
           {s.gear.map((g) => (
-            <div key={g.slot} className="sheet-row">
+            <div key={g.slot} className={`sheet-row sheet-gear-row ${QUALITY_CLASS[g.quality] ?? ""}`}>
               <span className="text-dim capitalize">{g.slot}</span>
-              <span>{g.name}{g.quality ? ` · ${g.quality}` : ""}{g.stat ? ` · ${g.stat}` : ""}</span>
+              <span>{g.name}{g.quality ? <span className="text-dim"> · {g.quality}</span> : ""}{g.stat ? <span className="text-dim"> · {g.stat}</span> : ""}</span>
             </div>
           ))}
-          {s.combat.filter((r) => r.label === "Set").map((r) => <p key={r.label} className="text-dim mt-1">Set bonus: {r.value}</p>)}
+          {s.combat.filter((r) => r.label === "Set").map((r) => <p key={r.label} className="text-kyo mt-1">Set bonus: {r.value}</p>)}
         </div>
       )}
     </div>

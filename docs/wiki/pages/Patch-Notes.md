@@ -1,5 +1,27 @@
 # Patch Notes
 
+## Menus: Camp, Build, Gear and Character sheet
+
+- **Camp menu (H)** now has tabs:
+  - **Needs:** meters, eat, drink, sleep, gathering and your materials.
+  - **Camp:** campfire, Pack up camp, build mode, followers, the Storage Chest, and a count of every wall, floor, door, bed, Ghost Box and chest in your camp.
+  - **Build:** every piece, grouped, with its cost and hotkey.
+  - **Cooking:** search, filters for Can make and Missing items, sorting, how many you can make, and **Make ×N**.
+  - A status bar shows night, camp, safe zone and warnings.
+- **Build mode (F)** has a toolbar along the bottom: pieces in Walls, Floors, Doors and Furniture with hotkeys **1–8**, a **Remove** tool (**X**), and a line that says what clicking the tile under your cursor will do, or why it can't.
+- **Gear (I):**
+  - **Upgrades only** filter and **Wear all upgrades**, with ▲ on any worn slot that has an upgrade in your bag.
+  - **Group by** slot, quality, set, element or use, and a **List** view.
+  - A **compare table** against what you wear, stat by stat and enchant by enchant.
+  - Worn totals (score, damage, armor, average level, enchants) and **Clear filters**.
+- **Character sheet (C):**
+  - Your numbers are grouped into Offense, Defense and Utility. Click one to see where it comes from.
+  - Real numbers has search and Expand or Collapse all.
+  - Bonuses, Skills and Verses can be searched and sorted, including verses by damage per second.
+  - Gear is coloured by quality, with a button to open the Gear menu.
+- Each menu remembers the tab and view you last used.
+- **Fix:** the Publish Wiki job failed on every update. The wiki builds again.
+
 ## V.3 UGONCRY — TURBZ is the main game, persistent camps, board reset
 
 - **TURBZ is the main game.** It is the big tile at the top of the menu, marked **MAIN GAME**. The menu is now titled **V.3 UGONCRY**.

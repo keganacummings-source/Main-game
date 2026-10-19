@@ -442,9 +442,9 @@ const BountyWin = memo(function BountyWin({ game }: GameProp) {
   const s = useSnapPick(["bountyBoard", "hunt", "kyo"] as const);
   return <BountyBoard snap={s as unknown as Snap} game={game} />;
 });
-const SheetWin = memo(function SheetWin() {
+const SheetWin = memo(function SheetWin({ game }: GameProp) {
   const { sheet } = useSnapPick(["sheet"] as const);
-  return <CharacterSheet sheet={sheet} />;
+  return <CharacterSheet sheet={sheet} game={game} />;
 });
 const ChestWin = memo(function ChestWin({ game }: GameProp) {
   const s = useSnapPick(["chest", "gear", "equipped", "locked", "sellMult"] as const);
@@ -457,7 +457,7 @@ const LootWin = memo(function LootWin({ game }: GameProp) {
 
 function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) {
   switch (panel) {
-    case "sheet": return <SheetWin />;
+    case "sheet": return <SheetWin game={game} />;
     case "bag": return <BagWin game={game} />;
     case "gear": return <GearWin game={game} />;
     case "skills": return <SkillsPanel game={game} />;

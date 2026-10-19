@@ -89,6 +89,85 @@ function EnchantList({ g }: { g: Gear }) {
   );
 }
 
+/** A one-line row for the list view: everything a card says, in one scan line. */
+function GearRow({ snap, g, selected, onPick, onEquip }: { snap: Snap; g: Gear; selected?: boolean; onPick?: () => void; onEquip?: () => void }) {
+  const worn = snap.equipped.includes(g.uid);
+  const locked = snap.locked.includes(g.uid);
+  return (
+    <button type="button" className={`gear-row q-${g.quality} ${selected ? "gear-card-on" : ""}`} onClick={onPick} onDoubleClick={onEquip} aria-pressed={selected} title={onEquip ? "Double-click to wear" : undefined}>
+      <span className="gear-row-name">{g.name}{worn ? " · WORN" : ""}{locked ? " · 🔒" : ""}</span>
+      <span className="text-dim">{SLOT_LABEL[g.slot]}</span>
+      <span className="text-dim">Lv {g.level}</span>
+      <span className={`type-${g.type}`}>{TYPES[g.type]?.name ?? g.type}</span>
+      <span>{statLine(g)}</span>
+      <span className="text-dim">{g.enchants.length} ench</span>
+      <span className="gear-row-score">{gearScore(g)} <Delta snap={snap} g={g} /></span>
+    </button>
+  );
+}
+
+/** Side by side: the piece you picked against what you wear in that slot, stat by stat and enchant by enchant. */
+function CompareTable({ snap, g }: { snap: Snap; g: Gear }) {
+  const worn = wornIn(snap, g.slot);
+  if (!worn || worn.uid === g.uid) return null;
+  const a = equipmentStats(g), b = equipmentStats(worn);
+  const rows: { label: string; mine: number; theirs: number; text?: [string, string] }[] = [
+    { label: "Score", mine: gearScore(g), theirs: gearScore(worn) },
+    { label: "Level", mine: g.level, theirs: worn.level },
+    { label: "Quality", mine: QUALITY_ORDER.indexOf(g.quality), theirs: QUALITY_ORDER.indexOf(worn.quality), text: [QUALITY_LABEL[g.quality], QUALITY_LABEL[worn.quality]] },
+    g.slot === "weapon" ? { label: "Damage", mine: a.damage ?? 0, theirs: b.damage ?? 0 } : { label: "Armor", mine: a.armor ?? 0, theirs: b.armor ?? 0 },
+  ];
+  const ids = [...new Set([...g.enchants.map((e) => e.id), ...worn.enchants.map((e) => e.id)])];
+  const pow = (x: Gear, id: string) => x.enchants.filter((e) => e.id === id).reduce((n, e) => n + e.power, 0);
+  const cls = (d: number) => (d > 0 ? "stat-up" : d < 0 ? "stat-down" : "text-dim");
+  return (
+    <div className="gear-compare" data-testid="gear-compare">
+      <div className="gear-compare-head"><span>Compared with what you wear</span><span>This</span><span>Worn</span><span>±</span></div>
+      <p className="gear-compare-worn text-dim">Worn: {worn.name}</p>
+      {rows.map((r) => {
+        const d = r.mine - r.theirs;
+        return (
+          <div key={r.label} className="gear-compare-row">
+            <span className="text-dim">{r.label}</span><b>{r.text ? r.text[0] : r.mine}</b><span>{r.text ? r.text[1] : r.theirs}</span>
+            <span className={cls(d)}>{r.text ? (d > 0 ? "▲" : d < 0 ? "▼" : "=") : d > 0 ? `+${d}` : d}</span>
+          </div>
+        );
+      })}
+      {ids.map((id) => {
+        const m = pow(g, id), t = pow(worn, id), d = m - t;
+        return (
+          <div key={id} className="gear-compare-row">
+            <span className="text-dim">{ENCHANT_BY_ID[id]?.name ?? id}</span><b>{m || "·"}</b><span>{t || "·"}</span>
+            <span className={cls(d)}>{d > 0 ? `+${d}` : d || "="}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type GroupKey = "none" | "slot" | "quality" | "set" | "element" | "purpose";
+type ViewKey = "cards" | "list";
+function readPref<T extends string>(key: string, ok: readonly T[], fallback: T): T {
+  try { const v = localStorage.getItem(key) as T | null; return v && ok.includes(v) ? v : fallback; } catch { return fallback; }
+}
+function writePref(key: string, v: string) {
+  try { localStorage.setItem(key, v); } catch { /* private mode */ }
+}
+/** Spare pieces that beat what is worn in their slot, best first per slot. */
+function upgradesOf(snap: Snap): Map<string, Gear> {
+  const best = new Map<string, Gear>();
+  for (const g of snap.gear) {
+    if (snap.equipped.includes(g.uid)) continue;
+    const worn = wornIn(snap, g.slot);
+    const beat = worn ? gearScore(g) > gearScore(worn) : true;
+    if (!beat) continue;
+    const cur = best.get(g.slot);
+    if (!cur || gearScore(g) > gearScore(cur)) best.set(g.slot, g);
+  }
+  return best;
+}
+
 function useSellable(snap: Snap, cap: QualityId | "all") {
   return useMemo(() => {
     const max = cap === "all" ? 99 : QUALITY_ORDER.indexOf(cap);
@@ -219,7 +298,16 @@ export function GearInventory({ snap, game }: Props) {
   const [search, setSearch] = useState("");
   const [showWorn, setShowWorn] = useState(false);
   const [lockedOnly, setLockedOnly] = useState(false);
+  const [upgradesOnly, setUpgradesOnly] = useState(false);
+  const [group, setGroupRaw] = useState<GroupKey>(() => readPref<GroupKey>("turbz-gear-group", ["none", "slot", "quality", "set", "element", "purpose"], "none"));
+  const [view, setViewRaw] = useState<ViewKey>(() => readPref<ViewKey>("turbz-gear-view", ["cards", "list"], "cards"));
+  const setGroup = (v: GroupKey) => { setGroupRaw(v); writePref("turbz-gear-group", v); };
+  const setView = (v: ViewKey) => { setViewRaw(v); writePref("turbz-gear-view", v); };
   const term = search.trim().toLowerCase();
+  const upgrades = useMemo(() => upgradesOf(snap), [snap.gear, snap.equipped]);
+  const upgradeIds = useMemo(() => new Set([...snap.gear.filter((g) => { const w = wornIn(snap, g.slot); return !snap.equipped.includes(g.uid) && (!w || gearScore(g) > gearScore(w)); }).map((g) => g.uid)]), [snap.gear, snap.equipped]);
+  const filtersOn = (term ? 1 : 0) + (slot !== "all" ? 1 : 0) + (purpose !== "all" ? 1 : 0) + (minQ !== "worn" ? 1 : 0) + (element !== "all" ? 1 : 0) + (lockedOnly ? 1 : 0) + (upgradesOnly ? 1 : 0);
+  const clearFilters = () => { setSearch(""); setSlot("all"); setPurpose("all"); setMinQ("worn"); setElement("all"); setLockedOnly(false); setUpgradesOnly(false); };
   const order = useMemo(() => new Map(snap.gear.map((g, i) => [g.uid, i])), [snap.gear]);
   const spare = snap.gear.filter((g) => !snap.equipped.includes(g.uid));
   const purposeCount = useMemo(() => {
@@ -232,7 +320,7 @@ export function GearInventory({ snap, game }: Props) {
     const text = (g: Gear) => `${g.name} ${g.slot} ${g.quality} ${g.type} ${PURPOSE_BY_ID[gearPurpose(g)].name} ${g.setId ? SET_BY_ID[g.setId]?.name ?? "" : ""} ${g.enchants.map((e) => ENCHANT_BY_ID[e.id]?.name ?? e.id).join(" ")}`.toLowerCase();
     const list = snap.gear.filter((g) =>
       (showWorn || !snap.equipped.includes(g.uid)) && (slot === "all" || g.slot === slot) && (purpose === "all" || gearPurpose(g) === purpose)
-      && QUALITY_ORDER.indexOf(g.quality) >= qMin && (element === "all" || g.type === element) && (!lockedOnly || snap.locked.includes(g.uid)) && (!term || text(g).includes(term)));
+      && QUALITY_ORDER.indexOf(g.quality) >= qMin && (element === "all" || g.type === element) && (!lockedOnly || snap.locked.includes(g.uid)) && (!upgradesOnly || upgradeIds.has(g.uid)) && (!term || text(g).includes(term)));
     const by: Record<SortKey, (a: Gear, b: Gear) => number> = {
       score: (a, b) => gearScore(b) - gearScore(a),
       level: (a, b) => b.level - a.level,
@@ -242,7 +330,35 @@ export function GearInventory({ snap, game }: Props) {
       purpose: (a, b) => purposePower(b, purpose === "all" ? gearPurpose(b) : purpose) - purposePower(a, purpose === "all" ? gearPurpose(a) : purpose),
     };
     return list.sort(by[sort]);
-  }, [snap.gear, snap.equipped, snap.locked, slot, purpose, minQ, element, lockedOnly, sort, term, showWorn, order]);
+  }, [snap.gear, snap.equipped, snap.locked, slot, purpose, minQ, element, lockedOnly, upgradesOnly, upgradeIds, sort, term, showWorn, order]);
+  /** The filtered list cut into labelled groups (one unnamed group when grouping is off). */
+  const groups = useMemo(() => {
+    if (group === "none") return [{ key: "all", label: "", list: gear }];
+    const keyOf = (g: Gear): [string, string, number] => {
+      if (group === "slot") return [g.slot, SLOT_LABEL[g.slot], SLOTS.indexOf(g.slot)];
+      if (group === "quality") return [g.quality, QUALITY_LABEL[g.quality], -QUALITY_ORDER.indexOf(g.quality)];
+      if (group === "element") return [g.type, TYPES[g.type]?.name ?? g.type, 0];
+      if (group === "purpose") { const p = gearPurpose(g); return [p, `${PURPOSE_ICON[p]} ${PURPOSE_BY_ID[p].name}`, GEAR_PURPOSES.findIndex((x) => x.id === p)]; }
+      const set = g.setId ? SET_BY_ID[g.setId] : null;
+      return set ? [g.setId!, set.name, 0] : ["~none", "No set", 1];
+    };
+    const m = new Map<string, { key: string; label: string; rank: number; list: Gear[] }>();
+    for (const g of gear) {
+      const [key, label, rank] = keyOf(g);
+      if (!m.has(key)) m.set(key, { key, label, rank, list: [] });
+      m.get(key)!.list.push(g);
+    }
+    return [...m.values()].sort((a, b) => a.rank - b.rank || a.label.localeCompare(b.label));
+  }, [gear, group]);
+  const wornList = SLOTS.map((sl) => wornIn(snap, sl)).filter((g): g is Gear => !!g);
+  const wornTotals = {
+    score: wornList.reduce((n, g) => n + gearScore(g), 0),
+    damage: wornList.reduce((n, g) => n + (equipmentStats(g).damage ?? 0), 0),
+    armor: wornList.reduce((n, g) => n + (equipmentStats(g).armor ?? 0), 0),
+    level: wornList.length ? Math.round(wornList.reduce((n, g) => n + g.level, 0) / wornList.length) : 0,
+    enchants: wornList.reduce((n, g) => n + g.enchants.length, 0),
+  };
+  const wearUpgrades = () => { for (const g of upgrades.values()) game?.equip(g.uid); };
   const sets = useMemo(() => {
     const m = new Map<string, Gear[]>();
     for (const g of snap.gear) if (g.setId && SET_BY_ID[g.setId]) m.set(g.setId, [...(m.get(g.setId) ?? []), g]);
@@ -276,13 +392,20 @@ export function GearInventory({ snap, game }: Props) {
       <div className="bag-body">
         <aside className="bag-worn" aria-label="Equipped">
           <p className="font-display text-[9px] text-kyo">WORN · {snap.setLabel}</p>
+          <div className="worn-totals" data-testid="worn-totals">
+            <span><b>{wornTotals.score}</b> score</span>
+            <span><b>{wornTotals.damage}</b> damage</span>
+            <span><b>{wornTotals.armor}</b> armor</span>
+            <span><b>{wornTotals.level || "–"}</b> avg lv</span>
+            <span><b>{wornTotals.enchants}</b> enchants</span>
+          </div>
           {snap.setBonus && <p className="set-bonus-active" data-testid="worn-set-bonus"><span className="text-kyo">Set bonus:</span> {snap.setBonus}</p>}
           <div className="worn-grid">
             {SLOTS.map((s) => {
               const g = wornIn(snap, s);
               return (
                 <button key={s} type="button" className={`worn-slot ${g ? `q-${g.quality}` : ""} ${g && snap.selected === g.uid ? "gear-card-on" : ""}`} onClick={() => g && game?.select(g.uid)} disabled={!g}>
-                  <span className="worn-slot-label">{SLOT_LABEL[s]}</span>
+                  <span className="worn-slot-label">{SLOT_LABEL[s]}{upgrades.has(s) && <span className="stat-up" title={`Upgrade in your bag: ${upgrades.get(s)!.name}`}> ▲</span>}</span>
                   {g ? (
                     <>
                       <span className="worn-slot-name">{g.name}</span>
@@ -345,6 +468,7 @@ export function GearInventory({ snap, game }: Props) {
                 <button type="button" className="float-win-btn" aria-label="Close details" onClick={() => game?.select(null)}>×</button>
               </div>
               <EnchantList g={selected} />
+              <CompareTable snap={snap} g={selected} />
               <p className="text-dim" data-testid="gear-fx-label">{fxLine(selected)}</p>
               <div className="gear-actions">
                 <button type="button" className="px-btn px-btn-kyo" disabled={snap.equipped.includes(selected.uid)} onClick={() => game?.equip(selected.uid)}>
@@ -376,6 +500,23 @@ export function GearInventory({ snap, game }: Props) {
                   <option value="new">Newest</option>
                 </select>
               </div>
+              <div className="bag-toolbar gear-toolbar-2">
+                <select className="px-input" aria-label="Group gear" value={group} onChange={(e) => setGroup(e.target.value as GroupKey)} data-testid="gear-group">
+                  <option value="none">No grouping</option>
+                  <option value="slot">Group by slot</option>
+                  <option value="quality">Group by quality</option>
+                  <option value="set">Group by set</option>
+                  <option value="element">Group by element</option>
+                  <option value="purpose">Group by use</option>
+                </select>
+                <Tabs value={view} onChange={setView} label="Gear view" tabs={[{ id: "cards", label: "Cards" }, { id: "list", label: "List", testid: "gear-view-list" }]} />
+              </div>
+              {upgrades.size > 0 && (
+                <div className="gear-upgrades" data-testid="gear-upgrades">
+                  <span className="stat-up">▲ {upgrades.size} upgrade{upgrades.size === 1 ? "" : "s"} in your bag: {[...upgrades.values()].map((g) => SLOT_LABEL[g.slot]).join(", ")}</span>
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="wear-upgrades" onClick={wearUpgrades}>Wear all upgrades</button>
+                </div>
+              )}
               <div className="chip-row" role="group" aria-label="Filter by purpose" data-testid="gear-purpose-filter">
                 <button type="button" className={`chip ${purpose === "all" ? "chip-on" : ""}`} onClick={() => setPurpose("all")}>Any use</button>
                 {GEAR_PURPOSES.map((p) => (
@@ -405,17 +546,34 @@ export function GearInventory({ snap, game }: Props) {
                 <label className="chip chip-check">
                   <input type="checkbox" checked={lockedOnly} onChange={(e) => setLockedOnly(e.target.checked)} /> Locked only
                 </label>
+                <label className={`chip chip-check ${upgradesOnly ? "chip-on" : ""}`} data-testid="gear-upgrades-only">
+                  <input type="checkbox" checked={upgradesOnly} onChange={(e) => setUpgradesOnly(e.target.checked)} /> Upgrades only · {upgradeIds.size}
+                </label>
+                {filtersOn > 0 && <button type="button" className="chip" data-testid="gear-clear-filters" onClick={clearFilters}>✕ Clear {filtersOn} filter{filtersOn === 1 ? "" : "s"}</button>}
               </div>
               <SellAllBar snap={snap} game={game} />
-              <p className="text-dim">Click a piece to read it. Double-click to wear it.</p>
+              <p className="text-dim">Showing {gear.length} of {showWorn ? snap.gear.length : spare.length}. Click a piece to read and compare it. Double-click to wear it.</p>
               {gear.length ? (
-                <div className="gear-grid">
-                  {gear.map((g) => (
-                    <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
-                  ))}
-                </div>
+                groups.map((grp) => (
+                  <div key={grp.key} className="gear-group">
+                    {grp.label && <p className="gear-group-head"><span>{grp.label}</span><span className="text-dim">{grp.list.length}</span></p>}
+                    {view === "list" ? (
+                      <div className="gear-list" data-testid="gear-list">
+                        {grp.list.map((g) => (
+                          <GearRow key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="gear-grid">
+                        {grp.list.map((g) => (
+                          <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))
               ) : (
-                <p className="text-dim">{term || slot !== "all" || purpose !== "all" || element !== "all" || minQ !== "worn" || lockedOnly ? "No gear matches these filters." : "No spare gear. Everything you own is being worn."}</p>
+                <p className="text-dim">{filtersOn ? "No gear matches these filters." : "No spare gear. Everything you own is being worn."}</p>
               )}
             </>
           )}

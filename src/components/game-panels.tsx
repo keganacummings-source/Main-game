@@ -3,7 +3,7 @@ import { ALCHEMY_RECIPES, attackForm, ITEM_BY_ID, moveTactic, TYPES, type TypeId
 import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
-import { BUILD_PIECES, BUILD_PIECE_IDS, TURBZ_ONLY_PIECES } from "@/game/building";
+import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, MAX_BEDS, TURBZ_ONLY_PIECES } from "@/game/building";
 import { GhostCard, GhostDetailCard, GhostName } from "./ghost-ui";
 import { resetLayout } from "@/game/ui-layout";
 import type { BoardView } from "@/game/quest-board";
@@ -893,99 +893,231 @@ export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
 // Survival & camp (Hardcore)
 // ---------------------------------------------------------------------------
 
+type CampTab = "needs" | "camp" | "build" | "cook";
+const CAMP_TAB_KEY = "turbz-camp-tab";
+/** A per-viewer UI preference: remembered, but the panel works without it (private mode, cleared storage). */
+function readPref<T extends string>(key: string, ok: readonly T[], fallback: T): T {
+  try { const v = localStorage.getItem(key) as T | null; return v && ok.includes(v) ? v : fallback; } catch { return fallback; }
+}
+function writePref(key: string, v: string) {
+  try { localStorage.setItem(key, v); } catch { /* private mode */ }
+}
+/** How many times a recipe can be made from the bag right now. */
+function timesCraftable(costs: Record<string, number>, count: (id: string) => number) {
+  return Math.min(...Object.entries(costs).map(([id, n]) => Math.floor(count(id) / Math.max(1, n))));
+}
+const MATERIALS: [string, string][] = [["timber", "Logs"], ["meat", "Meat"], ["fish", "Fish"], ["mushroom", "Shrooms"], ["raw_water", "Raw water"], ["drinking_water", "Drinking water"], ["leather", "Leather"], ["ore", "Ore"]];
+
+/**
+ * Survival & Camp (H). Four tabs:
+ *   Needs   — hunger / thirst / sleep, eat, drink, sleep, and gathering.
+ *   Camp    — your campfire (build, pack up / pick up), followers, the Storage Chest, and what the camp holds.
+ *   Build   — every camp piece, grouped, with its cost and hotkey; picking one starts build mode (F).
+ *   Cooking — campfire recipes: search, filter to what you can make, sort, Make or Make all.
+ */
 export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
   const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo", "turbz", "turbzChest", "camp"] as const);
-  if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
+  const [tab, setTabRaw] = useState<CampTab>(() => readPref<CampTab>(CAMP_TAB_KEY, ["needs", "camp", "build", "cook"], "needs"));
+  const setTab = (t: CampTab) => { setTabRaw(t); writePref(CAMP_TAB_KEY, t); };
+  const [q, setQ] = useState("");
+  const [show, setShow] = useState<"all" | "ready" | "missing">("all");
+  const [sort, setSort] = useState<"ready" | "name" | "xp">("ready");
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   // Blocks are bought with kyo, which lives outside the bag — count() resolves it so cost chips read right.
   const count = (id: string) => (id === "kyo" ? (s.kyo ?? 0) : (bag[id] ?? 0));
+  const recipes = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const list = CAMP_RECIPE_LIST.map((r) => ({ r, n: timesCraftable(r.costs, count) }))
+      .filter(({ r, n }) => (!term || `${r.name} ${r.about} ${Object.keys(r.outputs).map((id) => ITEM_BY_ID[id]?.name ?? id).join(" ")}`.toLowerCase().includes(term))
+        && (show === "all" || (show === "ready" ? n > 0 : n === 0)));
+    type Row = (typeof list)[number];
+    const by: Record<typeof sort, (a: Row, b: Row) => number> = {
+      ready: (a, b) => (b.n > 0 ? 1 : 0) - (a.n > 0 ? 1 : 0) || a.r.name.localeCompare(b.r.name),
+      name: (a, b) => a.r.name.localeCompare(b.r.name),
+      xp: (a, b) => (b.r.skill?.xp ?? 0) - (a.r.skill?.xp ?? 0) || a.r.name.localeCompare(b.r.name),
+    };
+    return list.sort(by[sort]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, show, sort, s.bag]);
+  if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
   const food = bestFood(bag, s.survival.hunger);
   const night = s.clock.phase === "night" && s.clock.active;
+  const c = s.build.counts;
+  const low = (v: number) => v < 15;
+  const warn = [low(s.survival.hunger) && "hungry", low(s.survival.thirst) && "thirsty", low(s.survival.rest) && "exhausted"].filter(Boolean) as string[];
+  const campLine = s.camp.near ? "Campfire in reach" : s.camp.lit ? (s.turbz ? "Your camp is elsewhere" : "No campfire in reach") : s.turbz && s.camp.packed ? `Camp packed · ${s.camp.pieces} pieces` : "No campfire yet";
+  const ready = CAMP_RECIPE_LIST.filter((r) => timesCraftable(r.costs, count) > 0).length;
+
+
+
   return (
-    <div className="ui-stack">
-      {s.clock.active && (
-        <div className={`ui-card ${night ? "ui-card-danger" : ""}`} data-testid="clock-line">
-          <p className={night ? "text-blood" : "text-kyo"}>{night ? "☾" : "☀"} {s.clock.label} · {s.clock.left} until {night ? "dawn" : "dusk"}</p>
-          <p className="text-dim">{night ? "Foes have twice the health and damage and give three times the experience. Sleep at a campfire to skip to dawn." : "Day lasts 10 minutes, night 15."}</p>
+    <div className="ui-stack camp-panel" data-testid="camp-panel">
+      <div className="camp-status">
+        {s.clock.active && <span className={`chip ${night ? "chip-bad" : ""}`} data-testid="clock-line">{night ? "☾" : "☀"} {s.clock.label} · {s.clock.left} to {night ? "dawn" : "dusk"}</span>}
+        <span className={`chip ${s.camp.near ? "chip-on" : ""}`}>{campLine}</span>
+        {s.build.inZone && <span className="chip chip-on">Safe zone</span>}
+        {warn.length > 0 && <span className="chip chip-bad">You are {warn.join(", ")}</span>}
+        <span className="chip">Logs {count("timber")} · {(s.kyo ?? 0).toLocaleString()} kyo</span>
+      </div>
+      <Tabs value={tab} onChange={setTab} label="Camp sections" tabs={[
+        { id: "needs", label: warn.length ? `Needs · ${warn.length}!` : "Needs", testid: "camp-tab-needs" },
+        { id: "camp", label: "Camp", testid: "camp-tab-camp" },
+        { id: "build", label: "Build", testid: "camp-tab-build" },
+        { id: "cook", label: `Cooking · ${ready}`, testid: "camp-tab-cook" },
+      ]} />
+
+      {tab === "needs" && (
+        <>
+          <div className="surv-meters">
+            <Meter kind={low(s.survival.hunger) ? "bad" : "good"} label="HUNGER" value={s.survival.hunger} max={100} detail={Math.ceil(s.survival.hunger)} />
+            <Meter kind={low(s.survival.thirst) ? "bad" : "good"} label="THIRST" value={s.survival.thirst} max={100} detail={Math.ceil(s.survival.thirst)} />
+            <Meter kind={low(s.survival.rest) ? "bad" : "good"} label="SLEEP" value={s.survival.rest} max={100} detail={Math.ceil(s.survival.rest)} />
+          </div>
+          <div className="gear-actions">
+            <button type="button" className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${s.bag.find((it) => it.id === food)?.name}` : "Not hungry / no food"}</button>
+            <button type="button" className="px-btn" disabled={!count("drinking_water") || s.survival.thirst >= 100} onClick={() => game?.useBag("drinking_water")}>Drink · {count("drinking_water")}</button>
+            <button type="button" className="px-btn" disabled={!s.sleeping && !s.nearCamp && !s.nearBed} title="Sleep by a campfire, or in a bed you built (rest comes half again as fast)" onClick={() => game?.survivalAction("sleep")}>{s.sleeping ? "Wake up" : s.nearBed ? (night ? "Sleep in bed to dawn" : "Sleep in bed") : night ? "Sleep to dawn" : "Sleep"}</button>
+          </div>
+          {s.clock.active && <p className="text-dim">{night ? "Foes have twice the health and damage and give three times the experience. Sleep at a campfire to skip to dawn." : "Day lasts 10 minutes, night 15."}</p>}
+          <p className="text-dim">Wounds do not heal by themselves in Hardcore. Healing spells, potions (¾ strength) and meals do.</p>
+          <Section title="GATHER">
+            <div className="gear-actions">
+              <button type="button" className="px-btn" disabled={!s.nearTree} onClick={() => game?.survivalAction("chop")}>Chop tree</button>
+              <button type="button" className="px-btn" disabled={!s.nearWater} onClick={() => game?.survivalAction("water")}>Collect water</button>
+              <button type="button" className="px-btn" disabled={!s.nearWater} onClick={() => game?.startFishing()}>Fish</button>
+            </div>
+            <div className="camp-mats">
+              {MATERIALS.map(([id, label]) => (
+                <span key={id} className={`camp-mat ${count(id) ? "" : "text-dim"}`}><span>{label}</span><b>{count(id)}</b></span>
+              ))}
+            </div>
+          </Section>
+        </>
+      )}
+
+      {tab === "camp" && (
+        <>
+          <Section title="CAMPFIRE" right={<span className={s.camp.near ? "text-kyo" : "text-dim"}>{campLine}</span>}>
+            <div className="gear-actions">
+              <button type="button" className="px-btn" data-testid="build-fire-btn" disabled={s.nearCamp || count("timber") < 3 || (s.turbz && s.camp.lit)} title={s.turbz && s.camp.lit ? "You already have a camp. Pack it up first to move it." : undefined} onClick={() => game?.survivalAction("fire")}>
+                {s.turbz && s.camp.packed ? `Light campfire & unpack camp (${s.camp.pieces} pieces) · 3 logs` : "Build campfire · 3 logs"}
+              </button>
+              <button type="button" className="px-btn px-btn-blood" data-testid="pack-camp-btn" disabled={!s.camp.near} title={s.camp.near ? undefined : "Stand by your campfire"} onClick={() => game?.survivalAction("packcamp")}>
+                {s.turbz ? "Pack up camp" : "Pick up campfire"}
+              </button>
+              <button type="button" className="px-btn px-btn-kyo" data-testid="build-toggle-btn" onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build mode (F)"}</button>
+            </div>
+            {s.turbz && <p className="text-dim">You keep one camp, out on the wild. Pack up camp (or dying) folds the fire and every piece into one bundle; lighting a campfire anywhere drops it back exactly as it was.</p>}
+          </Section>
+          <Section title="YOUR CAMP" right={<span className="text-dim">here on this map</span>}>
+            <div className="camp-counts" data-testid="camp-counts">
+              <span className="camp-count"><b>{c.walls}</b><span>Walls</span></span>
+              <span className="camp-count"><b>{c.floors}</b><span>Floors</span></span>
+              <span className="camp-count"><b>{c.doors}</b><span>Doors</span></span>
+              <span className="camp-count"><b>{c.beds}<span className="text-dim">/{MAX_BEDS}</span></b><span>Beds</span></span>
+              <span className={`camp-count ${c.ghostBox ? "" : "camp-count-off"}`}><b>{c.ghostBox ? "✓" : "–"}</b><span>Ghost Box</span></span>
+              {s.turbz && <span className={`camp-count ${c.chest ? "" : "camp-count-off"}`}><b>{c.chest ? "✓" : "–"}</b><span>Storage Chest</span></span>}
+            </div>
+            {s.turbz && s.camp.packed && <p className="text-kyo">Packed and waiting: {s.camp.pieces} pieces. Light a campfire on the wild to drop them back.</p>}
+          </Section>
+          <Section title="FOLLOWERS" right={<span className="text-dim">{s.build.holding ? "In bed at camp" : "With you"}</span>}>
+            <div className="gear-actions">
+              <button type="button" className="px-btn" data-testid="hold-followers-btn" disabled={!s.build.holding && !s.build.beds} onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Send followers to bed"}</button>
+            </div>
+            <p className="text-dim">Followers you send home rest in the camp's beds, where nothing can reach them.{!s.build.beds ? " Build a bed first." : ""}</p>
+          </Section>
+          {s.turbz && (
+            <Section title="STORAGE CHEST" right={<span className="text-dim">{s.turbzChest.count} stored</span>}>
+              <div className="gear-actions">
+                <button type="button" className="px-btn px-btn-kyo" data-testid="open-turbzchest" disabled={!s.turbzChest.near} onClick={() => game?.openTurbzChest()}>
+                  {!s.turbzChest.placed ? "No chest built" : s.turbzChest.near ? "Open Storage Chest" : "Walk to the chest to open it"}
+                </button>
+              </div>
+              <p className="text-dim">Items in the chest survive death. Build one from the Build tab (10,000 kyo).</p>
+            </Section>
+          )}
+        </>
+      )}
+
+      {tab === "build" && (
+        <div className="ui-stack" data-testid="build-pieces">
+          <p className="text-dim">Pick a piece to start building (the world pauses). In build mode, 1–8 switch pieces and X is the Remove tool. Walls, floors and doors cost {BLOCK_KYO} kyo each; beds, the Ghost Box and the chest go inside a camp's safe zone.</p>
+          {BUILD_GROUPS.map((g) => {
+            const pieces = g.pieces.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
+            if (!pieces.length) return null;
+            const hot = BUILD_HOTKEY_ORDER.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
+            return (
+              <Section key={g.id} title={g.label.toUpperCase()}>
+                <div className="ui-grid" style={{ "--min": "200px" } as React.CSSProperties}>
+                  {pieces.map((id) => {
+                    const def = BUILD_PIECES[id];
+                    const have = Object.entries(def.cost).every(([k, n]) => count(k) >= n);
+                    const on = s.build.on && s.build.piece === id;
+                    const placedAlready = (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && s.turbzChest.placed);
+                    const placed = id === "wood" || id === "stone" ? null : id === "woodfloor" || id === "stonefloor" ? null : id === "door" ? c.doors : id === "bed" ? c.beds : null;
+                    return (
+                      <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={!!placedAlready} onClick={() => game?.setBuildPiece(id)} data-testid={`camp-piece-${id}`}>
+                        <span className="ui-row"><span className="text-kyo">{def.name}{placedAlready ? " · placed" : ""}</span><kbd className="key-badge">{hot.indexOf(id) + 1}</kbd></span>
+                        <span className="cost-row">
+                          {Object.entries(def.cost).map(([k, n]) => (
+                            <span key={k} className={`cost-chip ${count(k) >= n ? "cost-ok" : "cost-miss"}`}>{k === "kyo" ? "Kyo" : ITEM_BY_ID[k]?.name ?? k} {count(k).toLocaleString()}/{n.toLocaleString()}</span>
+                          ))}
+                        </span>
+                        <span className="text-dim">{have ? def.about : "Missing materials"}{placed !== null ? ` · ${placed} here` : ""}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Section>
+            );
+          })}
+          <div className="gear-actions">
+            <button type="button" className="px-btn" data-testid="camp-piece-erase" onClick={() => game?.setBuildPiece("erase")}>Remove tool (X)</button>
+            <span className="text-dim">Walls {c.walls} · Floors {c.floors} · Doors {c.doors} · Beds {c.beds}/{MAX_BEDS}</span>
+          </div>
         </div>
       )}
-      <div className="surv-meters">
-        <Meter kind={s.survival.hunger < 15 ? "bad" : "good"} label="HUNGER" value={s.survival.hunger} max={100} detail={Math.ceil(s.survival.hunger)} />
-        <Meter kind={s.survival.thirst < 15 ? "bad" : "good"} label="THIRST" value={s.survival.thirst} max={100} detail={Math.ceil(s.survival.thirst)} />
-        <Meter kind={s.survival.rest < 15 ? "bad" : "good"} label="SLEEP" value={s.survival.rest} max={100} detail={Math.ceil(s.survival.rest)} />
-      </div>
-      <div className="gear-actions">
-        <button type="button" className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${s.bag.find((it) => it.id === food)?.name}` : "Not hungry / no food"}</button>
-        <button type="button" className="px-btn" disabled={!count("drinking_water") || s.survival.thirst >= 100} onClick={() => game?.useBag("drinking_water")}>Drink · {count("drinking_water")}</button>
-        <button type="button" className="px-btn" disabled={!s.sleeping && !s.nearCamp && !s.nearBed} title="Sleep by a campfire, or in a bed you built (rest comes half again as fast)" onClick={() => game?.survivalAction("sleep")}>{s.sleeping ? "Wake up" : s.nearBed ? (night ? "Sleep in bed to dawn" : "Sleep in bed") : night ? "Sleep to dawn" : "Sleep"}</button>
-      </div>
-      <p className="text-dim">Wounds do not heal by themselves in Hardcore: no regeneration, and sleep and hearths do not mend you. Healing spells, potions (¾ strength) and meals do.</p>
-      <Section title="GATHER" right={<span className="text-dim">Logs {count("timber")} · Meat {count("meat")} · Fish {count("fish")} · Raw water {count("raw_water")}</span>}>
-        <div className="gear-actions">
-          <button type="button" className="px-btn" disabled={!s.nearTree} onClick={() => game?.survivalAction("chop")}>Chop tree</button>
-          <button type="button" className="px-btn" disabled={!s.nearWater} onClick={() => game?.survivalAction("water")}>Collect water</button>
-          <button type="button" className="px-btn" disabled={!s.nearWater} onClick={() => game?.startFishing()}>Fish</button>
-        </div>
-      </Section>
-      <Section title="CAMP" right={<span className={s.nearCamp ? "text-kyo" : "text-dim"}>{s.nearCamp ? "Campfire in reach" : "No campfire near"}</span>}>
-        <div className="gear-actions">
-          <button type="button" className="px-btn" data-testid="build-fire-btn" disabled={s.nearCamp || count("timber") < 3 || (s.turbz && s.camp.lit)} title={s.turbz && s.camp.lit ? "You already have a camp. Pack it up first to move it." : undefined} onClick={() => game?.survivalAction("fire")}>
-            {s.turbz && s.camp.packed ? `Light campfire & unpack camp (${s.camp.pieces} pieces) · 3 logs` : "Build campfire · 3 logs"}
-          </button>
-          <button type="button" className="px-btn px-btn-blood" data-testid="pack-camp-btn" disabled={!s.camp.near} title={s.camp.near ? undefined : "Stand by your campfire"} onClick={() => game?.survivalAction("packcamp")}>
-            {s.turbz ? "Pack up camp" : "Pick up campfire"}
-          </button>
-          <button type="button" className="px-btn" data-testid="build-toggle-btn" onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build (F)"}</button>
-          <button type="button" className="px-btn" data-testid="hold-followers-btn" disabled={!s.build.holding && !s.build.beds} onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Send followers to bed"}</button>
-        </div>
-        {s.turbz && s.turbzChest.placed && (
-          <div className="gear-actions">
-            <button type="button" className="px-btn px-btn-kyo" data-testid="open-turbzchest" disabled={!s.turbzChest.near} onClick={() => game?.openTurbzChest()}>
-              {s.turbzChest.near ? `Open Storage Chest · ${s.turbzChest.count} stored` : `Storage Chest at camp · ${s.turbzChest.count} stored`}
-            </button>
+
+      {tab === "cook" && (
+        <>
+          <div className="bag-toolbar">
+            <input className="px-input" aria-label="Search recipes" placeholder="Search recipes or what they make" value={q} onChange={(e) => setQ(e.target.value)} />
+            <select className="px-input" aria-label="Sort recipes" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+              <option value="ready">Ready to make first</option>
+              <option value="name">Name</option>
+              <option value="xp">Most Cooking XP</option>
+            </select>
           </div>
-        )}
-        <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="build-pieces">
-          {BUILD_PIECE_IDS.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id)).map((id) => {
-            const def = BUILD_PIECES[id];
-            const have = Object.entries(def.cost).every(([k, n]) => count(k) >= n);
-            const on = s.build.on && s.build.piece === id;
-            const placedAlready = (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && s.turbzChest.placed);
-            return (
-              <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={placedAlready} onClick={() => game?.setBuildPiece(id)}>
-                <span className="text-kyo">{def.name}{placedAlready ? " · placed" : ""}</span>
-                <span className="cost-row">
-                  {Object.entries(def.cost).map(([k, n]) => (
-                    <span key={k} className={`cost-chip ${count(k) >= n ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[k]?.name ?? k} {count(k)}/{n}</span>
-                  ))}
-                </span>
-                <span className="text-dim">{have ? def.about : "Missing materials"}</span>
-              </button>
-            );
-          })}
-        </div>
-        <p className="text-dim">Build a campfire, then interact (E) with it and click Build to lay out your camp — the world pauses while you build. Walls, floors and doors cost 100 kyo each (press E beside a door to open or shut it); beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up for a refund. To move a campfire, use {s.turbz ? "Pack up camp" : "Pick up campfire"}. In TURBZ you keep one camp, on the wild: Pack up camp (or dying) folds the fire, every block, bed, the Ghost Box and the Storage Chest into one bundle, and lighting a campfire anywhere drops it back exactly as it was. Your chest items and boxed ghosts stay inside.{s.turbz && s.camp.packed ? ` Packed camp waiting: ${s.camp.pieces} pieces.` : ""} Blocks placed: {s.build.placed} · Beds: {s.build.beds} · Kyo: {s.kyo ?? 0}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
-      </Section>
-      <Section title="CAMPFIRE CRAFTING">
-        <div className="ui-grid" style={{ "--min": "210px" } as React.CSSProperties}>
-          {CAMP_RECIPE_LIST.map((r) => {
-            const have = Object.entries(r.costs).every(([id, n]) => count(id) >= n);
-            const outs = Object.entries(r.outputs).map(([id, n]) => `${ITEM_BY_ID[id]?.name ?? id} ×${n}`).join(", ");
-            return (
-              <div key={r.id} className={`ui-card ${have && s.nearCamp ? "ui-card-hl" : ""}`} title={r.about}>
-                <span className="text-kyo">{r.name}</span>
-                <span className="text-dim">→ {outs}</span>
-                <div className="cost-row">
-                  {Object.entries(r.costs).map(([id, n]) => (
-                    <span key={id} className={`cost-chip ${count(id) >= n ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[id]?.name ?? id} {count(id)}/{n}</span>
-                  ))}
+          <Chips value={show} onChange={setShow} label="Show recipes" options={[
+            { id: "all", label: `All · ${CAMP_RECIPE_LIST.length}` },
+            { id: "ready", label: `Can make · ${ready}` },
+            { id: "missing", label: `Missing items · ${CAMP_RECIPE_LIST.length - ready}` },
+          ]} />
+          {!s.nearCamp && <p className="text-bad">Stand by a campfire to cook.</p>}
+          {!recipes.length && <Empty>No recipes match.</Empty>}
+          <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
+            {recipes.map(({ r, n }) => {
+              const outs = Object.entries(r.outputs).map(([id, k]) => `${ITEM_BY_ID[id]?.name ?? id} ×${k}`).join(", ");
+              const most = Math.min(n, 20);
+              return (
+                <div key={r.id} className={`ui-card ${n > 0 && s.nearCamp ? "ui-card-hl" : ""}`} title={r.about}>
+                  <span className="ui-row"><span className="text-kyo">{r.name}</span>{n > 0 && <span className="text-good">×{n}</span>}</span>
+                  <span className="text-dim">→ {outs}{r.skill ? ` · +${r.skill.xp} Cooking XP` : ""}</span>
+                  <div className="cost-row">
+                    {Object.entries(r.costs).map(([id, k]) => (
+                      <span key={id} className={`cost-chip ${count(id) >= k ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[id]?.name ?? id} {count(id)}/{k}</span>
+                    ))}
+                  </div>
+                  <div className="gear-actions">
+                    <button type="button" className="px-btn ui-btn-sm" disabled={!s.nearCamp || n < 1} onClick={() => game?.survivalAction(r.id)}>Make</button>
+                    {most > 1 && <button type="button" className="px-btn ui-btn-sm" disabled={!s.nearCamp} onClick={() => { for (let i = 0; i < most; i++) game?.survivalAction(r.id); }}>Make ×{most}</button>}
+                  </div>
                 </div>
-                <button type="button" className="px-btn ui-btn-sm" disabled={!s.nearCamp || !have} onClick={() => game?.survivalAction(r.id)}>Make</button>
-              </div>
-            );
-          })}
-        </div>
-      </Section>
+              );
+            })}
+          </div>
+        </>
+      )}
     </div>
   );
 });

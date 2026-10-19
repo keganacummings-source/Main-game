@@ -1373,3 +1373,46 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .build-piece-erase .build-piece-name { color: var(--color-blood); }
 .build-bar-hint { font-size: 17px; margin: 0; }
 @media (width <= 760px) { .build-piece { min-width: 86px; } .build-bar-stats { font-size: 14px; } }
+
+/* ---- Camp menu (H) ---- */
+.chip-bad { color: var(--color-bone); background: #5a1d17; border-color: var(--color-blood); }
+.camp-status { display: flex; flex-wrap: wrap; gap: 6px; }
+.camp-status .chip { cursor: default; }
+.camp-mats { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 4px 10px; margin-top: 6px; }
+.camp-mat { display: flex; justify-content: space-between; gap: 6px; font-size: 17px; border-bottom: 1px dashed #ffffff14; }
+.camp-counts { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; }
+.camp-count { display: grid; justify-items: center; gap: 2px; padding: 6px 4px; border: 2px solid var(--ui-line, #5a4038); background: var(--color-ink); }
+.camp-count b { font-family: var(--font-display); font-size: 13px; color: var(--color-kyo); }
+.camp-count > span { font-size: 15px; color: var(--color-dim); }
+.camp-count-off b { color: var(--color-dim); }
+
+/* ---- Gear inventory (I) ---- */
+.worn-totals { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 16px; color: var(--color-dim); margin: 2px 0 6px; }
+.worn-totals b { color: var(--color-kyo); font-weight: normal; }
+.gear-toolbar-2 { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.gear-upgrades { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; padding: 6px 8px; border: 2px solid #3f7a3a; background: #14200f; font-size: 17px; }
+.gear-group { display: grid; gap: 6px; }
+.gear-group-head { display: flex; justify-content: space-between; font-family: var(--font-display); font-size: 9px; color: var(--color-kyo); border-bottom: 2px solid var(--ui-line, #5a4038); padding: 6px 2px 4px; margin: 4px 0 0; }
+.gear-list { display: grid; gap: 2px; }
+.gear-row { display: grid; grid-template-columns: minmax(140px, 2.4fr) 0.8fr 0.6fr 0.8fr 1fr 0.7fr 0.9fr; gap: 6px; align-items: center; text-align: left; padding: 4px 8px; background: var(--color-ink); color: var(--color-bone); border: 2px solid transparent; border-left-width: 4px; font: inherit; font-size: 16px; cursor: pointer; }
+.gear-row:hover { border-color: #5a4038; }
+.gear-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gear-row-score { text-align: right; }
+.gear-row { border-left-color: var(--q, transparent); }
+.gear-compare { display: grid; gap: 1px; margin: 6px 0; padding: 6px 8px; border: 2px dashed var(--ui-line, #5a4038); font-size: 16px; }
+.gear-compare-head, .gear-compare-row { display: grid; grid-template-columns: minmax(0, 1.6fr) 0.8fr 0.8fr 0.6fr; gap: 6px; }
+.gear-compare-head { font-family: var(--font-display); font-size: 7px; color: var(--color-kyo); padding-bottom: 3px; }
+.gear-compare-worn { margin: 0 0 2px; font-size: 15px; }
+@media (width <= 760px) { .gear-row { grid-template-columns: minmax(0, 1fr) auto auto; } .gear-row > :nth-child(2), .gear-row > :nth-child(4), .gear-row > :nth-child(6) { display: none; } }
+
+/* ---- Character sheet (C) ---- */
+.sheet-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 8px; }
+.sheet-group { display: grid; gap: 2px; align-content: start; }
+.sheet-row-link { width: 100%; background: transparent; border: 0; padding: 1px 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.sheet-row-link:hover b { text-decoration: underline; }
+.sheet-toolbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.sheet-toolbar .px-input:first-child { flex: 1 1 180px; }
+.sheet-subgroup { margin-top: 6px; }
+.sheet-subhead { font-family: var(--font-display); font-size: 8px; color: var(--color-dim); border-bottom: 1px solid var(--ui-line, #5a4038); padding-bottom: 3px; margin: 4px 0; }
+.sheet-gear-row { border-left: 4px solid transparent; padding-left: 6px; }
+.sheet-gear-row { border-left-color: var(--q, transparent); }
