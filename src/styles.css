@@ -1079,6 +1079,12 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 .ui-tile-title { font-family: var(--font-display); font-size: 11px; line-height: 1.4; display: flex; gap: 8px; align-items: center; }
 .ui-tile-badge { font-size: 7px; padding: 2px 4px; background: var(--color-blood); color: var(--color-bone); }
 .ui-tile-about { font-size: 18px; color: var(--color-dim); line-height: 1.15; }
+/* The main game: spans the whole row and reads first. */
+.ui-tile-hero { grid-column: 1 / -1; min-height: 132px; padding: 18px 20px; gap: 10px; align-content: center; box-shadow: 6px 6px 0 var(--color-blood); }
+.ui-tile-hero .ui-tile-title { font-size: 22px; gap: 14px; }
+.ui-tile-hero .ui-tile-badge { font-size: 10px; padding: 4px 7px; }
+.ui-tile-hero .ui-tile-about { font-size: 22px; }
+@media (width <= 760px) { .ui-tile-hero .ui-tile-title { font-size: 16px; } .ui-tile-hero .ui-tile-about { font-size: 19px; } }
 .class-grid { max-height: min(40dvh, 380px); }
 .veil-chat { top: auto; bottom: 8px; }
 @media (width <= 760px) { .screen-logo { font-size: 22px; } .screen-card { padding: 12px; } .lobby-join { grid-template-columns: 1fr 1fr; } .lobby-join .px-input { grid-column: 1 / -1; } }

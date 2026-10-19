@@ -20,8 +20,8 @@ export type GraveBody = {
   look?: unknown;
 };
 
-/** Bump to wipe the board once on the next deploy. Season 2: the leaderboard remake. */
-export const BOARD_SEASON = 2;
+/** Bump to wipe the board once on the next deploy. Season 2: the leaderboard remake. Season 3: V.3 UGONCRY full reset. */
+export const BOARD_SEASON = 3;
 export type DiscordChannel = { guildId: string; channelId: string };
 
 export type GraveRow = GraveBody & {

@@ -894,7 +894,7 @@ export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
 // ---------------------------------------------------------------------------
 
 export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
-  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo", "turbz", "turbzChest"] as const);
+  const s = useSnapPick(["survival", "bag", "clock", "nearTree", "nearWater", "nearCamp", "nearBed", "sleeping", "build", "kyo", "turbz", "turbzChest", "camp"] as const);
   if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   // Blocks are bought with kyo, which lives outside the bag — count() resolves it so cost chips read right.
@@ -929,7 +929,12 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
       </Section>
       <Section title="CAMP" right={<span className={s.nearCamp ? "text-kyo" : "text-dim"}>{s.nearCamp ? "Campfire in reach" : "No campfire near"}</span>}>
         <div className="gear-actions">
-          <button type="button" className="px-btn" disabled={s.nearCamp || count("timber") < 3} onClick={() => game?.survivalAction("fire")}>Build campfire · 3 logs</button>
+          <button type="button" className="px-btn" data-testid="build-fire-btn" disabled={s.nearCamp || count("timber") < 3 || (s.turbz && s.camp.lit)} title={s.turbz && s.camp.lit ? "You already have a camp. Pack it up first to move it." : undefined} onClick={() => game?.survivalAction("fire")}>
+            {s.turbz && s.camp.packed ? `Light campfire & unpack camp (${s.camp.pieces} pieces) · 3 logs` : "Build campfire · 3 logs"}
+          </button>
+          <button type="button" className="px-btn px-btn-blood" data-testid="pack-camp-btn" disabled={!s.camp.near} title={s.camp.near ? undefined : "Stand by your campfire"} onClick={() => game?.survivalAction("packcamp")}>
+            {s.turbz ? "Pack up camp" : "Pick up campfire"}
+          </button>
           <button type="button" className="px-btn" data-testid="build-toggle-btn" onClick={() => game?.toggleBuild()}>{s.build.on ? "Stop building (F)" : "Build (F)"}</button>
           <button type="button" className="px-btn" data-testid="hold-followers-btn" disabled={!s.build.holding && !s.build.beds} onClick={() => game?.holdFollowers(!s.build.holding)}>{s.build.holding ? "Call followers back" : "Send followers to bed"}</button>
         </div>
@@ -959,7 +964,7 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
             );
           })}
         </div>
-        <p className="text-dim">Build a campfire, then interact (E) with it and click Build to lay out your camp — the world pauses while you build. Walls, floors and doors cost 100 kyo each (press E beside a door to open or shut it); beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up for a refund. In TURBZ you keep one camp: it packs up when you die and drops back when you light a campfire again. Blocks placed: {s.build.placed} · Beds: {s.build.beds} · Kyo: {s.kyo ?? 0}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
+        <p className="text-dim">Build a campfire, then interact (E) with it and click Build to lay out your camp — the world pauses while you build. Walls, floors and doors cost 100 kyo each (press E beside a door to open or shut it); beds and the Ghost Box go inside a camp. Click a placed piece in build mode to pick it up for a refund. To move a campfire, use {s.turbz ? "Pack up camp" : "Pick up campfire"}. In TURBZ you keep one camp, on the wild: Pack up camp (or dying) folds the fire, every block, bed, the Ghost Box and the Storage Chest into one bundle, and lighting a campfire anywhere drops it back exactly as it was. Your chest items and boxed ghosts stay inside.{s.turbz && s.camp.packed ? ` Packed camp waiting: ${s.camp.pieces} pieces.` : ""} Blocks placed: {s.build.placed} · Beds: {s.build.beds} · Kyo: {s.kyo ?? 0}.{s.build.inZone ? " You are inside a safe zone." : ""}{s.build.holding ? " Your followers are in bed at camp." : ""}</p>
       </Section>
       <Section title="CAMPFIRE CRAFTING">
         <div className="ui-grid" style={{ "--min": "210px" } as React.CSSProperties}>

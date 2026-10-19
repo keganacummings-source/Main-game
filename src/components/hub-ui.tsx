@@ -220,7 +220,7 @@ export function Hub(props: {
     try { sessionStorage.setItem("turbz-news-yougonnacry", "1"); } catch { /* private mode */ }
   };
   return (
-    <Screen kicker={`V.2COMBAT · SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="V.2COMBAT">
+    <Screen kicker={`V.3 UGONCRY · SIGNED IN · ${props.username}${asc ? ` · ASCENSION ${roman(asc)}` : ""}`} title="V.3 UGONCRY">
       <p className="text-dim">Pick a veil. The dead keep the score.</p>
       {news && ascend === 0 && (
         <div className="loot-overlay" role="dialog" aria-label="Update" data-testid="update-popup">
@@ -265,8 +265,8 @@ export function Hub(props: {
         </div>
       )}
       <div className="tile-grid">
-        <Tile primary title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
-        <Tile title="TURBZ" about="Hardcore wild. Level 1, no bounties. Other witches grind, craft and team up." onClick={props.onTurbz} badge="NEW" />
+        <Tile hero title="TURBZ" about="Hardcore wild. Level 1, no bounties. Other witches grind, craft and team up." onClick={props.onTurbz} badge="MAIN GAME" testid="turbz-tile" />
+        <Tile title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
         <Tile title="Last Man Standing" about="You and 99 rival witches from level 1. Always night, only ghosts. Be the last one alive." onClick={props.onLms} badge="NEW" />
         <Tile title="TurboCircle" about="Battle simulator: Classic 6v6, or War up to 100 vs 100." onClick={props.onCircle} />
