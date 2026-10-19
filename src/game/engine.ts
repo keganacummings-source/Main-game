@@ -884,10 +884,13 @@ function loadAudioPrefs(): AudioPrefs {
 	return d;
 }
 
-/** The two background songs, played back to back with a quiet gap between them. */
-const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg"];
-/** Silence between songs: a full song plays, then this timer runs before the next one starts. */
-const MUSIC_GAP_MS = 20 * 60 * 1000;
+/** The background songs, played in rotation. Add a file to public/music and list it here. */
+const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg", "Track4.ogg"];
+/**
+ * A new song starts every 10 minutes, counted from when the last one started. A song is never cut
+ * short: if one runs longer than this, the next starts right after it ends.
+ */
+const MUSIC_EVERY_MS = 10 * 60 * 1000;
 
 export class TurbzGame {
 	canvas!: HTMLCanvasElement;
@@ -1219,14 +1222,14 @@ export class TurbzGame {
 			await audio.play();
 		} catch {}
 	}
-	/** Starts the two-song soundtrack from the first track. */
+	/** Starts the soundtrack rotation from the first track. */
 	startMusicCycle() {
 		clearTimeout(this.musicTimer); this.musicTimer = null;
 		this.playTrack(0);
 	}
 	/**
-	 * Plays one background song in full (no loop). When it ends, a 20-minute timer runs,
-	 * then the other song plays, and so on — the two songs trade back and forth.
+	 * Plays one background song in full (no loop). The next song in the rotation starts 10 minutes
+	 * after this one started (or as soon as it ends, if it is longer than that). Quiet in between.
 	 */
 	async playTrack(i) {
 		const file = MUSIC_TRACKS[((i % MUSIC_TRACKS.length) + MUSIC_TRACKS.length) % MUSIC_TRACKS.length]!;
@@ -1238,10 +1241,11 @@ export class TurbzGame {
 			audio.loop = false;
 			audio.volume = this.musicLevel();
 			this.toBus(audio, 0.9);
+			const started = Date.now();
 			audio.addEventListener("ended", () => {
 				if (this.music !== audio || !this.running) return;
 				clearTimeout(this.musicTimer);
-				this.musicTimer = setTimeout(() => this.playTrack(i + 1), MUSIC_GAP_MS);
+				this.musicTimer = setTimeout(() => this.playTrack(i + 1), Math.max(0, MUSIC_EVERY_MS - (Date.now() - started)));
 			});
 			await audio.play();
 		} catch {}

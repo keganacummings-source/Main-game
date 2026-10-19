@@ -1,7 +1,5 @@
-Drop music in this folder. The game loops the first file it finds.
+Background music, played in rotation: Background.ogg, Background2.ogg, Track4.ogg.
 
-veil.ogg or veil.mp3 — overworld
-title.ogg — title is silent unless you add veil.ogg
-shrine.ogg — optional, not required
-
-Use short loops. Ogg or mp3. If the file is missing, the game stays quiet.
+A new song starts every 10 minutes, counted from when the last one started; a song is
+never cut short. To add a song, drop the .ogg (or .mp3) here and add its file name to
+MUSIC_TRACKS in src/game/engine.ts. A missing file is skipped quietly.
