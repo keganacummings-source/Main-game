@@ -327,6 +327,8 @@ export type Snap = {
   /** Ghosts kept in the Ghost Box. */
   ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean; tagged: boolean; palette: string | null; abilities: string[] }[];
   ghostBox: { placed: boolean; near: boolean; max: number };
+  /** TURBZ storage chest: whether one is built, whether you're beside it, and its persistent contents. */
+  turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[] };
   /** The loot chest you have open (Hardcore). */
   chest: ChestView | null;
   /** The lingering ghost you are looking at, or null. */
@@ -660,6 +662,10 @@ const WILD_REACH = 64;
 const BED_REACH = 44;
 const BED_REST = 1.5;
 const HC_KEY = "turbz-hardcore-v1";
+/** TURBZ storage chest: its contents live here, outside the run save, so they survive death. */
+const TURBZ_CHEST_KEY = "turbz-chest-store-v1";
+/** What a Storage Chest costs to build/pick up (kyo). */
+const TURBZ_CHEST_KYO = 10000;
 const emptySnap = (): Snap => ({
 	mode: "title",
 	died: null,
@@ -714,6 +720,7 @@ const emptySnap = (): Snap => ({
 	ghostInspect: null,
 	ghostBonus: { passive: [], timed: [], working: 0 },
 	ghostBox: { placed: false, near: false, max: 300 },
+	turbzChest: { placed: false, near: false, count: 0, items: [] },
 	chest: null,
 	wildGhost: null,
 	lms: null,
@@ -2297,6 +2304,8 @@ export class TurbzGame {
 		if (bed) return this.removeFurniture("bed", bed);
 		const box = save.ghostBox;
 		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
+		const chest = save.turbzChest;
+		if (chest && chest.map === save.map && chest.tx === tx && chest.ty === ty) return this.removeTurbzChest();
 		const piece = this.buildPiece ?? "wood";
 		// Clicking the campfire tile: lay a floor underneath it if a floor is selected, otherwise pick the fire up.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
@@ -2305,6 +2314,7 @@ export class TurbzGame {
 			if (kind && FLOOR_KINDS.has(kind)) return this.placeLog(tx, ty, piece);
 			return this.removeCampfire(fire);
 		}
+		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		return this.placeLog(tx, ty, piece);
 	}
@@ -2316,7 +2326,7 @@ export class TurbzGame {
 		// Blocks cost kyo now, not materials; kyo isn't in the bag, so check it here and hide it from checkPlaceLog.
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
-		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : [])];
+		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : [])];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2324,7 +2334,7 @@ export class TurbzGame {
 			keepClear: this.mobs.filter((m) => m.alive).map((m) => ({ x: m.x, y: m.y })),
 			cost: matCost,
 			furniture,
-			needZone: piece === "bed" || piece === "ghostbox",
+			needZone: piece === "bed" || piece === "ghostbox" || piece === "turbzchest",
 			allowCampfireTile: isFloor,
 		});
 	}
@@ -2418,6 +2428,102 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 		return true;
+	}
+	// ---------- TURBZ storage chest (contents persist across death) ----------
+	/** The chest's stored items ({ itemId: count }), read from its own store so they outlive the run. */
+	turbzChestItems() {
+		try {
+			const raw = JSON.parse(localStorage.getItem(TURBZ_CHEST_KEY) ?? "null");
+			if (!raw || typeof raw !== "object") return {};
+			const out: Record<string, number> = {};
+			for (const [id, n] of Object.entries(raw)) { const c = Math.floor(Number(n)); if (id && Number.isFinite(c) && c > 0) out[id] = c; }
+			return out;
+		} catch { return {}; }
+	}
+	writeTurbzChestItems(items) {
+		try { localStorage.setItem(TURBZ_CHEST_KEY, JSON.stringify(items)); } catch { /* private mode */ }
+	}
+	turbzChestCount() {
+		return Object.values(this.turbzChestItems()).reduce((a, v) => a + (v as number), 0);
+	}
+	/** The Storage Chest if the player is standing near it on this map, else null. */
+	nearTurbzChest(reach = 72) {
+		const c = this.save?.turbzChest;
+		if (!c || c.map !== this.save.map) return null;
+		return Math.hypot(c.tx * 32 + 16 - this.save.x, c.ty * 32 + 16 - this.save.y) <= reach ? c : null;
+	}
+	placeTurbzChest(tx, ty) {
+		const save = this.save;
+		if (!this.turbz) { this.say("The Storage Chest is a TURBZ camp piece."); return false; }
+		if (save.turbzChest) { this.say("You already have a Storage Chest. Click it in build mode to pick it up and move it."); return false; }
+		if (!this.isOverworld(save.map)) { this.say("Place the Storage Chest at your camp in the overworld."); return false; }
+		const check = this.checkPiece("turbzchest", tx, ty);
+		if (!check.ok) { this.say(check.reason); return false; }
+		this.payForPiece("turbzchest", 20);
+		save.turbzChest = { map: save.map, tx, ty };
+		const n = this.turbzChestCount();
+		this.say(n ? `Storage Chest placed. Your ${n} stored item${n === 1 ? "" : "s"} are inside.` : "Storage Chest placed. Stand by it and open it to stash items that survive death.");
+		this.cue("rattle", { rate: 0.9 }, [420, .08, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	removeTurbzChest() {
+		const save = this.save;
+		const c = save?.turbzChest;
+		if (!c) return false;
+		if (Math.hypot(c.tx * 32 + 16 - save.x, c.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		save.turbzChest = null;
+		save.kyo = (save.kyo ?? 0) + TURBZ_CHEST_KYO;
+		if (this.turbzChestOpen) { this.turbzChestOpen = false; if (snap.panel === "turbzchest") publish({ panel: null }); }
+		this.say("Storage Chest packed up (kyo refunded). Your stored items are safe; place it again to reach them.");
+		this.cue("click", { rate: 0.75 }, [150, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	openTurbzChest() {
+		if (!this.nearTurbzChest()) { this.say("Walk to your Storage Chest to open it."); return; }
+		this.turbzChestOpen = true;
+		this.dest = null;
+		publish({ panel: "turbzchest" });
+		this.cue("rattle", {}, [420, .06, "triangle"]);
+		this.syncHud(true);
+	}
+	closeTurbzChest() {
+		this.turbzChestOpen = false;
+		if (snap.panel === "turbzchest") publish({ panel: null });
+		this.syncHud(true);
+	}
+	/** Move items from the bag into the chest. Kyo is a currency, not a storable item. */
+	turbzChestDeposit(id, n = 1) {
+		const save = this.save;
+		if (!save || !this.nearTurbzChest()) return this.say("Stand by your Storage Chest.");
+		if (id === "kyo") return;
+		const have = save.bag[id] ?? 0;
+		const take = Math.max(0, Math.min(have, Math.floor(n)));
+		if (take <= 0) return;
+		save.bag[id] = have - take;
+		if (save.bag[id] <= 0) delete save.bag[id];
+		const items = this.turbzChestItems();
+		items[id] = (items[id] ?? 0) + take;
+		this.writeTurbzChestItems(items);
+		this.persist();
+		this.syncHud(true);
+	}
+	turbzChestWithdraw(id, n = 1) {
+		const save = this.save;
+		if (!save || !this.nearTurbzChest()) return this.say("Stand by your Storage Chest.");
+		const items = this.turbzChestItems();
+		const have = items[id] ?? 0;
+		const take = Math.max(0, Math.min(have, Math.floor(n)));
+		if (take <= 0) return;
+		items[id] = have - take;
+		if (items[id] <= 0) delete items[id];
+		this.writeTurbzChestItems(items);
+		save.bag[id] = (save.bag[id] ?? 0) + take;
+		this.persist();
+		this.syncHud(true);
 	}
 	/** The campfire whose 15x15 safe zone the player is standing in, if any. */
 	playerSafeCamp() {
@@ -5686,7 +5792,9 @@ export class TurbzGame {
 	gainXp(n) {
 		const save = this.save;
 		n = Math.max(1, Math.round(n * bendDown(1 + this.mod("xp") / 100, 0.2, 0.05)));
-		const grant = this.rules === "hardcore" ? Math.max(1, Math.floor(n * 0.72)) : n;
+		let grant = this.rules === "hardcore" ? Math.max(1, Math.floor(n * 0.72)) : n;
+		// TURBZ class pick trades the Crying Lady's power for any class at half the XP.
+		if (this.turbz && save.turbzPickedClass) grant = Math.max(1, Math.floor(grant * 0.5));
 		save.xp += grant;
 		this.gainAccount(grant);
 		if (this.turbz) this.growWornGear?.(grant);
@@ -7477,8 +7585,10 @@ export class TurbzGame {
 			const door = this.doorNear(52);
 			if (door) { this.toggleDoor(door); return; }
 			const fire = this.campfireNear();
-			if (fire && !this.nearestChest() && !this.nearestWild()) { this.openBuildMenu(); return; }
+			if (fire && !this.nearestChest() && !this.nearestWild() && !this.nearTurbzChest(48)) { this.openBuildMenu(); return; }
 		}
+		// The TURBZ storage chest opens when you stand right beside it.
+		if (this.nearTurbzChest(48)) { this.openTurbzChest(); return; }
 		{
 			const chest = this.nearestChest();
 			const wild = this.nearestWild();
@@ -10144,6 +10254,9 @@ export class TurbzGame {
 	swapRules(rules) {
 		if (this.save) this.persist();
 		this.rules = rules === "hardcore" ? "hardcore" : "hunt";
+		// Leaving TURBZ: clear the flag so real modes capture account progress and write it normally.
+		// The TURBZ starters re-set this to true AFTER calling swapRules, before they begin the run.
+		this.turbz = false;
 		this.autoCombat = this.rules !== "hardcore";
 		this.duel = null;
 		this.save = null;
@@ -10575,6 +10688,16 @@ export class TurbzGame {
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
+			turbzChest: (() => {
+				const hasChest = !!save.turbzChest;
+				const items = hasChest ? this.turbzChestItems() : {};
+				return {
+					placed: hasChest,
+					near: hasChest && !!this.nearTurbzChest(),
+					count: Object.values(items).reduce((a, v) => a + (v as number), 0),
+					items: Object.entries(items).map(([id, c]) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, count: c as number })).sort((a, b) => a.name.localeCompare(b.name)),
+				};
+			})(),
 			chest: this.chestView(),
 			wildGhost: this.wildView(),
 			lms: this.lmsView?.() ?? null,
@@ -11325,7 +11448,25 @@ export class TurbzGame {
 		ctx.fillRect(x + 7, y + 16, 2, 6); ctx.fillRect(x + 23, y + 16, 2, 6); ctx.fillRect(x + 11, y + 20, 10, 2);
 		ctx.fillStyle = "#e7d9ff"; ctx.fillRect(x + 15, y + 1 - Math.sin(t * 3) * 2, 2, 2);
 	}
-	/** World-space pass: the Ghost Box, loot chests and attack telegraphs. */
+	/** Pixel-sprite storage chest: a banded wooden chest with a gold clasp, matching the camp art. */
+	paintTurbzChest(ctx, x, y) {
+		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 3, y + 27, 26, 4);
+		// Body.
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x + 3, y + 12, 26, 16);
+		ctx.fillStyle = "#7a4e2c"; ctx.fillRect(x + 4, y + 13, 24, 14);
+		ctx.fillStyle = "#8a5a34"; ctx.fillRect(x + 4, y + 20, 24, 7);
+		// Lid.
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x + 3, y + 6, 26, 8);
+		ctx.fillStyle = "#9a6a3c"; ctx.fillRect(x + 4, y + 7, 24, 6);
+		ctx.fillStyle = "#b07a44"; ctx.fillRect(x + 4, y + 7, 24, 2);
+		// Iron bands.
+		ctx.fillStyle = "#4a3018"; ctx.fillRect(x + 9, y + 6, 3, 22); ctx.fillRect(x + 20, y + 6, 3, 22);
+		ctx.fillStyle = "#6b4528"; ctx.fillRect(x + 9, y + 6, 1, 22); ctx.fillRect(x + 20, y + 6, 1, 22);
+		// Gold clasp.
+		ctx.fillStyle = "#e6c15a"; ctx.fillRect(x + 14, y + 11, 4, 6);
+		ctx.fillStyle = "#b8973a"; ctx.fillRect(x + 15, y + 14, 2, 2);
+	}
+	/** World-space pass: the Ghost Box, the storage chest, loot chests and attack telegraphs. */
 	drawExtras(ctx, w, h) {
 		const save = this.save;
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
@@ -11333,6 +11474,13 @@ export class TurbzGame {
 		if (box && box.map === save.map && Math.abs(box.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(box.ty * 32 + 16 - this.cam.y) < halfH) {
 			this.paintGhostBox(ctx, box.tx * 32, box.ty * 32, this.clock);
 			drawShadowName(ctx, `GHOST BOX · ${save.ghostStore?.length ?? 0}`, box.tx * 32 + 16, box.ty * 32 - 10, "#c9a6e8");
+		}
+		const tc = save.turbzChest;
+		if (tc && tc.map === save.map && Math.abs(tc.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(tc.ty * 32 + 16 - this.cam.y) < halfH) {
+			this.paintTurbzChest(ctx, tc.tx * 32, tc.ty * 32);
+			const near = !!this.nearTurbzChest();
+			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
+			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
 		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
@@ -11395,7 +11543,8 @@ export class TurbzGame {
 			const { tx, ty } = tileAt(this.mouseWorld.x, this.mouseWorld.y);
 			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty)
 				|| (sv.beds ?? []).some((b) => b.map === save.map && b.tx === tx && b.ty === ty)
-				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty);
+				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty)
+				|| (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty);
 			const check = placed ? { ok: true } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
 			ctx.save();
 			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";
