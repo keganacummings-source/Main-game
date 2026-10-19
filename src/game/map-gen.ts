@@ -45,7 +45,8 @@ export const ART = {
   grass: seq(F, (i) => `grass_${i}_new.png`, 0, 2),
   flowers: [...seq(F, (i) => `grass_flowers_yellow_${i}_new.png`, 1, 3), ...seq(F, (i) => `grass_flowers_red_${i}_new.png`, 1, 3), ...seq(F, (i) => `grass_flowers_blue_${i}_new.png`, 1, 3)],
   dirt: [...seq(F, (i) => `dirt_${i}_new.png`, 0, 2), F + "dirt_full_new.png"],
-  grassDirt: seq(F, (i) => `grass0-dirt-mix_${i}.png`, 1, 3),
+  // The grass/dirt mix tiles were dropped from the pack in V7; the older dirt art stands in for the worn patches.
+  grassDirt: seq(F, (i) => `dirt_${i}_old.png`, 0, 2),
   pebble: seq(F, (i) => `pebble_brown_${i}_new.png`, 0, 8),
   greyDirt: seq(F, (i) => `grey_dirt_${i}_new.png`, 0, 7),
   sand: seq(F, (i) => `sand_${i}.png`, 1, 8),
@@ -95,7 +96,8 @@ export const ART = {
   volcanicWall: seq(W, (i) => `volcanic_wall_${i}.png`, 0, 6),
   crystalWall: [...seq(W, (i) => `crystal_wall_${i}.png`, 0, 9), W + "crystal_wall_11.png", W + "crystal_wall_12.png", W + "crystal_wall_13.png"],
   emerald: seq(W, (i) => `emerald_${i}.png`, 1, 8),
-  labRock: seq(W, (i) => `lab-rock_${i}.png`, 0, 3),
+  // lab-rock_* was dropped from the pack in V7; the dark and grey rubble walls stand in.
+  labRock: [W + "stone2_dark_2_new.png", W + "stone2_dark_3_new.png", W + "stone2_gray_2_new.png", W + "stone2_gray_3_new.png"],
   yellowRock: seq(W, (i) => `wall_yellow_rock_${i}.png`, 0, 3),
   cobaltRock: seq(W, (i) => `cobalt_rock_${i}.png`, 1, 4),
   catacombs: seq(W, (i) => `catacombs_${i}.png`, 0, 15),

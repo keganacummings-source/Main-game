@@ -48,15 +48,16 @@ test("a map with story, NPCs and quests survives a save/load round trip", () => 
   assert.equal(r.npcs.length, 2);
 });
 
-test("old files that stored one quest on the NPC are upgraded", () => {
+// V7 dropped the ancient one-quest-on-the-NPC shape (quests live on MapFile.quests with `giver`).
+// Old files must still load: the stale field is stripped, nothing crashes, nothing is invented.
+test("old files with a quest stored on the NPC still load, without the stale field", () => {
   const m = village();
   m.quests = [];
   m.npcs[0].quest = { id: "old", name: "Old Favor", about: "x", rewardKyo: 70, steps: [{ type: "kill", count: 3 }] };
   const r = maps.parseMapJson(JSON.parse(JSON.stringify(m)));
-  assert.equal(r.quests.length, 1);
-  assert.equal(r.quests[0].giver, "elder");
-  assert.equal(r.quests[0].reward.kyo, 70);
+  assert.equal(r.quests.length, 0);
   assert.equal(r.npcs[0].quest, undefined);
+  assert.equal(r.npcs[0].id, "elder");
 });
 
 test("bad quest data is rejected or clamped", () => {

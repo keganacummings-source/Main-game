@@ -104,7 +104,7 @@ const abilities = await import(
   moduleUrl("../src/game/ability-progression.ts", { "./content": contentUrl })
 );
 const dungeons = await import(
-  moduleUrl("../src/game/procedural-dungeon.ts", { "./content": contentUrl })
+  moduleUrl("../src/game/procedural-dungeon.ts", { "./content": contentUrl, "./enemy-design": `data:text/javascript;base64,${Buffer.from("export const allEnemyDesigns=()=>[];").toString("base64")}` })
 );
 const ghostStyleUrl = moduleUrl("../src/game/ghost-style.ts");
 const creaturesUrl = moduleUrl("../src/game/creature-sprites.ts", { "./content": contentUrl, "./ghost-style": ghostStyleUrl });
@@ -275,18 +275,17 @@ test("every enemy and animal has a supplied pixel sprite", () => {
     assert.ok(creatures.CREATURE_CELLS[m.id], `Missing sprite for ${m.id}`);
 });
 
-test("equipment migration keeps enchantments and can restore a stripped piece", () => {
+// V7 renamed migrateEquipment to sanitizeGear and dropped the old previousEquipment restore.
+test("sanitizeGear keeps real enchantments, drops junk and gear-granted moves", () => {
   const g = content.rollGear(content.mulberry32(1), { level: 5, slot: "weapon" });
-  g.enchants = [{ id: "might", power: 8 }];
+  g.enchants = [{ id: "might", power: 8 }, { id: "not_a_real_enchant", power: 3 }, { id: "might", power: 0 }];
   g.moves = ["ember"];
-  content.migrateEquipment(g);
+  content.sanitizeGear(g);
   assert.deepEqual(g.enchants, [{ id: "might", power: 8 }]);
   assert.deepEqual(g.moves, []);
-  g.enchants = [];
-  g.previousEquipment = { enchants: [{ id: "might", power: 8 }], moves: ["ember"] };
-  content.migrateEquipment(g);
-  assert.deepEqual(g.enchants, [{ id: "might", power: 8 }]);
-  assert.deepEqual(g.moves, []);
+  g.enchants = undefined;
+  content.sanitizeGear(g);
+  assert.deepEqual(g.enchants, []);
 });
 
 const survival = await import(moduleUrl("../src/game/survival.ts", { "./building": moduleUrl("../src/game/building.ts") }));
@@ -361,7 +360,7 @@ test('items protect full reserves, distinguish buffs from healing, and keep reso
   assert.equal(itemUse.itemUseProblem(content.ITEM_BY_ID.cooked_meat, {...hard, hunger: 20}), null);
   assert.equal(itemUse.itemUseProblem(content.ITEM_BY_ID.drinking_water, {...hard, thirst: 20}), null);
   for (const id of ['cats_eye', 'ironroot_phial', 'warmth_tonic']) assert.equal(itemUse.itemUseProblem(content.ITEM_BY_ID[id], hard), null);
-  assert.match(itemUse.itemUseProblem(content.ITEM_BY_ID.timber, hard), /resource/);
+  assert.match(itemUse.itemUseProblem(content.ITEM_BY_ID.timber, hard), /material|resource/);
 });
 test('quick meal chooses the smallest sufficient portion or largest available without wasting full reserves', () => {
   const bag = { cooked_meat: 2, trail_ration: 1, mushroom: 5 };
@@ -374,10 +373,12 @@ test('quick meal chooses the smallest sufficient portion or largest available wi
 });
 
 
-test("actor walk cycle uses both steps and returns to standing without rapid frame skipping", () => {
-  assert.deepEqual([0, 1, 2, 3, 4].map(n => sheets.actorWalkFrame(n)), [1, 0, 1, 2, 1]);
-  assert.equal(sheets.actorWalkFrame(0.99), 1);
-  assert.equal(sheets.actorWalkFrame(1.01), 0);
+// The class sheets have four walk frames (frame 1 is the standing pose); the cycle walks all four in order.
+test("actor walk cycle steps through all four frames and stands on frame 1", () => {
+  assert.deepEqual([0, 1, 2, 3, 4].map(n => sheets.actorWalkFrame(n)), [0, 1, 2, 3, 0]);
+  assert.equal(sheets.actorWalkFrame(0.99), 0);
+  assert.equal(sheets.actorWalkFrame(1.01), 1);
+  assert.equal(sheets.actorWalkFrame(-2.5), 2, "walking backwards still picks a real frame");
   assert.equal(sheets.actorWalkFrame(7.5, false), 1);
 });
 
@@ -533,7 +534,7 @@ test("old ghosts are repaired: bad rows dropped, shiny-only removed from non-shi
 test("the Starfall batch: every new verse has its own animation and sane area numbers", () => {
   const batch = content.MOVES.filter((m) => m.fx);
   assert.ok(batch.length >= 12, `expected a batch of new verses, got ${batch.length}`);
-  const fxIds = new Set(["meteor", "chain", "vortex", "pillar", "nova", "boomerang", "barrage", "fissure", "sigil", "spectral", "wave", "bloom"]);
+  const fxIds = new Set(["meteor", "chain", "vortex", "pillar", "nova", "boomerang", "barrage", "fissure", "sigil", "spectral", "wave", "bloom", "fork", "orbit"]);
   const used = new Set(batch.map((m) => m.fx));
   assert.equal(used.size, fxIds.size, "every animation is used by at least one verse");
   const ids = new Set();
@@ -543,8 +544,9 @@ test("the Starfall batch: every new verse has its own animation and sane area nu
     assert.ok(content.MOVE_BY_ID[m.id] === m);
     assert.ok(["strike", "heavy", "channel"].includes(content.moveTactic(m)), `${m.id} is an attack`);
     assert.ok(m.power > 0 && m.power <= 90);
-    if (m.splash) assert.ok(m.splash.radius >= 30 && m.splash.radius <= 90 && m.splash.mult > 0 && m.splash.mult < 1);
-    if (m.chain) assert.ok(m.chain.jumps >= 1 && m.chain.jumps <= 4 && m.chain.mult < 1);
+    // The caster classes' area verses are wider than the first batch: up to 120px splashes and 5-jump chains.
+    if (m.splash) assert.ok(m.splash.radius >= 30 && m.splash.radius <= 120 && m.splash.mult > 0 && m.splash.mult < 1, `${m.id} splash ${m.splash.radius}`);
+    if (m.chain) assert.ok(m.chain.jumps >= 1 && m.chain.jumps <= 5 && m.chain.mult < 1, `${m.id} chain ${m.chain.jumps}`);
     if (m.nova) assert.equal(content.attackRange(m), m.nova, "a nova reaches exactly as far as its ring");
     if (m.echo) assert.ok(m.echo > 0 && m.echo < 1);
   }
@@ -583,8 +585,9 @@ test("the Reaver batch: 30 new melee verses with real reach, valid effects and e
     assert.ok(content.formTag(m).includes("ignores all armor"), `${id} says it ignores all armor`);
     assert.ok(content.formTag(m).includes("within 2 tiles"), `${id} says it works within 2 tiles`);
     if (m.nova) assert.equal(r, m.nova, `${id} nova reaches exactly as far as its ring`);
-    if (m.splash) assert.ok(m.splash.radius >= 30 && m.splash.radius <= 90 && m.splash.mult > 0 && m.splash.mult < 1);
-    if (m.chain) assert.ok(m.chain.jumps >= 1 && m.chain.jumps <= 4 && m.chain.mult < 1);
+    // The caster classes' area verses are wider than the first batch: up to 120px splashes and 5-jump chains.
+    if (m.splash) assert.ok(m.splash.radius >= 30 && m.splash.radius <= 120 && m.splash.mult > 0 && m.splash.mult < 1, `${m.id} splash ${m.splash.radius}`);
+    if (m.chain) assert.ok(m.chain.jumps >= 1 && m.chain.jumps <= 5 && m.chain.mult < 1, `${m.id} chain ${m.chain.jumps}`);
     if (m.echo) assert.ok(m.echo > 0 && m.echo < 1);
     types.add(m.type);
     tactics.add(content.moveTactic(m));

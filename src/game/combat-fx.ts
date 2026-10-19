@@ -84,7 +84,7 @@ const ease = (u: number) => 1 - (1 - Math.min(1, Math.max(0, u))) ** 3;
 type Shape = "comet" | "drop" | "boulder" | "gust" | "spark" | "shard" | "orb" | "lance" | "wisp" | "blob" | "star" | "coin";
 type Kind = "slash" | "thrust" | "proj" | "beam" | "impact" | "ward" | "heal" | "surge" | "trail" | "roll" | "blink" | "slam" | "rune" | "evade" | "flash" | "sigCast" | "sigHit" | "status" | "orbiter"
   // Bespoke verse animations (Move.fx) and ghost-ability effects.
-  | "meteor" | "chain" | "vortex" | "pillar" | "nova" | "boomerang" | "barrage" | "fissure" | "sigil" | "spectral" | "wave" | "bloom" | "bomb" | "guard";
+  | "meteor" | "chain" | "vortex" | "pillar" | "nova" | "boomerang" | "barrage" | "fissure" | "sigil" | "spectral" | "wave" | "bloom" | "fork" | "orbit" | "bomb" | "guard";
 type Fx = {
   kind: Kind; x0: number; y0: number; x1: number; y1: number; t: number; dur: number; pal: Pal; type: TypeId; seed: number;
   shape?: Shape; big?: number; dir?: number; tilt?: number; impact?: Fx; quality?: number; burst?: boolean;
@@ -150,7 +150,7 @@ const AREA_KINDS = new Set<Kind>(["vortex", "pillar", "barrage", "sigil", "spect
 /** Tactics whose verses may carry a bespoke animation (Move.fx). Movement and self verses keep theirs. */
 const BESPOKE_TACTICS = new Set(["strike", "heavy", "channel"]);
 /** Every bespoke animation a verse can name in Move.fx. */
-export const MOVE_FX_IDS = ["meteor", "chain", "vortex", "pillar", "nova", "boomerang", "barrage", "fissure", "sigil", "spectral", "wave", "bloom"] as const;
+export const MOVE_FX_IDS = ["meteor", "chain", "vortex", "pillar", "nova", "boomerang", "barrage", "fissure", "sigil", "spectral", "wave", "bloom", "fork", "orbit"] as const;
 export type MoveFxId = (typeof MOVE_FX_IDS)[number];
 
 export class CombatFx {
@@ -389,6 +389,18 @@ export class CombatFx {
         add({ ...base, ...chase(), kind: "bloom", dur: 0.8, t: -wind, x0: x1, y0: y1, rad });
         if (!miss) add(hit(wind + 0.22, 1));
         return wind + 0.22;
+      case "fork":
+        // A bolt that splits at the target into three crackling branches (the chain jumps follow it).
+        add({ ...base, kind: "flash", dur: 0.14, t: -wind, x1: x0, y1: y0 });
+        add({ ...base, ...chase(), kind: "fork", dur: 0.42, t: -wind, impact: { ...hit(0), t: 0 } });
+        return wind + 0.06;
+      case "orbit": {
+        // An orb flies out with three motes circling it, then bursts on the foe.
+        const dist = Math.hypot(x1 - x0, y1 - y0);
+        const flight = Math.max(0.18, dist / 460);
+        add({ ...base, ...chase(), kind: "orbit", dur: flight, t: -wind, impact: { ...hit(0, 1.1), t: 0 } });
+        return wind + flight;
+      }
     }
     return 0;
   }
@@ -676,7 +688,7 @@ export class CombatFx {
       case "sigCast": return this.sigCast(ctx, f, u, clock);
       case "sigHit": return this.sigHit(ctx, f, u, clock);
       case "meteor": case "chain": case "vortex": case "pillar": case "nova": case "boomerang": case "barrage":
-      case "fissure": case "sigil": case "spectral": case "wave": case "bloom": case "bomb": case "guard":
+      case "fissure": case "sigil": case "spectral": case "wave": case "bloom": case "fork": case "orbit": case "bomb": case "guard":
         return this.drawBespoke(ctx, f, u, clock);
       case "status": return this.statusFx(ctx, f, u, clock);
       case "orbiter": {
@@ -752,6 +764,38 @@ export class CombatFx {
           this.mote(f.x0 + (f.x1 - f.x0) * t, f.y0 + (f.y1 - f.y0) * t, h, f.type, 80, 0.25, "spark");
         }
         star(ctx, f.x1, f.y1, 8 * (1 - u) + 3, f.pal, 6, clock * 5);
+        return;
+      }
+      case "fork": {
+        // The main bolt reaches the foe, then three branches fan out past it and flicker away.
+        if (u > 0.85 && Math.floor(clock * 40) % 2) return;
+        const reach = Math.min(1, u * 3);
+        const ex = f.x0 + (f.x1 - f.x0) * reach, ey = f.y0 + (f.y1 - f.y0) * reach;
+        zig(ctx, f.x0, f.y0, ex, ey, m, 9, 10);
+        zig(ctx, f.x0, f.y0, ex, ey, h, 3, 6);
+        if (u > 0.3) {
+          const grow = Math.min(1, (u - 0.3) * 3);
+          for (const turn of [-0.7, 0, 0.7]) {
+            const bx = f.x1 + Math.cos(ang + turn) * 46 * grow * big, by = f.y1 + Math.sin(ang + turn) * 30 * grow * big;
+            zig(ctx, f.x1, f.y1, bx, by, l, 5, 6);
+            zig(ctx, f.x1, f.y1, bx, by, h, 2, 4);
+            star(ctx, bx, by, 5 * (1 - u) + 2, f.pal, 5, clock * 6);
+          }
+        }
+        if (Math.random() < 0.5) this.mote(ex, ey, h, f.type, 70, 0.25, "spark");
+        return;
+      }
+      case "orbit": {
+        // An orb in flight, three motes circling it on a tilted ring, a short trail behind.
+        const x = f.x0 + (f.x1 - f.x0) * u, y = f.y0 + (f.y1 - f.y0) * u;
+        for (let k = 1; k <= 4; k++) px(ctx, x - ca * k * 5, y - sa * k * 5, k < 2 ? l : m, Math.max(1, 3 - k));
+        disc(ctx, x, y, 5 * big, m);
+        disc(ctx, x - P, y - P, 3 * big, l);
+        px(ctx, x - P, y - P, h, 2);
+        for (let i = 0; i < 3; i++) {
+          const oa = clock * 10 + i * 2.09;
+          px(ctx, x + Math.cos(oa) * 11 * big, y + Math.sin(oa) * 6 * big, i ? a[2] : a[3], 2);
+        }
         return;
       }
       case "vortex": {

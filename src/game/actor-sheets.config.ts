@@ -60,7 +60,7 @@ const SHEET_SRC: Record<SheetId, string> = {
   third: "/sprites/charsets_12_3rd_sheet.png",
   fourth: "/sprites/charsets_12_4th_sheet.png",
   // ?v= busts the 24h /sprites/* cache (public/_headers) when the sheet changes; bump it on each redraw.
-  warrior: "/sprites/class_warriors.png?v=4",
+  warrior: "/sprites/class_warriors.png?v=5",
 };
 
 /** One character block: origin of its up-row, first frame, and its frame size. */
@@ -128,6 +128,11 @@ CHARACTERS["warrior:moonhopper"] = { sheet: "warrior", x: 384, y: 704, fw: 32, f
 CHARACTERS["warrior:bladedancer"] = { sheet: "warrior", x: 512, y: 704, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 CHARACTERS["warrior:sovereign"] = { sheet: "warrior", x: 640, y: 704, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 CHARACTERS["warrior:cryinggirl"] = { sheet: "warrior", x: 0, y: 880, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
+// The ten casters' own looks: recoloured from the sprite each used to borrow (scripts/sprites/recolor-casters.py).
+for (const [id, x, y] of [
+  ["embermage", 128, 880], ["tidewitch", 256, 880], ["stonecaller", 384, 880], ["stormwitch", 512, 880], ["frostweaver", 640, 880],
+  ["radiant", 0, 1056], ["gravemage", 128, 1056], ["arcanist", 256, 1056], ["ruinmage", 384, 1056], ["veilsinger", 512, 1056],
+] as const) CHARACTERS[`warrior:${id}`] = { sheet: "warrior", x, y, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 
 export const spriteKey = (charId: string, row: number, frame: number): string => `${charId}|d${row}f${frame}`;
 

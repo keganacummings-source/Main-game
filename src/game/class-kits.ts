@@ -284,7 +284,7 @@ export const KIT_MOVES: KitMove[] = [
   x("veilsinger", "ck_veilward", "Veil Ward", "spirit", 0, 100, 0, 3, "shell", "ward", "Veilsinger starter. A ward woven from the edge of the veil."),
   x("veilsinger", "ck_harmonystrike", "Harmony Strike", "spirit", 36, 96, 10, 1, "expose", "strike", "Veilsinger starter. Three ascending notes, each one louder than the last.", { form: "spell", multi: { hits: 3, gap: 0.14, mult: 0.7 } }),
   x("veilsinger", "ck_ghoststep", "Ghost Step", "spirit", 10, 100, 6, 3, "expose", "blink", "Veilsinger starter. Step along a veil-thread to a new spot.", { form: "spell", react: "move", fail: 10 }),
-  x("veilsinger", "sx_crescendo", "Crescendo", "spirit", 64, 86, 18, 0, "expose", "heavy", "Veilsinger bonus. The final note — a wave that slams every foe on screen.", { form: "spell", nova: 160, echo: 0.45, fx: "wave" }),
+  x("veilsinger", "sx_finale", "Final Crescendo", "spirit", 64, 86, 18, 0, "expose", "heavy", "Veilsinger bonus. The final note — a wave that slams every foe on screen.", { form: "spell", nova: 160, echo: 0.45, fx: "wave" }),
   x("veilsinger", "sx_echopulse", "Echo Pulse", "spirit", 26, 98, 8, 1, "expose", "strike", "Veilsinger bonus. An echo of the last spell you cast, rebounding back.", { form: "spell", echo: 0.7, fx: "bloom" }),
   // Embermage — fire burn-stacking caster
   x("embermage", "ck_emberblast", "Ember Blast", "fire", 54, 92, 14, 1, "burn", "strike", "Embermage signature. A concentrated fireball that ignites on impact and lingers.", { form: "spell", splash: { radius: 64, mult: 0.6 }, fx: "meteor" }),
@@ -297,7 +297,7 @@ export const KIT_MOVES: KitMove[] = [
   x("embermage", "sx_firetorrent", "Fire Torrent", "fire", 22, 98, 8, 1, "burn", "channel", "Embermage bonus. A rapid torrent of fireballs sprays forward.", { form: "spell", multi: { hits: 6, gap: 0.11, mult: 0.55 }, fx: "barrage" }),
   // Tidewitch — water flooding area caster
   x("tidewitch", "ck_tidecrash", "Tide Crash", "water", 50, 94, 12, 1, "soak", "strike", "Tidewitch signature. A crashing wave that rolls forward and soaks everything it crosses.", { form: "spell", chain: { jumps: 2, range: 130, mult: 0.8 }, fx: "wave" }),
-  x("tidewitch", "ck_brineward", "Brine Ward", "water", 0, 100, 0, 3, "shell", "ward", "Tidewitch starter. A ward of salt water that hardens the body."),
+  x("tidewitch", "ck_saltward", "Salt Ward", "water", 0, 100, 0, 3, "shell", "ward", "Tidewitch starter. A ward of salt water that hardens the body."),
   x("tidewitch", "ck_deluge", "Deluge", "water", 36, 96, 8, 1, "soak", "strike", "Tidewitch starter. Open the floodgates — water fills a wide ring.", { form: "spell", nova: 96, fx: "wave" }),
   x("tidewitch", "ck_tidalmend", "Tidal Mend", "water", 34, 100, 0, 2, "mend", "heal", "Tidewitch starter. The tide pulls the hurt out. Heals a steady amount."),
   x("tidewitch", "ck_currentstep", "Current Step", "water", 12, 100, 6, 3, "soak", "blink", "Tidewitch starter. Ride a current to a new position.", { form: "spell", react: "move", fail: 10 }),
@@ -337,7 +337,7 @@ export const KIT_MOVES: KitMove[] = [
   x("radiant", "sx_sunstorm", "Sunstorm", "light", 28, 100, 10, 1, "expose", "channel", "Radiant bonus. Call down a storm of light bolts — nothing on the field is spared.", { form: "spell", multi: { hits: 6, gap: 0.12, mult: 0.55 }, splash: { radius: 50, mult: 0.5 } }),
   // Gravemage — ghoul death-curse caster
   x("gravemage", "ck_gravecurse", "Grave Curse", "ghoul", 48, 90, 12, 1, "gloom", "strike", "Gravemage signature. A death curse that eats health over ten seconds.", { form: "spell", chain: { jumps: 2, range: 128, mult: 0.8 } }),
-  x("gravemage", "ck_graveward", "Grave Ward", "ghoul", 0, 100, 0, 3, "shell", "ward", "Gravemage starter. A shield woven from the boundary between living and dead."),
+  x("gravemage", "ck_cryptward", "Crypt Ward", "ghoul", 0, 100, 0, 3, "shell", "ward", "Gravemage starter. A shield woven from the boundary between living and dead."),
   x("gravemage", "ck_deathpulse", "Death Pulse", "ghoul", 36, 92, 10, 1, "gloom", "strike", "Gravemage starter. A pulse of death energy radiates outward.", { form: "spell", nova: 88, fx: "bloom" }),
   x("gravemage", "ck_gravemend", "Grave Mend", "ghoul", 32, 100, 0, 2, "mend", "heal", "Gravemage starter. Drain a little life from the dark between worlds."),
   x("gravemage", "ck_shadowstep", "Shadow Step", "ghoul", 14, 100, 8, 3, "gloom", "blink", "Gravemage starter. Step through the grave-dark to a new spot.", { form: "spell", react: "move", fail: 12 }),
@@ -382,12 +382,12 @@ export const STARTER_KITS: Record<string, string[]> = {
   ruinmage: ["ck_ruinstrike", "ck_darkward", "ck_voidcrack", "ck_abyssdrain", "ck_riftslip"],
   veilsinger: ["ck_veilsong", "ck_spiritmend", "ck_veilward", "ck_harmonystrike", "ck_ghoststep"],
   embermage: ["ck_emberblast", "ck_cinderward", "ck_scorchbeam", "ck_ashpulse", "ck_flashstep", "ck_embermend"],
-  tidewitch: ["ck_tidecrash", "ck_brineward", "ck_deluge", "ck_tidalmend", "ck_currentstep"],
+  tidewitch: ["ck_tidecrash", "ck_saltward", "ck_deluge", "ck_tidalmend", "ck_currentstep"],
   stonecaller: ["ck_stonecall", "ck_earthward", "ck_rockspike", "ck_stonemend", "ck_groundstep"],
   stormwitch: ["ck_stormvolley", "ck_galeward", "ck_windlance", "ck_windmend", "ck_gustblink"],
   frostweaver: ["ck_frostweave", "ck_iceward", "ck_blizzardneedle", "ck_frostmend", "ck_iceblink"],
   radiant: ["ck_radiantburst", "ck_lightward", "ck_solarbeam", "ck_lightmend", "ck_dawnstep"],
-  gravemage: ["ck_gravecurse", "ck_graveward", "ck_deathpulse", "ck_gravemend", "ck_shadowstep"],
+  gravemage: ["ck_gravecurse", "ck_cryptward", "ck_deathpulse", "ck_gravemend", "ck_shadowstep"],
 };
 for (const m of SIGNATURE_BATCH) {
   const kit = STARTER_KITS[m.cls!];
