@@ -25,7 +25,7 @@
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
-import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
+import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
@@ -409,7 +409,11 @@ export type Snap = {
   classId: string;
   sheet: Sheet | null;
   clock: { phase: "day" | "night"; label: string; left: string; dark: number; active: boolean };
-  build: { on: boolean; logs: number; placed: number; inZone: boolean; holding: boolean; piece: string; beds: number; ghostBox: boolean };
+  build: { on: boolean; logs: number; kyo?: number; placed: number; inZone: boolean; holding: boolean; piece: string; beds: number; ghostBox: boolean;
+    /** What the camp on this map is made of. */
+    counts: { walls: number; floors: number; doors: number; beds: number; ghostBox: boolean; chest: boolean; fires: number };
+    /** Build mode: what clicking the tile under the cursor would do (null when not building). */
+    hover: { tx: number; ty: number; ok: boolean; pickup: boolean; text: string } | null };
   lobby: { code: string; role: "solo" | "host" | "guest"; net: string; members: { id: string; name: string; classId: string; className: string; level: number; hp: number; max: number; map: string; self: boolean; host: boolean }[] };
 };
 export type Sheet = {
@@ -780,7 +784,7 @@ const emptySnap = (): Snap => ({
 	sheet: null,
 	clock: { phase: "day", label: "Day", left: "", dark: 0, active: false },
 	mapQuests: [],
-	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false, piece: "wood", beds: 0, ghostBox: false },
+	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false, piece: "wood", beds: 0, ghostBox: false, counts: { walls: 0, floors: 0, doors: 0, beds: 0, ghostBox: false, chest: false, fires: 0 }, hover: null },
 	lobby: { code: "", role: "solo", net: "", members: [] }
 });
 let snap: Snap = emptySnap();
@@ -1070,6 +1074,13 @@ export class TurbzGame {
 				"NumpadEnter"
 			].includes(e.code)) e.preventDefault();
 			if (e.repeat) return;
+			// Build mode: 1-8 pick a camp piece, X is the Remove tool. No verses while the world is paused.
+			if (this.buildMode && this.buildOn()) {
+				const digit = /^(Digit|Numpad)[1-9]$/.test(e.code) ? Number(e.code.slice(-1)) : 0;
+				if (digit) { const piece = buildHotkeyPiece(digit, !!this.turbz); if (piece) this.setBuildPiece(piece); return; }
+				if (e.code === "KeyX") { this.setBuildPiece("erase"); return; }
+				if (e.code === "Numpad0" || e.code === "NumpadEnter" || e.code === "Digit0" || e.code === "KeyR") return;
+			}
 			if (e.code.startsWith("Digit")) {
 				const digit = Number(e.code.slice(5));
 				if (digit >= 1 && digit <= 9) this.cast(digit - 1);
@@ -2277,15 +2288,20 @@ export class TurbzGame {
 	}
 	/** Picks what build mode places: a wooden or brick wall, a bed, or the Ghost Box. */
 	setBuildPiece(piece) {
-		if (!BUILD_PIECES[piece]) return;
+		if (piece !== "erase" && !BUILD_PIECES[piece]) return;
+		if (piece === "turbzchest" && !this.turbz) return;
+		const was = this.buildMode;
 		this.buildPiece = piece;
 		if (this.buildOn() && !this.dead) {
 			this.buildMode = true;
 			this.dest = null;
 			// Close the camp menu so the canvas is clickable; build mode runs with no panel open (and pauses the world).
 			if (snap.panel) publish({ panel: null });
-			const def = BUILD_PIECES[piece];
-			this.say(`Building ${def.name} (${this.costLine(def.cost)}). Click a tile to place it; click a placed piece to pick it up. F or Esc to stop.`);
+			// The build bar shows the pick; only say it when build mode was not already on.
+			if (!was) {
+				if (piece === "erase") this.say("Remove tool. Click a placed piece to pick it up for a refund. F or Esc to stop.");
+				else { const def = BUILD_PIECES[piece]; this.say(`Building ${def.name} (${this.costLine(def.cost)}). Click a tile to place it. 1-8 switch pieces, X removes. F or Esc to stop.`); }
+			}
 		}
 		this.syncHud(true);
 	}
@@ -2298,7 +2314,7 @@ export class TurbzGame {
 		this.dest = null;
 		if (this.buildMode && snap.panel) publish({ panel: null });
 		const def = BUILD_PIECES[this.buildPiece ?? "wood"] ?? BUILD_PIECES.wood;
-		this.say(this.buildMode ? `Build mode: ${def.name} (${this.costLine(def.cost)}). Click a tile to place it. Click a placed piece to pick it up. F or Esc to stop.` : "Build mode off.");
+		this.say(this.buildMode ? (this.buildPiece === "erase" ? "Build mode: Remove tool. Click a placed piece to pick it up. F or Esc to stop." : `Build mode: ${def.name} (${this.costLine(def.cost)}). Click a tile to place it. 1-8 switch pieces, X removes. F or Esc to stop.`) : "Build mode off.");
 		this.syncHud(true);
 	}
 	buildAt(x, y) {
@@ -2310,6 +2326,19 @@ export class TurbzGame {
 		const isFloorPlaced = placed && placed.kind && FLOOR_KINDS.has(placed.kind);
 		const piece = this.buildPiece ?? "wood";
 		const isFloorPiece = !!BUILD_PIECES[piece]?.kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind);
+		// Remove tool: pick up whatever is on top here, and never place anything.
+		if (piece === "erase") {
+			if (placed) return this.removeLog(placed);
+			const b = save.survival.beds.find((x) => x.map === save.map && x.tx === tx && x.ty === ty);
+			if (b) return this.removeFurniture("bed", b);
+			const gb = save.ghostBox;
+			if (gb && gb.map === save.map && gb.tx === tx && gb.ty === ty) return this.removeFurniture("ghostbox", gb);
+			const ch = save.turbzChest;
+			if (ch && ch.map === save.map && ch.tx === tx && ch.ty === ty) return this.removeTurbzChest();
+			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
+			this.say("Nothing to pick up there.");
+			return false;
+		}
 		// Clicking an existing non-floor piece removes it. Floors stay so walls/doors/beds/chests can sit on top.
 		if (placed && !isFloorPlaced) return this.removeLog(placed);
 		if (isFloorPlaced && isFloorPiece) return this.removeLog(placed);
@@ -2631,7 +2660,49 @@ export class TurbzGame {
 			piece: this.buildPiece ?? "wood",
 			beds: sv ? sv.beds.length : 0,
 			ghostBox: save?.ghostBox ? true : false,
+			counts: this.campCounts(),
+			hover: this.buildHover(),
 		};
+	}
+	/** What your camp on this map is made of, for the Camp menu and the build bar. */
+	campCounts() {
+		const save = this.save;
+		const sv = save?.survival;
+		const out = { walls: 0, floors: 0, doors: 0, beds: 0, ghostBox: false, chest: false, fires: 0 };
+		if (!sv) return out;
+		for (const l of sv.logs) {
+			if (l.map !== save.map) continue;
+			if (l.kind && FLOOR_KINDS.has(l.kind)) out.floors++;
+			else if (l.kind === "door") out.doors++;
+			else out.walls++;
+		}
+		out.beds = sv.beds.filter((b) => b.map === save.map).length;
+		out.ghostBox = !!(save.ghostBox && save.ghostBox.map === save.map);
+		out.chest = !!(save.turbzChest && save.turbzChest.map === save.map);
+		out.fires = sv.campfires.filter((c) => c.map === save.map).length;
+		return out;
+	}
+	/** Build mode: what a click on the tile under the cursor would do, and why not if it can't. */
+	buildHover() {
+		const save = this.save;
+		if (!this.buildMode || !this.buildOn() || !this.mouseWorld || !save?.survival || !this.world) return null;
+		const { tx, ty } = tileAt(this.mouseWorld.x, this.mouseWorld.y);
+		const sv = save.survival;
+		const piece = this.buildPiece ?? "wood";
+		const here = sv.logs.filter((l) => l.map === save.map && l.tx === tx && l.ty === ty);
+		const top = here.find((l) => !l.kind || !FLOOR_KINDS.has(l.kind)) ?? here[0];
+		const far = Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) > BUILD_REACH;
+		const pickup = (name, refund) => ({ tx, ty, ok: !far, pickup: true, text: far ? `${name} · too far to pick up` : `Click to pick up ${name} · refund ${refund}` });
+		const floorPiece = !!BUILD_PIECES[piece]?.kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind);
+		if (top && (piece === "erase" || !(top.kind && FLOOR_KINDS.has(top.kind)) || floorPiece)) return pickup(pieceNameForKind(top.kind), top.kind ? `${BLOCK_KYO} kyo` : "1 Log");
+		if (sv.beds.some((b) => b.map === save.map && b.tx === tx && b.ty === ty)) return pickup("Bed", this.costLine(BUILD_PIECES.bed.cost));
+		if (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty) return pickup("Ghost Box", this.costLine(BUILD_PIECES.ghostbox.cost));
+		if (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty) return pickup("Storage Chest", `${BUILD_PIECES.turbzchest.cost.kyo} kyo`);
+		const fire = sv.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
+		if (fire && !floorPiece) return { tx, ty, ok: false, pickup: false, text: this.turbz ? "Campfire · move it with Pack up camp (H)" : "Campfire · move it with Pick up campfire (H)" };
+		if (piece === "erase") return { tx, ty, ok: false, pickup: false, text: "Nothing to pick up here" };
+		const c = this.checkPiece(piece, tx, ty);
+		return { tx, ty, ok: !!c.ok, pickup: false, text: c.ok ? `Click to place ${BUILD_PIECES[piece]?.name ?? piece}` : c.reason ?? "Can't place that here" };
 	}
 	// ---------- Timed effects so damage lands when the FX lands ----------
 	/** Plays a verse's FX and returns the seconds until it visually lands. */
@@ -11660,7 +11731,7 @@ export class TurbzGame {
 				|| (sv.beds ?? []).some((b) => b.map === save.map && b.tx === tx && b.ty === ty)
 				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty)
 				|| (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty);
-			const check = placed ? { ok: true } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
+			const check = placed ? { ok: true } : this.buildPiece === "erase" ? { ok: false } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
 			ctx.save();
 			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";
 			ctx.fillRect(tx * 32, ty * 32, 32, 32);

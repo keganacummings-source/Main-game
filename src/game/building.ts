@@ -44,6 +44,26 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
 /** TURBZ-only camp pieces (hidden from the build menu in other modes). */
 export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest"]);
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
+/** How the build menu and the build bar group the pieces. */
+export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture"; label: string; pieces: BuildPiece[] }[] = [
+  { id: "walls", label: "Walls", pieces: ["wood", "stone"] },
+  { id: "floors", label: "Floors", pieces: ["woodfloor", "stonefloor"] },
+  { id: "doors", label: "Doors", pieces: ["door"] },
+  { id: "furniture", label: "Furniture", pieces: ["bed", "ghostbox", "turbzchest"] },
+];
+/** Build-mode hotkeys: 1-8 pick these pieces in order (TURBZ-only pieces are skipped outside TURBZ). X is the Remove tool. */
+export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest"];
+/** The piece a digit key picks in build mode (1-based), or null. */
+export function buildHotkeyPiece(digit: number, turbz: boolean): BuildPiece | null {
+  const list = BUILD_HOTKEY_ORDER.filter((id) => turbz || !TURBZ_ONLY_PIECES.has(id));
+  return list[digit - 1] ?? null;
+}
+/** The name of whatever a placed camp tile is, for the build bar ("Click to pick up a Door"). */
+export function pieceNameForKind(kind: TileKind | undefined): string {
+  if (!kind) return "Log";
+  if (kind === "brick") return "Brick Wall";
+  return BUILD_PIECE_IDS.map((id) => BUILD_PIECES[id]).find((d) => d.kind === kind)?.name ?? "Block";
+}
 /** The placeable blocks (not furniture), for the campfire build menu. */
 export const BLOCK_PIECE_IDS: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door"];
 export const MAX_BEDS = 12;

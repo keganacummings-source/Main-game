@@ -216,7 +216,9 @@ const MENUS = [
 
 /** Bottom-centre: verses and every menu, in one place. */
 export const HudDock = memo(function HudDock({ game }: GameProp) {
-  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd", "gimmick"] as const);
+  const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd", "gimmick", "build"] as const);
+  // The build bar takes the bottom of the screen while you build (verses are off then anyway).
+  if (s.build.on) return null;
   const smart = s.autoCombat || s.autoplay;
   const q = s.quick[0];
   return (

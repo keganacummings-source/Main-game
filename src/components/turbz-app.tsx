@@ -5,6 +5,7 @@ import { CLASSES, classGendered } from "@/game/classes";
 import { CharacterSheet, ClassPicker, CryingCustomizer, type Pick } from "@/components/character-ui";
 import { FloatWin, narrow, vh, vw } from "@/components/float-win";
 import { HudDock, HudFabs, HudHover, HudTarget, HudTracker, HudVitals } from "@/components/hud";
+import { BuildBar } from "@/components/build-bar";
 import { isPinned, useLayout } from "@/game/ui-layout";
 import { loadCloudSave, writeCloudSave } from "@/game/cloud-client";
 import { bindCloud, cloudReady, ingestCloud, localSaves, noteArena, noteHardcore, noteHunt, onSync, readArenaLocal } from "@/game/account-save";
@@ -600,6 +601,7 @@ function Play({ game, username: _username }: { game: TurbzGame | null; username:
       <HudTarget />
       <HudTracker game={game} />
       <HudDock game={game} />
+      <BuildBar game={game} />
       <HudFabs game={game} />
       <Stick on={(x, y) => game?.setStick(x, y)} />
       <Windows game={game} />
