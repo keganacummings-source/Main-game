@@ -34,6 +34,7 @@
 - **Set banner fix:** the "set complete" banner now shows when you finish **collecting** a set, not every time you equip one.
 - **Witches face where they walk.** TURBZ witches used to stay facing forward while walking sideways, so their blades and axes pointed the wrong way. They now turn with their steps, and their lunges go the way they face.
 - **The ten caster classes** each have their own sprite.
+- **Colour accents.** Classes that looked alike are easier to tell apart: the **Oathkeeper** wears steel and silver, the **Absolver**'s robes have a faint mint tint, and the **Crying Girl** is tear-teal.
 - **Fixes:** every failing test fixed, two missing spell animations (fork and orbit) added, and three duplicate verse ids renamed. A Gravemage save holding the old *Grave Ward* verse now loads the Spirit Caller's version.
 
 ## Menus: Camp, Build, Gear and Character sheet
