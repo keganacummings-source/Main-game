@@ -330,6 +330,8 @@ export type Snap = {
   ghostBox: { placed: boolean; near: boolean; max: number };
   /** TURBZ storage chest: whether one is built, whether you're beside it, and its persistent contents. */
   turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[] };
+  /** Your camp: a fire lit (anywhere), one in reach of you here, and (TURBZ) a camp packed up waiting to be dropped. */
+  camp: { lit: boolean; near: boolean; packed: boolean; pieces: number };
   /** The loot chest you have open (Hardcore). */
   chest: ChestView | null;
   /** The lingering ghost you are looking at, or null. */
@@ -722,6 +724,7 @@ const emptySnap = (): Snap => ({
 	ghostBonus: { passive: [], timed: [], working: 0 },
 	ghostBox: { placed: false, near: false, max: 300 },
 	turbzChest: { placed: false, near: false, count: 0, items: [] },
+	camp: { lit: false, near: false, packed: false, pieces: 0 },
 	chest: null,
 	wildGhost: null,
 	lms: null,
@@ -2316,12 +2319,14 @@ export class TurbzGame {
 		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
 		const chest = save.turbzChest;
 		if (chest && chest.map === save.map && chest.tx === tx && chest.ty === ty) return this.removeTurbzChest();
-		// Clicking the campfire tile: lay a floor underneath it if a floor is selected, otherwise pick the fire up.
+		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
+		// that is the Pack up camp / Pick up campfire button in the Camp menu, so a stray click can't move your camp.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
 		if (fire) {
 			const kind = BUILD_PIECES[piece]?.kind;
 			if (kind && FLOOR_KINDS.has(kind)) return this.placeLog(tx, ty, piece);
-			return this.removeCampfire(fire);
+			this.say(this.turbz ? "That's your campfire. To move your camp, use Pack up camp in the Camp menu (H)." : "That's a campfire. Use Pick up campfire in the Camp menu (H) to move it.");
+			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
@@ -2787,16 +2792,17 @@ export class TurbzGame {
 		if (action === "fire") {
 			if (this.nearCamp()) return this.say("A campfire is already nearby.");
 			if (blocked(this.world, save.x, save.y)) return;
-			// TURBZ: one camp at a time. Placing a fire drops (restores) the camp you were packed up with.
+			// TURBZ: one camp, on the wild, ever. Lighting a fire drops back the camp you packed up, layout intact.
 			if (this.turbz) {
-				if (save.survival.campfires.some((c) => c.map === save.map)) return this.say("You can only keep one camp at a time in TURBZ. Pick up this campfire to move it.");
+				if (save.survival.campfires.length) return this.say("You can only keep one camp in TURBZ. Use Pack up camp at your campfire to move it.");
+				if (!this.isOverworld(save.map)) return this.say("Make camp out on the wild, not in a dungeon.");
 				if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 				save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
 				this.gainSkill("survival", 12);
-				if (save.turbzCamp && (save.turbzCamp.logs?.length || save.turbzCamp.beds?.length)) {
+				if (this.turbzCampHasPieces?.(save.turbzCamp)) {
 					this.restoreTurbzCamp?.(save.x, save.y);
-					this.say("You drop your old camp back around the fire.");
-				} else this.say("Campfire built. Build your camp here — it will follow you between lives.");
+					this.say("You unpack your camp around the fire, exactly as you left it.");
+				} else this.say("Campfire built. Build your camp here. It packs up when you die, and comes back when you light a fire.");
 				this.persist(); this.syncHud(true); this.syncSolids(save.map);
 				return;
 			}
@@ -2805,6 +2811,19 @@ export class TurbzGame {
 			save.survival.campfires = save.survival.campfires.slice(-100);
 			this.gainSkill("survival", 12);
 			this.say("Campfire built. Each cook or boil uses another log.");
+		} else if (action === "packcamp") {
+			// The one way to move a camp: a button in the Camp menu, beside the fire.
+			const fire = save.survival.campfires.find((c) => c.map === save.map && Math.hypot(c.x - save.x, c.y - save.y) <= 96);
+			if (!fire) return this.say(this.turbz ? "Walk to your campfire to pack up your camp." : "Walk to a campfire to pick it up.");
+			if (!this.turbz) { this.removeCampfire(fire); return; }
+			if (this.buildMode) this.toggleBuild(false);
+			if (this.sleeping) this.wakeUp();
+			if (!this.packTurbzCamp?.()) return;
+			this.giveItem("timber", 3);
+			this.cue("click", { rate: 0.7 }, [140, .06, "triangle"]);
+			this.say("Camp packed up: every wall, floor, bed, the Ghost Box and the Storage Chest, layout and all. Light a campfire anywhere on the wild to drop it back.");
+			this.persist(); this.syncHud(true);
+			return;
 		} else if (action === "water") {
 			if (this.channel) return;
 			if (!waterWithinReach(this.world, save.x, save.y)) return this.say("Stand beside a water tile to collect water.");
@@ -10770,6 +10789,17 @@ export class TurbzGame {
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
+			camp: (() => {
+				const sv = save.survival;
+				const packed = this.turbz && !!this.turbzCampHasPieces?.(save.turbzCamp);
+				const pc = save.turbzCamp;
+				return {
+					lit: !!sv?.campfires?.length,
+					near: !!sv?.campfires?.some((c) => c.map === save.map && Math.hypot(c.x - save.x, c.y - save.y) <= 96),
+					packed,
+					pieces: packed ? (pc.logs?.length ?? 0) + (pc.beds?.length ?? 0) + (pc.chest ? 1 : 0) + (pc.ghostBox ? 1 : 0) : 0,
+				};
+			})(),
 			turbzChest: (() => {
 				const hasChest = !!save.turbzChest;
 				const items = hasChest ? this.turbzChestItems() : {};

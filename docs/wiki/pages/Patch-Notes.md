@@ -1,5 +1,13 @@
 # Patch Notes
 
+## V.3 UGONCRY — TURBZ is the main game, persistent camps, board reset
+
+- **TURBZ is the main game.** It is the big tile at the top of the menu, marked **MAIN GAME**. The menu is now titled **V.3 UGONCRY**.
+- **Leaderboards reset.** Season 3: every board (Hunt, Hardcore and TURBZ) starts empty for V.3.
+- **Your TURBZ camp is permanent.** You keep one camp, and only out on the wild. Dying, or the new **Pack up camp** button in the Camp menu (H), folds the campfire and every wall, floor, door, bed, the Ghost Box and the Storage Chest into one bundle. Lighting a campfire anywhere drops it back with the exact same layout. Chest items and boxed ghosts stay inside.
+- **Fixes:** dying again before you relit a fire used to delete your packed camp. A camp with only a chest or Ghost Box never came back. A camp still standing when you started a new run (without dying) was lost. All three now keep the camp.
+- **No more click-to-pick-up campfires.** Clicking the fire in build mode no longer lifts it (it only lays a floor under it). Use **Pack up camp** (TURBZ) or **Pick up campfire** (Hardcore) instead.
+
 ## Dungeon layouts and TURBZ witches
 
 - **Four dungeon layouts.** Rifts, the Tiny Crypt and the Ash Kiln now roll a layout each day: classic **Halls**, **Isles** (islands in water or lava joined by causeways, each isle with its own tribe of foes), a two-storey **Manor** (rooms, doors, stairs) and a **Portal maze** (sealed chambers linked only by portal pads, each a different plane). See [Bosses and Dungeons](Bosses-and-Dungeons).

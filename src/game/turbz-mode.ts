@@ -213,6 +213,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (!this.turbz || !save || this.dead) return;
     try { localStorage.setItem(TURBZ_SAVE_KEY, JSON.stringify(save)); } catch { /* private mode */ }
+    this.mirrorTurbzCamp();
   };
 
   /** Forget the resume slot (on death — the next life starts fresh, keeping the armour heirloom). */
@@ -265,6 +266,10 @@ export function installTurbz(game: any): void {
     this.witchGraves = [];
     this.spawnTurbzWitches(10 + Math.floor(rand() * 6));
     this.plantTurbzHunts();
+    // No camp standing and none packed in this run? Pick up the one kept off-run (a camp from an older run).
+    if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {
+      try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+    }
     this.say("TURBZ resumed. Your witch, your gear and your grind are right where you left them.");
     this.persistTurbz();
     this.syncHud(true);
@@ -419,14 +424,14 @@ export function installTurbz(game: any): void {
   };
 
   /**
-   * TURBZ one-camp rule: on death, fold the campfire, its blocks and its beds into a single packed camp
-   * (stored as tile offsets from the fire) that survives the run. Placing a campfire next life drops it back.
+   * The camp standing on the wild (its campfire plus every block, bed, chest and Ghost Box laid around it),
+   * written as tile offsets from the fire so it can be dropped anywhere, on any wild. Null if no fire is lit.
    */
-  game.packTurbzCamp = function () {
+  game.turbzCampBlueprint = function () {
     const save = this.save;
-    if (!this.turbz || !save?.survival) return;
-    const fire = save.survival.campfires.find((c: any) => c.map === save.map) ?? save.survival.campfires[0];
-    if (!fire) { try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ } save.turbzCamp = null; return; }
+    if (!save?.survival) return null;
+    const fire = save.survival.campfires.find((c: any) => c.map === TURBZ_MAP) ?? save.survival.campfires[0];
+    if (!fire) return null;
     const bx = Math.floor(fire.x / 32), by = Math.floor(fire.y / 32);
     const logs = (save.survival.logs ?? []).filter((l: any) => l.map === fire.map)
       .map((l: any) => ({ dx: l.tx - bx, dy: l.ty - by, kind: l.kind, open: l.open }));
@@ -438,17 +443,56 @@ export function installTurbz(game: any): void {
       ? { dx: save.turbzChest.tx - bx, dy: save.turbzChest.ty - by } : null;
     const ghostBox = save.ghostBox && save.ghostBox.map === fire.map
       ? { dx: save.ghostBox.tx - bx, dy: save.ghostBox.ty - by } : null;
-    // Ghost box contents survive death with the camp.
     const ghostStore = (save.ghostStore ?? []).map((s: any) => ({ ...s }));
-    save.turbzCamp = { logs, beds, chest, ghostBox, ghostStore };
-    // Remove it from the world so nothing is left standing after death.
+    return { fire, camp: { logs, beds, chest, ghostBox, ghostStore } };
+  };
+
+  /** Anything worth dropping back? A camp with just a chest or a Ghost Box still counts. */
+  game.turbzCampHasPieces = function (camp: any) {
+    return !!camp && !!(camp.logs?.length || camp.beds?.length || camp.chest || camp.ghostBox || camp.ghostStore?.length);
+  };
+
+  /**
+   * Keeps the off-run copy of your camp in step with the one you are standing in. Written on every TURBZ save,
+   * so the camp survives a crash, closing the tab, or starting a brand-new run without dying. Never erases it.
+   */
+  game.mirrorTurbzCamp = function () {
+    const save = this.save;
+    if (!this.turbz || !save) return;
+    const live = this.turbzCampBlueprint();
+    const camp = live ? live.camp : save.turbzCamp;
+    if (!this.turbzCampHasPieces(camp)) return;
+    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(camp)); } catch { /* private mode */ }
+  };
+
+  /**
+   * TURBZ one-camp rule: fold the campfire and everything around it into one packed camp that survives the run.
+   * Runs on death, and from the Pack up camp button. Lighting a campfire again drops it back, layout intact.
+   * If the camp is already packed (you died before lighting a fire), the packed camp is kept as it is.
+   */
+  game.packTurbzCamp = function (): boolean {
+    const save = this.save;
+    if (!this.turbz || !save?.survival) return false;
+    const live = this.turbzCampBlueprint();
+    if (!live) {
+      // Nothing standing. Never throw away a camp that is already packed.
+      if (!save.turbzCamp) {
+        try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+      }
+      return false;
+    }
+    const { fire, camp } = live;
+    save.turbzCamp = camp;
+    // Lift it all off the world so nothing is left standing.
     save.survival.campfires = save.survival.campfires.filter((c: any) => c !== fire);
     save.survival.logs = (save.survival.logs ?? []).filter((l: any) => l.map !== fire.map);
     save.survival.beds = (save.survival.beds ?? []).filter((b: any) => b.map !== fire.map);
     save.turbzChest = null;
     save.ghostBox = null;
+    if (this.turbzChestOpen) this.turbzChestOpen = false;
     this.syncSolids?.(save.map);
-    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(save.turbzCamp)); } catch { /* private mode */ }
+    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(camp)); } catch { /* private mode */ }
+    return true;
   };
 
   /** Drops the packed camp back onto the world, centred on a freshly placed campfire at (x, y). */
@@ -486,8 +530,9 @@ export function installTurbz(game: any): void {
       save.ghostStore = camp.ghostStore.map((s: any) => ({ ...s }));
     }
     save.turbzCamp = null;
-    try { localStorage.removeItem(TURBZ_CAMP_KEY); } catch { /* ignore */ }
     this.syncSolids?.(save.map);
+    // The off-run copy now follows the camp that is standing (it is not erased, so a crash cannot lose it).
+    this.mirrorTurbzCamp();
   };
 
   game.growWornGear = function (grant: number) {

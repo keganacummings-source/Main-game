@@ -75,6 +75,7 @@ test("the new season wipes every old grave once, and death channels are kept per
   s1.post("kegan", { mode: "hunt", score: 9, name: "New", race: "Vesper", level: 4, accountScore: 0, skills: [], gear: [], note: "", cause: "Killed by a boar" }, 10_000);
   const s2 = new GravesStore(sql);
   const rows = s2.list("hunt");
+  // A season-2 board (meta already says 2) is wiped by season 3 too: every board starts empty for V.3.
   assert.equal(rows.length, 1, "only wiped once");
   assert.equal(rows[0]!.cause, "Killed by a boar");
   s2.setChannel("g1", "c1", "kegan", 1);
@@ -87,6 +88,11 @@ test("the new season wipes every old grave once, and death channels are kept per
   assert.equal(board.length, 1);
   assert.equal(board[0]!.name, "Mira");
   assert.equal(s2.list("hunt").length, 1, "TURBZ does not land on the Hunt board");
+  db.exec(`UPDATE meta SET v = '2' WHERE k = 'season'`);
+  const s3 = new GravesStore(sql);
+  assert.equal(s3.list("hunt").length, 0, "season 2 graves are wiped by the season 3 reset");
+  assert.equal(s3.list("turbz").length, 0, "every mode's board is wiped");
+  assert.deepEqual(s3.channels(), [], "Discord channels are not graves");
 });
 
 test("/shiny username answers with the collection GIF, or says who has none", async () => {

@@ -130,9 +130,9 @@ export function Screen({ kicker, title, children, wide, roomy, aside }: { kicker
   );
 }
 
-export function Tile({ title, about, onClick, primary, disabled, testid, badge }: { title: ReactNode; about?: ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean; testid?: string; badge?: ReactNode }) {
+export function Tile({ title, about, onClick, primary, hero, disabled, testid, badge }: { title: ReactNode; about?: ReactNode; onClick: () => void; primary?: boolean; /** Full-width headline tile (the main game). */ hero?: boolean; disabled?: boolean; testid?: string; badge?: ReactNode }) {
   return (
-    <button type="button" className={`ui-tile ${primary ? "ui-tile-primary" : ""}`} onClick={onClick} disabled={disabled} data-testid={testid}>
+    <button type="button" className={`ui-tile ${primary || hero ? "ui-tile-primary" : ""} ${hero ? "ui-tile-hero" : ""}`} onClick={onClick} disabled={disabled} data-testid={testid}>
       <span className="ui-tile-title">{title}{badge && <span className="ui-tile-badge">{badge}</span>}</span>
       {about && <span className="ui-tile-about">{about}</span>}
     </button>
