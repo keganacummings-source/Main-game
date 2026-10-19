@@ -1,10 +1,9 @@
 /**
  * Enemy skins & random identity.
  *
- * Every ordinary foe now wears a random "skin" — one of the shipped pixel sprites in
- * `enemies/custom-enemies.json`, drawn in greyscale and then tinted by the foe's own
- * random element(s). The same sprite therefore reads as a brand-new creature every time:
- * a grey SlappingTon tinted fire+void looks nothing like the same grey tinted ice.
+ * Every non-witch foe now wears a random "skin" — one of the uploaded pixel sprites in
+ * `enemies/replacement-sprites.json`, drawn in full colour exactly as supplied. This is the
+ * player's own sprite set replacing every enemy look in the world (witches keep their bodies).
  *
  * A foe also rolls:
  *   - a silly random name (Jeff, Bubbles, Oreo…),
@@ -15,9 +14,11 @@
  */
 import { TYPE_IDS, TYPES, type TypeId, type Rng } from "./content";
 import { setEnemySkin, clearEnemySkins } from "./creature-sprites";
-import shipped from "./enemies/custom-enemies.json";
+// The skin pool is the player's uploaded sprite set: every non-witch foe wears one of these,
+// drawn in full colour (see installEnemySkins). Replaces the old greyscale-tinted pool.
+import pool from "./enemies/replacement-sprites.json";
 
-type ShippedSkin = { id: string; scale?: number; sprite?: { kind?: string; pixels?: (string | null)[] } };
+type PoolSkin = { id: string; type?: string; scale?: number; boss?: boolean; pixels?: (string | null)[] };
 
 /** Ids of the skins available in the pool, in install order. */
 export const ENEMY_SKIN_IDS: string[] = [];
@@ -101,8 +102,8 @@ function hexToRgb(hex: string): [number, number, number] | null {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
-/** Build a 16×16 greyscale canvas from a 256-length pixel array. Keeps dark outlines dark. */
-function greyscaleCanvas(pixels: (string | null)[]): HTMLCanvasElement | null {
+/** Build a 16×16 full-colour canvas from a 256-length pixel array, exactly as supplied. */
+function colorCanvas(pixels: (string | null)[]): HTMLCanvasElement | null {
   if (typeof document === "undefined") return null;
   const c = document.createElement("canvas");
   c.width = 16;
@@ -111,28 +112,26 @@ function greyscaleCanvas(pixels: (string | null)[]): HTMLCanvasElement | null {
   if (!g) return null;
   for (let i = 0; i < 256; i++) {
     const p = pixels[i];
-    if (!p) continue;
-    const rgb = hexToRgb(p);
-    if (!rgb) continue;
-    // Luma, then a gentle contrast curve so tints keep readable light/dark shading.
-    let l = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
-    l = Math.max(0, Math.min(255, (l - 128) * 1.15 + 128));
-    const v = Math.round(l);
-    g.fillStyle = `rgb(${v},${v},${v})`;
+    if (!p || !hexToRgb(p)) continue;
+    g.fillStyle = p;
     g.fillRect(i % 16, Math.floor(i / 16), 1, 1);
   }
   return c;
 }
 
-/** Builds the skin pool from the shipped pixel sprites and registers each greyscale canvas. */
+/**
+ * Builds the skin pool from the uploaded sprite set and registers each as a full-colour skin.
+ * Every non-witch foe rolls one of these and wears it as-is (no element tint), so the player's
+ * own art is what shows in the world.
+ */
 export function installEnemySkins(): number {
   clearEnemySkins();
   ENEMY_SKIN_IDS.length = 0;
-  const list = Array.isArray(shipped) ? (shipped as ShippedSkin[]) : [];
+  const list = Array.isArray(pool) ? (pool as PoolSkin[]) : [];
   for (const d of list) {
-    const px = d?.sprite?.kind === "pixels" ? d.sprite.pixels : null;
+    const px = d?.pixels;
     if (!Array.isArray(px) || px.length !== 256) continue;
-    const canvas = greyscaleCanvas(px);
+    const canvas = colorCanvas(px);
     if (!canvas) {
       // No DOM (e.g. SSR): still record the id so rolls work; the renderer falls back gracefully.
       ENEMY_SKIN_IDS.push(d.id);
@@ -140,7 +139,7 @@ export function installEnemySkins(): number {
     }
     // Normalise scale: as a shared skin pool every foe should read at a consistent tile size, so the
     // per-sprite design scale (which ranged from tiny to boss-huge) is ignored here.
-    setEnemySkin(SKIN_KEY(d.id), { canvas, scale: 1 });
+    setEnemySkin(SKIN_KEY(d.id), { canvas, scale: 1, noTint: true });
     ENEMY_SKIN_IDS.push(d.id);
   }
   return ENEMY_SKIN_IDS.length;
