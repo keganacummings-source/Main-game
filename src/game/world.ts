@@ -16,7 +16,14 @@ import {
   type Rng,
 } from "./content";
 
-export type Tile = { floor: number; biome: number; block: number; decor: number; sprite?: string; layers?: string[]; portal?: { map: string; tx?: number; ty?: number } };
+export type Tile = { floor: number; biome: number; block: number; decor: number; sprite?: string; layers?: string[]; portal?: { map: string; tx?: number; ty?: number; kind?: PadKind } };
+
+/** What an in-map pad looks like and says: a portal, a staircase, or the boss room's way back out. */
+export type PadKind = "portal" | "stairs-up" | "stairs-down" | "return";
+/** Same-map portals use this as `portal.map`: step on the tile, arrive at (tx, ty) on this map. */
+export const HERE_PORTAL = "@here";
+/** A pad laid by the dungeon generator, so the engine can draw a glow and label over it. */
+export type DungeonPad = { tx: number; ty: number; to: { tx: number; ty: number }; kind: PadKind };
 
 export const BIOMES: BiomeId[] = ["void", "frost", "verdant", "crown", "bone", "tide", "ashen"];
 
@@ -68,6 +75,11 @@ export type WorldData = {
   solids?: Set<number>;
   /** Water can be swum through (Last Man Standing). */
   swim?: boolean;
+  /** Generated dungeons: which layout was rolled, its display name, a line for the player, and its pads. */
+  layout?: string;
+  name?: string;
+  blurb?: string;
+  pads?: DungeonPad[];
 };
 
 const REGION_DESIGN: { id: BiomeId; x: number; y: number; r: number }[] = [

@@ -76,7 +76,14 @@ type Brain = {
   bag: Record<string, number>; spirits: number; team: number;
   state: string; goalX: number; goalY: number; think: number; simT: number; stuck: number;
   castCd: Record<string, number>; foe: string; foeT: number; dodgeCd: number; wanderT: number; age: number;
+  /** Combat footwork (see twitchDuel): which way she circles, dash timers, her preferred range. */
+  strafe?: number; strafeT?: number; dashT?: number; dashX?: number; dashY?: number; want?: number; potT?: number; summonT?: number;
 };
+
+/** How many ghosts a TURBZ witch brings: one, a second from level 20, a third from 40. Crying Ladies bring one extra. */
+export function twitchGhostCount(level: number, cryingGirl: boolean): number {
+  return Math.max(1, Math.min(3, 1 + Math.floor(Math.max(0, level) / 20) + (cryingGirl ? 1 : 0)));
+}
 
 export function poolMax(level: number): number {
   return 50 + Math.max(0, Math.floor(level) - 1) * 3;
@@ -321,7 +328,7 @@ export function installTurbz(game: any): void {
     if (this.turbz) {
       this.turbzRoster = (this.turbzRoster ?? []).filter((m: any) => m?.alive);
       for (const m of this.mobs ?? []) {
-        if ((m.twitch || m.turbzBoss) && m.alive && !this.turbzRoster.includes(m)) this.turbzRoster.push(m);
+        if ((m.twitch || m.turbzBoss || m.twitchPet) && m.alive && !this.turbzRoster.includes(m)) this.turbzRoster.push(m);
       }
     }
     origLoad(map, fresh);
@@ -770,6 +777,18 @@ export function installTurbz(game: any): void {
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;
     const save = this.save;
+    // Your velocity, smoothed over about a third of a second. Witches lead their shots with it.
+    if (dt > 0) {
+      const last = this.turbzPVLast;
+      const pv = this.turbzPV ?? { x: 0, y: 0 };
+      if (last && last.map === save.map) {
+        const vx = (save.x - last.x) / dt, vy = (save.y - last.y) / dt;
+        if (Math.hypot(vx, vy) > 900) { pv.x = 0; pv.y = 0; } // a teleport, not a run
+        else { const k = Math.min(1, dt * 3); pv.x += (vx - pv.x) * k; pv.y += (vy - pv.y) * k; }
+      }
+      this.turbzPV = pv;
+      this.turbzPVLast = { x: save.x, y: save.y, map: save.map };
+    }
     const graves: number[] = this.witchGraves ?? [];
     for (let i = 0; i < graves.length; i++) graves[i] = (graves[i] ?? 0) - dt;
     this.witchGraves = graves;
@@ -866,13 +885,23 @@ export function installTurbz(game: any): void {
     if (!r || !save || !m.alive) return;
     r.age += dt;
     r.dodgeCd = Math.max(0, r.dodgeCd - dt);
+    m.evadeT = Math.max(0, (m.evadeT ?? 0) - dt);
     // Hunter witches never forget the player — keep the foe lock permanently refreshed.
     if (m.turbzHunter) { r.foe = "player"; r.foeT = 9999; }
     else r.foeT = Math.max(0, r.foeT - dt);
     for (const k of Object.keys(r.castCd)) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
     const near = Math.hypot(m.x - save.x, m.y - save.y) < NEAR;
     if (!near) return this.simTwitch(m, dt);
+    this.twitchEscort(m, dt);
     this.liveTwitch(m, dt);
+  };
+
+  /** Her own ghosts, and the ghosts of witches on her team, are never her foes. */
+  game.twitchFriend = function (m: any, o: any): boolean {
+    if (!o?.master) return false;
+    if (o.master === m.id) return true;
+    const lead = this.mobs.find((x: any) => x.id === o.master);
+    return !!(lead?.twitch && m.rv?.team && lead.rv?.team === m.rv.team);
   };
 
   game.twitchTeamSize = function (id: number) {
@@ -920,6 +949,7 @@ export function installTurbz(game: any): void {
     for (const o of this.mobs) {
       if (!o.alive || o === m) continue;
       if (o.twitch && r.team && o.rv?.team === r.team) continue;
+      if (this.twitchFriend(m, o)) continue;
       const d = Math.hypot(o.x - m.x, o.y - m.y);
       if (d > 640) continue;
       foes.push({
@@ -1202,8 +1232,12 @@ export function installTurbz(game: any): void {
     const r: Brain = m.rv;
     const save = this.save;
     r.think -= dt;
-    if (r.think <= 0) { r.think = 0.35; this.twitchThink(m); }
+    // Quicker decisions than a wandering witch: she re-reads the fight five times a second.
+    if (r.think <= 0) { r.think = 0.2; this.twitchThink(m); }
     this.witchUnstick(m);
+    // In a fight she uses real footwork (strafe, weave, kite, dash) instead of walking at her goal.
+    const foe = this.twitchFoe(m);
+    if (foe && Math.hypot(foe.x - m.x, foe.y - m.y) < 420) { this.twitchDuel(m, foe, dt); return; }
     const spot = this.witchLandSpot(r.goalX, r.goalY, m.x, m.y);
     r.goalX = spot.x;
     r.goalY = spot.y;
@@ -1241,7 +1275,7 @@ export function installTurbz(game: any): void {
     if (r.foe === "player" && !this.dead && r.foeT > 0) return { player: true, x: save.x, y: save.y, alive: true, level: save.level };
     if (r.foe && r.foe !== "player") {
       const o = this.mobs.find((x: any) => x.id === r.foe && x.alive);
-      if (o && !(o.twitch && o.rv?.team && o.rv.team === r.team)) return o;
+      if (o && !(o.twitch && o.rv?.team && o.rv.team === r.team) && !this.twitchFriend(m, o)) return o;
     }
     r.foe = "";
     return null;
@@ -1254,7 +1288,7 @@ export function installTurbz(game: any): void {
       let best = foe;
       let pct = (foe.hp ?? foe.max ?? 1) / Math.max(1, foe.max ?? 1);
       for (const o of this.mobs) {
-        if (!o.alive || o === m || (o.twitch && r.team && o.rv?.team === r.team)) continue;
+        if (!o.alive || o === m || (o.twitch && r.team && o.rv?.team === r.team) || this.twitchFriend(m, o)) continue;
         if (Math.hypot(o.x - m.x, o.y - m.y) > 110) continue;
         const p = o.hp / Math.max(1, o.max);
         if (p < pct && p < 0.35) { pct = p; best = o; }
@@ -1269,7 +1303,8 @@ export function installTurbz(game: any): void {
     const spellEdge = spells.reduce((n, mv) => Math.max(n, typeEdge(mv.type, foeType)), 0);
     const meleeEdge = melees.reduce((n, mv) => Math.max(n, typeEdge(mv.type, foeType)), 0);
     const caster = spellEdge > meleeEdge || (spellEdge === meleeEdge && spells.length > melees.length);
-    const want = caster ? 96 : 42;
+    const want = caster ? 112 + Math.min(28, r.level * 0.4) : 42;
+    r.want = want;
     if (d > want + 8) { r.goalX = foe.x; r.goalY = foe.y; }
     else if (caster && d < 58) {
       const a = Math.atan2(m.y - foe.y, m.x - foe.x);
@@ -1278,7 +1313,7 @@ export function installTurbz(game: any): void {
     } else { r.goalX = m.x; r.goalY = m.y; }
     const pool = (caster && spellEdge > 0 ? spells : melees.length && meleeEdge > 0 ? melees : moves.filter(isOffense)).filter(ready);
     const hpLeft = foe.hp ?? foe.max ?? 80;
-    const hit = pool.filter((mv) => typeEdge(mv.type, foeType) > 0 && d <= (attackForm(mv) === "melee" ? 64 : Math.min(160, attackRange(mv))))
+    const hit = pool.filter((mv) => typeEdge(mv.type, foeType) > 0 && d <= (attackForm(mv) === "melee" ? 64 : Math.min(176, attackRange(mv) + 16)))
       .sort((a, b) => this.witchMoveScore(r, b, foeType, hpLeft) - this.witchMoveScore(r, a, foeType, hpLeft))[0];
     if (!hit) return;
     const hurt = m.hp / Math.max(1, m.max);
@@ -1301,7 +1336,8 @@ export function installTurbz(game: any): void {
 
   game.twitchCast = function (m: any, move: Move, foe: any) {
     const r: Brain = m.rv;
-    r.castCd[move.id] = Math.max(0.45, (move.power > 60 ? 1.3 : 0.7));
+    // TURBZ witches chain verses faster than other foes: about half a second between light spells.
+    r.castCd[move.id] = Math.max(0.35, (move.power > 60 ? 1.0 : 0.5));
     if (isHeal(move)) {
       const n = 12 + move.power * 0.4 + r.level;
       m.hp = Math.min(m.max, m.hp + n);
@@ -1310,7 +1346,7 @@ export function installTurbz(game: any): void {
     }
     if (isWard(move)) { m.wardT = 2.4; this.float(m.x, m.y - 46, "WARD", "#fff1a8"); return; }
     if (!foe) {
-      this.mobAttack(m, move);
+      this.mobAttack(m, move, attackForm(move) === "melee" ? undefined : this.twitchAim(m, move));
       return;
     }
     if (!foe.alive) return;
@@ -1323,6 +1359,237 @@ export function installTurbz(game: any): void {
       this.twitchXp(m, 10 + (foe.level ?? 1) * 3);
       if (rand() < 0.2) r.bag.mushroom = (r.bag.mushroom ?? 0) + 1;
     }
+  };
+
+
+  /**
+   * Where a witch aims a shot at you: where you will be when it lands, not where you stand. She reads
+   * your last half-second of movement and leads by the wind-up plus flight time (capped, so a feint
+   * still works), and one shot in four is fired straight to punish stopping.
+   */
+  game.twitchAim = function (m: any, move: Move) {
+    const save = this.save;
+    if (!save) return undefined;
+    const vx = this.turbzPV?.x ?? 0, vy = this.turbzPV?.y ?? 0;
+    if (Math.hypot(vx, vy) < 20 || rand() < 0.25) return { x: save.x, y: save.y };
+    const d = Math.hypot(save.x - m.x, save.y - m.y);
+    const wind = attackForm(move) === "ranged" ? 0.42 : 0.55;
+    const t = Math.min(0.9, wind + d / 420) * (0.75 + rand() * 0.25);
+    let ox = vx * t, oy = vy * t;
+    const lead = Math.hypot(ox, oy);
+    if (lead > 72) { ox *= 72 / lead; oy *= 72 / lead; }
+    const s = this.witchLandSpot(save.x + ox, save.y + oy, save.x, save.y);
+    return { x: s.x, y: s.y };
+  };
+
+  /**
+   * Combat footwork for a witch in a fight. She holds her best range (casters ~110-140, melee in close),
+   * circles you and flips direction at random, weaves on the way in instead of a straight line, backs off
+   * when a caster is crowded, dashes sideways when you wind up a big cast or lunge, and drinks a potion
+   * when she is low instead of standing in the open.
+   */
+  game.twitchDuel = function (m: any, foe: any, dt: number) {
+    const r: Brain = m.rv;
+    const save = this.save;
+    const dx = foe.x - m.x, dy = foe.y - m.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const ux = dx / d, uy = dy / d;
+    // Her range breathes in and out a little, so she is never a fixed ring around you.
+    const caster = (r.want ?? 96) > 60;
+    const want = (r.want ?? 96) + Math.sin(r.age * 1.3 + (m.y % 5)) * (caster ? 22 : 6);
+    r.strafeT = (r.strafeT ?? 0) - dt;
+    r.potT = Math.max(0, (r.potT ?? 0) - dt);
+    if (r.strafeT <= 0 || !r.strafe) { r.strafe = rand() < 0.5 ? -1 : 1; r.strafeT = 0.6 + rand() * 0.9; }
+
+    // Low health: a potion, with a step back first. Not a flight across the map.
+    const hp = m.hp / Math.max(1, m.max);
+    if (hp < 0.35 && r.potT <= 0 && (r.bag.potion ?? 0) > 0) {
+      r.bag.potion--;
+      r.potT = 9;
+      m.hp = Math.min(m.max, m.hp + m.max * 0.28);
+      this.float(m.x, m.y - 46, "DRINKS", "#9ad8c8");
+      r.dashT = 0.25; r.dashX = -ux; r.dashY = -uy;
+    }
+
+    // Threat read (only against you): a big cast winding up, a lunge or rush, or you closing on a caster.
+    if (foe.player && !this.dead && r.dodgeCd <= 0 && (r.dashT ?? 0) <= 0) {
+      const pv = this.turbzPV ?? { x: 0, y: 0 };
+      const closing = -(pv.x * ux + pv.y * uy);
+      const windup = (this.castLock ?? 0) > 0.05 && d < 300;
+      const lunging = !!(this.lunge || this.rush) && d < 200;
+      const crowded = caster && d < 70 && closing > 40;
+      if (windup || lunging || crowded) {
+        const side = r.strafe ?? 1;
+        // Sideways, and a little away if she is a caster who is too close.
+        let ddx = -uy * side - (caster ? ux * 0.6 : 0), ddy = ux * side - (caster ? uy * 0.6 : 0);
+        const l = Math.hypot(ddx, ddy) || 1;
+        ddx /= l; ddy /= l;
+        if (!this.witchClear(m.x, m.y, m.x + ddx * 60, m.y + ddy * 60)) { ddx = -ddx; ddy = -ddy; r.strafe = -side; }
+        r.dashT = 0.24; r.dashX = ddx; r.dashY = ddy;
+        r.dodgeCd = 1.5 + rand() * 1.1;
+        m.evadeT = 0.3; // her dash is a real dodge: hits that land in this window miss
+        this.float(m.x, m.y - 40, "DASH", "#e7d9ff");
+      }
+    }
+
+    let vx: number, vy: number, sp: number;
+    const pace = (140 + Math.min(34, r.level * 0.6)) * (m.stats?.speed ?? 1);
+    if ((r.dashT ?? 0) > 0) {
+      r.dashT! -= dt;
+      vx = r.dashX ?? 0; vy = r.dashY ?? 0; sp = 380;
+    } else {
+      // Radial: close to her range, or back off. Tangential: circle, and weave while closing in.
+      let radial = Math.max(-1.25, Math.min(1, (d - want) / 45));
+      if (caster && d < want * 0.55) radial = -1.25;
+      const far = d > want + 70;
+      const tang = far ? Math.sin(r.age * 5.5 + (m.x % 7)) * 0.75 : (caster ? 0.85 : d < 70 ? 0.7 : 0.35) * (r.strafe ?? 1);
+      vx = radial * ux + tang * -uy;
+      vy = radial * uy + tang * ux;
+      sp = pace * (far ? 1.15 : 1);
+    }
+    const l = Math.hypot(vx, vy);
+    if (l > 0.05) {
+      const step = sp * dt;
+      const gx = m.x + (vx / l) * step * 3, gy = m.y + (vy / l) * step * 3;
+      if (this.witchNudge(m, gx, gy, step)) r.stuck = 0;
+      else {
+        // Pinned on a wall or the shore: switch circling direction and break off the dash.
+        r.strafe = -(r.strafe ?? 1);
+        r.dashT = 0;
+        r.stuck = (r.stuck ?? 0) + dt;
+        if (r.stuck > 0.55) this.witchRepick(m);
+      }
+    }
+    m.facing = foe.x < m.x ? -1 : 1;
+    m.direction = Math.abs(dx) >= Math.abs(dy) ? (dx < 0 ? "left" : "right") : (dy < 0 ? "up" : "down");
+    r.goalX = m.x; r.goalY = m.y;
+    if (foe.player && save) m.aggro = true;
+  };
+
+  /**
+   * A dodge roll against a hit that is about to land (called from resolveHit). True means the hit missed.
+   * Inside a dash it always misses; otherwise there is a cooldown-gated chance that grows with her level,
+   * and she side-steps for real so the next shot has to find her again.
+   */
+  game.twitchDodge = function (m: any, move: Move): boolean {
+    const r: Brain = m.rv;
+    if (!r || !m.alive) return false;
+    if ((m.evadeT ?? 0) > 0) { this.float(m.x, m.y - 36, "DODGE", "#e7d9ff"); return true; }
+    if (r.dodgeCd > 0) return false;
+    const chance = Math.min(0.4, 0.2 + (m.classId === "cryinggirl" ? 0.06 : 0) + r.level * 0.002 + (attackForm(move) === "melee" ? -0.05 : 0));
+    if (rand() > chance) return false;
+    r.dodgeCd = 2 + rand() * 1.2;
+    const save = this.save;
+    const a = save ? Math.atan2(m.y - save.y, m.x - save.x) + (rand() < 0.5 ? 1.57 : -1.57) : rand() * 6.283;
+    const nx = m.x + Math.cos(a) * 52, ny = m.y + Math.sin(a) * 52;
+    if (this.witchClear(m.x, m.y, nx, ny)) {
+      const mob = (r.known ?? []).map((id) => MOVE_BY_ID[id]).find((mv) => mv && ["roll", "dash", "blink", "surge"].includes(moveTactic(mv)));
+      if (mob) this.playMoveFx(mob, m.x, m.y - 16, nx, ny - 16);
+      m.x = nx; m.y = ny;
+    }
+    r.dashT = 0;
+    this.float(m.x, m.y - 40, "DODGE", "#e7d9ff");
+    return true;
+  };
+
+  /**
+   * Her ghosts. Raised the first time she comes near you (1-3, see twitchGhostCount), and she calls a
+   * fresh one about 40 s after one is destroyed. They are real enemy ghosts (makeEnemyGhost): ghost kits,
+   * aid verses that heal and ward her, 1-in-100 shiny, and they fade when she falls.
+   */
+  game.twitchEscort = function (m: any, dt: number) {
+    if (!this.turbz || this.save?.map !== TURBZ_MAP || !this.makeEnemyGhost) return;
+    const r: Brain = m.rv;
+    r.summonT = Math.max(0, (r.summonT ?? 0) - dt);
+    if (r.summonT > 0) return;
+    const want = twitchGhostCount(r.level, m.classId === "cryinggirl");
+    const have = this.mobs.filter((o: any) => o.alive && o.twitchPet && o.master === m.id);
+    if (have.length >= want) return;
+    const used = new Set(have.map((o: any) => o.ghostSlot));
+    const first = !m.escortMade;
+    const n = first ? want - have.length : 1;
+    for (let k = 0, slot = 0; k < n && slot < 3; slot++) {
+      if (used.has(slot)) continue;
+      const pet = this.makeEnemyGhost(m, slot, want, Math.max(1, r.level - 1), { rarity: Math.max(2, m.rarity ?? 2) });
+      pet.twitchPet = true;
+      pet.aggro = true;
+      pet.seen = true;
+      pet.chipT = 1 + rand();
+      const at = this.witchLandSpot(m.x + (slot - 1) * 26, m.y + 20, m.x, m.y);
+      pet.x = at.x; pet.y = at.y; pet.homeX = at.x; pet.homeY = at.y;
+      this.mobs.push(pet);
+      used.add(slot);
+      k++;
+    }
+    if (!first) this.float(m.x, m.y - 56, "SUMMONS", "#c9a6e8");
+    m.escortMade = true;
+    r.summonT = first ? 40 : 40 + rand() * 10;
+  };
+
+  /**
+   * One frame of a witch's ghost. It sticks to her (and is pulled back if it falls far behind), flanks
+   * you from the side she is not on when she is fighting you, and fights whatever else she is fighting.
+   */
+  game.tickTwitchGhost = function (m: any, d: number, dt: number) {
+    const lead = this.mobs.find((x: any) => x.id === m.master && x.alive);
+    if (!lead) {
+      m.alive = false; m.hp = 0;
+      this.float(m.x, m.y - 30, "FADES", "#c9a6e8");
+      return;
+    }
+    this.tickEnemyGhostAid?.(m, dt);
+    if ((m.status ?? []).some((s: any) => s.id === "root" || s.id === "sleep")) return;
+    const save = this.save;
+    const ld = Math.hypot(lead.x - m.x, lead.y - m.y);
+    if (ld > 420) {
+      const at = this.witchLandSpot(lead.x + (rand() - 0.5) * 40, lead.y + 18, lead.x, lead.y);
+      m.x = at.x; m.y = at.y;
+      return;
+    }
+    const r: Brain = lead.rv;
+    const move = MOVE_BY_ID[m.move] ?? MOVES[0]!;
+    const melee = attackForm(move) === "melee";
+    const slot = m.ghostSlot ?? 0;
+    let tx: number | undefined, ty: number | undefined, sp = 150;
+    if (save && !this.dead && (r?.foe === "player" || lead.turbzHunter) && d < 340) {
+      // Pincer: stand off on the far side of you from her, spread by slot, bobbing so it is not a fixed target.
+      const reach = melee ? 46 : Math.min(140, attackRange(move) * 0.8);
+      const base = Math.atan2(save.y - lead.y, save.x - lead.x);
+      const ang = base + (slot - 1) * 0.95 + Math.sin(this.clock * 1.7 + slot * 2) * 0.45;
+      tx = save.x + Math.cos(ang) * reach;
+      ty = save.y + Math.sin(ang) * reach;
+      sp = 160;
+      m.aggro = true;
+      this.combat = Math.max(this.combat ?? 0, 2);
+    } else if (r?.foe && r.foe !== "player") {
+      const foe = this.mobs.find((o: any) => o.id === r.foe && o.alive && o !== m);
+      if (foe) {
+        const a = this.clock * 1.3 + slot * 2.1;
+        tx = foe.x + Math.cos(a) * 40;
+        ty = foe.y + Math.sin(a) * 26;
+        sp = 145;
+        m.chipT = (m.chipT ?? 1) - dt;
+        if (m.chipT <= 0 && Math.hypot(foe.x - m.x, foe.y - m.y) < (melee ? 70 : 150)) {
+          m.chipT = 1 + rand() * 0.4;
+          const dmg = Math.round(5 + (m.level ?? 1) * 1.3);
+          this.playMoveFx?.(move, m.x, m.y - 12, foe.x, foe.y - 12);
+          foe.hp -= dmg;
+          this.float(foe.x, foe.y - 30, `${dmg}`, "#c9a6e8");
+          if (foe.hp <= 0) { foe.hp = 0; foe.alive = false; if (foe.twitch) this.queueWitch(); }
+        }
+      }
+    }
+    if (tx === undefined || ty === undefined) {
+      // Not fighting: keep up with her, then circle her.
+      if (ld > 80) {
+        const s = Math.min(210, ld * 3);
+        this.moveMob(m, ((lead.x - m.x) / ld) * s * dt, ((lead.y - m.y) / ld) * s * dt);
+      } else this.orbitMaster?.(m, lead, dt);
+      return;
+    }
+    const hx = tx - m.x, hy = ty - m.y, hd = Math.hypot(hx, hy);
+    if (hd > 3) this.moveMob(m, (hx / hd) * Math.min(sp, hd * 5) * dt, (hy / hd) * Math.min(sp, hd * 5) * dt);
+    if (save) m.facing = save.x < m.x ? -1 : 1;
   };
 
   const origPlan = game.planGrind.bind(game);

@@ -213,6 +213,7 @@ import {
 } from "./fight-depth";
 import {
   BIOME_LABEL,
+  HERE_PORTAL,
   TAVERNS,
   WORLD_RETURN,
   biomeNameAt,
@@ -3722,6 +3723,15 @@ export class TurbzGame {
 				prev.set(k, cur);
 				q.push(k);
 			}
+			// Same-map pads (dungeon portals and stairs) are edges too, so autoplay and click-to-walk use them.
+			const pad = world.tiles[cur]?.portal;
+			if (pad && pad.map === HERE_PORTAL && pad.tx !== undefined && pad.ty !== undefined) {
+				const k = key(pad.tx, pad.ty);
+				if (!prev.has(k) && !blocked(world, pad.tx * 32 + 16, pad.ty * 32 + 16)) {
+					prev.set(k, cur);
+					q.push(k);
+				}
+			}
 		}
 		if (hit < 0) hit = best === start ? -1 : best;
 		if (hit < 0) return [];
@@ -4594,6 +4604,7 @@ export class TurbzGame {
 			return;
 		}
 		if (mob.rival && this.rivalDodge(mob)) return;
+		if (mob.twitch && this.twitchDodge?.(mob, move)) return;
 		const pure = form === "spell";
 		const tm = pure ? 1 : typeChartMulti(move.type, mob.types, mob.type);
 		if (!pure && tm === 0) {
@@ -6083,6 +6094,11 @@ export class TurbzGame {
 				this.tickBountySpirit(m, dt);
 				continue;
 			}
+			// A TURBZ witch's own ghosts: follow her, flank you, fight what she fights (turbz-mode.ts).
+			if (m.twitchPet && this.tickTwitchGhost) {
+				this.tickTwitchGhost(m, d, dt);
+				continue;
+			}
 			if (m.enemyGhost) {
 				const lead = this.mobs.find((x) => x.id === m.master && x.alive);
 				if (!lead) {
@@ -7282,7 +7298,8 @@ export class TurbzGame {
 		if (m.enraged && (m.bounty || m.bountySpirit)) gap *= BOUNTY_ENRAGE.gap;
 		return Math.max(0.28, gap * (0.95 + Math.random() * 0.1));
 	}
-	mobAttack(m, move) {
+	/** `aim` (optional): where a ranged shot is fired, for foes that lead their target. Default: where you stand. */
+	mobAttack(m, move, aim = undefined) {
 		const save = this.save!;
 		m.kcd = m.kcd ?? {};
 		m.kcd[move.id] = baseMoveCooldown(move);
@@ -7306,7 +7323,7 @@ export class TurbzGame {
 			});
 			return;
 		}
-		this.queueStrike(m, move);
+		this.queueStrike(m, move, aim);
 	}
 	/** A foe picks from its own kit: something ready that reaches you, its signature if nothing else. */
 	pickFoeMove(m) {
@@ -7364,12 +7381,12 @@ export class TurbzGame {
 			ctx.restore();
 		}
 	}
-	queueStrike(m, move) {
+	queueStrike(m, move, aim = undefined) {
 		const save = this.save;
 		const form = attackForm(move);
 		const wind = (form === "melee" ? .34 : form === "ranged" ? .42 : .55) * (m.boss ? .85 : 1) * (m.enchants?.includes("swift") ? .8 : 1) * (this.rules === "hardcore" ? Math.max(.7, 1 - (save.level ?? 1) * .006) : 1);
 		this.incoming = this.incoming ?? [];
-		this.incoming.push({ id: m.id, move: move.id, t: wind, ax: save.x, ay: save.y, form });
+		this.incoming.push({ id: m.id, move: move.id, t: wind, ax: form !== "melee" && aim ? aim.x : save.x, ay: form !== "melee" && aim ? aim.y : save.y, form });
 		this.float(m.x, m.y - 40, "!", "#ff6a4a");
 	}
 	tickIncoming(dt) {
@@ -8213,6 +8230,26 @@ export class TurbzGame {
 		this.closePanel();
 		this.switchTo("world", this.returnTo ?? hearthXY());
 	}
+	/** Generated dungeon pads (portals, stairs, the sigil home): a pulsing ring and a label so you can find them. */
+	drawPads(ctx, w, h) {
+		const pads = this.world?.pads;
+		if (!pads?.length) return;
+		const pulse = 0.5 + 0.5 * Math.sin(this.clock * 3);
+		for (const p of pads) {
+			const x = p.tx * 32 + 16, y = p.ty * 32 + 16;
+			if (Math.abs(x - this.cam.x) > w / this.zoom * 0.62 + 64 || Math.abs(y - this.cam.y) > h / this.zoom * 0.62 + 64) continue;
+			const col = p.kind === "return" ? "232, 220, 160" : p.kind === "portal" ? "180, 166, 255" : "240, 226, 200";
+			ctx.save();
+			ctx.strokeStyle = `rgba(${col}, ${0.35 + pulse * 0.45})`;
+			ctx.lineWidth = 2;
+			ctx.beginPath();
+			ctx.ellipse(x, y + 6, 15 + pulse * 3, 7 + pulse * 1.5, 0, 0, Math.PI * 2);
+			ctx.stroke();
+			ctx.restore();
+			const label = p.kind === "stairs-up" ? "UP" : p.kind === "stairs-down" ? "DOWN" : p.kind === "return" ? "EXIT" : "PORTAL";
+			drawShadowName(ctx, label, x, y - 24, `rgb(${col})`);
+		}
+	}
 	tickPortal(dt) {
 		const save = this.save;
 		this.portalCd = Math.max(0, (this.portalCd ?? 0) - dt);
@@ -8222,6 +8259,30 @@ export class TurbzGame {
 		if (!t?.portal) return;
 		this.portalCd = 1.5;
 		const p = t.portal;
+		// Generated dungeons: pads, stairs and the boss room's sigil home, all on this same map.
+		if (p.map === HERE_PORTAL && p.tx !== undefined) {
+			const to = nearestOpen(this.world, p.tx * 32 + 16, p.ty * 32 + 16);
+			const fx = save.x, fy = save.y;
+			save.x = to.x;
+			save.y = to.y;
+			this.cam.x = save.x;
+			this.cam.y = save.y;
+			this.dest = null;
+			this.path = [];
+			this.incoming = [];
+			this.lunge = null;
+			this.rush = null;
+			// Your ghosts come through with you instead of drifting across the walls.
+			for (const mate of this.mates ?? []) if (mate && typeof mate.x === "number") { mate.x = save.x + (mate.x - fx) * 0.3; mate.y = save.y + (mate.y - fy) * 0.3; }
+			this.portalCd = 2.5;
+			const line = p.kind === "stairs-up" ? "You climb the stairs." : p.kind === "stairs-down" ? "You go back down the stairs." : p.kind === "return" ? "The sigil carries you back to the entrance." : "The portal pulls you through.";
+			this.float(save.x, save.y - 44, p.kind === "stairs-up" ? "UPSTAIRS" : p.kind === "stairs-down" ? "DOWNSTAIRS" : "WARP", "#b4a6ff");
+			this.say(line);
+			this.cue("swell", { rate: p.kind === "portal" || p.kind === "return" ? 1.3 : 0.9 }, [420, .18, "triangle"]);
+			this.cfx?.evade?.(save.x, save.y - 18);
+			this.persist();
+			return;
+		}
 		if (p.map === "world") {
 			const at = p.tx !== undefined ? (this.overworld ? nearestOpen(this.overworld, p.tx * 32 + 16, p.ty * 32 + 16) : { x: p.tx * 32 + 16, y: p.ty * 32 + 16 }) : this.returnTo ?? hearthXY();
 			this.switchTo("world", at);
@@ -8260,7 +8321,8 @@ export class TurbzGame {
 		this.cam.y = save.y;
 		if (map.startsWith("custom-")) { this.persist(); this.openMapStory(); return; }
 		if (map === "world" && this.customFile && !(save.mapSeen ?? []).includes(this.customFile.id)) { this.persist(); this.openMapStory(); return; }
-		this.say(map === "world" ? "Back under the sky." : map === "crypt" ? "The Tiny Crypt breathes." : map.startsWith("rift-") ? "A new dungeon. Its guardian waits in the final room." : "The Ash Kiln is awake.");
+		const named = this.world?.layout && this.world.layout !== "halls" ? ` ${this.world.name}: ${this.world.blurb}` : "";
+		this.say(map === "world" ? "Back under the sky." : map === "crypt" ? `The Tiny Crypt breathes.${named}` : map.startsWith("rift-") ? (named ? `A new dungeon.${named}` : "A new dungeon. Its guardian waits in the final room.") : `The Ash Kiln is awake.${named}`);
 		if (map === "crypt") {
 			if (!save.quests.bone_king.done && save.regions.includes("bone")) {}
 		}
@@ -10978,6 +11040,7 @@ export class TurbzGame {
 			const ex = this.dungeonExitAt();
 			drawRift(ctx, ex.x, ex.y + 8);
 			drawShadowName(ctx, "EXIT", ex.x, ex.y - 130, "#e7d9ff");
+			this.drawPads(ctx, w, h);
 		}
 		if (save.map === "world" || save.map === "custom-turbz") for (const portal of save.dungeons?.portals ?? []) {
 			if (portal.cleared) continue;

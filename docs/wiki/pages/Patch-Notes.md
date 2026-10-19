@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Dungeon layouts and TURBZ witches
+
+- **Four dungeon layouts.** Rifts, the Tiny Crypt and the Ash Kiln now roll a layout each day: classic **Halls**, **Isles** (islands in water or lava joined by causeways, each isle with its own tribe of foes), a two-storey **Manor** (rooms, doors, stairs) and a **Portal maze** (sealed chambers linked only by portal pads, each a different plane). See [Bosses and Dungeons](Bosses-and-Dungeons).
+- **Way home.** Isles, manors and portal mazes put an EXIT sigil in the guardian's room. Pads glow and are labelled; autoplay and click-to-walk path through them.
+- **TURBZ witches bring their own ghosts.** One ghost, a second from level 20, a third from 40 (Crying Ladies bring one more, up to three). Ghosts follow their witch, flank you from the other side, heal and ward her, fight whatever she is fighting, and fade when she falls. She calls a fresh one about 40 s after one is destroyed.
+- **TURBZ witches fight smarter.** They re-read the fight five times a second, circle and weave instead of walking straight at you, back off when a caster is crowded, **dash sideways** when you wind up a heavy cast or lunge (a real dodge: hits during the dash miss), roll a dodge chance against incoming hits, **lead their shots** to where you are running (one in four is fired straight), and chain spells about twice as fast.
+- **Fix:** the overgrown-brick wall art pointed at files that were never shipped, so Sunken dungeons and some town houses drew blank walls.
+
 ## V7 — Cleanup, original Crying Girl sprite, visible set bonuses
 
 - **No more "legacy" content.** Every V6 update is now base behaviour. The old `legacy_*` perks are promoted into the main perk pool as "`<ClassName>'s Signature`" and listed alongside new perks (no separate tab). Old saves that stored `legacy_<classId>` are remapped automatically.

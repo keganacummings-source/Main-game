@@ -20,7 +20,7 @@
 import { MONSTER_BY_ID, ANIMAL_BY_ID, POIS, TILE, mulberry32, type Rng } from "./content";
 import { LIMITS, MAP_VERSION, type MapFile, type MapInteractable, type MapNpc, type MapQuest, type MapQuestStep, type MapRegion, type MapTile, type SpawnZone } from "./map-format";
 import { repairQuests } from "./quest-check";
-import type { Spawn, Tile, WorldData } from "./world";
+import type { DungeonPad, PadKind, Spawn, Tile, WorldData } from "./world";
 
 // ---------------------------------------------------------------------------
 // Tile art (MapAssets pack)
@@ -78,7 +78,8 @@ export const ART = {
   // walls
   stoneBrick: seq(W, (i) => `stone_brick_${i}.png`, 1, 12),
   brickBrown: seq(W, (i) => `brick_brown_${i}.png`, 0, 7),
-  vineBrick: seq(W, (i) => `brick_brown-vines_${i}.png`, 1, 4),
+  // The pack never shipped brick_brown-vines_*.png; the overgrown wall set stands in for it.
+  vineBrick: seq(W, (i) => `wall_vines_${i}.png`, 3, 6),
   brickGray: seq(W, (i) => `brick_gray_${i}.png`, 0, 3),
   brickDark: seq(W, (i) => `brick_dark_${i}.png`, 0, 6),
   sandWall: seq(W, (i) => `sandstone_wall_${i}.png`, 0, 9),
@@ -2115,6 +2116,8 @@ export type DungeonGenOptions = {
   day?: number;
   /** Spawn id prefix for the rooms' foes. Rifts use `d-<seed>`. */
   idPrefix?: string;
+  /** Force a layout (tests, the designer). Left out, the seed rolls one: see dungeonLayoutFor(). */
+  layout?: DungeonLayout;
 };
 
 /** Mixes a base seed, the in-game day and a salt into a fresh 32-bit seed. Same inputs, same dungeon. */
@@ -2154,7 +2157,78 @@ const DUNGEON_THEMES: DungeonTheme[] = [
 ];
 const THEME_BY_ID = Object.fromEntries(DUNGEON_THEMES.map((t) => [t.id, t])) as Record<string, DungeonTheme>;
 
-type DRoom = { x: number; y: number; w: number; h: number; shape: "rect" | "round" | "cross" | "notch"; cells: [number, number][]; cx: number; cy: number };
+
+type DRoom = {
+  x: number; y: number; w: number; h: number;
+  shape: "rect" | "round" | "cross" | "notch" | "isle" | "hall";
+  cells: [number, number][];
+  cx: number; cy: number;
+  /** Foes that live in this room only (an island's tribe, a portal chamber's plane). Unset: the dungeon's pool. */
+  pool?: string[];
+};
+
+// ---------------------------------------------------------------------------
+// Layouts
+// ---------------------------------------------------------------------------
+//
+// Every dungeon rolls one of four layouts from its seed:
+//   halls    — the classic: rooms of mixed shapes joined by tunnels.
+//   islands  — isles in a lake (lava in the Kiln, black water in the Crypt) joined by causeways.
+//              Each isle is home to its own tribe of foes.
+//   mansion  — the inside of a two-storey house: rooms split by walls and doors, a grand staircase
+//              up to the second floor, and the master of the house in the deepest room upstairs.
+//   portals  — sealed chambers with no corridors at all. Portal pads link them; every chamber is a
+//              different plane with its own floor, walls and foes.
+// Islands, mansions and portal mazes also get a sigil in the boss room that carries you back to the exit.
+// Same-map pads use `portal.map === "@here"`: the engine moves you to (tx, ty) without reloading.
+
+export type DungeonLayout = "halls" | "islands" | "mansion" | "portals";
+export const DUNGEON_LAYOUTS: readonly DungeonLayout[] = ["halls", "islands", "mansion", "portals"];
+const HERE = "@here";
+
+const LAYOUT_ODDS: Record<DungeonKind, [DungeonLayout, number][]> = {
+  rift: [["halls", 3], ["islands", 2.4], ["mansion", 2.3], ["portals", 2.3]],
+  crypt: [["halls", 3], ["mansion", 3], ["portals", 2], ["islands", 2]],
+  kiln: [["halls", 3], ["islands", 3], ["portals", 2], ["mansion", 2]],
+};
+
+/** Which layout a seed rolls. Uses its own random stream, so the pick never shifts the rooms or the foes. */
+export function dungeonLayoutFor(kind: DungeonKind, seed: number): DungeonLayout {
+  const odds = LAYOUT_ODDS[kind] ?? LAYOUT_ODDS.rift;
+  let roll = mulberry32((((seed >>> 0) ^ 0x5bd1e995) >>> 0) || 7)() * odds.reduce((n, [, w]) => n + w, 0);
+  for (const [id, w] of odds) { roll -= w; if (roll <= 0) return id; }
+  return odds[0]![0];
+}
+
+/** A tribe owns one island (or one portal chamber): its own ground, walls, scenery and foes. */
+type Tribe = { id: string; floor: string[]; floorCode: number; wall: string[]; props: string[]; pool: string[] };
+const TRIBES: Tribe[] = [
+  { id: "ember", floor: ART.volcanic, floorCode: FL.ash, wall: ART.volcanicWall, props: [...ART.boulder, ...ART.pillar], pool: ["onibi", "nobi", "hinotama", "kagaribi"] },
+  { id: "tide", floor: [...ART.moss, ...ART.bog], floorCode: FL.bog, wall: ART.vineWall, props: ART.mangrove, pool: ["shizuku", "nami", "uroko", "kasa", "wisp"] },
+  { id: "grove", floor: [...ART.grass, ...ART.vines.slice(0, 3)], floorCode: FL.grass, wall: ART.vineBrick, props: ART.trees, pool: ["tsuchi", "kusa", "yanagi", "mokuzu", "umoregi"] },
+  { id: "frost", floor: [...ART.snow.slice(0, 8), ...ART.ice], floorCode: FL.snow, wall: ART.stoneGray, props: [...ART.columns.slice(0, 3), ...ART.pedestal], pool: ["yuki", "kaze", "shizuku"] },
+  { id: "storm", floor: [...ART.sandRock, ...ART.greyDirt.slice(0, 4)], floorCode: FL.stone, wall: ART.cobaltRock, props: [...ART.stones, ART.orb[2]!], pool: ["raiju", "kaze", "hikari"] },
+  { id: "shade", floor: ART.crystal, floorCode: FL.void, wall: ART.crystalWall, props: [...ART.orb.slice(0, 2), ...ART.darkStatues.slice(0, 3)], pool: ["kage", "yomi", "naraku", "yami"] },
+  { id: "bone", floor: [...ART.tomb, ...ART.bones.slice(0, 6)], floorCode: FL.bone, wall: ART.catacombs, props: ART.sarcophagus, pool: ["gaikotsu", "muma", "yami"] },
+  { id: "sun", floor: [...ART.sand, ...ART.sandstone.slice(0, 4)], floorCode: FL.sand, wall: ART.sandWall, props: [...ART.columns, ...ART.statues.slice(0, 4)], pool: ["hikari", "tsuchi", "kaze", "hinotama"] },
+];
+
+/** What fills the gaps between islands. Always impassable: water (floor 2) or lava (floor 11), both solid. */
+const LIQUID: Record<string, { deep: string[]; shore: string[]; floor: number }> = {
+  catacomb: { deep: [L + "deep_water_murky.png"], shore: [L + "shallow_water_murky.png"], floor: FL.water },
+  ember: { deep: ART.lava, shore: ART.lava, floor: FL.lava },
+  crystal: { deep: [L + "ink_full.png"], shore: [L + "ink_full.png"], floor: FL.water },
+  default: { deep: [...ART.deep, ...ART.sea.slice(0, 2)], shore: ART.shallow, floor: FL.water },
+};
+
+type Plan = {
+  w: number; h: number; tiles: Tile[];
+  rooms: DRoom[]; start: number; bossAt: number; depth: Map<number, number>;
+  pads: DungeonPad[];
+  /** Tiles foes must not be placed on (pads, their landing tiles, doors). */
+  reserved: Set<number>;
+  name: string; blurb: string;
+};
 
 /** Builds one dungeon. Deterministic: the same options always give the same map, spawns and entry. */
 export function generateDungeon(opts: DungeonGenOptions): WorldData {
@@ -2163,119 +2237,498 @@ export function generateDungeon(opts: DungeonGenOptions): WorldData {
   const level = Math.max(1, Math.floor(opts.level ?? 1));
   const rint = (a: number, b: number) => a + Math.floor(rng() * (b - a + 1));
   const pick = <T,>(list: readonly T[]): T => list[Math.floor(rng() * list.length)]!;
-
-  const theme = kind === "crypt" ? THEME_BY_ID.catacomb! : kind === "kiln" ? THEME_BY_ID.ember! : pick(DUNGEON_THEMES);
-  const w = kind === "rift" ? rint(56, 72) : kind === "crypt" ? rint(44, 54) : rint(40, 50);
-  const h = kind === "rift" ? rint(42, 52) : kind === "crypt" ? rint(32, 38) : rint(30, 36);
-  const want = kind === "rift" ? rint(9, 13) : kind === "crypt" ? rint(7, 10) : rint(6, 9);
-  // The engine treats the outer two tiles as wall; stay well inside.
-  const lo = 3, hiX = w - 4, hiY = h - 4;
-
-  const tiles: Tile[] = Array.from({ length: w * h }, () => ({ floor: theme.floorCode, biome: theme.biome, block: 1, decor: 0 }));
-  const open = (x: number, y: number) => { if (x >= lo && y >= lo && x <= hiX && y <= hiY) tiles[y * w + x]!.block = 0; };
-
-  // --- rooms: random rectangles that do not touch, each carved in its own shape ---
-  const rooms: DRoom[] = [];
-  const clash = (r: { x: number; y: number; w: number; h: number }) => rooms.some((o) => r.x < o.x + o.w + 2 && r.x + r.w + 2 > o.x && r.y < o.y + o.h + 2 && r.y + r.h + 2 > o.y);
-  const bigRoom = kind === "rift" ? 13 : 11;
-  for (let tries = 0; tries < 600 && rooms.length < want; tries++) {
-    const rw = rint(6, bigRoom), rh = rint(5, Math.max(6, bigRoom - 3));
-    const r = { x: rint(lo, hiX - rw), y: rint(lo, hiY - rh), w: rw, h: rh };
-    if (r.x + r.w - 1 > hiX || r.y + r.h - 1 > hiY || clash(r)) continue;
-    const shape = pick(["rect", "round", "cross", "notch", "rect"] as const);
-    const cells: [number, number][] = [];
-    const rx = rw / 2, ry = rh / 2, ccx = r.x + rx - 0.5, ccy = r.y + ry - 0.5;
-    for (let y = r.y; y < r.y + rh; y++) for (let x = r.x; x < r.x + rw; x++) {
-      const dx = x - r.x, dy = y - r.y;
-      let on = true;
-      if (shape === "round") on = ((x - ccx) / rx) ** 2 + ((y - ccy) / ry) ** 2 <= 1.05;
-      else if (shape === "cross") on = (dx >= Math.floor(rw / 3) && dx < rw - Math.floor(rw / 3)) || (dy >= Math.floor(rh / 3) && dy < rh - Math.floor(rh / 3));
-      else if (shape === "notch") on = !((dx < 2 || dx >= rw - 2) && (dy < 2 || dy >= rh - 2));
-      if (on) cells.push([x, y]);
-    }
-    rooms.push({ ...r, shape, cells, cx: r.x + Math.floor(rw / 2), cy: r.y + Math.floor(rh / 2) });
-  }
-  // Safety net: a plain grid of rooms if the random placement came up short.
-  if (rooms.length < 4) {
-    rooms.length = 0;
-    const cols = 3, rows = 2, cw = Math.floor((hiX - lo) / cols), ch = Math.floor((hiY - lo) / rows);
-    for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
-      const rw = Math.max(5, cw - 4), rh = Math.max(5, ch - 4);
-      const x = lo + col * cw + 1, y = lo + row * ch + 1;
-      const cells: [number, number][] = [];
-      for (let yy = y; yy < y + rh; yy++) for (let xx = x; xx < x + rw; xx++) cells.push([xx, yy]);
-      rooms.push({ x, y, w: rw, h: rh, shape: "rect", cells, cx: x + Math.floor(rw / 2), cy: y + Math.floor(rh / 2) });
-    }
-  }
-  for (const r of rooms) for (const [x, y] of r.cells) open(x, y);
-
-  // --- corridors: a spanning tree over the rooms (nearest first) plus a few loops ---
-  const dist = (a: DRoom, b: DRoom) => Math.abs(a.cx - b.cx) + Math.abs(a.cy - b.cy);
-  const dig = (a: DRoom, b: DRoom) => {
-    const horizontalFirst = rng() < 0.5;
-    const [x0, y0, x1, y1] = [a.cx, a.cy, b.cx, b.cy];
-    const hRun = (y: number) => { for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) { open(x, y); open(x, y + 1); } };
-    const vRun = (x: number) => { for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) { open(x, y); open(x + 1, y); } };
-    if (horizontalFirst) { hRun(y0); vRun(x1); } else { vRun(x0); hRun(y1); }
+  const shuffle = <T,>(list: T[]): T[] => {
+    for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [list[i], list[j]] = [list[j]!, list[i]!]; }
+    return list;
   };
-  const start = Math.floor(rng() * rooms.length);
-  const joined = new Set([start]);
-  const parent = new Map<number, number>();
-  while (joined.size < rooms.length) {
-    let best: [number, number] | null = null, bd = Infinity;
-    for (const i of joined) for (let j = 0; j < rooms.length; j++) {
-      if (joined.has(j)) continue;
-      const d = dist(rooms[i]!, rooms[j]!) + rng() * 4;
-      if (d < bd) { bd = d; best = [i, j]; }
-    }
-    if (!best) break;
-    dig(rooms[best[0]]!, rooms[best[1]]!);
-    parent.set(best[1], best[0]);
-    joined.add(best[1]);
-  }
-  for (let k = 0, loops = rint(1, 3); k < loops; k++) {
-    const a = rint(0, rooms.length - 1), b = rint(0, rooms.length - 1);
-    if (a !== b) dig(rooms[a]!, rooms[b]!);
-  }
-
-  // --- entry in one room, the guardian in the room furthest from it along the tunnels ---
-  const depth = new Map<number, number>([[start, 0]]);
-  const depthOf = (i: number): number => {
-    if (depth.has(i)) return depth.get(i)!;
-    const d = depthOf(parent.get(i) ?? start) + 1;
-    depth.set(i, d);
-    return d;
-  };
-  rooms.forEach((_, i) => depthOf(i));
-  let bossAt = start;
-  rooms.forEach((r, i) => { if (depth.get(i)! > depth.get(bossAt)! || (depth.get(i) === depth.get(bossAt) && dist(r, rooms[start]!) > dist(rooms[bossAt]!, rooms[start]!))) bossAt = i; });
-  if (bossAt === start) bossAt = (start + 1) % rooms.length;
-  const entryRoom = rooms[start]!, bossRoom = rooms[bossAt]!;
-
-  // --- art ---
   const hash = (x: number, y: number) => (Math.imul(x + 11, 73856093) ^ Math.imul(y + 7, 19349663) ^ (opts.seed | 0)) >>> 0;
-  const isFloor = (x: number, y: number) => tiles[y * w + x]?.block === 0;
-  tiles.forEach((t, i) => {
-    const x = i % w, y = Math.floor(i / w), n = hash(x, y);
-    if (t.block) {
-      const face = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => x + dx! >= 0 && y + dy! >= 0 && x + dx! < w && y + dy! < h && isFloor(x + dx!, y + dy!));
-      t.sprite = face ? theme.wall[n % theme.wall.length] : theme.rock[n % theme.rock.length];
-    } else {
-      t.sprite = theme.floor[n % theme.floor.length];
+  const theme = kind === "crypt" ? THEME_BY_ID.catacomb! : kind === "kiln" ? THEME_BY_ID.ember! : pick(DUNGEON_THEMES);
+  const layout: DungeonLayout = opts.layout && DUNGEON_LAYOUTS.includes(opts.layout) ? opts.layout : dungeonLayoutFor(kind, opts.seed);
+
+  // ---- helpers shared by the layouts ----
+  const centre = (r: DRoom) => {
+    // The room's anchor tile (entry, boss) must be one of its own floor cells.
+    if (r.cells.some(([x, y]) => x === r.cx && y === r.cy)) return;
+    let best = r.cells[0]!, bd = Infinity;
+    for (const c of r.cells) { const d = Math.abs(c[0] - r.cx) + Math.abs(c[1] - r.cy); if (d < bd) { bd = d; best = c; } }
+    r.cx = best[0]; r.cy = best[1];
+  };
+  const roomDist = (a: DRoom, b: DRoom) => Math.abs(a.cx - b.cx) + Math.abs(a.cy - b.cy);
+  /** Nearest-first spanning tree over the rooms, plus a few extra links for loops. */
+  const spanTree = (rooms: DRoom[], start: number, loops: number, ok: (a: number, b: number) => boolean = () => true) => {
+    const edges: [number, number][] = [];
+    const joined = new Set([start]);
+    while (joined.size < rooms.length) {
+      let best: [number, number] | null = null, bd = Infinity;
+      for (const i of joined) for (let j = 0; j < rooms.length; j++) {
+        if (joined.has(j) || !ok(i, j)) continue;
+        const d = roomDist(rooms[i]!, rooms[j]!) + rng() * 4;
+        if (d < bd) { bd = d; best = [i, j]; }
+      }
+      if (!best) break;
+      edges.push(best);
+      joined.add(best[1]);
     }
-  });
-  // Props: a few over the floor of rooms (never on the entry, the boss tile or a tunnel mouth).
-  const keep = new Set([`${entryRoom.cx},${entryRoom.cy}`, `${bossRoom.cx},${bossRoom.cy}`]);
-  rooms.forEach((r, i) => {
-    if (r.cells.length < 24 || i === start) return;
-    const n = Math.min(4, Math.floor(r.cells.length / 22));
-    for (let k = 0; k < n; k++) {
-      const [x, y] = pick(r.cells);
-      const edge = x === r.x || y === r.y || x === r.x + r.w - 1 || y === r.y + r.h - 1;
-      if (keep.has(`${x},${y}`) || !edge) continue;
-      tiles[y * w + x]!.layers = [pick(theme.props)];
+    for (let k = 0, tries = 0; k < loops && tries < 40; tries++) {
+      const a = rint(0, rooms.length - 1), b = rint(0, rooms.length - 1);
+      if (a === b || edges.some(([p, q]) => (p === a && q === b) || (p === b && q === a)) || !ok(a, b)) continue;
+      edges.push([a, b]);
+      k++;
     }
-  });
+    return edges;
+  };
+  /** Steps from the start room to every room, walking the links. */
+  const depthFrom = (n: number, edges: [number, number][], start: number) => {
+    const depth = new Map<number, number>([[start, 0]]);
+    const q = [start];
+    for (let i = 0; i < q.length; i++) for (const [a, b] of edges) {
+      const o = a === q[i] ? b : b === q[i] ? a : -1;
+      if (o < 0 || depth.has(o)) continue;
+      depth.set(o, depth.get(q[i]!)! + 1);
+      q.push(o);
+    }
+    for (let i = 0; i < n; i++) if (!depth.has(i)) depth.set(i, n);
+    return depth;
+  };
+  /** The room deepest from the start (ties: the one furthest away on the map). Never the start itself. */
+  const farthest = (rooms: DRoom[], depth: Map<number, number>, start: number, among?: number[]) => {
+    const list = among ?? rooms.map((_, i) => i);
+    let at = -1;
+    for (const i of list) {
+      if (i === start) continue;
+      if (at < 0 || depth.get(i)! > depth.get(at)! || (depth.get(i) === depth.get(at) && roomDist(rooms[i]!, rooms[start]!) > roomDist(rooms[at]!, rooms[start]!))) at = i;
+    }
+    return at < 0 ? (start + 1) % rooms.length : at;
+  };
+  /** A good spot for a pad in a room: an inner tile clear of other pads and the room's anchor, with a landing tile next to it. */
+  const padSpot = (tiles: Tile[], w: number, r: DRoom, reserved: Set<number>) => {
+    const open = (x: number, y: number) => tiles[y * w + x]?.block === 0;
+    const inner = r.cells.filter(([x, y]) => open(x - 1, y) && open(x + 1, y) && open(x, y - 1) && open(x, y + 1) && !reserved.has(y * w + x));
+    const clear = (x: number, y: number, gap: number) => Math.max(Math.abs(x - r.cx), Math.abs(y - r.cy)) >= 2 && ![...reserved].some((k) => Math.max(Math.abs((k % w) - x), Math.abs(Math.floor(k / w) - y)) < gap);
+    const notAnchor = ([x, y]: [number, number]) => !(x === r.cx && y === r.cy) && !reserved.has(y * w + x);
+    let list = inner.filter(([x, y]) => clear(x, y, 3));
+    if (!list.length) list = inner.filter(([x, y]) => clear(x, y, 2));
+    // Small rooms: any floor tile but the anchor (where the entry or the guardian stands).
+    if (!list.length) list = r.cells.filter((c) => notAnchor(c) && ![[1, 0], [-1, 0], [0, 1], [0, -1]].every(([dx, dy]) => !open(c[0] + dx!, c[1] + dy!)));
+    if (!list.length) list = r.cells.filter(notAnchor);
+    if (!list.length) list = r.cells;
+    const [px, py] = pick(list);
+    // Land on the neighbour that faces into the room (but not on the anchor tile itself).
+    const sides = ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const)
+      .map(([dx, dy]) => [px + dx, py + dy] as [number, number])
+      .filter(([x, y]) => open(x, y) && !reserved.has(y * w + x))
+      .sort((a, b) => Math.abs(a[0] - r.cx) + Math.abs(a[1] - r.cy) - (Math.abs(b[0] - r.cx) + Math.abs(b[1] - r.cy)));
+    const land = sides.find(notAnchor) ?? sides[0] ?? [r.cx, r.cy];
+    return { pad: [px, py] as [number, number], land };
+  };
+  const PAD_ART: Record<PadKind, string[]> = { portal: ART.portal, "stairs-up": [G + "stone_stairs_up.png"], "stairs-down": [G + "stone_stairs_down.png"], return: [G + "exit.png"] };
+  const layPad = (tiles: Tile[], w: number, pads: DungeonPad[], reserved: Set<number>, at: [number, number], to: [number, number], padKind: PadKind, art?: string) => {
+    const t = tiles[at[1] * w + at[0]]!;
+    t.layers = [art ?? pick(PAD_ART[padKind])];
+    t.portal = { map: HERE, tx: to[0], ty: to[1], kind: padKind };
+    pads.push({ tx: at[0], ty: at[1], to: { tx: to[0], ty: to[1] }, kind: padKind });
+    reserved.add(at[1] * w + at[0]);
+    reserved.add(to[1] * w + to[0]);
+  };
+  /** A two-way portal pair between rooms a and b. */
+  const linkRooms = (tiles: Tile[], w: number, pads: DungeonPad[], reserved: Set<number>, a: DRoom, b: DRoom, padKinds: [PadKind, PadKind] = ["portal", "portal"]) => {
+    const sa = padSpot(tiles, w, a, reserved);
+    reserved.add(sa.pad[1] * w + sa.pad[0]); reserved.add(sa.land[1] * w + sa.land[0]);
+    const sb = padSpot(tiles, w, b, reserved);
+    const art = padKinds[0] === "portal" ? pick(ART.portal) : undefined;
+    layPad(tiles, w, pads, reserved, sa.pad, sb.land, padKinds[0], art);
+    layPad(tiles, w, pads, reserved, sb.pad, sa.land, padKinds[1], art);
+  };
+  /** The boss room's way home: a one-way sigil back to the entrance. */
+  const returnPad = (tiles: Tile[], w: number, pads: DungeonPad[], reserved: Set<number>, boss: DRoom, entry: DRoom) => {
+    const s = padSpot(tiles, w, boss, reserved);
+    const home = padSpot(tiles, w, entry, reserved);
+    layPad(tiles, w, pads, reserved, s.pad, home.land, "return");
+  };
+  /** Props along the walls of a room (never on reserved tiles or the anchor). */
+  const dress = (tiles: Tile[], w: number, r: DRoom, art: readonly string[], n: number, reserved: Set<number>) => {
+    if (!art.length) return;
+    const edge = r.cells.filter(([x, y]) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => tiles[(y + dy!) * w + x + dx!]?.block === 1));
+    for (let k = 0; k < n && edge.length; k++) {
+      const [x, y] = pick(edge);
+      if (reserved.has(y * w + x) || (x === r.cx && y === r.cy) || tiles[y * w + x]!.layers?.length) continue;
+      tiles[y * w + x]!.layers = [pick(art)];
+    }
+  };
+
+  // ---- halls: the classic rooms and tunnels ----
+  const buildHalls = (): Plan => {
+    const w = kind === "rift" ? rint(56, 72) : kind === "crypt" ? rint(44, 54) : rint(40, 50);
+    const h = kind === "rift" ? rint(42, 52) : kind === "crypt" ? rint(32, 38) : rint(30, 36);
+    const want = kind === "rift" ? rint(9, 13) : kind === "crypt" ? rint(7, 10) : rint(6, 9);
+    // The engine treats the outer two tiles as wall; stay well inside.
+    const lo = 3, hiX = w - 4, hiY = h - 4;
+    const tiles: Tile[] = Array.from({ length: w * h }, () => ({ floor: theme.floorCode, biome: theme.biome, block: 1, decor: 0 }));
+    const open = (x: number, y: number) => { if (x >= lo && y >= lo && x <= hiX && y <= hiY) tiles[y * w + x]!.block = 0; };
+    // Rooms: random rectangles that do not touch, each carved in its own shape.
+    const rooms: DRoom[] = [];
+    const clash = (r: { x: number; y: number; w: number; h: number }) => rooms.some((o) => r.x < o.x + o.w + 2 && r.x + r.w + 2 > o.x && r.y < o.y + o.h + 2 && r.y + r.h + 2 > o.y);
+    const bigRoom = kind === "rift" ? 13 : 11;
+    for (let tries = 0; tries < 600 && rooms.length < want; tries++) {
+      const rw = rint(6, bigRoom), rh = rint(5, Math.max(6, bigRoom - 3));
+      const r = { x: rint(lo, hiX - rw), y: rint(lo, hiY - rh), w: rw, h: rh };
+      if (r.x + r.w - 1 > hiX || r.y + r.h - 1 > hiY || clash(r)) continue;
+      const shape = pick(["rect", "round", "cross", "notch", "rect"] as const);
+      rooms.push({ ...r, shape, cells: shapeCells(r.x, r.y, rw, rh, shape), cx: r.x + Math.floor(rw / 2), cy: r.y + Math.floor(rh / 2) });
+    }
+    // Safety net: a plain grid of rooms if the random placement came up short.
+    if (rooms.length < 4) {
+      rooms.length = 0;
+      const cols = 3, rows = 2, cw = Math.floor((hiX - lo) / cols), ch = Math.floor((hiY - lo) / rows);
+      for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+        const rw = Math.max(5, cw - 4), rh = Math.max(5, ch - 4);
+        const x = lo + col * cw + 1, y = lo + row * ch + 1;
+        rooms.push({ x, y, w: rw, h: rh, shape: "rect", cells: shapeCells(x, y, rw, rh, "rect"), cx: x + Math.floor(rw / 2), cy: y + Math.floor(rh / 2) });
+      }
+    }
+    for (const r of rooms) for (const [x, y] of r.cells) open(x, y);
+    // Corridors: a spanning tree over the rooms (nearest first) plus a few loops.
+    const dig = (a: DRoom, b: DRoom) => {
+      const horizontalFirst = rng() < 0.5;
+      const [x0, y0, x1, y1] = [a.cx, a.cy, b.cx, b.cy];
+      const hRun = (y: number) => { for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x++) { open(x, y); open(x, y + 1); } };
+      const vRun = (x: number) => { for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) { open(x, y); open(x + 1, y); } };
+      if (horizontalFirst) { hRun(y0); vRun(x1); } else { vRun(x0); hRun(y1); }
+    };
+    const start = Math.floor(rng() * rooms.length);
+    const edges = spanTree(rooms, start, rint(1, 3));
+    for (const [a, b] of edges) dig(rooms[a]!, rooms[b]!);
+    // Depth along the tree only (the loops are shortcuts, not the intended route).
+    const depth = depthFrom(rooms.length, edges.slice(0, rooms.length - 1), start);
+    const bossAt = farthest(rooms, depth, start);
+    // Art.
+    const isFloor = (x: number, y: number) => tiles[y * w + x]?.block === 0;
+    tiles.forEach((t, i) => {
+      const x = i % w, y = Math.floor(i / w), n = hash(x, y);
+      if (t.block) {
+        const face = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => x + dx! >= 0 && y + dy! >= 0 && x + dx! < w && y + dy! < h && isFloor(x + dx!, y + dy!));
+        t.sprite = face ? theme.wall[n % theme.wall.length] : theme.rock[n % theme.rock.length];
+      } else t.sprite = theme.floor[n % theme.floor.length];
+    });
+    // Props: a few along the edges of rooms (never on the entry, the boss tile or a tunnel mouth).
+    const keep = new Set([`${rooms[start]!.cx},${rooms[start]!.cy}`, `${rooms[bossAt]!.cx},${rooms[bossAt]!.cy}`]);
+    rooms.forEach((r, i) => {
+      if (r.cells.length < 24 || i === start) return;
+      const n = Math.min(4, Math.floor(r.cells.length / 22));
+      for (let k = 0; k < n; k++) {
+        const [x, y] = pick(r.cells);
+        const edge = x === r.x || y === r.y || x === r.x + r.w - 1 || y === r.y + r.h - 1;
+        if (keep.has(`${x},${y}`) || !edge) continue;
+        tiles[y * w + x]!.layers = [pick(theme.props)];
+      }
+    });
+    const label: Record<string, string> = { catacomb: "Catacomb", ember: "Ember", frostvault: "Frost", sunken: "Sunken", crystal: "Crystal", sandvault: "Sand", marblehall: "Marble" };
+    return { w, h, tiles, rooms, start, bossAt, depth, pads: [], reserved: new Set(), name: `${label[theme.id] ?? "Rift"} Halls`, blurb: "Rooms and tunnels. Its guardian waits in the final room." };
+  };
+
+  // ---- islands: isles in a lake, joined by causeways, each isle its own tribe ----
+  const buildIslands = (): Plan => {
+    const w = kind === "rift" ? rint(62, 76) : rint(54, 64);
+    const h = kind === "rift" ? rint(46, 56) : rint(40, 48);
+    const liquid = LIQUID[theme.id] ?? LIQUID.default!;
+    const lo = 3, hiX = w - 4, hiY = h - 4;
+    const tiles: Tile[] = Array.from({ length: w * h }, () => ({ floor: liquid.floor, biome: theme.biome, block: 1, decor: 0 }));
+    const want = kind === "rift" ? rint(7, 10) : rint(6, 8);
+    const isles: { cx: number; cy: number; r: number; ext: number; wob: [number, number, number, number] }[] = [];
+    for (let tries = 0; tries < 900 && isles.length < want; tries++) {
+      const r = rint(4, 6);
+      const wob: [number, number, number, number] = [rng() * 6.283, rng() * 6.283, 0.08 + rng() * 0.08, 0.04 + rng() * 0.06];
+      const ext = Math.ceil(r * (1 + wob[2] + wob[3]));
+      const cx = rint(lo + ext, hiX - ext), cy = rint(lo + ext, hiY - ext);
+      // Keep at least three tiles of open water between any two shores.
+      if (isles.some((o) => Math.hypot(o.cx - cx, o.cy - cy) < o.ext + ext + 3)) continue;
+      isles.push({ cx, cy, r, ext, wob });
+    }
+    if (isles.length < 4) {
+      isles.length = 0;
+      const cols = 3, rows = 2, cw = Math.floor((hiX - lo) / cols), ch = Math.floor((hiY - lo) / rows);
+      for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+        const r = Math.max(3, Math.min(5, Math.floor(Math.min(cw, ch) / 2) - 3));
+        isles.push({ cx: lo + col * cw + Math.floor(cw / 2), cy: lo + row * ch + Math.floor(ch / 2), r, ext: r, wob: [0, 0, 0, 0] });
+      }
+    }
+    const tribes = shuffle([...TRIBES]);
+    const rooms: DRoom[] = isles.map((s, i) => {
+      const cells: [number, number][] = [];
+      for (let y = s.cy - s.ext; y <= s.cy + s.ext; y++) for (let x = s.cx - s.ext; x <= s.cx + s.ext; x++) {
+        if (x < lo || y < lo || x > hiX || y > hiY) continue;
+        const a = Math.atan2(y - s.cy, x - s.cx);
+        const rr = s.r * (1 + s.wob[2] * Math.sin(3 * a + s.wob[0]) + s.wob[3] * Math.sin(5 * a + s.wob[1]));
+        if (Math.hypot(x - s.cx, y - s.cy) <= rr + 0.35) cells.push([x, y]);
+      }
+      return { x: s.cx - s.ext, y: s.cy - s.ext, w: s.ext * 2 + 1, h: s.ext * 2 + 1, shape: "isle", cells, cx: s.cx, cy: s.cy, pool: tribes[i % tribes.length]!.pool };
+    });
+    const start = Math.floor(rng() * rooms.length);
+    const tribeOf = (i: number) => tribes[i % tribes.length]!;
+    rooms.forEach((r, i) => {
+      for (const [x, y] of r.cells) {
+        const t = tiles[y * w + x]!;
+        const n = hash(x, y);
+        t.block = 0;
+        // The landing isle wears the dungeon's own floor; the rest wear their tribe's ground.
+        if (i === start) { t.floor = theme.floorCode; t.sprite = theme.floor[n % theme.floor.length]; }
+        else { t.floor = tribeOf(i).floorCode; t.sprite = tribeOf(i).floor[n % tribeOf(i).floor.length]; }
+      }
+      centre(r);
+    });
+    // Causeways: a thick straight line from shore to shore, three tiles wide.
+    const bridgeArt = theme.id === "ember" ? ART.cobalt : theme.id === "catacomb" ? ART.tomb : theme.id === "frostvault" ? ART.ice : ART.street;
+    const lay = (x: number, y: number) => {
+      if (x < 2 || y < 2 || x > w - 3 || y > h - 3) return;
+      const t = tiles[y * w + x]!;
+      if (t.block === 0) return;
+      t.block = 0;
+      t.floor = FL.stone;
+      t.sprite = bridgeArt[hash(x, y) % bridgeArt.length];
+    };
+    const causeway = (a: DRoom, b: DRoom) => {
+      const dx = b.cx - a.cx, dy = b.cy - a.cy, steps = Math.max(Math.abs(dx), Math.abs(dy), 1);
+      const wide = Math.abs(dx) >= Math.abs(dy);
+      for (let s = 0; s <= steps; s++) {
+        const x = Math.round(a.cx + (dx * s) / steps), y = Math.round(a.cy + (dy * s) / steps);
+        for (let k = -1; k <= 1; k++) wide ? lay(x, y + k) : lay(x + k, y);
+      }
+    };
+    const edges = spanTree(rooms, start, rint(1, 2));
+    for (const [a, b] of edges) causeway(rooms[a]!, rooms[b]!);
+    const depth = depthFrom(rooms.length, edges.slice(0, rooms.length - 1), start);
+    const bossAt = farthest(rooms, depth, start);
+    // The guardian's isle also hosts the dungeon's own kind, so it is never a tribe you have already cleared.
+    rooms[bossAt]!.pool = [...rooms[bossAt]!.pool!, ...theme.pool];
+    // Liquid art: shallows along the shore, deep water (or lava) further out.
+    const isOpen = (x: number, y: number) => tiles[y * w + x]?.block === 0;
+    tiles.forEach((t, i) => {
+      if (!t.block) return;
+      const x = i % w, y = Math.floor(i / w), n = hash(x, y);
+      let shore = false;
+      for (let dy = -1; dy <= 1 && !shore; dy++) for (let dx = -1; dx <= 1; dx++) if (x + dx >= 0 && x + dx < w && y + dy >= 0 && y + dy < h && isOpen(x + dx, y + dy)) { shore = true; break; }
+      const art = shore ? liquid.shore : liquid.deep;
+      t.sprite = art[n % art.length];
+    });
+    const pads: DungeonPad[] = [];
+    const reserved = new Set<number>();
+    returnPad(tiles, w, pads, reserved, rooms[bossAt]!, rooms[start]!);
+    rooms.forEach((r, i) => { if (i !== start) dress(tiles, w, r, tribeOf(i).props, Math.min(4, Math.floor(r.cells.length / 18)), reserved); });
+    const name = theme.id === "ember" ? "Cinder Isles" : theme.id === "catacomb" ? "Bone Isles" : theme.id === "crystal" ? "Ink Isles" : theme.id === "frostvault" ? "Frozen Isles" : "Drowned Isles";
+    const over = liquid.floor === FL.lava ? "lava" : "water";
+    return { w, h, tiles, rooms, start, bossAt, depth, pads, reserved, name, blurb: `Isles in the ${over}, joined by causeways. Every isle has its own kind of foe. The guardian waits on the farthest one.` };
+  };
+
+  // ---- mansion: two storeys of rooms, walls and doors, joined by a staircase ----
+  const buildMansion = (): Plan => {
+    const w = kind === "rift" ? rint(70, 82) : rint(60, 68);
+    const h = kind === "rift" ? rint(34, 42) : rint(30, 36);
+    const lo = 3, hiX = w - 4, hiY = h - 4;
+    const tiles: Tile[] = Array.from({ length: w * h }, () => ({ floor: FL.stone, biome: theme.biome, block: 1, decor: 0 }));
+    const key = (x: number, y: number) => y * w + x;
+    const setOpen = (x: number, y: number, on: boolean) => { tiles[key(x, y)]!.block = on ? 0 : 1; };
+    const mid = Math.floor((lo + hiX) / 2) + rint(-3, 3);
+    // Each storey is a walled footprint; solid rock between them, so the stairs are the only way up.
+    const storeys = [{ x0: lo, x1: mid - 2, y0: lo, y1: hiY }, { x0: mid + 2, x1: hiX, y0: lo, y1: hiY }];
+    const doors = new Set<number>();
+    const doorNear = (x: number, y: number) => doors.has(key(x - 1, y)) || doors.has(key(x + 1, y)) || doors.has(key(x, y - 1)) || doors.has(key(x, y + 1));
+    const leaves: { x: number; y: number; w: number; h: number; storey: number }[] = [];
+    const MIN = 4;
+    const split = (r: { x: number; y: number; w: number; h: number }, storey: number, depth: number) => {
+      // Big rooms always split; medium ones often stay whole, so a house mixes halls with small rooms.
+      const big = r.w > 15 || r.h > 12;
+      if (depth > 7 || (!big && ((r.w < 11 && r.h < 9) || rng() < 0.45))) { leaves.push({ ...r, storey }); return; }
+      const vertical = r.w > r.h * 1.2 ? true : r.h > r.w * 1.2 ? false : rng() < 0.5;
+      const tryAxis = (vert: boolean) => {
+        const cands: number[] = [];
+        if (vert) {
+          for (let sx = r.x + MIN; sx <= r.x + r.w - 1 - MIN; sx++) {
+            let ok = true;
+            for (let y = r.y; y < r.y + r.h && ok; y++) if (doorNear(sx, y)) ok = false;
+            if (ok) cands.push(sx);
+          }
+        } else {
+          for (let sy = r.y + MIN; sy <= r.y + r.h - 1 - MIN; sy++) {
+            let ok = true;
+            for (let x = r.x; x < r.x + r.w && ok; x++) if (doorNear(x, sy)) ok = false;
+            if (ok) cands.push(sy);
+          }
+        }
+        return cands;
+      };
+      let vert = vertical;
+      let cands = tryAxis(vert);
+      if (!cands.length) { vert = !vert; cands = tryAxis(vert); }
+      if (!cands.length) { leaves.push({ ...r, storey }); return; }
+      const s = pick(cands);
+      if (vert) {
+        for (let y = r.y; y < r.y + r.h; y++) setOpen(s, y, false);
+        const dy = rint(r.y, r.y + r.h - 1);
+        setOpen(s, dy, true); doors.add(key(s, dy));
+        split({ x: r.x, y: r.y, w: s - r.x, h: r.h }, storey, depth + 1);
+        split({ x: s + 1, y: r.y, w: r.x + r.w - 1 - s, h: r.h }, storey, depth + 1);
+      } else {
+        for (let x = r.x; x < r.x + r.w; x++) setOpen(x, s, false);
+        const dx = rint(r.x, r.x + r.w - 1);
+        setOpen(dx, s, true); doors.add(key(dx, s));
+        split({ x: r.x, y: r.y, w: r.w, h: s - r.y }, storey, depth + 1);
+        split({ x: r.x, y: s + 1, w: r.w, h: r.y + r.h - 1 - s }, storey, depth + 1);
+      }
+    };
+    storeys.forEach((f, si) => {
+      const inner = { x: f.x0 + 1, y: f.y0 + 1, w: f.x1 - f.x0 - 1, h: f.y1 - f.y0 - 1 };
+      for (let y = inner.y; y < inner.y + inner.h; y++) for (let x = inner.x; x < inner.x + inner.w; x++) setOpen(x, y, true);
+      split(inner, si, 0);
+    });
+    const rooms: DRoom[] = leaves.map((r) => {
+      const cells: [number, number][] = [];
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) cells.push([x, y]);
+      return { x: r.x, y: r.y, w: r.w, h: r.h, shape: "hall", cells, cx: r.x + Math.floor(r.w / 2), cy: r.y + Math.floor(r.h / 2) };
+    });
+    const roomAt = new Map<number, number>();
+    rooms.forEach((r, i) => { for (const [x, y] of r.cells) roomAt.set(key(x, y), i); });
+    // Doors join the two rooms on either side.
+    const edges: [number, number][] = [];
+    const joinVia = (x: number, y: number) => {
+      const a = roomAt.get(key(x - 1, y)) ?? roomAt.get(key(x, y - 1));
+      const b = roomAt.get(key(x + 1, y)) ?? roomAt.get(key(x, y + 1));
+      if (a !== undefined && b !== undefined && a !== b) edges.push([a, b]);
+    };
+    for (const d of doors) joinVia(d % w, Math.floor(d / w));
+    // A few extra doors so the house has loops, not just one route.
+    const linked = (a: number, b: number) => edges.some(([p, q]) => (p === a && q === b) || (p === b && q === a));
+    const extra: [number, number, number, number][] = [];
+    for (let y = lo + 1; y < hiY; y++) for (let x = lo + 1; x < hiX; x++) {
+      if (tiles[key(x, y)]!.block !== 1 || doorNear(x, y)) continue;
+      const l = roomAt.get(key(x - 1, y)), r = roomAt.get(key(x + 1, y)), u = roomAt.get(key(x, y - 1)), dn = roomAt.get(key(x, y + 1));
+      if (l !== undefined && r !== undefined && l !== r && tiles[key(x, y - 1)]!.block && tiles[key(x, y + 1)]!.block) extra.push([x, y, l, r]);
+      else if (u !== undefined && dn !== undefined && u !== dn && tiles[key(x - 1, y)]!.block && tiles[key(x + 1, y)]!.block) extra.push([x, y, u, dn]);
+    }
+    for (let k = 0, want = rint(1, 3), tries = 0; k < want && tries < 60 && extra.length; tries++) {
+      const [x, y, a, b] = pick(extra);
+      if (linked(a, b) || doorNear(x, y)) continue;
+      setOpen(x, y, true); doors.add(key(x, y)); edges.push([a, b]); k++;
+    }
+    const ground = rooms.map((_, i) => i).filter((i) => leaves[i]!.storey === 0);
+    const upper = rooms.map((_, i) => i).filter((i) => leaves[i]!.storey === 1);
+    // The foyer: a ground-floor room on the front (bottom) wall, nearest the middle of the house.
+    const gMid = (storeys[0]!.x0 + storeys[0]!.x1) / 2;
+    const start = [...ground].sort((a, b) => (rooms[b]!.y + rooms[b]!.h) - (rooms[a]!.y + rooms[a]!.h) || Math.abs(rooms[a]!.cx - gMid) - Math.abs(rooms[b]!.cx - gMid))[0]!;
+    const groundDepth = depthFrom(rooms.length, edges, start);
+    const stairsDown = farthest(rooms, groundDepth, start, ground);
+    // The landing upstairs is on the side nearest the ground floor.
+    const landing = [...upper].sort((a, b) => rooms[a]!.cx - rooms[b]!.cx || rooms[a]!.cy - rooms[b]!.cy)[0]!;
+    const pads: DungeonPad[] = [];
+    const reserved = new Set<number>(doors);
+    linkRooms(tiles, w, pads, reserved, rooms[stairsDown]!, rooms[landing]!, ["stairs-up", "stairs-down"]);
+    const links: [number, number][] = [...edges, [stairsDown, landing]];
+    // Half the houses have a servants' stair too, from another ground room to another upstairs room.
+    const spareG = ground.filter((i) => i !== start && i !== stairsDown);
+    const spareU = upper.filter((i) => i !== landing);
+    if (spareG.length && spareU.length > 1 && rng() < 0.5) {
+      const a = pick(spareG), b = pick(spareU);
+      linkRooms(tiles, w, pads, reserved, rooms[a]!, rooms[b]!, ["stairs-up", "stairs-down"]);
+      links.push([a, b]);
+    }
+    // Depth over the main route (doors + grand stair) so the guardian sits in the deepest room upstairs.
+    const depth = depthFrom(rooms.length, [...edges, [stairsDown, landing]], start);
+    const bossAt = farthest(rooms, depth, start, upper.length > 1 ? upper.filter((i) => i !== landing) : upper);
+    returnPad(tiles, w, pads, reserved, rooms[bossAt]!, rooms[start]!);
+    // Art: each storey has its own wallpaper; rooms get their own floors and furniture.
+    const wallSets = theme.id === "catacomb" ? [ART.catacombs, ART.tombWall] : theme.id === "ember" ? [ART.volcanicWall, ART.brickDark] : theme.id === "crystal" ? [ART.crystalWall, ART.marbleWall] : shuffle([ART.stoneBrick, ART.brickBrown, ART.church, ART.marbleWall, ART.relief, ART.brickGray]);
+    const floorSets = theme.id === "catacomb" ? [ART.tomb, ART.crypt, ART.etched, ART.limestone] : theme.id === "ember" ? [ART.volcanic, ART.roughRed, ART.cobalt, ART.etched] : [ART.limestone, ART.marble, ART.whiteMarble, ART.mosaic, ART.etched, ART.roughRed];
+    const roomFloor = rooms.map(() => pick(floorSets));
+    const storeyOf = (x: number) => (x <= storeys[0]!.x1 ? 0 : 1);
+    const isOpen = (x: number, y: number) => tiles[key(x, y)]?.block === 0;
+    tiles.forEach((t, i) => {
+      const x = i % w, y = Math.floor(i / w), n = hash(x, y);
+      if (t.block) {
+        const face = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => x + dx! >= 0 && y + dy! >= 0 && x + dx! < w && y + dy! < h && isOpen(x + dx!, y + dy!));
+        const set = wallSets[storeyOf(x) % wallSets.length]!;
+        // Torches and banners hang on walls that face a room from above.
+        if (face && isOpen(x, y + 1) && n % 17 === 0) t.sprite = ART.torch[n % ART.torch.length];
+        else if (face && isOpen(x, y + 1) && n % 29 === 0) t.sprite = ART.banner[0];
+        else t.sprite = face ? set[n % set.length] : theme.rock[n % theme.rock.length];
+      } else {
+        const ri = roomAt.get(i);
+        const art = ri !== undefined ? roomFloor[ri]! : ART.limestone;
+        t.sprite = art[n % art.length];
+      }
+    });
+    for (const d of doors) tiles[d]!.layers = [ART.doors[1]!];
+    const roles = theme.id === "catacomb" ? [ART.sarcophagus, ART.darkStatues, ART.darkAltars, ART.columns] : theme.id === "ember" ? [ART.darkAltars, ART.boulder, ART.pillar, ART.darkStatues] : [ART.statues, ART.altars, ART.boxes, ART.pedestal, ART.golden, ART.columns, ART.orb];
+    rooms.forEach((r, i) => {
+      if (i === start) return;
+      dress(tiles, w, r, pick(roles), Math.min(4, Math.floor(r.cells.length / 16)), reserved);
+    });
+    // A fountain in the middle of the biggest room downstairs: the great hall.
+    const hall = [...ground].filter((i) => i !== start && i !== stairsDown).sort((a, b) => rooms[b]!.cells.length - rooms[a]!.cells.length)[0];
+    if (hall !== undefined && rooms[hall]!.cells.length >= 30) {
+      const r = rooms[hall]!;
+      const at = key(r.cx, r.cy - 1);
+      if (!reserved.has(at) && isOpen(r.cx, r.cy - 1)) tiles[at]!.layers = [pick(theme.id === "catacomb" ? ART.bloodFountain : ART.fountain)];
+    }
+    const name = kind === "crypt" ? "Ossuary Manor" : kind === "kiln" ? "Ashen Manor" : pick(["Haunted Manor", "Hollow Estate", "Widow's Mansion", "Gloam House"]);
+    return { w, h, tiles, rooms, start, bossAt, depth, pads, reserved, name, blurb: "Two floors of rooms and doors. Find the stairs; the master of the house waits upstairs." };
+  };
+
+  // ---- portals: sealed chambers, no corridors, every chamber a different plane ----
+  const buildPlanes = (): Plan => {
+    const cols = kind === "rift" ? rint(3, 4) : 3, rows = kind === "rift" ? rint(2, 3) : 2;
+    const cw = rint(14, 17), ch = rint(13, 15);
+    const w = cols * cw + 8, h = rows * ch + 8;
+    const ox = 4, oy = 4;
+    const tiles: Tile[] = Array.from({ length: w * h }, () => ({ floor: theme.floorCode, biome: theme.biome, block: 1, decor: 0 }));
+    const slots: [number, number][] = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) slots.push([c, r]);
+    // Big grids lose a chamber or two so no two mazes share a silhouette.
+    for (let drop = slots.length >= 9 ? rint(1, 2) : slots.length >= 8 ? rint(0, 1) : 0; drop > 0; drop--) slots.splice(Math.floor(rng() * slots.length), 1);
+    const planes = shuffle([...TRIBES]);
+    const rooms: DRoom[] = slots.map(([c, r], i) => {
+      const rw = rint(7, cw - 4), rh = rint(6, ch - 4);
+      const x = ox + c * cw + rint(2, cw - rw - 2), y = oy + r * ch + rint(2, ch - rh - 2);
+      const shape = pick(["rect", "round", "notch", "cross", "rect"] as const);
+      const room: DRoom = { x, y, w: rw, h: rh, shape, cells: shapeCells(x, y, rw, rh, shape), cx: x + Math.floor(rw / 2), cy: y + Math.floor(rh / 2), pool: planes[i % planes.length]!.pool };
+      centre(room);
+      return room;
+    });
+    const roomAt = new Map<number, number>();
+    rooms.forEach((r, i) => { for (const [x, y] of r.cells) { tiles[y * w + x]!.block = 0; tiles[y * w + x]!.floor = planes[i % planes.length]!.floorCode; roomAt.set(y * w + x, i); } });
+    const start = Math.floor(rng() * rooms.length);
+    const edges = spanTree(rooms, start, rooms.length >= 5 ? rint(1, 2) : 0);
+    const pads: DungeonPad[] = [];
+    const reserved = new Set<number>();
+    for (const [a, b] of edges) linkRooms(tiles, w, pads, reserved, rooms[a]!, rooms[b]!);
+    const depth = depthFrom(rooms.length, edges.slice(0, rooms.length - 1), start);
+    const bossAt = farthest(rooms, depth, start);
+    rooms[bossAt]!.pool = [...rooms[bossAt]!.pool!, ...theme.pool];
+    returnPad(tiles, w, pads, reserved, rooms[bossAt]!, rooms[start]!);
+    // Art: the landing chamber wears the dungeon's floor; every other chamber its plane's floor and walls.
+    tiles.forEach((t, i) => {
+      const x = i % w, y = Math.floor(i / w), n = hash(x, y);
+      if (t.block) {
+        let owner = -1;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]] as const) {
+          const o = roomAt.get((y + dy) * w + x + dx);
+          if (o !== undefined && x + dx >= 0 && x + dx < w) { owner = o; break; }
+        }
+        const wall = owner < 0 ? null : owner === start ? theme.wall : planes[owner % planes.length]!.wall;
+        t.sprite = wall ? wall[n % wall.length] : theme.rock[n % theme.rock.length];
+      } else {
+        const ri = roomAt.get(i)!;
+        const art = ri === start ? theme.floor : planes[ri % planes.length]!.floor;
+        if (ri === start) t.floor = theme.floorCode;
+        t.sprite = art[n % art.length];
+      }
+    });
+    rooms.forEach((r, i) => { if (i !== start) dress(tiles, w, r, planes[i % planes.length]!.props, Math.min(3, Math.floor(r.cells.length / 20)), reserved); });
+    const name = kind === "crypt" ? "Hall of Doors" : kind === "kiln" ? "Ember Shards" : pick(["Shattered Sanctum", "Rift Maze", "Broken Planes"]);
+    return { w, h, tiles, rooms, start, bossAt, depth, pads, reserved, name, blurb: "No corridors here. Step on the portals: every chamber is a different plane with its own foes." };
+  };
+
+  const plan = layout === "islands" ? buildIslands() : layout === "mansion" ? buildMansion() : layout === "portals" ? buildPlanes() : buildHalls();
+  const { w, h, tiles, rooms, start, bossAt, depth, reserved } = plan;
+  const entryRoom = rooms[start]!, bossRoom = rooms[bossAt]!;
 
   // --- foes ---
   const spawns: Spawn[] = [];
@@ -2294,14 +2747,23 @@ export function generateDungeon(opts: DungeonGenOptions): WorldData {
   const guests = Object.values(MONSTER_BY_ID).filter((m) => !m.animal && !m.boss && m.id !== "saintling" && !theme.pool.includes(m.id));
   const pool = [...theme.pool, ...(kind === "rift" && bossDef ? Object.values(MONSTER_BY_ID).filter((m) => m.type === bossDef.type).map((m) => m.id) : [])];
   for (let g = 0; g < 2 && guests.length; g++) pool.push(pick(guests).id);
+  const anchor = new Set([entryRoom.cy * w + entryRoom.cx, bossRoom.cy * w + bossRoom.cx]);
   const roomOrder = rooms.map((_, i) => i).filter((i) => i !== start && i !== bossAt).sort((a, b) => depth.get(a)! - depth.get(b)!);
   roomOrder.forEach((ri, order) => {
     const r = rooms[ri]!;
-    const count = Math.min(4, 1 + Math.floor(r.cells.length / 30) + (rng() < 0.35 ? 1 : 0));
+    const free = r.cells.filter(([x, y]) => !reserved.has(y * w + x) && !anchor.has(y * w + x));
+    if (!free.length) return;
+    // A manor has many small rooms: some stand empty and the rest hold fewer foes, so it totals about the same as halls.
+    if (layout === "mansion" && order > 0 && rng() < 0.4) return;
+    const count = layout === "mansion"
+      ? Math.min(3, 1 + Math.floor(r.cells.length / 60))
+      : Math.min(4, 1 + Math.floor(r.cells.length / 30) + (rng() < 0.35 ? 1 : 0));
     const lvl = kind === "rift" ? level : level0 + Math.min(4, Math.floor((order * 4) / Math.max(1, roomOrder.length)));
     for (let k = 0; k < count; k++) {
-      const [x, y] = pick(r.cells);
-      const def = MONSTER_BY_ID[pick(pool)] ?? MONSTER_BY_ID.onibi!;
+      const [x, y] = pick(free);
+      // Islands and portal chambers keep to their own tribe; now and then a wanderer from the wider pool.
+      const from = r.pool?.length && rng() < 0.85 ? r.pool : pool;
+      const def = MONSTER_BY_ID[pick(from)] ?? MONSTER_BY_ID.onibi!;
       spawns.push({ id: `${idPrefix}-${order}-${k}`, kind: "mob", species: def.id, level: lvl, x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, template: def.template, type: def.type } as Spawn);
     }
   });
@@ -2310,5 +2772,24 @@ export function generateDungeon(opts: DungeonGenOptions): WorldData {
   } else if (kind === "crypt" || kind === "kiln") {
     spawns.push({ id: kind === "crypt" ? "bone_king" : "ash_regent", kind: "mob", species: kind === "crypt" ? "gaikotsu" : "kagaribi", boss: true, bossId: kind === "crypt" ? "bone_king" : "ash_regent", level: kind === "crypt" ? 18 : 16, template: kind === "crypt" ? 22 : 3, type: kind === "crypt" ? "ghoul" : "fire", x: (bossRoom.cx + 0.5) * TILE, y: (bossRoom.cy + 0.5) * TILE } as Spawn);
   }
-  return { w, h, tiles, spawns, cache: null, entry: { x: (entryRoom.cx + 0.5) * TILE, y: (entryRoom.cy + 0.5) * TILE } };
+  return {
+    w, h, tiles, spawns, cache: null,
+    entry: { x: (entryRoom.cx + 0.5) * TILE, y: (entryRoom.cy + 0.5) * TILE },
+    layout, name: plan.name, blurb: plan.blurb, pads: plan.pads,
+  };
+}
+
+/** The floor cells of a room of the given shape inside its bounding box. */
+function shapeCells(x0: number, y0: number, rw: number, rh: number, shape: "rect" | "round" | "cross" | "notch"): [number, number][] {
+  const cells: [number, number][] = [];
+  const rx = rw / 2, ry = rh / 2, ccx = x0 + rx - 0.5, ccy = y0 + ry - 0.5;
+  for (let y = y0; y < y0 + rh; y++) for (let x = x0; x < x0 + rw; x++) {
+    const dx = x - x0, dy = y - y0;
+    let on = true;
+    if (shape === "round") on = ((x - ccx) / rx) ** 2 + ((y - ccy) / ry) ** 2 <= 1.05;
+    else if (shape === "cross") on = (dx >= Math.floor(rw / 3) && dx < rw - Math.floor(rw / 3)) || (dy >= Math.floor(rh / 3) && dy < rh - Math.floor(rh / 3));
+    else if (shape === "notch") on = !((dx < 2 || dx >= rw - 2) && (dy < 2 || dy >= rh - 2));
+    if (on) cells.push([x, y]);
+  }
+  return cells;
 }

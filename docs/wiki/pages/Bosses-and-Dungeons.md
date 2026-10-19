@@ -31,9 +31,24 @@ Leave through the exit at the entrance. In TurboHunt, dying inside only **knocks
 Every **10 minutes** of play (paused and hidden time don't count), a new **rift** opens somewhere near you. A message tells you, and the Map shows it.
 
 - Walk within 120 px of the rift and press **E**, or use **Track** on the Map to walk there.
-- Each rift is a **procedurally generated** dungeon: 12 rooms on a 3×4 grid, each a different size, joined in a chain, in one of three tile themes.
+- Each rift is a **procedurally generated** dungeon in one of seven tile themes, and one of four layouts (below).
 - Foes inside **don't respawn**. The **guardian** in the last room is a copy of one of the three world bosses (it hits 10% softer). Beat it to clear the rift, then leave through the entrance rift.
 - Rifts stay open until cleared, and you can have several open at once.
+
+## Dungeon layouts
+
+Every dungeon — rifts, the Tiny Crypt and the Ash Kiln, in every mode that has them — rolls one of four layouts each day:
+
+| Layout | What it is |
+| --- | --- |
+| **Halls** | The classic: rooms of mixed shapes joined by tunnels. |
+| **Isles** | Islands in a lake (lava in the Kiln, black water in the Crypt) joined by stone causeways. **Each isle has its own tribe of foes** (fire, tide, grove, frost, storm, shade, bone or sun), with its own ground and scenery. The guardian waits on the farthest isle. |
+| **Manor** | The inside of a two-storey house: rooms split by walls and doors, a great hall with a fountain, and a staircase (**UP** / **DOWN**) to the upper floor. Some houses have a second, servants' stair. The guardian waits in the deepest room upstairs. |
+| **Portal maze** | Sealed chambers with no corridors. Step on a **PORTAL** pad to jump to its twin in another chamber. Every chamber is a different plane with its own floor, walls and foes. |
+
+- Isles, manors and portal mazes put an **EXIT** sigil in the guardian's room that takes you straight back to the entrance.
+- Pads glow and are labelled. Click-to-walk and autoplay path through them.
+- The game names the layout when you walk in (for example *"Cinder Isles"*, *"Ossuary Manor"*, *"Shattered Sanctum"*).
 
 ## Shrines
 
