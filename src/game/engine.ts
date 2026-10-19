@@ -2298,22 +2298,27 @@ export class TurbzGame {
 		const save = this.save;
 		if (!this.buildOn() || !this.world) return;
 		const { tx, ty } = tileAt(x, y);
-		const placed = save.survival.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty);
-		if (placed) return this.removeLog(placed);
-		const bed = save.survival.beds.find((b) => b.map === save.map && b.tx === tx && b.ty === ty);
-		if (bed) return this.removeFurniture("bed", bed);
-		const box = save.ghostBox;
-		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
-		const chest = save.turbzChest;
-		if (chest && chest.map === save.map && chest.tx === tx && chest.ty === ty) return this.removeTurbzChest();
+		const at = (l) => l.map === save.map && l.tx === tx && l.ty === ty;
 		const piece = this.buildPiece ?? "wood";
-		// Clicking the campfire tile: lay a floor underneath it if a floor is selected, otherwise pick the fire up.
+		const placingFloor = !!BUILD_PIECES[piece]?.kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
+		// Floors sit UNDER everything else, so a floor and a wall/door/bed/chest/fire can share a tile.
+		const floor = save.survival.logs.find((l) => at(l) && !!l.kind && FLOOR_KINDS.has(l.kind));
+		const solid = save.survival.logs.find((l) => at(l) && (!l.kind || !FLOOR_KINDS.has(l.kind)));
+		const bed = save.survival.beds.find((b) => b.map === save.map && b.tx === tx && b.ty === ty);
+		const box = save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty ? save.ghostBox : null;
+		const chest = save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty ? save.turbzChest : null;
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
-		if (fire) {
-			const kind = BUILD_PIECES[piece]?.kind;
-			if (kind && FLOOR_KINDS.has(kind)) return this.placeLog(tx, ty, piece);
-			return this.removeCampfire(fire);
+		// Placing a floor: pick up the floor if one is here, else lay it (it slides under anything already placed).
+		if (placingFloor) {
+			if (floor) return this.removeLog(floor);
+			return this.placeLog(tx, ty, piece);
 		}
+		// Any other piece: clicking removes the top thing on the tile; an empty-or-floor-only tile gets the new piece.
+		if (solid) return this.removeLog(solid);
+		if (bed) return this.removeFurniture("bed", bed);
+		if (box) return this.removeFurniture("ghostbox", box);
+		if (chest) return this.removeTurbzChest();
+		if (fire) return this.removeCampfire(fire);
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		return this.placeLog(tx, ty, piece);
@@ -2336,6 +2341,7 @@ export class TurbzGame {
 			furniture,
 			needZone: piece === "bed" || piece === "ghostbox" || piece === "turbzchest",
 			allowCampfireTile: isFloor,
+			placingFloor: isFloor,
 		});
 	}
 	/** Spends a piece's cost (kyo for blocks, materials for furniture). The Building skill may hand one back. */
@@ -2789,9 +2795,10 @@ export class TurbzGame {
 				this.persist(); this.syncHud(true); this.syncSolids(save.map);
 				return;
 			}
+			// One camp at a time, in every mode: pick up your current campfire before lighting a new one.
+			if (save.survival.campfires.length) return this.say("You can only keep one camp at a time. Pick up your campfire first to move it.");
 			if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 			save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
-			save.survival.campfires = save.survival.campfires.slice(-100);
 			this.gainSkill("survival", 12);
 			this.say("Campfire built. Each cook or boil uses another log.");
 		} else if (action === "water") {
@@ -11270,19 +11277,18 @@ export class TurbzGame {
 		}
 	}
 	paintLog(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fillRect(x + 2, y + 27, 30, 4);
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 32);
 		for (let i = 0; i < 4; i++) {
-			const by = y + 2 + i * 7;
-			ctx.fillStyle = "#4a2e1a"; ctx.fillRect(x + 1, by, 30, 7);
-			ctx.fillStyle = i % 2 ? "#8a5a34" : "#9a6a3c"; ctx.fillRect(x + 2, by + 1, 28, 5);
-			ctx.fillStyle = "#6b4528"; ctx.fillRect(x + 2, by + 4, 28, 2);
+			const by = y + i * 8;
+			ctx.fillStyle = "#4a2e1a"; ctx.fillRect(x + 1, by, 30, 8);
+			ctx.fillStyle = i % 2 ? "#8a5a34" : "#9a6a3c"; ctx.fillRect(x + 2, by + 1, 28, 6);
+			ctx.fillStyle = "#6b4528"; ctx.fillRect(x + 2, by + 5, 28, 2);
 			ctx.fillStyle = "#d2a566"; ctx.fillRect(x + 1, by + 1, 5, 5);
 			ctx.fillStyle = "#a97a45"; ctx.fillRect(x + 3, by + 3, 2, 2);
 		}
 	}
 	paintBrick(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 27, 30, 4);
-		ctx.fillStyle = "#3a2622"; ctx.fillRect(x, y, 32, 30);
+		ctx.fillStyle = "#3a2622"; ctx.fillRect(x, y, 32, 32);
 		for (let r = 0; r < 5; r++) {
 			const by = y + 1 + r * 6;
 			const off = r % 2 ? 0 : -6;
@@ -11296,24 +11302,22 @@ export class TurbzGame {
 			}
 		}
 	}
-	/** Pixel-sprite wooden wall: vertical planks with grain and a plated seam. */
+	/** Pixel-sprite wooden wall: vertical planks with grain and a plated seam. Fills the whole tile so walls connect. */
 	paintWoodWall(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 28, 30, 4);
-		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 30);
+		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 32);
 		for (let c = 0; c < 4; c++) {
 			const bx = x + 1 + c * 8;
-			ctx.fillStyle = c % 2 ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx, y + 1, 7, 28);
-			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx, y + 1, 2, 28);
-			ctx.fillStyle = "#5a3a20"; ctx.fillRect(bx + 6, y + 1, 1, 28);
+			ctx.fillStyle = c % 2 ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx, y, 7, 32);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx, y, 2, 32);
+			ctx.fillStyle = "#5a3a20"; ctx.fillRect(bx + 6, y, 1, 32);
 			ctx.fillStyle = "rgba(0,0,0,.25)"; ctx.fillRect(bx + 2, y + 9 + (c % 2) * 6, 3, 1); ctx.fillRect(bx + 1, y + 19, 4, 1);
 		}
 		ctx.fillStyle = "#4a3018"; ctx.fillRect(x, y + 13, 32, 3);
 		ctx.fillStyle = "#6b4528"; ctx.fillRect(x, y + 14, 32, 1);
 	}
-	/** Pixel-sprite stone wall: staggered grey blocks with mortar. */
+	/** Pixel-sprite stone wall: staggered grey blocks with mortar. Fills the whole tile so walls connect. */
 	paintStoneWall(ctx, x, y) {
-		ctx.fillStyle = "rgba(0,0,0,.32)"; ctx.fillRect(x + 2, y + 28, 30, 4);
-		ctx.fillStyle = "#2c2e33"; ctx.fillRect(x, y, 32, 30);
+		ctx.fillStyle = "#2c2e33"; ctx.fillRect(x, y, 32, 32);
 		for (let r = 0; r < 5; r++) {
 			const by = y + 1 + r * 6;
 			const off = r % 2 ? 0 : -6;
@@ -11498,13 +11502,19 @@ export class TurbzGame {
 		const sv = save.survival;
 		if (!sv) return;
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
+		const onScreen = (l) => l.map === save.map && Math.abs(l.tx * 32 + 16 - this.cam.x) <= halfW && Math.abs(l.ty * 32 + 16 - this.cam.y) <= halfH;
+		const isFloorKind = (k) => k === "woodfloor" || k === "stonefloor";
+		// Floors first (they are the base layer), then walls/doors on top, so a piece laid on a floor shows above it.
 		for (const l of sv.logs) {
-			if (l.map !== save.map) continue;
+			if (!isFloorKind(l.kind) || !onScreen(l)) continue;
 			const x = l.tx * 32, y = l.ty * 32;
-			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
+			if (l.kind === "woodfloor") this.paintWoodFloor(ctx, x, y);
+			else this.paintStoneFloor(ctx, x, y);
+		}
+		for (const l of sv.logs) {
+			if (isFloorKind(l.kind) || !onScreen(l)) continue;
+			const x = l.tx * 32, y = l.ty * 32;
 			if (l.kind === "stone") this.paintStoneWall(ctx, x, y);
-			else if (l.kind === "woodfloor") this.paintWoodFloor(ctx, x, y);
-			else if (l.kind === "stonefloor") this.paintStoneFloor(ctx, x, y);
 			else if (l.kind === "door") this.paintDoor(ctx, x, y, !!l.open);
 			else if (l.kind === "wood") this.paintWoodWall(ctx, x, y);
 			else if (l.kind === "brick") this.paintBrick(ctx, x, y);
@@ -11541,11 +11551,19 @@ export class TurbzGame {
 		ctx.restore();
 		if (this.buildMode && this.mouseWorld) {
 			const { tx, ty } = tileAt(this.mouseWorld.x, this.mouseWorld.y);
-			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty)
-				|| (sv.beds ?? []).some((b) => b.map === save.map && b.tx === tx && b.ty === ty)
-				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty)
-				|| (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty);
-			const check = placed ? { ok: true } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
+			const atTile = (l) => l.map === save.map && l.tx === tx && l.ty === ty;
+			const curPiece = this.buildPiece ?? "wood";
+			const curFloor = !!BUILD_PIECES[curPiece]?.kind && FLOOR_KINDS.has(BUILD_PIECES[curPiece].kind!);
+			// Clicking removes something only when there is a matching layer here: a floor if placing a floor,
+			// otherwise a solid/door/bed/box/chest/fire (a bare floor underneath does not count).
+			const placed = curFloor
+				? sv.logs.some((l) => atTile(l) && !!l.kind && FLOOR_KINDS.has(l.kind))
+				: sv.logs.some((l) => atTile(l) && (!l.kind || !FLOOR_KINDS.has(l.kind)))
+					|| (sv.beds ?? []).some((b) => atTile(b))
+					|| (save.ghostBox && atTile(save.ghostBox))
+					|| (save.turbzChest && atTile(save.turbzChest))
+					|| sv.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
+			const check = placed ? { ok: true } : this.checkPiece(curPiece, tx, ty);
 			ctx.save();
 			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";
 			ctx.fillRect(tx * 32, ty * 32, 32, 32);

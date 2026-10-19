@@ -58,7 +58,9 @@ export function sanitizeLogs(raw: unknown): LogTile[] {
   const out: LogTile[] = [];
   for (const r of raw) {
     if (!r || typeof r.map !== "string" || !Number.isInteger(r.tx) || !Number.isInteger(r.ty) || r.tx < 0 || r.ty < 0) continue;
-    const k = `${r.map}|${r.tx},${r.ty}`;
+    // A tile may hold one floor AND one solid/door, so the dedup key is scoped by layer (floor vs. the rest).
+    const isFloor = r.kind === "woodfloor" || r.kind === "stonefloor";
+    const k = `${r.map}|${r.tx},${r.ty}|${isFloor ? "f" : "s"}`;
     if (seen.has(k)) continue;
     seen.add(k);
     const valid: TileKind[] = ["wood", "brick", "stone", "woodfloor", "stonefloor", "door"];
@@ -166,13 +168,23 @@ export function checkPlaceLog(args: {
   needZone?: boolean;
   /** Floors may be laid on the campfire's own tile (the fire draws on top); other pieces may not. */
   allowCampfireTile?: boolean;
+  /** True when the piece being placed is a floor. Floors need a clear tile; solids/doors/furniture may sit on a floor. */
+  placingFloor?: boolean;
 }): PlaceCheck {
   const { world, map, logs, camps, tx, ty, player, bag, terrainBlocked } = args;
   if (tx < 3 || ty < 3 || tx >= world.w - 3 || ty >= world.h - 3) return { ok: false, reason: "Too close to the edge of the world." };
   const cx = tx * TILE_PX + TILE_PX / 2, cy = ty * TILE_PX + TILE_PX / 2;
   if (Math.hypot(cx - player.x, cy - player.y) > BUILD_REACH) return { ok: false, reason: "Too far away. Move closer to build." };
-  if (logs.some((l) => l.map === map && l.tx === tx && l.ty === ty)) return { ok: false, reason: "There is already a log there." };
-  if (terrainBlocked(cx, cy)) return { ok: false, reason: "Something solid is already there." };
+  // A floor needs an empty tile; a solid/door/furniture may sit on top of an existing floor, but not on another solid.
+  const here = logs.filter((l) => l.map === map && l.tx === tx && l.ty === ty);
+  if (args.placingFloor) {
+    if (here.length) return { ok: false, reason: "There is already something on that tile." };
+  } else {
+    if (here.some((l) => !l.kind || !FLOOR_KINDS.has(l.kind))) return { ok: false, reason: "There is already something there." };
+  }
+  // A placed floor is walkable, so it never counts as "solid" terrain under a new piece.
+  const onFloor = here.some((l) => l.kind && FLOOR_KINDS.has(l.kind));
+  if (!onFloor && terrainBlocked(cx, cy)) return { ok: false, reason: "Something solid is already there." };
   const tile = world.tiles[ty * world.w + tx];
   if (!tile || tile.floor === 1 || tile.floor === 2) return { ok: false, reason: "You cannot build on water." };
   if (tileOf(player.x) === tx && tileOf(player.y) === ty) return { ok: false, reason: "You are standing there." };
