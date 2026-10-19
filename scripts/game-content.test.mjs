@@ -699,3 +699,25 @@ test("cloud payloads round-trip through gzip, and plain JSON still reads", async
   assert.equal(await save.unpackCloud(packed), json);
   assert.equal(await save.unpackCloud(json), json);
 });
+
+const classesMod = await import(classesUrl);
+test("every class but the Crying Girl has exactly one unique passive; she borrows up to two", () => {
+  const { CLASS_PASSIVES, CLASS_PASSIVE_BY_ID, CRY_PASSIVE_MAX, classPassiveOf, activePassives, classSpiritOut, CLASSES } = classesMod;
+  assert.equal(new Set(CLASS_PASSIVES.map((p) => p.id)).size, CLASS_PASSIVES.length, "passive ids are unique");
+  assert.equal(new Set(CLASS_PASSIVES.map((p) => p.name)).size, CLASS_PASSIVES.length, "passive names are unique");
+  for (const c of CLASSES) {
+    const own = CLASS_PASSIVES.filter((p) => p.cls === c.id);
+    if (c.id === "cryinggirl") { assert.equal(own.length, 0); continue; }
+    assert.equal(own.length, 1, `${c.id} has one passive`);
+    assert.ok(own[0].about.length > 20, `${c.id} explains its passive`);
+    assert.deepEqual(activePassives(c.id), [own[0].id]);
+  }
+  for (const p of CLASS_PASSIVES) assert.ok(CLASSES.some((c) => c.id === p.cls), `${p.id} belongs to a real class`);
+  assert.equal(CRY_PASSIVE_MAX, 2);
+  assert.equal(classPassiveOf("voidwalker").id, "rift_step", "Phasewalker: free blinks");
+  assert.equal(classPassiveOf("pathfinder").id, "hybrid_arrows", "Pathfinder: half physical, half magic");
+  assert.equal(classPassiveOf("bloodrager").id, "hunting_cat", "Bloodrager: the hunting cat");
+  assert.equal(classSpiritOut("spiritbinder"), 6, "Choir of Six");
+  assert.equal(classSpiritOut("warden"), 3);
+  assert.ok(CLASS_PASSIVE_BY_ID.choir_six);
+});

@@ -163,7 +163,7 @@ export type Move = {
   cls?: string;
 };
 /** Bespoke verse animations (see combat-fx.ts MOVE_FX_IDS). */
-export type MoveFx = "meteor" | "chain" | "vortex" | "pillar" | "nova" | "boomerang" | "barrage" | "fissure" | "sigil" | "spectral" | "wave" | "bloom";
+export type MoveFx = "meteor" | "chain" | "vortex" | "pillar" | "nova" | "boomerang" | "barrage" | "fissure" | "sigil" | "spectral" | "wave" | "bloom" | "fork" | "orbit";
 
 /**
  * An aura: while it is up it reserves `reserve` (0–1) of your maximum health and adds its bonuses.

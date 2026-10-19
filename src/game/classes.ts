@@ -461,8 +461,86 @@ export function aptitudeOf(classId: ClassId, skill: SkillId): number {
   return 1;
 }
 
-/** How many spirits this class can have out at once. */
+/** How many spirits this class can have out at once (the Choir of Six passive raises it to six). */
 export function classSpiritOut(classId: string | null | undefined): number {
+  if (hasPassive(classId, "choir_six")) return 6;
   const n = classId ? (CLASS_BY_ID[classId as ClassId] as { outMax?: number } | undefined)?.outMax : undefined;
   return n && n > 0 ? n : 3;
+}
+
+// ---------------------------------------------------------------------------
+// Class passives: one always-on rule per class that changes how it plays (not just a stat).
+// The Crying Girl has none of her own; she borrows up to CRY_PASSIVE_MAX from other classes.
+// The rules themselves run in class-gimmicks.ts (and a few engine hooks noted in each `about`).
+// ---------------------------------------------------------------------------
+export type ClassPassive = { id: string; cls: ClassId; name: string; about: string };
+export const CLASS_PASSIVES: ClassPassive[] = [
+  { id: "shield_wall", cls: "warden", name: "Shield Wall", about: "Hits from foes in front of you deal 40% less damage." },
+  { id: "storm_chain", cls: "spellweaver", name: "Storm Chain", about: "Every 4th spell you land arcs to two more foes nearby for half damage." },
+  { id: "choir_six", cls: "spiritbinder", name: "Choir of Six", about: "Six spirits can follow you at once instead of three." },
+  { id: "killing_edge", cls: "nightblade", name: "Killing Edge", about: "Crits deal 50% more, and every crit lets you slip the next hit that comes within 3s." },
+  { id: "hybrid_arrows", cls: "pathfinder", name: "Hybrid Arrows", about: "Every verse deals half physical and half magic damage: armor, spell resistance and element immunity only stop their own half." },
+  { id: "flowing_strikes", cls: "ironpalm", name: "Flowing Strikes", about: "Each hit has a 20% chance to reset that verse's cooldown." },
+  { id: "hunting_cat", cls: "bloodrager", name: "Hunting Cat", about: "A pet cat follows you and harvests trees, ore and mushrooms near you every few seconds." },
+  { id: "grave_bargain", cls: "ghoulknight", name: "Grave Bargain", about: "Once every 90s, a killing blow leaves you at 1 health and you heal 30% over 3s." },
+  { id: "last_stand", cls: "frostblade", name: "Unbroken", about: "Below 30% health you regenerate 3% of your health every second." },
+  { id: "smoulder", cls: "pyromancer", name: "Smoulder", about: "Burning foes take 20% more from you, and a burning foe that dies sets the nearest foe alight." },
+  { id: "tidal_rest", cls: "tidecaller", name: "Tidal Rest", about: "Out of combat you heal 5% of your health every second." },
+  { id: "slipstream", cls: "stormrider", name: "Slipstream", about: "While moving you deal 25% more damage." },
+  { id: "aftershock", cls: "briarmage", name: "Aftershock", about: "Melee hits quake the ground: every other foe within 60px takes 35% of the hit." },
+  { id: "searing_light", cls: "lightbringer", name: "Searing Light", about: "Every hit exposes the foe; exposed foes take 15% more from you." },
+  { id: "rift_step", cls: "voidwalker", name: "Rift Step", about: "Blink verses have no cooldown." },
+  { id: "absolution", cls: "absolver", name: "Absolution", about: "Every kill heals you and every spirit with you for 10% of their health." },
+  { id: "watchful_ward", cls: "vigilant", name: "Watchful Ward", about: "Every 8s a ward forms that blocks the next hit completely." },
+  { id: "golden_touch", cls: "coinmaster", name: "Golden Touch", about: "Every kill pays a bonus of 5% of the kyo you carry (up to 200)." },
+  { id: "lingering_hex", cls: "hexbinder", name: "Lingering Hex", about: "Hits curse the foe with gloom; hitting a foe already in gloom heals you for 15% of the damage." },
+  { id: "plunder", cls: "corsair", name: "Plunder", about: "Hits on rooted, sleeping or soaked foes deal 40% more and steal 1-4 kyo." },
+  { id: "battle_rhythm", cls: "warlord", name: "Battle Rhythm", about: "Each foe within 150px gives +6% damage and -4% damage taken (up to five foes)." },
+  { id: "sanguine_spells", cls: "nightlord", name: "Sanguine Spells", about: "Spells heal you for 12% of the damage they deal." },
+  { id: "ballad", cls: "songweaver", name: "Ballad of Ten", about: "Every 10th kill resets every verse cooldown." },
+  { id: "vengeance", cls: "oathkeeper", name: "Vengeance", about: "After you take a hit, your next hit within 3s deals 60% more." },
+  { id: "iaijutsu", cls: "ronin", name: "Iaijutsu", about: "Your first hit on every foe is a guaranteed crit." },
+  { id: "guardian_wings", cls: "seraph", name: "Guardian Wings", about: "A hit worth more than 25% of your health is halved (once every 10s)." },
+  { id: "lunar_grace", cls: "moonhopper", name: "Lunar Grace", about: "12% chance to slip any hit; after a slip your next hit is a crit." },
+  { id: "momentum", cls: "bladedancer", name: "Momentum", about: "Each hit within 2s of the last stacks +5% damage, up to +50%." },
+  { id: "royal_guard", cls: "sovereign", name: "Royal Guard", about: "Your spirits deal 35% more damage." },
+  { id: "wildfire", cls: "embermage", name: "Wildfire", about: "Burning foes that die explode, hurting every foe within 80px." },
+  { id: "rising_tide", cls: "tidewitch", name: "Rising Tide", about: "Spells soak foes 30% of the time, and soaked foes take 25% more from your spells." },
+  { id: "crushing_weight", cls: "stonecaller", name: "Crushing Weight", about: "Rooted foes take 60% more damage from you." },
+  { id: "static_volley", cls: "stormwitch", name: "Static Volley", about: "Every spell you land fires a free bolt at another foe nearby for 30%." },
+  { id: "shatter_point", cls: "frostweaver", name: "Shatter Point", about: "Hitting a rooted foe breaks the ice for 80% more damage (and frees it)." },
+  { id: "perfect_aim", cls: "radiant", name: "Perfect Aim", about: "Your verses never miss and cannot be dodged." },
+  { id: "soul_harvest", cls: "gravemage", name: "Soul Harvest", about: "Each kill within 8s of the last stacks +8% damage, up to six stacks." },
+  { id: "mana_font", cls: "arcanist", name: "Mana Font", about: "Spells cool down 15% faster and cost half the mana (TURBZ)." },
+  { id: "cataclysm", cls: "ruinmage", name: "Cataclysm", about: "Every 12s, your next spell deals triple damage." },
+  { id: "resonance", cls: "veilsinger", name: "Resonance", about: "Each spell you land cuts 0.4s off your other verses' cooldowns." },
+];
+export const CLASS_PASSIVE_BY_ID: Record<string, ClassPassive> = Object.fromEntries(CLASS_PASSIVES.map((p) => [p.id, p]));
+/** The passive a class plays with natively (null for the Crying Girl). */
+export function classPassiveOf(classId: string | null | undefined): ClassPassive | null {
+  return CLASS_PASSIVES.find((p) => p.cls === classId) ?? null;
+}
+/** How many other classes' passives the Crying Girl may borrow. */
+export const CRY_PASSIVE_MAX = 2;
+const CRY_PASSIVE_KEY = "turbz.cryingPassives";
+let cryPassives: string[] = (() => {
+  try {
+    const raw = typeof localStorage !== "undefined" ? JSON.parse(localStorage.getItem(CRY_PASSIVE_KEY) ?? "[]") : [];
+    return Array.isArray(raw) ? raw.filter((id: string) => CLASS_PASSIVE_BY_ID[id]).slice(0, CRY_PASSIVE_MAX) : [];
+  } catch { return []; }
+})();
+export function getCryPassives(): string[] { return cryPassives; }
+export function setCryPassives(ids: string[]): void {
+  cryPassives = [...new Set(ids)].filter((id) => CLASS_PASSIVE_BY_ID[id]).slice(0, CRY_PASSIVE_MAX);
+  try { if (typeof localStorage !== "undefined") localStorage.setItem(CRY_PASSIVE_KEY, JSON.stringify(cryPassives)); } catch { /* storage full */ }
+}
+/** The passives a class has on right now: its own, or the Crying Girl's borrowed picks. */
+export function activePassives(classId: string | null | undefined): string[] {
+  if (!classId) return [];
+  if (classId === "cryinggirl") return cryPassives;
+  const own = classPassiveOf(classId);
+  return own ? [own.id] : [];
+}
+export function hasPassive(classId: string | null | undefined, id: string): boolean {
+  return activePassives(classId).includes(id);
 }

@@ -801,7 +801,8 @@ export function installTurbz(game: any): void {
     const key = kind === "spell" ? "mana" : "stam";
     const slow = kind === "spell" ? "manaSlow" : "stamSlow";
     const skill = kind === "spell" ? "mana" : "stamina";
-    const cost = poolCost(move.power, kind);
+    // Mana Font (Arcanist passive): spells cost half the mana.
+    const cost = Math.max(1, Math.round(poolCost(move.power, kind) * (kind === "spell" && this.gim?.pas?.("mana_font") ? 0.5 : 1)));
     if (this.pools[key] >= cost) this.pools[key] -= cost;
     else {
       this.pools[key] = 0;

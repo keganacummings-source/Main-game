@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOVE_BY_ID, SKILLS, TYPES, moveTactic, type TypeId } from "@/game/content";
-import { CLASSES, CLASS_BY_ID, CLASS_RACE, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, CRY_RSKILLS, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, getCryPresets, saveCryPreset, loadCryPreset, deleteCryPreset, type ClassId, type Role } from "@/game/classes";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, CLASS_PASSIVES, CRY_PASSIVE_MAX, classPassiveOf, getCryPassives, setCryPassives, CUSTOM_BUILD_MAX, GIMMICKS, PERKS, ROLES, TRAITS, buffLines, classPerks, CRY_TYPES, CRY_RSKILLS, getCryingConfig, getCustomBuild, LEAN_BUDGET, LEAN_MAX, LEAN_MIN, LEAN_STATS, LEAN_STEP, leanSpent, setCryingConfig, setCustomBuild, STAT_LABEL, getCryPresets, saveCryPreset, loadCryPreset, deleteCryPreset, type ClassId, type Role } from "@/game/classes";
 import { actorSpritesReady } from "@/game/actor-sprites";
 import type { Sheet, TurbzGame } from "@/game/engine";
 import { Empty, Meter, Tabs } from "./ui-kit";
@@ -111,7 +111,8 @@ export function ClassPicker({ pick, setPick, game, badge }: { pick: Pick; setPic
         </div>
         <p data-testid="class-focus"><span className="text-kyo">Focus: {c.focus}.</span> <span className="text-dim">Side element:</span> <span className={typeClass(c.type)}>{TYPES[c.type].name}</span> <span className="text-dim">(+5% Affinity with its verses)</span></p>
         <p>{c.blurb} <span className="text-dim">{c.specialty}.</span></p>
-        <p className="text-kyo" data-testid="class-gimmick">Gimmick: <span className="text-bone">{c.passive}</span></p>
+        {classPassiveOf(c.id) && <p className="text-kyo" data-testid="class-passive">Passive · {classPassiveOf(c.id)!.name}: <span className="text-bone">{classPassiveOf(c.id)!.about}</span></p>}
+        <p className="text-kyo" data-testid="class-gimmick">Gimmick (R): <span className="text-bone">{c.passive}</span></p>
         {c.id !== "cryinggirl" && (
           <div data-testid="class-perks">
             <p className="font-display text-[9px] text-kyo">CLASS PERKS</p>
@@ -323,7 +324,11 @@ export function CharacterSheet({ sheet, game }: { sheet: Sheet | null; game?: Tu
           </div>
           <div className="sheet-box" data-testid="sheet-stats">
             <p className="font-display text-[9px] text-kyo">CLASS & TRAIT ATTRIBUTES</p>
-            <p className="text-dim">Passive: <span className="text-bone">{s.passive}</span></p>
+            {(s.classPassives ?? []).map((p) => (
+              <p key={p.id} data-testid="sheet-class-passive"><span className="text-kyo">Passive · {p.name}:</span> {p.about}{s.classId === "cryinggirl" ? <span className="text-dim"> (from {p.from})</span> : null}</p>
+            ))}
+            {s.classId === "cryinggirl" && !(s.classPassives ?? []).length && <p className="text-dim">No borrowed passives. Pick up to two in her builder on the character screen.</p>}
+            <p className="text-dim">Gimmick (R): <span className="text-bone">{s.passive}</span></p>
             <p className="text-dim">Trait: <span className="text-kyo" data-testid="sheet-trait">{s.trait ? s.trait.name : "None"}</span>{s.trait && ` · ${s.trait.about}`}</p>
             <div className="sheet-table mt-1">
               <div className="sheet-table-head"><span>Attribute</span><span>Class</span><span>Trait</span><span>Total</span></div>
@@ -512,12 +517,32 @@ function PerkBuilder({ onChange }: { onChange: () => void }) {
     setCustomBuild(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
     onChange();
   };
+  const passives = getCryPassives();
+  const togglePassive = (id: string) => {
+    setCryPassives(passives.includes(id) ? passives.filter((x) => x !== id) : [...passives, id]);
+    onChange();
+  };
+  const shownPassives = CLASS_PASSIVES.filter((p) => !f || p.name.toLowerCase().includes(f) || p.about.toLowerCase().includes(f) || (CLASS_BY_ID[p.cls]?.name ?? "").toLowerCase().includes(f));
   return (
     <div className="grid gap-2" data-testid="perk-builder">
-      <p className="font-display text-[9px] text-kyo">BUILD HER · {picked.length}/{CUSTOM_BUILD_MAX} PERKS</p>
       <div className="flex flex-wrap gap-1">
-        <input className="px-input flex-1" data-testid="perk-search" placeholder="Search perks or class" value={q} onChange={(e) => setQ(e.target.value)} />
+        <input className="px-input flex-1" data-testid="perk-search" placeholder="Search passives, perks or class" value={q} onChange={(e) => setQ(e.target.value)} />
       </div>
+      <p className="font-display text-[9px] text-kyo">BORROWED PASSIVES · {passives.length}/{CRY_PASSIVE_MAX}</p>
+      <p className="text-dim">She has no passive of her own: borrow up to {CRY_PASSIVE_MAX} from the other classes. The search box below filters these and the perks.</p>
+      <div className="grid gap-1 sm:grid-cols-2" style={{ maxHeight: 240, overflowY: "auto" }} data-testid="passive-builder">
+        {shownPassives.map((p) => {
+          const on = passives.includes(p.id);
+          return (
+            <button key={p.id} type="button" data-testid={`passive-pick-${p.id}`} disabled={!on && passives.length >= CRY_PASSIVE_MAX}
+              className={`class-card perk-pick ${on ? "class-card-on" : ""}`} onClick={() => togglePassive(p.id)}>
+              <span className="block text-lg">{on ? "✔ " : ""}{p.name} <span className="text-dim text-sm">· {CLASS_BY_ID[p.cls]?.name}</span></span>
+              <span className="block text-base text-dim">{p.about}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="font-display text-[9px] text-kyo">BUILD HER · {picked.length}/{CUSTOM_BUILD_MAX} PERKS</p>
       <div className="grid gap-1 sm:grid-cols-2" style={{ maxHeight: 260, overflowY: "auto" }}>
         {shown.map((p) => {
           const on = picked.includes(p.id);

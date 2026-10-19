@@ -9,6 +9,8 @@ Your class decides your **element**, your **stats**, a **passive**, any **immuni
 - Each class belongs to a **race** (from its element). That race's armor sets are more likely to drop for you.
 - Finished armor sets unlock **per class**. See [Sets](Sets).
 - Class names were updated in V6: Frostguard → **Vanguard**, Emberheart → **Channeler**, Tideshaper → **Wellspring**, Galeborn → **Outrider**, Radiant → **Beacon**, Umbral → **Phasewalker**.
+- Every class has a **class passive**: an always-on rule of its own, shown under each class on the select screen and in the Character sheet (C). A few: the **Phasewalker**'s blinks have no cooldown, the **Pathfinder** deals half physical and half magic damage on every attack, the **Bloodrager** keeps a **Hunting Cat** that follows you and harvests nearby trees, ore and plants, and the **Spirit Caller** keeps six spirits out. The **Crying Girl** has none of her own: she borrows up to **2** from other classes in her builder.
+- The **gimmick** (R) is separate from the passive. The Bloodrager's **Trophy Skins** now makes you twice the size with double health and double damage, and you take half damage while it lasts.
 - Every class also has a **signature perk** (its original V5 passive): a small stat package named "`<ClassName>'s Signature`" that lives in the main perk pool. The Crying Girl can pick from signatures the same way she picks from any other perk.
 
 ## Stats

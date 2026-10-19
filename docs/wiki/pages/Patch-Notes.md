@@ -1,5 +1,24 @@
 # Patch Notes
 
+## Class passives, Crying Girl builder, Trophy Skins, music and fixes
+
+- **Every class has its own passive.** 39 new always-on passives, one per class, shown on the select screen and in the Character sheet (C). See [Classes](Classes). Highlights:
+  - **Phasewalker, Rift Step:** blink verses have no cooldown.
+  - **Pathfinder, Hybrid Arrows:** every verse is half physical, half magic: armor and spell resistance each stop only their own half.
+  - **Bloodrager, Hunting Cat:** a pet cat follows you and harvests nearby trees, ore and plants for you.
+  - **Bulwark, Shield Wall:** 40% less damage from foes in front of you.
+  - **Ronin, Iaijutsu:** your first hit on each foe is always a critical hit.
+  - **Dreadknight, Grave Bargain:** survive a killing blow once every 90 s and heal 30% over 3 s.
+  - The **Spirit Caller** keeps its six spirits.
+- **Crying Girl builder:** she now borrows up to **2 passives from other classes**, picked from a new Borrowed Passives grid in her builder.
+- **Trophy Skins (Bloodrager R) reworked:** twice your size, double health, double damage, half damage taken, while it lasts.
+- **Character select:** class portraits are larger, no longer squished, and show the plain class with no gear FX. Each class lists its passive and its gimmick.
+- **Music:** a third song, **Track4**, joins the rotation. A new song starts every 10 minutes.
+- **Set banner fix:** the "set complete" banner now shows when you finish **collecting** a set, not every time you equip one.
+- **Witches face where they walk.** TURBZ witches used to stay facing forward while walking sideways, so their blades and axes pointed the wrong way. They now turn with their steps, and their lunges go the way they face.
+- **The ten caster classes** each have their own sprite.
+- **Fixes:** every failing test fixed, two missing spell animations (fork and orbit) added, and three duplicate verse ids renamed. A Gravemage save holding the old *Grave Ward* verse now loads the Spirit Caller's version.
+
 ## Menus: Camp, Build, Gear and Character sheet
 
 - **Camp menu (H)** now has tabs:

@@ -119,7 +119,7 @@ import type { GraveBody } from "./social-types";
 import { flushNow, noteShiny, readAccountMeta, takeVaultGhosts, unionGhosts, vaultGhosts, wipeAccountProgress, writeAccountMeta } from "./account-save";
 import { furtherLevel, perkPointsAvailable, perkPointsEarned, perkPointsSpent, PERK_POINTS_PER_LEVEL } from "./account-progress";
 import { getCryingConfig, getCustomBuild, cryingElements } from "./classes";
-import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
+import { activePassives, aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, CLASS_PASSIVE_BY_ID, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { Gimmicks, type GimmickView } from "./class-gimmicks";
 import { witchSteer } from "./witch-brain";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
@@ -419,6 +419,8 @@ export type Snap = {
 };
 export type Sheet = {
   name: string; classId: string; className: string; role: string; type: TypeId; blurb: string; specialty: string; passive: string; female: boolean; gendered: boolean;
+  /** The class passives in play (the Crying Girl's are the ones she borrowed). */
+  classPassives: { id: string; name: string; about: string; from: string }[];
   level: number; xp: number; xpNeed: number; hp: number; maxHp: number; shield: number; kyo: number; skillPoints: number;
   trait: { id: string; name: string; about: string } | null;
   stats: { id: string; name: string; value: string; about: string; mod: number; cls: number; trait: number }[];
@@ -3889,7 +3891,7 @@ export class TurbzGame {
 		dmg *= bendDown(1 + this.mod("might") / 100, 0.2, 0.05);
 		dmg *= this.offenseFactor(mob, "melee");
 		if (mob.boss) dmg *= 1 + this.chan("boss_bane") / 100;
-		this.damageMob(mob, Math.max(1, dmg), false);
+		this.damageMob(mob, Math.max(1, dmg), false, "melee");
 		this.gainSkill("physical", 2);
 		this.combat = 3;
 	}
@@ -4677,6 +4679,8 @@ export class TurbzGame {
 	moveCooldown(move) {
 		const tactic = moveTactic(move);
 		const form = attackForm(move);
+		// Rift Step (Phasewalker passive): blink verses have no cooldown.
+		if (tactic === "blink" && this.gim?.freeBlink?.()) return 0;
 		let cd = baseMoveCooldown(move) * (1 - bend(this.chan("swift") / 100, 0.4, 0.75));
 		if (form === "spell" && tactic !== "heavy" && tactic !== "channel") cd *= rateMult(this.skillN("magic") * 0.2) * (1 - bend(this.chan("focus") / 100, 0.35, 0.7));
 		cd *= rateMult(this.skillN(masteryOf(move.type)) * 0.1);
@@ -4689,30 +4693,45 @@ export class TurbzGame {
 			if (form === "spell" && this.pools.manaSlow > 0) cd *= 2;
 			if (form === "melee" && this.pools.stamSlow > 0) cd *= 2;
 		}
+		if (form === "spell") cd *= this.gim?.spellCdMult?.() ?? 1;
 		return Math.max(.2, cd * (1 - bendSigned(this.mod("haste") / 100, -1.5, -0.4, 0.45, 0.82)));
 	}
 	resolveHit(move, mob, fromPet, mult = 1, opts = {}) {
 		const save = this.save;
 		const form = attackForm(move);
-		if (opts.missed ?? Math.random() * 100 > move.accuracy) {
+		// Class passives (class-gimmicks.ts): Perfect Aim never misses and can't be dodged; Hybrid Arrows is half magic.
+		const trueAim = !fromPet && !!this.gim?.trueAim?.();
+		const hybrid = !fromPet && !!this.gim?.hybrid?.();
+		if (!trueAim && (opts.missed ?? Math.random() * 100 > move.accuracy)) {
 			this.float(mob.x, mob.y - 36, "MISS", "#e8dcc4");
 			return;
 		}
-		if (mob.rival && this.rivalDodge(mob)) return;
-		if (mob.twitch && this.twitchDodge?.(mob, move)) return;
+		if (!trueAim && mob.rival && this.rivalDodge(mob)) return;
+		if (!trueAim && mob.twitch && this.twitchDodge?.(mob, move)) return;
 		const pure = form === "spell";
 		const tm = pure ? 1 : typeChartMulti(move.type, mob.types, mob.type);
-		if (!pure && tm === 0) {
+		// Hybrid Arrows: an element immunity only stops the physical half.
+		if (!pure && tm === 0 && !hybrid) {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
 		}
-		if (Math.random() < bend(Math.max(0, (mob.stats?.dodge ?? 0) + (mob.enraged && (mob.bounty || mob.bountySpirit) ? BOUNTY_ENRAGE.dodge : 0)), 0.35, 0.8)) {
+		if (!trueAim && Math.random() < bend(Math.max(0, (mob.stats?.dodge ?? 0) + (mob.enraged && (mob.bounty || mob.bountySpirit) ? BOUNTY_ENRAGE.dodge : 0)), 0.35, 0.8)) {
 			this.float(mob.x, mob.y - 36, "DODGE", "#e7d9ff");
 			return;
 		}
-		const crit = !!opts.forceCrit || Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
-		let dmg = this.damageParts(move, mob, { fromPet, mult, crit, pet: opts.pet }).dmg;
-		dmg *= 1 - bend(Math.max(0, pure ? (mob.stats?.spellRes ?? 0) : defenseVs(form, mob.stats?.physRes ?? 0)), 0.55, 0.88);
+		const passiveCrit = !fromPet && !opts.child && !!this.gim?.forceCrit?.(mob);
+		const crit = !!opts.forceCrit || passiveCrit || Math.random() * 100 < (opts.pet ? move.crit + (opts.pet.rarity ?? 0) * 2 + (opts.pet.shiny ? 5 : 0) : this.critChanceOf(move));
+		const resist = (f, d) => d * (1 - bend(Math.max(0, f === "spell" ? (mob.stats?.spellRes ?? 0) : defenseVs(f, mob.stats?.physRes ?? 0)), 0.55, 0.88));
+		let dmg;
+		if (hybrid) {
+			// Half the verse lands as it is (physical: armor, physical resistance and element chart), half as a pure spell.
+			const physForm = pure ? "ranged" : form;
+			const phys = tm === 0 && !pure ? 0 : resist(physForm, this.damageParts({ ...move, form: physForm }, mob, { fromPet, mult, crit, pet: opts.pet }).dmg);
+			const magic = resist("spell", this.damageParts({ ...move, form: "spell" }, mob, { fromPet, mult, crit, pet: opts.pet }).dmg);
+			dmg = phys * 0.5 + magic * 0.5;
+		} else {
+			dmg = resist(form, this.damageParts(move, mob, { fromPet, mult, crit, pet: opts.pet }).dmg);
+		}
 		if (pure) {
 			const school = schoolMult(move.type, (mob.status ?? []).map((s) => s.id));
 			if (school.mult !== 1) {
@@ -4727,9 +4746,9 @@ export class TurbzGame {
 			hits = 3;
 			dmg *= .55;
 		}
-		this.damageMob(mob, dmg, crit, form);
+		this.damageMob(mob, dmg, crit, form, fromPet, move.id);
 		// Extra strikes (double strike, volleys) land one after another instead of all at once.
-		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false, form); });
+		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false, form, fromPet, move.id); });
 		this.applyEffect(move, mob, true);
 		if (!fromPet && mob.alive && this.chan("ghost_burn") > 0 && Math.random() * 100 < this.chan("ghost_burn")) this.applyMobStatus(mob, "burn", 4);
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
@@ -4769,8 +4788,8 @@ export class TurbzGame {
 			}
 		}
 	}
-	damageMob(mob, dmg, crit, form?) {
-		const gm = this.gim ? this.gim.dealMult(mob, !!crit) : 1;
+	damageMob(mob, dmg, crit, form?, fromPet = false, moveId = undefined) {
+		const gm = this.gim ? this.gim.dealMult(mob, !!crit, form, fromPet) : 1;
 		if (gm <= 0) { this.float(mob.x, mob.y - 30, "PHASED", "#9ad8ff"); return; }
 		const amount = Math.floor(dmg * gm);
 		if (this.role === "guest") {
@@ -4784,7 +4803,7 @@ export class TurbzGame {
 			return;
 		}
 		this.applyMobDamage(mob, amount, crit);
-		this.gim?.onHit(mob, amount, crit, form);
+		this.gim?.onHit(mob, amount, crit, form, fromPet, moveId);
 		// Thorned foes bite back, at most 4% of your health a hit and three times a second.
 		if (mob.enchants?.includes("thorned") && (mob.thornT ?? 0) <= 0 && !this.dead && this.save) {
 			mob.thornT = .33;
@@ -7599,7 +7618,7 @@ export class TurbzGame {
 			const move = dist > 70 ? huntMove(npc.shrine ?? "normal") : MOVES.find((m) => m.type === (npc.shrine ?? "normal") && attackForm(m) === "melee") ?? huntMove(npc.shrine ?? "normal");
 			const mateDmg = (dist > 70 ? 6 : 9) + save.level * 1.4;
 			const mateDelay = this.playMoveFx(move, this.mateCd[`${key}x`] ?? save.x, (this.mateCd[`${key}y`] ?? save.y) - 20, foe.x, foe.y - 12, { follow: () => (foe.alive ? [foe.x, foe.y - 12] : null) });
-			this.later(mateDelay, () => { if (foe.alive) this.damageMob(foe, mateDmg, false); });
+			this.later(mateDelay, () => { if (foe.alive) this.damageMob(foe, mateDmg, false, attackForm(move), true); });
 		});
 	}
 	tickFx(dt) {
@@ -10199,7 +10218,7 @@ export class TurbzGame {
 		if (!save) return 80;
 		const tide = 1 + Math.max(0, this.chan("body_tide")) / 100;
 		const full = (78 + save.level * 12 + this.chan("spark_life") + this.chan("vitality")) * (1 + this.mod("hp") / 100 + this.chan("ironblood") / 100) * tide;
-		return Math.max(20, Math.floor(full * (1 - this.auraReserve())));
+		return Math.max(20, Math.floor(full * (1 - this.auraReserve()) * (this.gim?.hpMult?.() ?? 1)));
 	}
 	/** Mana and stamina as shares of max health, plus skills, enchants, auras and ghosts. */
 	poolCaps() {
@@ -10653,6 +10672,7 @@ export class TurbzGame {
 		const moveIds = [...new Set([...c.starterMoves, ...Object.keys(ranks)])].filter((id) => MOVE_BY_ID[id]);
 		return {
 			name: save.name, classId: save.classId, className: c.name, role: c.role, type: c.type, blurb: c.blurb, specialty: c.specialty, passive: c.passive,
+			classPassives: activePassives(save.classId).map((id) => CLASS_PASSIVE_BY_ID[id]).filter(Boolean).map((p) => ({ id: p.id, name: p.name, about: p.about, from: CLASS_BY_ID[p.cls]?.name ?? p.cls })),
 			female: save.female !== false, gendered: classGendered(save.classId),
 			level: save.level, xp: save.xp, xpNeed: xpNeed(save.level), hp: Math.max(0, Math.ceil(save.hp)), maxHp: this.maxHp(), shield: Math.ceil(this.shield), kyo: save.kyo, skillPoints: save.skillPoints ?? 0,
 			trait: t ? { id: t.id, name: t.name, about: t.about } : null,
@@ -11331,6 +11351,7 @@ export class TurbzGame {
 			});
 			drawShadowName(ctx, r.name, r.x, r.y - 44, "#e6c15a");
 		}
+		this.gim?.drawPet?.(ctx);
 		const formDrawn = !!this.gim?.drawForm(ctx, { x: save.x, y: save.y, direction: this.direction, moving: this.moving && !this.dead, walk: this.walk, facing: this.facing, hurt: this.hurt, time: this.clock });
 		if (this.gim?.active("phase")) ctx.globalAlpha = 0.5 + Math.sin(this.clock * 5) * 0.1;
 		if (this.gim?.active("flight")) ctx.translate(0, -10);

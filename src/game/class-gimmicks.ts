@@ -2,7 +2,7 @@
 // One real playstyle trick per class (R), plus the class perk hooks. The engine calls in at a
 // handful of points: tick, input, damage dealt/taken, kills, movement speed and drawing.
 
-import { CLASS_BY_ID, classGimmick, classPerks, GIMMICKS, type GimmickDef, type PerkHook } from "./classes";
+import { CLASS_BY_ID, classGimmick, classPerks, GIMMICKS, hasPassive, type GimmickDef, type PerkHook } from "./classes";
 import type { Move, TypeId } from "./content";
 import { drawMonster } from "./sprites";
 
@@ -17,6 +17,17 @@ const FORM_KINDS = new Set(["cat", "rabbit", "bossform", "phase", "flight"]);
 const AUTO_OK = new Set(["bastion", "overload", "spiritlead", "volley", "flurry", "bossform", "tether", "trail", "pyre", "pool", "cyclone", "beam", "halo", "totem", "rain", "banner", "bloodmoon", "tempo", "oath", "blades", "decree", "tearstorm", "leap", "iaido"]);
 
 let catImg: HTMLImageElement | null = null;
+/** Running state for the class passives (classes.ts CLASS_PASSIVES). Reset when the class changes. */
+type PassiveState = {
+  cls: string; spells: number; slipT: number; bargainCd: number; healT: number; healPer: number; wardT: number; wardUp: boolean;
+  vengeT: number; firstHit: Set<string>; wingsCd: number; critNext: boolean; momN: number; momT: number; kills: number;
+  soulN: number; soulT: number; cataT: number;
+  cat: { x: number; y: number; t: number; target: string | null; walk: number; facing: number; moving: boolean } | null;
+};
+const freshPassive = (cls: string): PassiveState => ({
+  cls, spells: 0, slipT: 0, bargainCd: 0, healT: 0, healPer: 0, wardT: 0, wardUp: true, vengeT: 0, firstHit: new Set(), wingsCd: 0,
+  critNext: false, momN: 0, momT: 0, kills: 0, soulN: 0, soulT: 0, cataT: 0, cat: null,
+});
 let rabbitImg: HTMLImageElement | null = null;
 function img(src: string): HTMLImageElement | null {
   if (typeof Image === "undefined") return null;
@@ -47,8 +58,36 @@ export class Gimmicks {
   pounce = 0;
   hopT = 0;
   hookCache = { key: "", sums: {} as Partial<Record<PerkHook, number>> };
+  ps: PassiveState = freshPassive("");
 
   constructor(g: any) { this.g = g; }
+  /** Does the player have this class passive on (their own, or one the Crying Girl borrowed)? */
+  pas(id: string): boolean { return hasPassive(this.g.save?.classId, id); }
+  /** Passive state, reset whenever the class changes. */
+  st(): PassiveState {
+    const cls = this.g.save?.classId ?? "";
+    if (this.ps.cls !== cls) this.ps = freshPassive(cls);
+    return this.ps;
+  }
+  /** Max-health multiplier from forms (Trophy Skins doubles it). */
+  hpMult(): number { return this.active("bossform") ? 2 : 1; }
+  /** Passives that force a crit on this hit (Iaijutsu's first hit, Lunar Grace after a slip). Consumes the charge. */
+  forceCrit(mob: any): boolean {
+    const p = this.st();
+    let force = false;
+    if (this.pas("iaijutsu") && mob?.id && !p.firstHit.has(mob.id)) { p.firstHit.add(mob.id); force = true; }
+    if (this.pas("lunar_grace") && p.critNext) { p.critNext = false; force = true; }
+    if (p.firstHit.size > 400) p.firstHit.clear();
+    return force;
+  }
+  /** Rift Step: blink verses come straight back. */
+  freeBlink(): boolean { return this.pas("rift_step"); }
+  /** Mana Font: spell cooldowns 15% faster. */
+  spellCdMult(): number { return this.pas("mana_font") ? 0.85 : 1; }
+  /** Hybrid Arrows: every verse is half physical, half magic. */
+  hybrid(): boolean { return this.pas("hybrid_arrows"); }
+  /** Perfect Aim: verses never miss and cannot be dodged. */
+  trueAim(): boolean { return this.pas("perfect_aim"); }
 
   def(): GimmickDef | null { return classGimmick(this.g.save?.classId); }
   active(kind?: string): boolean { return this.t > 0 && (!kind || this.id === kind); }
@@ -102,11 +141,14 @@ export class Gimmicks {
       if (!pick) { this.say("No trophies yet: slay a boss first", "#c9a6e8"); return false; }
       this.data.boss = pick;
       dur *= 1 + this.hook("bossPower") / 120;
-      this.g.say(`You wear the skin of ${pick.name}.`);
+      this.g.say(`You wear the skin of ${pick.name}: twice your size, twice your strength.`);
     }
+    // Trophy Skins doubles max health while worn, so double what you have too (and halve it back on the way out).
+    const wasMax = this.g.maxHp();
     this.id = d.id;
     this.t = dur;
     this.dur = dur;
+    if (d.id === "bossform") save.hp = Math.min(this.g.maxHp(), Math.round(save.hp * (this.g.maxHp() / Math.max(1, wasMax))));
     this.cdMax = d.cd * (1 - haste);
     this.cd = this.cdMax + (dur > 1 ? dur : 0);
     this.tick0 = 0;
@@ -178,7 +220,9 @@ export class Gimmicks {
 
   end() {
     const id = this.id;
+    const bigMax = id === "bossform" ? this.g.maxHp() : 0;
     this.t = 0;
+    if (id === "bossform" && this.g.save) this.g.save.hp = Math.max(1, Math.min(this.g.maxHp(), Math.round(this.g.save.hp * (this.g.maxHp() / Math.max(1, bigMax)))));
     if (id === "cat") { this.pounce = 4; this.say("CAT STRIKE READY", "#c9a6ff"); }
     if (id === "oath" && this.data.stored > 0) {
       const me = this.me();
@@ -208,6 +252,7 @@ export class Gimmicks {
     if (this.def()?.id !== this.id && this.t > 0) this.end();
     this.cd = Math.max(0, this.cd - dt);
     this.pounce = Math.max(0, this.pounce - dt);
+    this.tickPassives(dt);
     if (this.t <= 0) return;
     this.t -= dt;
     this.tick0 += dt;
@@ -308,6 +353,76 @@ export class Gimmicks {
     if (this.t <= 0) this.end();
   }
 
+  // ---------------- class passives (per frame) ----------------
+  tickPassives(dt: number) {
+    const save = this.g.save;
+    const p = this.st();
+    const max = this.g.maxHp();
+    const heal = (n: number) => { save.hp = Math.min(this.g.maxHp(), save.hp + n); };
+    p.slipT = Math.max(0, p.slipT - dt);
+    p.vengeT = Math.max(0, p.vengeT - dt);
+    p.wingsCd = Math.max(0, p.wingsCd - dt);
+    p.bargainCd = Math.max(0, p.bargainCd - dt);
+    p.momT = Math.max(0, p.momT - dt); if (p.momT <= 0) p.momN = 0;
+    p.soulT = Math.max(0, p.soulT - dt); if (p.soulT <= 0) p.soulN = 0;
+    if (p.healT > 0) { p.healT -= dt; heal(p.healPer * dt); }
+    if (this.g.dead) return;
+    if (this.pas("last_stand") && save.hp < max * 0.3) heal(max * 0.03 * dt);
+    if (this.pas("tidal_rest") && (this.g.combat ?? 0) <= 0 && save.hp < max) heal(max * 0.05 * dt);
+    if (this.pas("watchful_ward") && !p.wardUp) { p.wardT += dt; if (p.wardT >= 8) { p.wardT = 0; p.wardUp = true; this.g.float(save.x, save.y - 60, "WARD READY", "#fff1a8"); } }
+    if (this.pas("cataclysm") && p.cataT < 12) { p.cataT += dt; if (p.cataT >= 12) this.g.float(save.x, save.y - 62, "CATACLYSM READY", "#ff7a7a"); }
+    if (this.pas("hunting_cat")) this.tickCat(dt); else p.cat = null;
+  }
+  /** Hunting Cat: a pet that trots after you and harvests nodes near you. */
+  tickCat(dt: number) {
+    const save = this.g.save;
+    const p = this.st();
+    const c = p.cat ?? (p.cat = { x: save.x - 30, y: save.y + 10, t: 3, target: null, walk: 0, facing: 1, moving: false });
+    // Pulled back to you after a teleport, a door or a map change.
+    if (Math.hypot(c.x - save.x, c.y - save.y) > 420) { c.x = save.x - 30; c.y = save.y + 10; c.target = null; }
+    c.t -= dt;
+    const nodes = (this.g.world?.spawns ?? []).filter((n: any) => n.kind === "node" && n.node !== "fish");
+    let goal = { x: save.x - 30 * (this.g.facing ?? 1), y: save.y + 12 };
+    const node = c.target ? nodes.find((n: any) => n.id === c.target) : null;
+    if (!node) c.target = null;
+    if (!c.target && c.t <= 0 && !(this.g.combat > 0) && !this.g.dead) {
+      c.t = 2;
+      const near = nodes.filter((n: any) => Math.hypot(n.x - save.x, n.y - save.y) < 170).sort((a: any, b: any) => Math.hypot(a.x - c.x, a.y - c.y) - Math.hypot(b.x - c.x, b.y - c.y))[0];
+      if (near) c.target = near.id;
+    }
+    if (node) {
+      goal = { x: node.x, y: node.y + 6 };
+      if (Math.hypot(node.x - c.x, node.y + 6 - c.y) < 12) {
+        c.target = null;
+        c.t = 6;
+        this.g.float(node.x, node.y - 30, "THE CAT FETCHES", "#e6c15a");
+        this.g.harvestNow?.(node.id, node.node);
+      }
+    }
+    const dx = goal.x - c.x, dy = goal.y - c.y, d = Math.hypot(dx, dy);
+    c.moving = d > 6;
+    if (c.moving) {
+      const sp = Math.min(d * 4, node ? 170 : 150) * dt;
+      c.x += (dx / d) * sp; c.y += (dy / d) * sp;
+      c.walk += dt * 8;
+      if (Math.abs(dx) > 1) c.facing = dx < 0 ? -1 : 1;
+    }
+  }
+  /** The Hunting Cat passive's pet, drawn with the actors. */
+  drawPet(ctx: CanvasRenderingContext2D) {
+    const c = this.ps.cat;
+    if (!c || !this.pas("hunting_cat")) return;
+    catImg = catImg ?? img("/sprites/form_cat.png");
+    if (!catImg?.complete || !catImg.naturalWidth) return;
+    const f = c.moving ? Math.floor(c.walk) % 6 : 0;
+    ctx.save();
+    ctx.translate(Math.round(c.x), Math.round(c.y));
+    if (c.facing > 0) ctx.scale(-1, 1);
+    ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(-12, -2, 24, 4);
+    ctx.drawImage(catImg, f * 40, (c.moving ? 0 : 1) * 34, 40, 34, -19, -33, 38, 33);
+    ctx.restore();
+  }
+
   // ---------------- hooks ----------------
   speedMult(): number {
     let k = 1;
@@ -339,10 +454,12 @@ export class Gimmicks {
   isGhost(m: any): boolean { return !!(m?.ghost || m?.enemyGhost || m?.bountySpirit); }
 
   /** Multiplier on damage you deal to `mob`. 0 means the hit cannot land. */
-  dealMult(mob: any, crit = false): number {
+  dealMult(mob: any, crit = false, form?: string, fromPet = false): number {
     const save = this.g.save;
     let k = 1;
     if (this.active("phase") && !this.isGhost(mob)) return 0;
+    if (fromPet) return this.pas("royal_guard") ? 1.35 : 1;
+    k *= this.passiveDeal(mob, crit, form);
     if (this.isGhost(mob)) k *= 1 + this.hook("ghostPower") / 100;
     if (mob.hp >= mob.max) k *= 1 + this.hook("firstStrike") / 100;
     if (mob.hp < mob.max * 0.35) k *= 1 + this.hook("execute") / 100;
@@ -351,14 +468,41 @@ export class Gimmicks {
     if (dist(mob, save) > 120) k *= 1 + this.hook("farPower") / 100;
     if (this.transformed()) k *= 1 + this.chan("form_fury") / 100;
     if (crit && classPerks(save.classId).some((p) => p.id === "arc_memory")) k *= 1.15;
-    if (this.active("bossform")) k *= 1.35 + (this.data.boss?.level ?? 0) * 0.004;
+    if (this.active("bossform")) k *= 2 + (this.data.boss?.level ?? 0) * 0.002;
     if (this.active("banner") && dist(save, this.data.at) < 130) k *= 1.3;
     if (this.active("decree") && this.data.marked?.has(mob.id)) k *= 1.3;
     if (this.pounce > 0 && !this.inGim) { k *= 2; this.pounce = 0; this.g.float(mob.x, mob.y - 52, "CAT STRIKE ×2", "#c9a6ff"); }
     return k;
   }
-  onHit(mob: any, dmg: number, crit: boolean, form?: string) {
+  /** Damage multipliers from class passives. Some consume a charge (Vengeance, Cataclysm, Shatter Point). */
+  passiveDeal(mob: any, crit: boolean, form?: string): number {
     const save = this.g.save;
+    const p = this.st();
+    const has = (id: string) => (mob?.status ?? []).some((x: any) => x.id === id && x.t > 0);
+    let k = 1;
+    if (this.inGim) return k;
+    if (crit && this.pas("killing_edge")) k *= 1.5;
+    if (this.pas("smoulder") && has("burn")) k *= 1.2;
+    if (this.pas("slipstream") && this.g.moving) k *= 1.25;
+    if (this.pas("searing_light") && has("expose")) k *= 1.15;
+    if (this.pas("plunder") && (has("root") || has("sleep") || has("soak"))) k *= 1.4;
+    if (this.pas("battle_rhythm")) k *= 1 + 0.06 * Math.min(5, this.foes(save, 150).length);
+    if (this.pas("vengeance") && p.vengeT > 0) { k *= 1.6; p.vengeT = 0; this.g.float(mob.x, mob.y - 58, "VENGEANCE", "#fff1a8"); }
+    if (this.pas("momentum")) k *= 1 + 0.05 * Math.min(10, p.momN);
+    if (this.pas("crushing_weight") && has("root")) k *= 1.6;
+    if (this.pas("shatter_point") && has("root")) {
+      k *= 1.8;
+      mob.status = (mob.status ?? []).filter((x: any) => x.id !== "root");
+      this.g.float(mob.x, mob.y - 58, "SHATTER", "#bfefff");
+    }
+    if (this.pas("soul_harvest")) k *= 1 + 0.08 * p.soulN;
+    if (this.pas("rising_tide") && form === "spell" && has("soak")) k *= 1.25;
+    if (this.pas("cataclysm") && form === "spell" && p.cataT >= 12) { k *= 3; p.cataT = 0; this.g.float(mob.x, mob.y - 62, "CATACLYSM", "#ff5a4a"); this.g.shake = Math.max(this.g.shake ?? 0, 7); }
+    return k;
+  }
+  onHit(mob: any, dmg: number, crit: boolean, form?: string, fromPet = false, moveId?: string) {
+    const save = this.g.save;
+    if (!fromPet && !this.inGim) this.passiveHit(mob, dmg, crit, form, moveId);
     const roll = (v: number) => v > 0 && Math.random() * 100 < v;
     if (crit) {
       if (this.hook("critHeal")) save.hp = Math.min(this.g.maxHp(), save.hp + this.g.maxHp() * this.hook("critHeal") / 100);
@@ -375,10 +519,48 @@ export class Gimmicks {
       for (const m of near) { this.g.cfx?.link(mob.x, mob.y - 14, m.x, m.y - 14, "electric"); this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.45 * this.power())), false); }
     }
   }
+  /** What a landed hit does for the class passives (procs, heals, stacks). Never re-enters onHit. */
+  passiveHit(mob: any, dmg: number, crit: boolean, form?: string, moveId?: string) {
+    const save = this.g.save;
+    const p = this.st();
+    const has = (id: string) => (mob?.status ?? []).some((x: any) => x.id === id && x.t > 0);
+    const heal = (n: number) => { save.hp = Math.min(this.g.maxHp(), save.hp + n); };
+    const spell = form === "spell";
+    if (this.pas("storm_chain") && spell && ++p.spells % 4 === 0) {
+      for (const m of this.foes(mob, 150).filter((x: any) => x !== mob).slice(0, 2)) {
+        this.g.cfx?.link(mob.x, mob.y - 14, m.x, m.y - 14, "electric");
+        this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.5)), false);
+      }
+    }
+    if (this.pas("killing_edge") && crit) p.slipT = 3;
+    if (this.pas("flowing_strikes") && moveId && (this.g.cds?.[moveId] ?? 0) > 0 && Math.random() < 0.2) { this.g.cds[moveId] = 0; this.g.float(save.x, save.y - 56, "FLOW", "#9ad8c8"); }
+    if (this.pas("aftershock") && form === "melee") {
+      for (const m of this.foes(mob, 60)) if (m !== mob) this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.35)), false);
+      this.g.cfx?.nova(mob.x, mob.y - 4, 60, "earth");
+    }
+    if (this.pas("searing_light") && mob.alive) this.g.applyMobStatus(mob, "expose", 3);
+    if (this.pas("lingering_hex")) {
+      if (has("gloom")) heal(dmg * 0.15);
+      if (mob.alive) this.g.applyMobStatus(mob, "gloom", 4);
+    }
+    if (this.pas("plunder") && (has("root") || has("sleep") || has("soak"))) { const n = 1 + Math.floor(Math.random() * 4); save.kyo = (save.kyo ?? 0) + n; this.g.float(mob.x, mob.y - 60, `+${n} kyo`, "#e6c15a"); }
+    if (this.pas("sanguine_spells") && spell) heal(dmg * 0.12);
+    if (this.pas("momentum")) { p.momN = p.momT > 0 ? p.momN + 1 : 1; p.momT = 2; }
+    if (this.pas("static_volley") && spell) {
+      const m = this.foes(mob, 140).find((x: any) => x !== mob);
+      if (m) { this.g.cfx?.link(mob.x, mob.y - 14, m.x, m.y - 14, "electric"); this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.3)), false); }
+    }
+    if (this.pas("resonance") && spell) for (const id of Object.keys(this.g.cds ?? {})) if (id !== moveId) this.g.cds[id] = Math.max(0, this.g.cds[id] - 0.4);
+    if (this.pas("rising_tide") && spell && mob.alive && Math.random() < 0.3) this.g.applyMobStatus(mob, "soak", 3);
+  }
   /** Before a foe's hit lands: may refuse it entirely. */
   allowHit(m: any, form: string): boolean {
     const save = this.g.save;
     this.data.attacker = m;
+    const p = this.st();
+    if (this.pas("killing_edge") && p.slipT > 0) { p.slipT = 0; this.g.float(save.x, save.y - 36, "SLIP", "#c9a6ff"); return false; }
+    if (this.pas("watchful_ward") && p.wardUp) { p.wardUp = false; p.wardT = 0; this.g.float(save.x, save.y - 36, "WARDED", "#fff1a8"); return false; }
+    if (this.pas("lunar_grace") && Math.random() < 0.12) { p.critNext = true; this.g.float(save.x, save.y - 36, "MOON SLIP", "#e8f0ff"); return false; }
     if (this.active("phase") && !this.isGhost(m)) { this.g.float(save.x, save.y - 36, "PHASED", "#9ad8ff"); return false; }
     if (this.active("flight") && form === "melee") { this.g.float(save.x, save.y - 36, "AIRBORNE", "#fff1a8"); return false; }
     if (this.active("cyclone") && Math.random() < 0.35) { this.g.float(save.x, save.y - 36, "SWEPT", "#e7d9ff"); return false; }
@@ -391,6 +573,16 @@ export class Gimmicks {
     const save = this.g.save;
     let k = 1;
     if (!this.g.moving) k *= 1 - this.hook("standStill") / 100;
+    const p = this.st();
+    const a = this.data.attacker;
+    if (this.pas("shield_wall") && a) {
+      // In front: on the side you face (left/right), or above/below when you face up/down.
+      const dir = this.g.direction ?? (this.g.facing < 0 ? "left" : "right");
+      const ahead = dir === "left" ? a.x < save.x : dir === "right" ? a.x > save.x : dir === "up" ? a.y < save.y : a.y > save.y;
+      if (ahead) k *= 0.6;
+    }
+    if (this.pas("battle_rhythm")) k *= 1 - 0.04 * Math.min(5, this.foes(save, 150).length);
+    if (this.pas("guardian_wings") && p.wingsCd <= 0 && amount > this.g.maxHp() * 0.25) { k *= 0.5; p.wingsCd = 10; this.g.float(save.x, save.y - 44, "WINGS", "#fff1a8"); }
     if (save.hp < this.g.maxHp() * 0.4) k *= 1 - this.hook("lowHpGuard") / 100;
     if (this.transformed()) k *= 1 - this.chan("form_fury") / 200;
     if (this.t > 0) {
@@ -399,7 +591,7 @@ export class Gimmicks {
         const a = this.data.attacker;
         if (a?.alive) this.g.applyMobDamage(a, Math.max(1, Math.floor(amount * 0.5)), false);
       }
-      if (this.id === "bossform") k *= 0.7;
+      if (this.id === "bossform") k *= 0.5;
       if (this.id === "banner" && dist(save, this.data.at) < 130) k *= 0.75;
       if (this.id === "oath") { this.data.stored += amount; k *= 0.5; }
       if (this.id === "halo") { k *= 0.5; save.hp = Math.min(this.g.maxHp(), save.hp + amount * 0.5); }
@@ -407,16 +599,28 @@ export class Gimmicks {
     return Math.max(0, k);
   }
   afterHurt(dmg: number) {
+    if (this.pas("vengeance") && dmg > 0) this.st().vengeT = 3;
     const v = this.hook("thorns");
     if (v > 0) {
       const foe = this.g.nearestMob(this.g.save.x, this.g.save.y, 200);
       if (foe?.alive) this.g.applyMobDamage(foe, Math.max(1, Math.floor(dmg * v / 100)), false);
     }
   }
-  saveFromDeath(): boolean { return this.active("halo"); }
+  saveFromDeath(): boolean {
+    if (this.active("halo")) return true;
+    const p = this.st();
+    if (this.pas("grave_bargain") && p.bargainCd <= 0) {
+      p.bargainCd = 90;
+      p.healT = 3; p.healPer = this.g.maxHp() * 0.1;
+      this.g.float(this.g.save.x, this.g.save.y - 60, "GRAVE BARGAIN", "#9ad8a0");
+      return true;
+    }
+    return false;
+  }
   onKill(mob: any) {
     const save = this.g.save;
     if (!save) return;
+    this.passiveKill(mob);
     if (this.hook("killHeal")) save.hp = Math.min(this.g.maxHp(), save.hp + this.g.maxHp() * this.hook("killHeal") / 100);
     if (this.hook("killShield")) this.g.shield = (this.g.shield ?? 0) + this.g.maxHp() * this.hook("killShield") / 100;
     if (mob.boss || mob.dungeonBoss) {
@@ -430,6 +634,36 @@ export class Gimmicks {
         if (this.def()?.id === "bossform") this.g.say(`Trophy taken: ${mob.name} joins your catalog of skins.`);
       }
     }
+  }
+  /** Kill effects from class passives. */
+  passiveKill(mob: any) {
+    const save = this.g.save;
+    const p = this.st();
+    const burning = (mob?.status ?? []).some((x: any) => x.id === "burn" && x.t > 0);
+    if (this.pas("smoulder") && burning) {
+      const next = this.foes(mob, 120).find((x: any) => x !== mob);
+      if (next) this.g.applyMobStatus(next, "burn", 4);
+    }
+    if (this.pas("wildfire") && burning) {
+      const dmg = Math.floor(20 + save.level * 3);
+      for (const m of this.foes(mob, 80)) if (m !== mob) this.g.applyMobDamage(m, dmg, false);
+      this.g.cfx?.nova(mob.x, mob.y - 8, 80, "fire");
+      this.g.float(mob.x, mob.y - 50, "WILDFIRE", "#ff9a4a");
+    }
+    if (this.pas("absolution")) {
+      save.hp = Math.min(this.g.maxHp(), save.hp + this.g.maxHp() * 0.1);
+      for (const sp of this.g.activeSpirits?.() ?? []) if (sp.hp > 0) sp.hp = Math.min(sp.max, sp.hp + sp.max * 0.1);
+    }
+    if (this.pas("golden_touch")) {
+      const n = Math.min(200, Math.max(1, Math.floor((save.kyo ?? 0) * 0.05)));
+      save.kyo = (save.kyo ?? 0) + n;
+      this.g.float(mob.x, mob.y - 62, `+${n} kyo`, "#e6c15a");
+    }
+    if (this.pas("ballad") && ++p.kills % 10 === 0) {
+      for (const id of Object.keys(this.g.cds ?? {})) this.g.cds[id] = 0;
+      this.g.float(save.x, save.y - 64, "BALLAD · ALL VERSES READY", "#c9f0ff");
+    }
+    if (this.pas("soul_harvest")) { p.soulN = Math.min(6, p.soulT > 0 ? p.soulN + 1 : 1); p.soulT = 8; }
   }
   pickBoss(key: string) { if (this.g.save) this.g.save.bossForm = key; }
 
@@ -481,7 +715,11 @@ export class Gimmicks {
     }
     if (this.id === "bossform" && this.data.boss) {
       const b = this.data.boss as BossTrophy;
+      // Twice your size while you wear it (scaled about your feet).
+      ctx.save();
+      ctx.translate(a.x, a.y); ctx.scale(2, 2); ctx.translate(-a.x, -a.y);
       drawMonster(ctx, { x: a.x, y: a.y, template: b.template, type: b.type, facing: left ? -1 : 1, walk: a.walk, hurt: a.hurt, boss: true, rarity: b.rarity, species: b.species, look: b.look as never, time: a.time } as never);
+      ctx.restore();
       return true;
     }
     return false;
