@@ -374,7 +374,7 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
                   <input className="px-input" placeholder="Search moves" value={moveFilter} onChange={(e) => setMoveFilter(e.target.value)} />
                   <label className="chip chip-check"><input type="checkbox" checked={onlyType} onChange={(e) => setOnlyType(e.target.checked)} /> Its element</label>
                 </div>
-                <button type="button" className="px-btn ui-btn-sm" onClick={() => set({ moves: autoPickMoves(d) })}>AutoMove Picker</button>
+                <button type="button" className="px-btn ui-btn-sm" onClick={() => set({ moves: autoPickMoves(d, statOpts) })}>AutoMove Picker</button>
                 <div className="move-pick">
                   {moves.map((m) => (
                     <button key={m.id} type="button" className={`ui-card verse-pick ${d.moves.includes(m.id) ? "ui-card-hl" : ""}`} disabled={!d.moves.includes(m.id) && d.moves.length >= 4} onClick={() => set({ moves: d.moves.includes(m.id) ? d.moves.filter((x) => x !== m.id) : [...d.moves, m.id] })}>

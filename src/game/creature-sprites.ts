@@ -41,8 +41,9 @@ export const CREATURE_SPRITE_SCALE = 2;
 export const BOSS_SPRITE_SCALE = 2;
 let image: HTMLImageElement | null = null;
 
-/** Looks registered by the Enemy Designer: a sheet cell or a drawn 16×16 canvas, plus a size. */
-export type CustomSprite = { cell?: [number, number]; canvas?: HTMLCanvasElement | null; scale?: number };
+/** Looks registered by the Enemy Designer: a sheet cell or a drawn 16×16 canvas, plus a size.
+ *  `noTint` marks a full-colour skin that must be drawn as-is (no element tint laid over it). */
+export type CustomSprite = { cell?: [number, number]; canvas?: HTMLCanvasElement | null; scale?: number; noTint?: boolean };
 const customSprites = new Map<string, CustomSprite>();
 export function setCustomSprite(species: string, sprite: CustomSprite): void {
   customSprites.set(species, sprite);
@@ -268,7 +269,8 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
   const scale = (m.boss ? BOSS_SPRITE_SCALE : CREATURE_SPRITE_SCALE) * (custom?.scale ?? 1),
     bob = Math.round(Math.sin(m.walk * 5) * 1);
   // A skinned foe is drawn from its greyscale sprite and tinted by its element list.
-  const tint = skin ? (m.types && m.types.length ? m.types : [m.type]).map((tp) => TYPES[tp as keyof typeof TYPES]?.color ?? "#c8c0b0") : null;
+  // Full-colour skins (noTint) are drawn exactly as supplied, so the tint list is left empty for them.
+  const tint = skin && !skin.noTint ? (m.types && m.types.length ? m.types : [m.type]).map((tp) => TYPES[tp as keyof typeof TYPES]?.color ?? "#c8c0b0") : null;
   const t = m.time ?? 0;
   const style = rarityStyle(m.rarity);
   const pal = m.shiny ? shinyPalette(m.palette) : null;

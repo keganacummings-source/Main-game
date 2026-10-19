@@ -25,7 +25,7 @@
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
-import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, zoneRect, type LogTile } from "./building";
+import { BUILD_PIECES, BUILD_REACH, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
@@ -297,6 +297,8 @@ export type Snap = {
   mapQuests: { id: string; name: string; lines: string[]; ready: boolean; turnIn: string }[];
   gear: Gear[];
   equipped: string[];
+  /** TURBZ only: whether a pickup that beats your gear is worn automatically. */
+  autoEquip: boolean;
   setLabel: string;
   setBonus: string;
   setCount: number;
@@ -687,6 +689,7 @@ const emptySnap = (): Snap => ({
 	talk: null,
 	gear: [],
 	equipped: [],
+	autoEquip: false,
 	setLabel: "",
 	setBonus: "",
 	setCount: 0,
@@ -1561,7 +1564,7 @@ export class TurbzGame {
 		// Shinies caught before the collection existed join it now.
 		if (!this.lms) for (const sp of [...(save.spirits ?? []), ...(save.ghostStore ?? [])]) if (sp?.shiny) this.recordShiny(sp);
 		if (this.refundNote) setTimeout(() => this.say(`Ghost slots are gone: 3 ghosts go out with you, 6 ride in your party, and a Ghost Box at camp holds the rest. ${this.refundNote} skill point${this.refundNote === 1 ? "" : "s"} refunded.`), 1500);
-		// The shipped pixel sprites become the random skin pool for every foe (greyscale + element tint).
+		// The uploaded pixel sprites become the random skin pool for every non-witch foe (full colour).
 		try { installEnemySkins(); } catch { /* a bad skin must not stop the game */ }
 		// Warm the world/dungeon boss sheets so a boss is fully drawn on its first frame.
 		try { initBossSprites(); } catch { /* boss art must not stop the game */ }
@@ -2129,6 +2132,10 @@ export class TurbzGame {
 	isDungeonMap(map) {
 		return map === "crypt" || map === "kiln" || (typeof map === "string" && map.startsWith("rift-"));
 	}
+	/** The overworld map id for this mode: "world" normally, "custom-turbz" in TURBZ. Used by camp/Ghost Box placement. */
+	isOverworld(map = this.save?.map) {
+		return map === "world" || (this.turbz && map === "custom-turbz");
+	}
 	/** The day a dungeon's layout was built for. It is fixed while you are inside, so the walls never move around you. */
 	dungeonDay(map) {
 		const d = this.save?.dungeons;
@@ -2291,6 +2298,13 @@ export class TurbzGame {
 		const box = save.ghostBox;
 		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
 		const piece = this.buildPiece ?? "wood";
+		// Clicking the campfire tile: lay a floor underneath it if a floor is selected, otherwise pick the fire up.
+		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
+		if (fire) {
+			const kind = BUILD_PIECES[piece]?.kind;
+			if (kind && FLOOR_KINDS.has(kind)) return this.placeLog(tx, ty, piece);
+			return this.removeCampfire(fire);
+		}
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		return this.placeLog(tx, ty, piece);
 	}
@@ -2303,6 +2317,7 @@ export class TurbzGame {
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : [])];
+		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
 			terrainBlocked: (px, py) => blocked(this.world, px, py),
@@ -2310,6 +2325,7 @@ export class TurbzGame {
 			cost: matCost,
 			furniture,
 			needZone: piece === "bed" || piece === "ghostbox",
+			allowCampfireTile: isFloor,
 		});
 	}
 	/** Spends a piece's cost (kyo for blocks, materials for furniture). The Building skill may hand one back. */
@@ -2360,7 +2376,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (piece === "bed" && save.survival.beds.length >= MAX_BEDS) { this.say(`${MAX_BEDS} beds is the most a hunter can keep. Pick one up first.`); return false; }
 		if (piece === "ghostbox" && save.ghostBox) { this.say("You already have a Ghost Box. Click it in build mode to pick it up and move it."); return false; }
-		if (piece === "ghostbox" && save.map !== "world") { this.say("Place the Ghost Box at a camp in the overworld."); return false; }
+		if (piece === "ghostbox" && !this.isOverworld(save.map)) { this.say("Place the Ghost Box at a camp in the overworld."); return false; }
 		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
 		this.payForPiece(piece, piece === "ghostbox" ? 20 : 12);
@@ -2386,6 +2402,19 @@ export class TurbzGame {
 		}
 		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) this.giveItem(id, n);
 		this.cue("click", { rate: 0.75 }, [150, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** Pick the campfire back up: refunds its logs and frees the tile. In TURBZ this is how you move your camp. */
+	removeCampfire(fire) {
+		const save = this.save;
+		if (Math.hypot(fire.x - save.x, fire.y - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		save.survival.campfires = save.survival.campfires.filter((c) => c !== fire);
+		this.giveItem("timber", 3);
+		this.cue("click", { rate: 0.7 }, [140, .06, "triangle"]);
+		this.say(this.turbz ? "Campfire packed up. Place it again to move your camp here." : "Campfire picked up. Place it again wherever you like.");
+		this.syncSolids?.(save.map);
 		this.persist();
 		this.syncHud(true);
 		return true;
@@ -5118,7 +5147,7 @@ export class TurbzGame {
 			if (!this.playerSafeCamp()) return this.say("Stand inside a camp (a campfire's safe zone) to place the Ghost Box.");
 			this.buildPiece = "ghostbox";
 		}
-		if (save.map !== "world") return this.say("Place the Ghost Box in the overworld.");
+		if (!this.isOverworld(save.map)) return this.say("Place the Ghost Box in the overworld.");
 		const cost = BUILD_PIECES.ghostbox.cost;
 		const missing = Object.entries(cost).filter(([id, n]) => (save.bag[id] ?? 0) < n);
 		const pay = this.rules !== "hardcore" && missing.length && buy;
@@ -5150,7 +5179,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save?.ghostBox || this.dead) return;
 		if (this.rules === "hardcore") return this.say("In Hardcore, move the Ghost Box in build mode at your camp.");
-		if (save.map !== "world") return this.say("Place the Ghost Box in the overworld.");
+		if (!this.isOverworld(save.map)) return this.say("Place the Ghost Box in the overworld.");
 		const spot = this.ghostBoxSpot();
 		if (!spot) return this.say("No room here. Step onto open ground and try again.");
 		save.ghostBox = { map: save.map, tx: spot.tx, ty: spot.ty };
@@ -5199,8 +5228,9 @@ export class TurbzGame {
 			uid: nextUid(), species: mob.species || "wisp", name: mob.name || "Ghost", type, template: Number(mob.template) || 0,
 			level: Math.max(1, Math.min(this.ghostLevelCap(), mob.level | 0)), rarity, look, move: kit.slots[0] ?? mob.move, known: kit.known, slots: kit.slots,
 			hp: max, max, speed: Math.max(6, (mob.speed ?? 10) - 1), active: false, shiny: isShiny, xp: 0,
-			// Witches and bosses keep their own body (class actor / species sheet). Wild foes keep the skin they wore.
-			skin: witchBody || mob.boss || mob.dungeonBoss || mob.turbzBoss ? null : (mob.skin ?? null),
+			// Only witches keep their own body (the class actor). Every other foe — bosses included — passes
+			// the skin it wore in life to its ghost, so the ghost looks like the thing you just killed.
+			skin: witchBody ? null : (mob.skin ?? null),
 			types,
 			classId: witchBody ? (mob.classId ?? null) : undefined,
 			race: witchBody ? (mob.race ?? null) : undefined,
@@ -5344,6 +5374,21 @@ export class TurbzGame {
 	/** Merge armor: a duplicate piece enhances the one you own instead of cluttering your bag. On in TURBZ. */
 	mergeArmorOn() {
 		return this.turbz || !!this.save?.mergeArmor;
+	}
+	/** Auto-equip: TURBZ wears your best pickup automatically so sets can complete. On by default; toggled from the Gear inventory. */
+	autoEquipOn() {
+		return !!this.turbz && (this.save?.autoEquip ?? true);
+	}
+	/** Flip (or set) TURBZ auto-equip. Off leaves pickups in your bag to wear yourself. */
+	toggleAutoEquip(on?: boolean) {
+		const save = this.save;
+		if (!save || !this.turbz) return;
+		save.autoEquip = typeof on === "boolean" ? on : !(save.autoEquip ?? true);
+		this.say(save.autoEquip
+			? "Auto-equip on: a pickup that beats what you wear is equipped for you."
+			: "Auto-equip off: pickups wait in your bag — wear them yourself.");
+		this.persist();
+		this.syncHud(true);
 	}
 	/** True when two pieces are "the same" armor for merging: same slot, set and style. */
 	sameArmor(a, b) {
@@ -8299,8 +8344,9 @@ export class TurbzGame {
 		}
 		save.gear.push(g);
 		this.noteFound(g);
-		// Hardcore never dresses you — EXCEPT TURBZ, where autopickup wears your best so sets can complete.
-		if (this.rules === "hardcore" && !this.turbz) return;
+		// Hardcore never dresses you — EXCEPT TURBZ with auto-equip on, where a pickup that beats your gear
+		// is worn so sets can complete. With the toggle off, TURBZ leaves the piece in your bag.
+		if (this.rules === "hardcore" && !this.autoEquipOn()) return;
 		const worn = this.piece(g.slot);
 		if (!worn || gearScore(g) > gearScore(worn)) {
 			save.equipped[g.slot] = g.uid;
@@ -10458,6 +10504,7 @@ export class TurbzGame {
 			}),
 			gear: this.cachedGear(),
 			equipped: !slow ? snap.equipped : Object.values(save.equipped).filter((x) => !!x),
+			autoEquip: this.autoEquipOn(),
 			setLabel: !slow ? snap.setLabel : set.name ? `${set.name} ${set.count}/5` : "No set",
 			setBonus: !slow ? snap.setBonus : set.on ? set.bonus : "Wear all 5 pieces of one set.",
 			setCount: !slow ? snap.setCount : set.count,
@@ -10794,14 +10841,7 @@ export class TurbzGame {
 			drawRift(ctx, portal.x, portal.y);
 			drawShadowName(ctx, `DUNGEON ${portal.id.slice(5)}`, portal.x, portal.y - 100, "#e7d9ff");
 		}
-		if (this.rules === "hardcore") for (const fire of save.survival.campfires) {
-			if (fire.map !== save.map) continue;
-			// Small pixel flame and crossed logs use the same pixel scale as world art.
-			ctx.fillStyle = "#68412d"; ctx.fillRect(fire.x - 12, fire.y - 4, 24, 6); ctx.fillRect(fire.x - 8, fire.y - 8, 16, 6);
-			ctx.fillStyle = "#df582a"; ctx.fillRect(fire.x - 8, fire.y - 20, 16, 14); ctx.fillRect(fire.x - 4, fire.y - 26, 8, 6);
-			ctx.fillStyle = "#ffc45b"; ctx.fillRect(fire.x - 4, fire.y - 16, 8, 10);
-			drawShadowName(ctx, "CAMP", fire.x, fire.y - 40, "#ffc45b");
-		}
+		// Campfires are drawn inside drawBuild (after walls/floors) so a block on the tile above never covers them.
 		if (this.rules === "hardcore") this.drawBuild(ctx, w, h);
 		this.drawExtras(ctx, w, h);
 		for (const node of this.world.spawns) if (node.kind === "node") {
@@ -10832,11 +10872,11 @@ export class TurbzGame {
 			} else {
 				// World and dungeon bosses wear the full directional creature sheets (boss-sprites.ts);
 					// drawBossSprite returns false until its sheet loads, so it falls through to the creature draw.
-					if ((m.boss || m.dungeonBoss) && !m.ghost && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
+					if ((m.boss || m.dungeonBoss) && !m.ghost && !m.skin && drawBossSprite(ctx, { x: m.x, y: m.y, bossId: m.bossId, type: m.type, direction: m.direction, facing: m.facing, moving: m.moving, walk: m.walk, hurt: m.hurt, enraged: m.enraged, time: this.clock })) {
 						this.queuePlate(m);
 						continue;
 					}
-					// Monsters, animals and other foes draw from their random greyscale skin, tinted by element(s).
+					// Monsters, animals and reskinned bosses draw from their rolled full-colour uploaded skin.
 				const gfx = m.enemyGhost ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
 				if (gfx) drawGhostFx(ctx, gfx, this.clock, "back");
 				drawMonster(ctx, {
@@ -10853,7 +10893,9 @@ export class TurbzGame {
 				shiny: !!m.shiny,
 				palette: m.palette,
 				animal: !!m.animal,
-				species: m.enemyGhost ? undefined : m.species,
+				// Pass the species for ghosts too, so a custom/designed foe's registered sprite (and its
+				// ghost FX) resolve instead of falling back to a generic elemental blob.
+				species: m.species,
 				skin: m.skin ?? null,
 				types: m.types ?? null,
 				look: m.look ?? null,
@@ -11213,6 +11255,64 @@ export class TurbzGame {
 		ctx.fillStyle = "#a94848"; ctx.fillRect(x + 5, y + 13, 22, 3);
 		ctx.fillStyle = "#6e2c2c"; for (let i = 0; i < 3; i++) ctx.fillRect(x + 8 + i * 7, y + 18, 3, 1);
 	}
+	/**
+	 * Pixel-sprite campfire, drawn centred on (cx, cy) to match the camp art (stone ring, crossed logs,
+	 * a layered animated flame with embers). `t` animates the flame. Rises nearly a full tile so it reads
+	 * as "camp"; drawn after walls so a block on the tile above never buries it.
+	 */
+	paintCampfire(ctx, cx, cy, t) {
+		const x = Math.round(cx), y = Math.round(cy);
+		const flick = Math.sin(t * 6) * 0.5 + Math.sin(t * 11 + 1.3) * 0.3; // -0.8..0.8-ish
+		// Ground shadow + warm scorch ring.
+		ctx.fillStyle = "rgba(0,0,0,.28)"; ctx.fillRect(x - 15, y + 8, 30, 5);
+		ctx.fillStyle = "rgba(60,30,12,.35)"; ctx.fillRect(x - 13, y + 4, 26, 7);
+		// Stone ring (same greys as the stone wall), staggered for a pixel-sprite look.
+		const stones = [[-14, 6], [-8, 8], [-1, 9], [6, 8], [11, 6], [-12, 2], [10, 2]];
+		for (let i = 0; i < stones.length; i++) {
+			const sx = x + stones[i][0], sy = y + stones[i][1];
+			ctx.fillStyle = "#2c2e33"; ctx.fillRect(sx - 1, sy - 1, 8, 7);
+			ctx.fillStyle = i % 3 === 0 ? "#6c7076" : i % 3 === 1 ? "#7e8288" : "#5a5e64"; ctx.fillRect(sx, sy, 6, 5);
+			ctx.fillStyle = "#9aa0a6"; ctx.fillRect(sx, sy, 6, 1);
+		}
+		// Crossed logs (same browns as the log/wall art).
+		for (const [lx, ly, w, flip] of [[-11, 1, 22, 0], [-9, 4, 20, 1]] as const) {
+			const bx = x + lx, by = y + ly;
+			ctx.fillStyle = "#3a2414"; ctx.fillRect(bx, by, w, 5);
+			ctx.fillStyle = flip ? "#7a4e2c" : "#8a5a34"; ctx.fillRect(bx + 1, by + 1, w - 2, 3);
+			ctx.fillStyle = "#9a6a3c"; ctx.fillRect(bx + 1, by + 1, w - 2, 1);
+			ctx.fillStyle = "#d2a566"; ctx.fillRect(flip ? bx + w - 4 : bx + 1, by + 1, 3, 3);
+		}
+		// Glow halo behind the flame.
+		const glow = 0.5 + flick * 0.18;
+		ctx.fillStyle = `rgba(255,150,60,${0.14 + glow * 0.1})`;
+		ctx.beginPath(); ctx.arc(x, y - 6, 16, 0, Math.PI * 2); ctx.fill();
+		// Flame: outer → mid → inner, each a tapered stack of rects whose height breathes with `t`.
+		const h0 = 20 + flick * 4;
+		const flame = (color: string, spread: number, top: number, wobble: number) => {
+			ctx.fillStyle = color;
+			const steps = 6;
+			for (let i = 0; i < steps; i++) {
+				const f = i / (steps - 1);
+				const hw = Math.max(1, Math.round(spread * (1 - f) + 1));
+				const fy = y + 2 - Math.round((top) * f);
+				const sway = Math.round(Math.sin(t * 7 + f * 3) * wobble * f);
+				ctx.fillRect(x - hw + sway, fy - 2, hw * 2, 3);
+			}
+		};
+		flame("#c23a16", 8, h0, 2);            // deep red-orange base
+		flame("#df582a", 6, h0 - 2, 2.2);      // orange body
+		flame("#ffa33c", 4, h0 - 6, 2.4);      // bright orange
+		flame("#ffc45b", 3, h0 - 10, 2.6);     // yellow
+		flame("#ffe9b0", 2, h0 - 14, 2.8);     // hot core
+		// Embers: a few flickering pixels drifting up.
+		for (let i = 0; i < 4; i++) {
+			const p = (t * 0.9 + i * 0.37) % 1;
+			const ex = x + Math.round(Math.sin(t * 3 + i * 2) * 7);
+			const ey = y - 2 - Math.round(p * 26);
+			ctx.fillStyle = i % 2 ? "#ffd87a" : "#ff8a3c";
+			if (p < 0.85) ctx.fillRect(ex, ey, 2, 2);
+		}
+	}
 	paintGhostBox(ctx, x, y, t) {
 		const glow = .55 + Math.sin(t * 2.2) * .25;
 		ctx.fillStyle = "rgba(0,0,0,.3)"; ctx.fillRect(x + 2, y + 27, 28, 4);
@@ -11267,6 +11367,14 @@ export class TurbzGame {
 			const x = b.tx * 32, y = b.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
 			this.paintBed(ctx, x, y);
+		}
+		// Campfires last among camp art: a wall/floor on the tile above is drawn above (earlier), so the flame
+		// always sits in front of it rather than being buried.
+		for (const fire of sv.campfires) {
+			if (fire.map !== save.map) continue;
+			if (Math.abs(fire.x - this.cam.x) > halfW || Math.abs(fire.y - this.cam.y) > halfH) continue;
+			this.paintCampfire(ctx, fire.x, fire.y, this.clock);
+			drawShadowName(ctx, "CAMP", fire.x, fire.y - 40, "#ffc45b");
 		}
 		const inside = this.playerSafeCamp();
 		ctx.save();

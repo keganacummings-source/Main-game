@@ -265,6 +265,12 @@ export function GearInventory({ snap, game }: Props) {
           { id: "stash", label: `Enchants · ${snap.stash.length}` },
         ]} />
         <span className="bag-kyo">{snap.kyo.toLocaleString()} kyo</span>
+        {snap.turbz && (
+          <label className={`chip chip-check ${snap.autoEquip ? "chip-on" : ""}`} title="When on, a pickup that beats what you wear is equipped automatically. When off, pickups wait in your bag to wear yourself.">
+            <input type="checkbox" checked={snap.autoEquip} onChange={(e) => game?.toggleAutoEquip(e.target.checked)} data-testid="toggle-autoequip" />
+            Auto-equip
+          </label>
+        )}
       </div>
 
       <div className="bag-body">

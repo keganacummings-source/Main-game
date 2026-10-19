@@ -161,6 +161,8 @@ export function checkPlaceLog(args: {
   furniture?: Furniture[];
   /** Beds and the Ghost Box must stand inside a campfire's safe zone. */
   needZone?: boolean;
+  /** Floors may be laid on the campfire's own tile (the fire draws on top); other pieces may not. */
+  allowCampfireTile?: boolean;
 }): PlaceCheck {
   const { world, map, logs, camps, tx, ty, player, bag, terrainBlocked } = args;
   if (tx < 3 || ty < 3 || tx >= world.w - 3 || ty >= world.h - 3) return { ok: false, reason: "Too close to the edge of the world." };
@@ -172,7 +174,7 @@ export function checkPlaceLog(args: {
   if (!tile || tile.floor === 1 || tile.floor === 2) return { ok: false, reason: "You cannot build on water." };
   if (tileOf(player.x) === tx && tileOf(player.y) === ty) return { ok: false, reason: "You are standing there." };
   for (const n of world.spawns) if (n.kind === "node" && Math.hypot(n.x - cx, n.y - cy) < 26) return { ok: false, reason: "A resource is in the way." };
-  for (const c of camps) if (c.map === map && tileOf(c.x) === tx && tileOf(c.y) === ty) return { ok: false, reason: "That is the campfire." };
+  if (!args.allowCampfireTile) for (const c of camps) if (c.map === map && tileOf(c.x) === tx && tileOf(c.y) === ty) return { ok: false, reason: "That is the campfire." };
   for (const p of args.keepClear ?? []) if (tileOf(p.x) === tx && tileOf(p.y) === ty) return { ok: false, reason: "Something is standing there." };
   for (const f of args.furniture ?? []) if (f.map === map && f.tx === tx && f.ty === ty) return { ok: false, reason: "Something is already built there." };
   if (args.needZone && !safeZoneAt(camps, map, cx, cy)) return { ok: false, reason: "Build this inside a campfire's safe zone." };

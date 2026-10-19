@@ -299,37 +299,107 @@ export function enemyDesignFor(species: string): EnemyDesign | null {
   return active.get(species) ?? null;
 }
 
-/**
- * AutoMove Picker — similar to how the Crying Girl / CryingWitch kit is built.
- * Picks 1-4 moves based on the design's element, stats, and assigned role (witch, boss, tanky, etc.).
- */
-export function autoPickMoves(d: EnemyDesign): string[] {
-  const pool = MOVES.filter((m) => m.type === d.type || m.type === "normal" || (d.flags.witch && (m.type === "spirit" || m.type === "water")));
-  const score = (m: typeof MOVES[number]): number => {
-    let s = m.power * 0.4;
-    if (d.stats.dmg > 1.3 && attackForm(m) !== "melee") s += 12;
-    if (d.stats.hp > 1.4 && (moveTactic(m) === "ward" || m.effect === "shell")) s += 18;
-    if (d.flags.witch && (moveTactic(m) === "heal" || m.effect === "mend")) s += 22;
-    if (d.flags.dungeonBoss || d.flags.worldBoss) s += m.power > 40 ? 10 : 0;
-    if (d.stats.crit > 0.12 && m.crit > 10) s += 8;
-    if (d.stats.speed > 1.2 && (moveTactic(m) === "dash" || moveTactic(m) === "blink")) s += 10;
-    if (d.flags.animal && attackForm(m) === "melee") s += 6;
-    return s;
+/** A tiny deterministic PRNG so a given design always rolls the same kit, but different designs differ. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-  const ranked = [...pool].sort((a, b) => score(b) - score(a));
-  const want = d.flags.witch || d.flags.dungeonBoss || d.flags.worldBoss ? 4 : 3;
-  const picked: string[] = [];
-  for (const m of ranked) {
-    if (picked.length >= want) break;
-    if (!picked.includes(m.id)) picked.push(m.id);
-  }
-  return picked.length ? picked : ["thorn"];
+}
+function hashStr(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return h >>> 0;
 }
 
-/** Options for the AutoStat Picker. */
-export type StatOption = "melee" | "ranged" | "spell" | "fast" | "slow" | "highDamage" | "tanky" | "physical" | "spellResist" | "crit" | "dodge";
+/**
+ * AutoMove Picker — builds a kit that fits the design's *actual* stat line, element, role and chosen
+ * combat styles, not a fixed table per element. Every move is scored by a continuous function of the
+ * stats (a heavy hitter favours big spells, a fast dodger favours mobility verses, a tank favours wards),
+ * then the kit is filled across attack forms so it is not three near-identical nukes. A deterministic
+ * per-design seed means two monsters of the same element with different stats get genuinely different
+ * movesets, while any one design stays stable between presses.
+ */
+export function autoPickMoves(d: EnemyDesign, options: StatOption[] = []): string[] {
+  const s = d.stats;
+  const has = (o: StatOption) => options.includes(o);
+  const pool = MOVES.filter((m) => m.type === d.type || m.type === "normal" || (d.flags.witch && (m.type === "spirit" || m.type === "water")));
+  if (!pool.length) return ["thorn"];
+
+  const seed = hashStr(`${d.id}|${d.name}|${d.type}|${s.hp.toFixed(2)}|${s.dmg.toFixed(2)}|${s.speed.toFixed(2)}|${s.crit.toFixed(2)}|${s.dodge.toFixed(2)}|${s.physRes.toFixed(2)}|${s.spellRes.toFixed(2)}|${options.join(",")}|${d.flags.witch}${d.flags.worldBoss}${d.flags.dungeonBoss}${d.flags.animal}`);
+  const rng = mulberry32(seed);
+
+  // Continuous affinity: how well a move suits THIS stat line.
+  const affinity = (m: typeof MOVES[number]): number => {
+    const f = attackForm(m), t = moveTactic(m);
+    let v = 6 + m.power * 0.5;
+    // Attackers scale with the design's damage; the form that fits the build is rewarded.
+    if (f !== "melee") v += (s.dmg - 1) * 22;
+    if (f === "melee") v += 4 + (s.physRes + Math.max(0, s.hp - 1) * 0.5) * 20;
+    if (f === "spell") v += s.spellRes * 16 + (s.dmg - 1) * 8;
+    // Mobility verses suit fast, dodgy builds; heavy windups suit slow heavy hitters.
+    if (t === "dash" || t === "blink" || t === "lunge" || t === "roll") v += (s.speed - 1) * 26 + s.dodge * 22;
+    if (t === "heavy") v += (s.dmg - 1) * 18 + (1 - s.speed) * 14;
+    // Defensive verses suit tanks, wardens and casters.
+    if (t === "ward" || m.effect === "shell") v += Math.max(0, s.hp - 1) * 20 + s.spellRes * 30 + (has("warden") || has("juggernaut") ? 18 : 0);
+    if (t === "heal" || m.effect === "mend") v += (d.flags.witch ? 26 : 4) + Math.max(0, s.hp - 1) * 8;
+    if (t === "aura" || t === "channel") v += s.spellRes * 18 + (s.speed < 1 ? 10 : 0);
+    // Crit and priority.
+    v += s.crit * (m.crit ?? 0) * 1.2;
+    if (s.crit > 0.1 && (m.crit ?? 0) > 8) v += 8;
+    v += (m.priority ?? 0) * (1 + s.speed) * 1.5;
+    // Role nudges.
+    if (d.flags.worldBoss || d.flags.dungeonBoss || d.boss) v += m.power > 45 ? 14 : m.power > 30 ? 6 : 0;
+    if (d.flags.animal && f === "melee") v += 8;
+    // Chosen combat styles bias the kit toward their attack form.
+    if (has("melee") || has("bruiser") || has("juggernaut") || has("berserker")) v += f === "melee" ? 10 : 0;
+    if (has("ranged") || has("skirmisher")) v += f === "ranged" ? 10 : 0;
+    if (has("spell") || has("warden")) v += f === "spell" ? 10 : 0;
+    if (has("assassin") || has("lethal")) v += (m.crit ?? 0) > 8 ? 10 : 0;
+    // Deterministic jitter, unique to this design — breaks ties and separates similar builds.
+    v += (rng() - 0.5) * 18;
+    return v;
+  };
+
+  const scored = pool.map((m) => ({ m, v: affinity(m) })).sort((a, b) => b.v - a.v);
+  const want = d.flags.witch || d.flags.dungeonBoss || d.flags.worldBoss ? 4 : 3;
+  const picked: string[] = [];
+  // Weighted pick among the strongest few, so near-equal designs still diverge.
+  const takeFrom = (cands: { m: typeof MOVES[number]; v: number }[]): void => {
+    const top = cands.filter((c) => !picked.includes(c.m.id)).slice(0, 5);
+    if (!top.length) return;
+    const total = top.reduce((a, c) => a + Math.max(0.01, c.v), 0);
+    let r = rng() * total;
+    for (const c of top) { r -= Math.max(0.01, c.v); if (r <= 0) { picked.push(c.m.id); return; } }
+    picked.push(top[top.length - 1]!.m.id);
+  };
+
+  // A primary attacker first, then fill across attack forms so the kit is varied, not stacked.
+  takeFrom(scored.filter((c) => attackForm(c.m) !== "spell" || c.m.power > 0));
+  while (picked.length < want) {
+    const remaining = scored.filter((c) => !picked.includes(c.m.id));
+    if (!remaining.length) break;
+    const haveForms = new Set(picked.map((id) => (MOVE_BY_ID[id] ? attackForm(MOVE_BY_ID[id]!) : "")));
+    const fresh = remaining.filter((c) => !haveForms.has(attackForm(c.m)));
+    takeFrom(fresh.length ? fresh : remaining);
+  }
+  return picked.length ? picked.slice(0, want) : [pool[0]!.id];
+}
+
+/**
+ * Options for the AutoStat Picker. The first group are the primitives (one lever each); the second
+ * group are archetypes that set a whole feel at once. They stack — pick several and they combine,
+ * then the soft clamps keep the result playable.
+ */
+export type StatOption =
+  | "melee" | "ranged" | "spell" | "fast" | "slow" | "highDamage" | "tanky" | "physical" | "spellResist" | "crit" | "dodge"
+  | "glassCannon" | "bruiser" | "juggernaut" | "assassin" | "skirmisher" | "berserker" | "warden" | "evasive" | "colossus" | "lethal";
 
 export const STAT_OPTIONS: { id: StatOption; label: string; hint: string }[] = [
+  // Primitives — single levers.
   { id: "melee", label: "Melee", hint: "Prefers close combat. A bit tankier." },
   { id: "ranged", label: "Ranged", hint: "Keeps distance. Slightly faster and harder-hitting." },
   { id: "spell", label: "Magic", hint: "Spell-focused. Better spell resistance." },
@@ -341,16 +411,28 @@ export const STAT_OPTIONS: { id: StatOption; label: string; hint: string }[] = [
   { id: "spellResist", label: "Spell Resist", hint: "Higher spell resistance." },
   { id: "crit", label: "Crit", hint: "Higher crit chance." },
   { id: "dodge", label: "Dodge", hint: "Higher dodge chance." },
+  // Archetypes — a whole feel at once.
+  { id: "glassCannon", label: "Glass Cannon", hint: "Enormous damage and crit, but very fragile." },
+  { id: "bruiser", label: "Bruiser", hint: "Hits hard up close and takes a beating. Physical." },
+  { id: "juggernaut", label: "Juggernaut", hint: "Huge health and physical resist, very slow." },
+  { id: "assassin", label: "Assassin", hint: "Fast, crit-heavy, high damage — but squishy." },
+  { id: "skirmisher", label: "Skirmisher", hint: "Fast, evasive, ranged harasser." },
+  { id: "berserker", label: "Berserker", hint: "High damage and speed, no defense." },
+  { id: "warden", label: "Warden", hint: "Resilient caster: spell resist and health." },
+  { id: "evasive", label: "Evasive", hint: "Very high dodge and speed, low health." },
+  { id: "colossus", label: "Colossus", hint: "Immense health, slow, a bit stronger." },
+  { id: "lethal", label: "Lethal", hint: "Crit chance and damage focus." },
 ];
 
 /**
- * AutoStat Picker. Builds a stats line from selected combat styles.
- * Role flags (boss, witch, animal) also influence the result.
+ * AutoStat Picker. Builds a stats line from selected combat styles. Primitives and archetypes stack
+ * multiplicatively, then role flags (boss, witch, animal) nudge the result and soft clamps keep it sane.
  */
 export function autoPickStats(d: EnemyDesign, options: StatOption[]): EnemyStats {
   const has = (o: StatOption) => options.includes(o);
   const s: EnemyStats = { hp: 1, dmg: 1, speed: 1, crit: 0.05, dodge: 0, physRes: 0, spellRes: 0 };
 
+  // Primitives
   if (has("tanky")) { s.hp *= 1.65; s.speed *= 0.82; }
   if (has("highDamage")) { s.dmg *= 1.55; s.hp *= 0.82; }
   if (has("fast")) { s.speed *= 1.45; s.hp *= 0.88; }
@@ -359,35 +441,35 @@ export function autoPickStats(d: EnemyDesign, options: StatOption[]): EnemyStats
   if (has("spellResist")) { s.spellRes += 0.18; }
   if (has("crit")) { s.crit += 0.14; s.dmg *= 1.08; }
   if (has("dodge")) { s.dodge += 0.12; s.speed *= 1.08; }
-
   if (has("melee")) { s.physRes += 0.06; s.hp *= 1.1; }
   if (has("ranged")) { s.speed *= 1.06; s.dmg *= 1.06; }
   if (has("spell")) { s.spellRes += 0.08; s.dmg *= 1.05; }
 
+  // Archetypes — distinct, strong feels.
+  if (has("glassCannon")) { s.dmg *= 1.9; s.hp *= 0.6; s.crit += 0.1; }
+  if (has("bruiser")) { s.hp *= 1.3; s.dmg *= 1.25; s.physRes += 0.1; s.speed *= 0.95; }
+  if (has("juggernaut")) { s.hp *= 2.1; s.physRes += 0.24; s.spellRes += 0.08; s.speed *= 0.68; }
+  if (has("assassin")) { s.speed *= 1.3; s.crit += 0.22; s.dmg *= 1.28; s.hp *= 0.7; }
+  if (has("skirmisher")) { s.speed *= 1.3; s.dodge += 0.14; s.dmg *= 1.12; s.hp *= 0.9; }
+  if (has("berserker")) { s.dmg *= 1.5; s.speed *= 1.2; s.hp *= 0.85; }
+  if (has("warden")) { s.spellRes += 0.22; s.hp *= 1.25; s.dmg *= 1.05; }
+  if (has("evasive")) { s.dodge += 0.2; s.speed *= 1.25; s.hp *= 0.8; }
+  if (has("colossus")) { s.hp *= 2.6; s.speed *= 0.78; s.dmg *= 1.15; }
+  if (has("lethal")) { s.crit += 0.22; s.dmg *= 1.18; }
+
   // Role influence
-  if (d.flags?.worldBoss || d.flags?.dungeonBoss || d.boss) {
-    s.hp *= 1.45;
-    s.dmg *= 1.25;
-  }
-  if (d.flags?.witch) {
-    s.spellRes += 0.1;
-    s.dmg *= 1.12;
-    s.hp *= 1.1;
-  }
-  if (d.flags?.animal) {
-    s.hp *= 0.75;
-    s.speed *= 1.12;
-    s.dmg *= 0.9;
-  }
+  if (d.flags?.worldBoss || d.flags?.dungeonBoss || d.boss) { s.hp *= 1.45; s.dmg *= 1.25; }
+  if (d.flags?.witch) { s.spellRes += 0.1; s.dmg *= 1.12; s.hp *= 1.1; }
+  if (d.flags?.animal) { s.hp *= 0.75; s.speed *= 1.12; s.dmg *= 0.9; }
 
   // Soft clamps so values stay in the useful range
-  s.hp = Math.max(0.4, Math.min(6, s.hp));
+  s.hp = Math.max(0.4, Math.min(8, s.hp));
   s.dmg = Math.max(0.5, Math.min(5, s.dmg));
   s.speed = Math.max(0.4, Math.min(2.5, s.speed));
-  s.crit = Math.max(0, Math.min(0.45, s.crit));
-  s.dodge = Math.max(0, Math.min(0.35, s.dodge));
-  s.physRes = Math.max(0, Math.min(0.55, s.physRes));
-  s.spellRes = Math.max(0, Math.min(0.55, s.spellRes));
+  s.crit = Math.max(0, Math.min(0.6, s.crit));
+  s.dodge = Math.max(0, Math.min(0.4, s.dodge));
+  s.physRes = Math.max(0, Math.min(0.6, s.physRes));
+  s.spellRes = Math.max(0, Math.min(0.6, s.spellRes));
 
   return s;
 }
