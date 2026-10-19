@@ -123,6 +123,7 @@ import { aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, IMM
 import { Gimmicks, type GimmickView } from "./class-gimmicks";
 import { witchSteer } from "./witch-brain";
 import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
+import { drawClassPreview } from "./class-preview";
 import { drawBossSprite, initBossSprites } from "./boss-sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
 import { captureDeathGif } from "./death-gif";
@@ -6802,7 +6803,8 @@ export class TurbzGame {
 		if (nowComplete && !wasComplete) {
 			const set = SET_BY_ID[g.setId];
 			this.say(`Set unlocked: ${set.name}. Any class can wake wearing it from now on.`);
-			this.cue("sparkle", { rate: 1.1, len: 1.4 }, [660, .25]);
+			// The banner belongs to collecting the set, not to wearing it.
+			this.announceSetComplete(set.name);
 		}
 	}
 	/** A set is unlocked once all five pieces have been found by any class on the account. */
@@ -8624,7 +8626,6 @@ export class TurbzGame {
 			const dup = (save.gear ?? []).find((x) => this.sameArmor(x, g));
 			if (dup) {
 				this.mergeGear(dup, g);
-				this.checkSetBanner();
 				return;
 			}
 		}
@@ -8637,7 +8638,6 @@ export class TurbzGame {
 		if (!worn || gearScore(g) > gearScore(worn)) {
 			save.equipped[g.slot] = g.uid;
 			if (!this.turbz) this.say(`Wore ${g.name}. Score ${gearScore(g)}.`);
-			this.checkSetBanner();
 		}
 	}
 	/** Task toggles for autoplay. Every mode can turn a job off. */
@@ -10186,13 +10186,7 @@ export class TurbzGame {
 	}
 	setBonusMod(id) { const v = this.setBonusMods(); return v ? (v[id] ?? 0) : 0; }
 	setBonusChan(id) { const v = this.setBonusMods(); return v ? (v._chan?.[id] ?? 0) : 0; }
-	/** Pops the "SET COMPLETED" banner once, the moment a new 5-piece set comes together. */
-	checkSetBanner() {
-		const set = this.setInfo();
-		const id = set.on ? set.id : null;
-		if (id && id !== this._lastFullSet) { this._lastFullSet = id; this.announceSetComplete(set.name); }
-		else if (!id) this._lastFullSet = null;
-	}
+	/** The "SET COMPLETED" banner. Shown once per set: when its fifth piece is first collected (noteFound), never on equip. */
 	announceSetComplete(name) {
 		if (!name || !this.save) return;
 		publish({ setAlert: getSnap().setAlert + 1, setAlertName: name });
@@ -10729,7 +10723,6 @@ export class TurbzGame {
 		this.hudAt = now;
 		const save = this.save;
 		if (!save) return;
-		this.checkSetBanner();
 		// Fast fields refresh every 120 ms. Slow fields (bag, perks, spirits, boards…) only on a real
 		// change (force) or once a second. The character sheet is only built while it is on screen.
 		const slow = !!force || now - (this.slowAt ?? 0) > 1000 || snap.mode !== "play";
@@ -12557,60 +12550,9 @@ export class TurbzGame {
 		}
 		return null;
 	}
-	preview(canvas, race, classId?: ClassId, female = true) {
-		const ctx = canvas.getContext("2d");
-		if (!ctx) return;
-		ctx.clearRect(0, 0, canvas.width, canvas.height);
-		ctx.fillStyle = "#1c1412";
-		ctx.fillRect(0, 0, canvas.width, canvas.height);
-		const r = RACES.find((x) => x.id === race);
-		drawActor(ctx, {
-			x: canvas.width / 2,
-			y: canvas.height - 8,
-			race,
-			classId,
-			female,
-			hair: r.hair,
-			skin: RACES.findIndex((x) => x.id === race),
-			facing: 1,
-			walk: performance.now() / 400,
-			attack: 0,
-			hurt: 0,
-			tall: 1,
-			pieces: [
-				{
-					slot: "chest",
-					style: 0,
-					type: r.type,
-					fxSeed: 1,
-					quality: 3
-				},
-				{
-					slot: "legs",
-					style: 0,
-					type: r.type,
-					fxSeed: 2,
-					quality: 2
-				},
-				{
-					slot: "head",
-					style: 1,
-					type: r.type,
-					fxSeed: 3,
-					quality: 2
-				},
-				{
-					slot: "feet",
-					style: 0,
-					type: r.type,
-					fxSeed: 0,
-					quality: 1
-				}
-			],
-			setFx: "lanternwake",
-			setOn: true,
-			scale: 1.7
-		});
+	/** The character-select portrait (class-preview.ts): fitted, unstretched, and with no gear FX. */
+	preview(canvas, race, classId?: ClassId, female = true, walking = false) {
+		drawClassPreview(canvas, race, classId, female, walking);
 	}
 	/** Plain words for what killed this witch. */
 	causeOfDeath() {

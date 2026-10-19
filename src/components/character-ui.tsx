@@ -8,23 +8,30 @@ import { Empty, Meter, Tabs } from "./ui-kit";
 const MOVEMENT = new Set(["blink", "lunge", "roll", "dash", "surge"]);
 const typeClass = (t: TypeId) => `type-${t}`;
 
+/**
+ * A class portrait on the picker card. The canvas keeps its own aspect ratio (CSS never stretches it)
+ * and draws at twice its CSS size so pixel art stays crisp. Only the selected card animates.
+ */
 export function ClassCanvas({ classId, game, active, female }: { classId: ClassId; game: TurbzGame | null; active: boolean; female: boolean }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !game) return;
-    canvas.width = 120;
-    canvas.height = 110;
+    canvas.width = PREVIEW_W;
+    canvas.height = PREVIEW_H;
     let frame = 0;
     const draw = () => {
-      game.preview(canvas, CLASS_RACE[classId], classId, female);
+      game.preview(canvas, CLASS_RACE[classId], classId, female, active);
       if (active || !actorSpritesReady()) frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
   }, [classId, game, active, female]);
-  return <canvas ref={ref} width={120} height={110} className="h-20 w-full bg-ink" />;
+  return <canvas ref={ref} width={PREVIEW_W} height={PREVIEW_H} className="class-canvas" />;
 }
+/** Portrait canvas size in device pixels (shown at half: 96 x 120 CSS px). Portrait, like the body. */
+const PREVIEW_W = 192;
+const PREVIEW_H = 240;
 
 function Lines({ buffs, debuffs }: { buffs: string[]; debuffs: string[] }) {
   return (

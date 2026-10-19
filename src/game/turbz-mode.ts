@@ -1212,6 +1212,9 @@ export function installTurbz(game: any): void {
       const ny = m.y + Math.sin(ang + extra) * dist;
       if (!this.witchClear(m.x, m.y, nx, ny)) continue;
       m.facing = nx < m.x ? -1 : 1;
+      // Face the way she walks, so her sprite (and the weapon in it) turns with her.
+      const sx = nx - m.x, sy = ny - m.y;
+      m.direction = Math.abs(sx) >= Math.abs(sy) ? (sx < 0 ? "left" : "right") : (sy < 0 ? "up" : "down");
       m.x = nx;
       m.y = ny;
       m.moving = true;

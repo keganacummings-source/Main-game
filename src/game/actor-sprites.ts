@@ -88,7 +88,12 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
   ctx.translate(a.x, a.y);
   const bob = a.moving === false ? 0 : Math.sin(a.walk * Math.PI / 2) * 0.5;
   ctx.translate(0, bob);
-  if (a.attack > 0) ctx.translate(4 * a.attack, 0);
+  // The attack lunge goes the way she faces (it always went right before, even facing left).
+  if (a.attack > 0) {
+    const d = a.direction ?? "down";
+    const lx = d === "left" ? -1 : d === "right" ? 1 : 0, ly = d === "up" ? -1 : d === "down" ? 1 : 0;
+    ctx.translate(4 * a.attack * lx, 3 * a.attack * ly);
+  }
 
   const drawn = drawAtlasSprite(ctx, atlas, key, {
     dx: 0,
