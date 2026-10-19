@@ -14,7 +14,8 @@ export type GimmickView = {
 };
 
 const FORM_KINDS = new Set(["cat", "rabbit", "bossform", "phase", "flight"]);
-const AUTO_OK = new Set(["bastion", "overload", "spiritlead", "volley", "flurry", "bossform", "tether", "trail", "pyre", "pool", "cyclone", "beam", "halo", "totem", "rain", "banner", "bloodmoon", "tempo", "oath", "blades", "decree", "tearstorm", "leap", "iaido"]);
+const AUTO_OK = new Set(["bastion", "overload", "spiritlead", "volley", "flurry", "bossform", "tether", "trail", "pyre", "pool", "cyclone", "beam", "halo", "totem", "rain", "banner", "bloodmoon", "tempo", "oath", "blades", "decree", "tearstorm", "leap", "iaido", "loop", "surge", "throne", "crown", "shatter", "luminary", "hunger", "font", "cataclysm", "resonance"]);
+const CURSES = ["gloom", "burn", "soak", "expose", "spark", "leech", "root"];
 
 let catImg: HTMLImageElement | null = null;
 /** Running state for the class passives (classes.ts CLASS_PASSIVES). Reset when the class changes. */
@@ -83,7 +84,9 @@ export class Gimmicks {
   /** Rift Step: blink verses come straight back. */
   freeBlink(): boolean { return this.pas("rift_step"); }
   /** Mana Font: spell cooldowns 15% faster. */
-  spellCdMult(): number { return this.pas("mana_font") ? 0.85 : 1; }
+  spellCdMult(): number { return this.active("font") ? 0 : this.pas("mana_font") ? 0.85 : 1; }
+  /** Arcane Font halves spell mana costs while it runs. */
+  spellCostMult(): number { return this.active("font") || this.pas("mana_font") ? 0.5 : 1; }
   /** Hybrid Arrows: every verse is half physical, half magic. */
   hybrid(): boolean { return this.pas("hybrid_arrows"); }
   /** Perfect Aim: verses never miss and cannot be dodged. */
@@ -190,6 +193,44 @@ export class Gimmicks {
       for (const m of this.foes(me, 170)) { this.g.applyMobStatus(m, "sleep", 3); this.data.marked.add(m.id); }
       this.g.cfx?.nova(me.x, me.y - 10, 170, "light");
     }
+    if (id === "throne") {
+      // Six stone pillars in a ring around the aim point; each roots what it lands on.
+      this.data.at = { ...at };
+      this.data.pts = Array.from({ length: 6 }, (_, i) => ({ x: at.x + Math.cos(i * Math.PI / 3) * 52, y: at.y + Math.sin(i * Math.PI / 3) * 34 }));
+      const struck = new Set<any>();
+      for (const pt of this.data.pts) { this.g.cfx?.nova(pt.x, pt.y - 6, 30, "earth"); for (const m of this.foes(pt, 30)) struck.add(m); }
+      for (const m of this.foes(at, 52)) struck.add(m); // anything caught inside the ring is crushed too
+      for (const m of struck) { this.g.applyMobStatus(m, "root", 2); this.hit(m, 42, "earth", "root"); }
+      this.g.shake = Math.max(this.g.shake ?? 0, 6);
+    }
+    if (id === "shatter") {
+      // Freeze everything near the aim point, then shatter it. Already-frozen foes break for triple.
+      let n = 0;
+      for (const m of this.foes(at, 110)) {
+        const frozen = (m.status ?? []).some((x: any) => x.id === "root" && x.t > 0);
+        this.g.applyMobStatus(m, "root", 2);
+        this.hit(m, 40, "ice", "root", { mult: frozen ? 3 : 1.5 });
+        n++;
+      }
+      this.g.cfx?.nova(at.x, at.y - 8, 110, "ice");
+      this.say(n ? `SHATTER ×${n}` : "SHATTER", "#bfefff");
+      this.t = 0;
+    }
+    if (id === "cataclysm") {
+      // Every point of mana goes into one blast: more mana spent, wider and heavier.
+      const pools = this.g.pools;
+      const spend = pools ? Math.max(0, pools.mana) : 40 + (this.g.save.level ?? 1) * 2;
+      if (pools) { pools.mana = 0; pools.manaSlow = Math.max(pools.manaSlow ?? 0, 2); }
+      const r = Math.min(220, 60 + spend * 0.6);
+      const pw = Math.min(260, 30 + spend * 0.5);
+      for (const m of this.foes(at, r)) this.hit(m, pw, "void", "gloom");
+      this.g.cfx?.nova(at.x, at.y - 8, r, "void");
+      this.g.cfx?.nova(at.x, at.y - 8, r * 0.55, "fire");
+      this.g.shake = Math.max(this.g.shake ?? 0, 10);
+      this.say(`CATACLYSM ${Math.round(spend)} MANA`, "#ff5a4a");
+      this.t = 0;
+    }
+    if (id === "resonance") { this.data.amp = 0; this.data.resT = 0; }
     if (id === "phase") this.g.say("Wraith Veil: only ghosts can touch you now, and only ghosts can be touched.");
   }
 
@@ -326,6 +367,31 @@ export class Gimmicks {
       if (dist(me, at) < 72) save.hp = Math.min(this.g.maxHp(), save.hp + this.g.maxHp() * 0.04 * dt);
       if (every(1)) for (const m of this.foes(at, 72)) this.hit(m, 14, "water", "soak");
     }
+    if (id === "surge" && every(1)) {
+      for (const m of this.foes(me, 120)) {
+        this.hit(m, 16, "water", "soak");
+        const d = Math.max(1, dist(m, me));
+        if (!m.boss && !m.dungeonBoss) { m.x += ((m.x - me.x) / d) * 26; m.y += ((m.y - me.y) / d) * 26; }
+      }
+      this.g.cfx?.nova(me.x, me.y - 6, 120, "water");
+    }
+    if (id === "throne" && every(1)) {
+      for (const pt of this.data.pts ?? []) this.mote(pt, "#b08a5a", "earth", 3, 16);
+      for (const m of this.foes(this.data.at, 60)) this.hit(m, 14, "earth", "root");
+    }
+    if (id === "crown" && every(0.4)) {
+      const m = this.g.mobs.filter((x: any) => x.alive && dist(x, me) < 320).sort((a: any, b: any) => dist(a, me) - dist(b, me))[0];
+      if (m) { this.g.cfx?.link(me.x, me.y - 30, m.x, m.y - 14, "air"); this.hit(m, 14, "air", "none"); }
+    }
+    if (id === "hunger" && every(1)) {
+      for (const m of this.foes(me, 300)) {
+        if (!(m.status ?? []).some((x: any) => CURSES.includes(x.id) && x.t > 0)) continue;
+        const amt = Math.max(2, Math.floor(Math.min(m.max * 0.06, 40 + save.level * 6) * this.power()));
+        this.g.applyMobDamage(m, amt, false);
+        save.hp = Math.min(this.g.maxHp(), save.hp + amt * 0.5);
+        this.g.cfx?.link(m.x, m.y - 14, me.x, me.y - 16, "ghoul");
+      }
+    }
     if (id === "totem" && every(1)) for (const m of this.foes(this.data.at, 112)) this.hit(m, 16, "spirit", "gloom");
     if (id === "rain" && every(0.22)) {
       const list = this.foes(this.data.at, 84);
@@ -370,7 +436,7 @@ export class Gimmicks {
     if (this.pas("last_stand") && save.hp < max * 0.3) heal(max * 0.03 * dt);
     if (this.pas("tidal_rest") && (this.g.combat ?? 0) <= 0 && save.hp < max) heal(max * 0.05 * dt);
     if (this.pas("watchful_ward") && !p.wardUp) { p.wardT += dt; if (p.wardT >= 8) { p.wardT = 0; p.wardUp = true; this.g.float(save.x, save.y - 60, "WARD READY", "#fff1a8"); } }
-    if (this.pas("cataclysm") && p.cataT < 12) { p.cataT += dt; if (p.cataT >= 12) this.g.float(save.x, save.y - 62, "CATACLYSM READY", "#ff7a7a"); }
+    if (this.pas("cataclysm") && p.cataT < 12) { p.cataT += dt; if (p.cataT >= 12) this.g.float(save.x, save.y - 62, "RUIN READY", "#ff7a7a"); }
     if (this.pas("hunting_cat")) this.tickCat(dt); else p.cat = null;
   }
   /** Hunting Cat: a pet that trots after you and harvests nodes near you. */
@@ -435,7 +501,7 @@ export class Gimmicks {
     if (this.id === "flight") return k * 1.6 * form;
     if (this.id === "bossform") return k * 0.9;
     if (this.id === "bastion" || this.id === "flurry") return 0;
-    if (this.id === "leap" || this.id === "iaido") return 0;
+    if (this.id === "leap" || this.id === "iaido" || this.id === "throne") return 0;
     return k;
   }
   flying(): boolean { return this.active("flight"); }
@@ -470,6 +536,7 @@ export class Gimmicks {
     if (crit && classPerks(save.classId).some((p) => p.id === "arc_memory")) k *= 1.15;
     if (this.active("bossform")) k *= 2 + (this.data.boss?.level ?? 0) * 0.002;
     if (this.active("banner") && dist(save, this.data.at) < 130) k *= 1.3;
+    if (this.active("resonance") && form === "spell" && this.data.amp > 0 && !this.inGim) { k *= 1.4; this.data.amp--; }
     if (this.active("decree") && this.data.marked?.has(mob.id)) k *= 1.3;
     if (this.pounce > 0 && !this.inGim) { k *= 2; this.pounce = 0; this.g.float(mob.x, mob.y - 52, "CAT STRIKE ×2", "#c9a6ff"); }
     return k;
@@ -497,7 +564,7 @@ export class Gimmicks {
     }
     if (this.pas("soul_harvest")) k *= 1 + 0.08 * p.soulN;
     if (this.pas("rising_tide") && form === "spell" && has("soak")) k *= 1.25;
-    if (this.pas("cataclysm") && form === "spell" && p.cataT >= 12) { k *= 3; p.cataT = 0; this.g.float(mob.x, mob.y - 62, "CATACLYSM", "#ff5a4a"); this.g.shake = Math.max(this.g.shake ?? 0, 7); }
+    if (this.pas("cataclysm") && form === "spell" && p.cataT >= 12) { k *= 3; p.cataT = 0; this.g.float(mob.x, mob.y - 62, "RUIN ×3", "#ff5a4a"); this.g.shake = Math.max(this.g.shake ?? 0, 7); }
     return k;
   }
   onHit(mob: any, dmg: number, crit: boolean, form?: string, fromPet = false, moveId?: string) {
@@ -513,10 +580,30 @@ export class Gimmicks {
     if (roll(this.hook("kyoOnHit"))) { const n = 1 + Math.floor(Math.random() * 3); save.kyo = (save.kyo ?? 0) + n; this.g.float(mob.x, mob.y - 58, `+${n} kyo`, "#e6c15a"); }
     if (this.active("bloodmoon")) save.hp = Math.min(this.g.maxHp(), save.hp + dmg * 0.4);
     if (this.inGim) return;
+    if (!fromPet && form === "spell" && this.t > 0) this.spellGimmickHit(mob, dmg);
     if (roll(this.hookFor("echoHit", form))) this.g.later(0.14, () => { if (mob.alive) this.g.applyMobDamage(mob, Math.max(1, Math.floor(dmg * 0.5)), false); });
     if (this.active("overload")) {
       const near = this.foes(mob, 140).filter((m: any) => m !== mob).slice(0, 2);
       for (const m of near) { this.g.cfx?.link(mob.x, mob.y - 14, m.x, m.y - 14, "electric"); this.g.applyMobDamage(m, Math.max(1, Math.floor(dmg * 0.45 * this.power())), false); }
+    }
+  }
+  /** Caster gimmicks that ride on every spell you land. */
+  spellGimmickHit(mob: any, dmg: number) {
+    const id = this.id;
+    if (id === "loop") {
+      // A second burn ring: 30% of the hit again over 3 seconds. Stacks with itself.
+      if (mob.alive) this.g.applyMobStatus(mob, "burn", 3);
+      const per = Math.max(1, Math.floor(dmg * 0.1 * this.power()));
+      for (let i = 1; i <= 3; i++) this.g.later?.(i, () => { if (mob.alive) this.g.applyMobDamage(mob, per, false); });
+    }
+    if (id === "luminary") this.g.later?.(0.12, () => { if (mob.alive) { this.g.cfx?.nova(mob.x, mob.y - 14, 18, "light"); this.g.applyMobDamage(mob, Math.max(1, Math.floor(dmg * 0.6 * this.power())), false); } });
+    if (id === "font") { const p = this.g.pools; if (p) p.mana = Math.min(p.maxMana, p.mana + 15); }
+    if (id === "resonance" && (this.data.resT ?? 0) <= this.tick0) {
+      this.data.resT = this.tick0 + 0.5;
+      const cds = this.g.cds ?? {};
+      const top = Object.keys(cds).filter((k) => cds[k] > 0).sort((a, b) => cds[b] - cds[a]).slice(0, 2);
+      for (const k of top) cds[k] = 0;
+      if (top.length) { this.data.amp = 2; this.say("RESONANCE", "#c9a6ff"); }
     }
   }
   /** What a landed hit does for the class passives (procs, heals, stacks). Never re-enters onHit. */
@@ -592,6 +679,7 @@ export class Gimmicks {
         if (a?.alive) this.g.applyMobDamage(a, Math.max(1, Math.floor(amount * 0.5)), false);
       }
       if (this.id === "bossform") k *= 0.5;
+      if (this.id === "throne") k *= 0.7;
       if (this.id === "banner" && dist(save, this.data.at) < 130) k *= 0.75;
       if (this.id === "oath") { this.data.stored += amount; k *= 0.5; }
       if (this.id === "halo") { k *= 0.5; save.hp = Math.min(this.g.maxHp(), save.hp + amount * 0.5); }

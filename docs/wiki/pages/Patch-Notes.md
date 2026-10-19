@@ -10,6 +10,23 @@
   - **Ronin, Iaijutsu:** your first hit on each foe is always a critical hit.
   - **Dreadknight, Grave Bargain:** survive a killing blow once every 90 s and heal 30% over 3 s.
   - The **Spirit Caller** keeps its six spirits.
+- **The ten caster classes are finished.** Embermage, Tidewitch, Stonecaller, Stormwitch, Frostweaver, Radiant, Gravemage, Arcanist, Ruinmage and Veilsinger had no class perks, and their gimmick (R) did nothing. Each now has two class perks and a working gimmick:
+  - **Immolation Loop:** every spell adds a second burn ring.
+  - **Tidal Surge:** waves push foes back and soak them.
+  - **Earthen Throne:** a ring of roots, and you are planted with 30% less damage taken.
+  - **Storm Crown:** auto-firing air bolts.
+  - **Shatter:** frozen foes break for triple damage.
+  - **Luminary:** every spell hits twice.
+  - **Grave Hunger:** cursed foes are drained and you heal.
+  - **Arcane Font:** no spell cooldowns, half mana cost, and mana back on every hit.
+  - **Cataclysm:** all your mana goes into one blast.
+  - **Resonant Verse:** your two longest cooldowns reset, and your next spells hit 40% harder.
+- **Every class retuned** so its numbers match what it claims to be:
+  - **Ruinmage:** the most Arcana in the veil (+60%) and the smallest health pool (−40%).
+  - **Arcanist:** the second-most Arcana.
+  - **Bulwark:** the most Guard. **Vanguard:** the most health. **Bloodrager:** the most Might. **Nightblade:** the most crit. **Ironpalm:** the most Haste. **Outrider:** the most speed.
+  - Drawbacks sit where each class's identity says they should.
+  - The Ruinmage's and Veilsinger's passives are renamed **Gathering Ruin** and **Harmonics**, so they no longer share names with their gimmicks.
 - **Crying Girl builder:** she now borrows up to **2 passives from other classes**, picked from a new Borrowed Passives grid in her builder.
 - **Trophy Skins (Bloodrager R) reworked:** twice your size, double health, double damage, half damage taken, while it lasts.
 - **Character select:** class portraits are larger, no longer squished, and show the plain class with no gear FX. Each class lists its passive and its gimmick.

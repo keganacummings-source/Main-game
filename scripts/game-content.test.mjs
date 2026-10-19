@@ -721,3 +721,21 @@ test("every class but the Crying Girl has exactly one unique passive; she borrow
   assert.equal(classSpiritOut("warden"), 3);
   assert.ok(CLASS_PASSIVE_BY_ID.choir_six);
 });
+
+test("every class has two real class perks and a real gimmick (R)", () => {
+  const { CLASSES, classPerks, classGimmick } = classesMod;
+  for (const c of CLASSES) {
+    assert.ok(classGimmick(c.id), `${c.id} gimmick "${c.gimmick}" is defined`);
+    if (c.id === "cryinggirl") continue;
+    assert.equal(classPerks(c.id).length, 2, `${c.id} perks ${c.perks} are all defined`);
+  }
+});
+
+test("class stats match what each class claims to be best at", () => {
+  const list = classesMod.CLASSES.filter((c) => c.id !== "cryinggirl");
+  const lead = (k, dir = 1) => [...list].sort((a, b) => dir * ((b.stats[k] ?? 0) - (a.stats[k] ?? 0)))[0].id;
+  assert.equal(lead("arcana"), "ruinmage", "Ruinmage: strongest magic");
+  assert.equal(lead("hp", -1), "ruinmage", "Ruinmage: weakest health pool");
+  const claims = { guard: "warden", crit: "nightblade", haste: "ironpalm", might: "bloodrager", leech: "ghoulknight", hp: "frostblade", regen: "tidecaller", speed: "stormrider", kyo: "coinmaster", xp: "songweaver" };
+  for (const [k, id] of Object.entries(claims)) assert.equal(lead(k), id, `${id} leads ${k}`);
+});
