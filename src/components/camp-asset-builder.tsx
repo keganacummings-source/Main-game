@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { Tile } from "./ui-kit";
+import { useEffect, useRef, useState, type ChangeEvent, type PointerEvent as RPointerEvent } from "react";
 
 const CATEGORIES = [
   "walls", "floors", "chest", "ghostbox", "campfire", "doors", "beds",
@@ -11,7 +10,7 @@ type Asset = {
   id: string;
   name: string;
   category: Category;
-  pixels: string; // base64 or dataURL of 32x32 or 16x16 canvas
+  pixels: string; // PNG data URL of the 16x16 or 32x32 canvas (transparent where unpainted)
   size: 16 | 32;
   created: number;
 };
@@ -37,18 +36,17 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
   const [color, setColor] = useState("#6b3e26");
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [drawing, setDrawing] = useState(false);
+  const [erase, setErase] = useState(false);
 
+  // Resizing the canvas clears it. Unpainted pixels stay transparent so pieces can sit on any floor.
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
     c.width = size;
     c.height = size;
-    const ctx = c.getContext("2d")!;
-    ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, size, size);
   }, [size]);
 
-  function getPos(e: React.MouseEvent) {
+  function getPos(e: RPointerEvent) {
     const c = canvasRef.current!;
     const r = c.getBoundingClientRect();
     const x = Math.floor(((e.clientX - r.left) / r.width) * size);
@@ -60,16 +58,19 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
     const c = canvasRef.current;
     if (!c) return;
     const ctx = c.getContext("2d")!;
+    if (erase) { ctx.clearRect(x, y, 1, 1); return; }
     ctx.fillStyle = color;
     ctx.fillRect(x, y, 1, 1);
   }
 
-  function onDown(e: React.MouseEvent) {
+  function onDown(e: RPointerEvent) {
+    // Pointer events cover mouse, pen and touch; capture keeps the stroke going if the finger slides off.
+    try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch { /* not capturable */ }
     setDrawing(true);
     const p = getPos(e);
     paint(p.x, p.y);
   }
-  function onMove(e: React.MouseEvent) {
+  function onMove(e: RPointerEvent) {
     if (!drawing) return;
     const p = getPos(e);
     paint(p.x, p.y);
@@ -101,7 +102,13 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
     a.click();
   }
 
-  function importJSON(e: React.ChangeEvent<HTMLInputElement>) {
+  function removeAsset(id: string) {
+    const next = assets.filter((a) => a.id !== id);
+    setAssets(next);
+    savePack(next);
+  }
+
+  function importJSON(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -109,20 +116,20 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
       try {
         const parsed = JSON.parse(String(reader.result));
         if (Array.isArray(parsed)) {
-          setAssets(parsed);
-          savePack(parsed);
+          const ok = parsed.filter((a): a is Asset => !!a && typeof a.id === "string" && typeof a.pixels === "string" && CATEGORIES.includes(a.category));
+          setAssets(ok);
+          savePack(ok);
         }
       } catch { /* bad file */ }
     };
     reader.readAsText(file);
+    e.target.value = ""; // so importing the same file twice still fires
   }
 
   function clearCanvas() {
     const c = canvasRef.current;
     if (!c) return;
-    const ctx = c.getContext("2d")!;
-    ctx.fillStyle = "#1a1a1a";
-    ctx.fillRect(0, 0, size, size);
+    c.getContext("2d")!.clearRect(0, 0, size, size);
   }
 
   const filtered = assets.filter((a) => a.category === category);
@@ -160,6 +167,8 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
             <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
           </label>
           <br /><br />
+          <button type="button" className="px-btn" onClick={() => setErase((v) => !v)}>{erase ? "Eraser: ON" : "Eraser: off"}</button>
+          <br />
           <button type="button" className="px-btn" onClick={clearCanvas}>Clear canvas</button>
           <br />
           <button type="button" className="px-btn" onClick={saveAsset}>Save piece</button>
@@ -177,13 +186,13 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
             ref={canvasRef}
             width={size}
             height={size}
-            style={{ width: 256, height: 256, imageRendering: "pixelated", border: "2px solid #666", background: "#111", cursor: "crosshair" }}
-            onMouseDown={onDown}
-            onMouseMove={onMove}
-            onMouseUp={onUp}
-            onMouseLeave={onUp}
+            style={{ width: 256, height: 256, imageRendering: "pixelated", border: "2px solid #666", background: "repeating-conic-gradient(#2a2a2a 0% 25%, #3a3a3a 0% 50%) 0 0 / 32px 32px", cursor: "crosshair", touchAction: "none" }}
+            onPointerDown={onDown}
+            onPointerMove={onMove}
+            onPointerUp={onUp}
+            onPointerCancel={onUp}
           />
-          <p style={{ fontSize: 12, opacity: 0.7 }}>Click/drag to paint. Saved pieces appear below.</p>
+          <p style={{ fontSize: 12, opacity: 0.7 }}>Click, drag or touch to paint. Saved pieces appear below.</p>
         </div>
 
         <div style={{ flex: 1, minWidth: 200 }}>
@@ -193,6 +202,7 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
               <div key={a.id} style={{ textAlign: "center", fontSize: 11 }}>
                 <img src={a.pixels} alt={a.name} style={{ width: 64, height: 64, imageRendering: "pixelated", border: "1px solid #444" }} />
                 <div>{a.name}</div>
+                <button type="button" className="px-btn" onClick={() => removeAsset(a.id)}>Delete</button>
               </div>
             ))}
             {!filtered.length && <em>None yet</em>}

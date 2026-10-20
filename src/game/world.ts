@@ -648,6 +648,11 @@ type TerrainWindow = {
 // One bounded window per world; abandoned worlds and their canvases can be collected.
 const terrainWindows = new WeakMap<WorldData, TerrainWindow>();
 
+/** Forget the cached terrain bitmap for a world. Call after changing its tiles in place (camp clearing). */
+export function invalidateTerrain(world: WorldData): void {
+  terrainWindows.delete(world);
+}
+
 /** Reuse static terrain until the camera approaches its edge or new art loads. */
 export function drawWorldSlice(
   ctx: CanvasRenderingContext2D,

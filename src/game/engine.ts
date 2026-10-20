@@ -233,6 +233,7 @@ import {
   reachableFrom,
   type Tavern,
   type WorldData,
+  invalidateTerrain,
 } from "./world";
 
 export type DeathReport = {
@@ -2526,41 +2527,94 @@ export class TurbzGame {
 		if (this.dormant) this.dormant = this.dormant.filter((d) => !inside(d.x, d.y));
 	}
 
+	/** Tiles and spawns removed by camp clearing, per world, so a new life can put the land back. */
+	campUndo: WeakMap<object, { tiles: Map<number, any>; spawns: any[]; stash: any[] }> = new WeakMap();
+	campUndoFor(world) {
+		let u = this.campUndo.get(world);
+		if (!u) { u = { tiles: new Map(), spawns: [], stash: [] }; this.campUndo.set(world, u); }
+		return u;
+	}
+	/** True when a point (pixels) lies inside a cleared camp rect of the given map. */
+	inCampGround(map: string, x: number, y: number) {
+		const rects = this.save?.campGround?.[map];
+		if (!rects?.length) return false;
+		const tx = Math.floor(x / 32), ty = Math.floor(y / 32);
+		for (const r of rects) if (tx >= r[0] && tx <= r[2] && ty >= r[1] && ty <= r[3]) return true;
+		return false;
+	}
+	/** Drop gathering nodes and non-boss mob spawns that sit inside a cleared camp zone (and stop them regrowing there). */
+	stripCampSpawns(map: string) {
+		if (!this.world?.spawns) return;
+		const u = this.campUndoFor(this.world);
+		this.world.spawns = this.world.spawns.filter((s) => {
+			if (s.boss || s.dungeonBoss) return true;
+			if (!this.inCampGround(map, s.x, s.y)) return true;
+			if (!u.spawns.some((o) => o.id === s.id)) u.spawns.push(s);
+			return false;
+		});
+		if (this.nodeStash?.length) {
+			this.nodeStash = this.nodeStash.filter((e) => {
+				if (e.world !== this.world || !this.inCampGround(map, e.node.x, e.node.y)) return true;
+				if (!u.stash.some((o) => o.id === e.node.id) && !u.spawns.some((o) => o.id === e.node.id)) u.stash.push(e.node);
+				return false;
+			});
+		}
+	}
 	/** Reapply all stored camp ground clears for the current map: grass tiles + strip nodes/spawns. */
 	applyCampGround(map: string) {
 		const save = this.save;
 		if (!save?.campGround?.[map] || !this.world) return;
 		const rects = save.campGround[map];
 		const w = this.world.w;
+		const h = this.world.h;
 		const tiles = this.world.tiles;
-		const GRASS = 0; // FL.grass
+		const u = this.campUndoFor(this.world);
+		const GRASS = 0; // floor id 0 is grass
+		let changed = false;
 		for (const rect of rects) {
 			const [tx0, ty0, tx1, ty1] = rect;
-			for (let ty = ty0; ty <= ty1; ty++) {
-				for (let tx = tx0; tx <= tx1; tx++) {
-					if (tx < 0 || ty < 0 || tx >= w || ty >= this.world.h) continue;
+			for (let ty = Math.max(0, ty0); ty <= Math.min(h - 1, ty1); ty++) {
+				for (let tx = Math.max(0, tx0); tx <= Math.min(w - 1, tx1); tx++) {
 					const i = ty * w + tx;
 					const t = tiles[i];
 					if (!t) continue;
+					// Already grass from an earlier pass (or this pass): nothing to do.
+					if (u.tiles.has(i) && t.floor === GRASS && !t.block && !t.decor && !t.layers) continue;
+					if (!u.tiles.has(i)) u.tiles.set(i, { ...t, layers: t.layers ? [...t.layers] : undefined });
+					const hadArt = !!t.sprite;
 					t.floor = GRASS;
 					t.block = 0;
 					t.decor = 0;
-					delete t.sprite;
 					delete t.layers;
+					// Map-file worlds paint tiles from art, so give them real grass art instead of a flat fill.
+					if (hadArt) t.sprite = `/MapAssets/01_Floor_and_Ground_Tiles/grass_${(tx * 7 + ty * 13) % 3}_new.png`;
+					else delete t.sprite;
+					changed = true;
 				}
 			}
 		}
-		// Strip nodes and non-boss mob spawns that fall inside any cleared rect.
-		this.world.spawns = this.world.spawns.filter((s) => {
-			if (s.boss || s.dungeonBoss) return true;
-			const tx = Math.floor(s.x / 32);
-			const ty = Math.floor(s.y / 32);
-			for (const rect of rects) {
-				if (tx >= rect[0] && tx <= rect[2] && ty >= rect[1] && ty <= rect[3]) return false;
-			}
-			return true;
-		});
+		this.stripCampSpawns(map);
 		this.world.cache = null;
+		if (changed) {
+			// The terrain bitmap and the minimap are cached by world, so tell them the tiles changed in place.
+			invalidateTerrain(this.world);
+			this.mapImg = null;
+		}
+	}
+	/** New life / new run: put back the land the camps cleared (tiles, nodes and spawns). */
+	restoreCampGround() {
+		for (const world of [this.world, this.overworld]) {
+			if (!world) continue;
+			const u = this.campUndo.get(world);
+			if (!u) continue;
+			for (const [i, t] of u.tiles) if (world.tiles[i]) world.tiles[i] = t;
+			for (const s of u.spawns) if (!world.spawns.some((o) => o.id === s.id)) world.spawns.push(s);
+			for (const n of u.stash) if (!world.spawns.some((o) => o.id === n.id)) world.spawns.push(n);
+			this.campUndo.delete(world);
+			world.cache = null;
+			invalidateTerrain(world);
+		}
+		this.mapImg = null;
 	}
 
 	// ---------- TURBZ storage chest (contents persist across death) ----------
@@ -3809,6 +3863,7 @@ export class TurbzGame {
 			e.world.spawns.push(e.node);
 			n += 1;
 		}
+		if (n && this.world) this.stripCampSpawns(save.map);
 		const had = Object.values(save.nodesTaken ?? {}).some((l) => l?.length);
 		this.nodeStash = [];
 		save.nodesTaken = {};
@@ -6851,7 +6906,7 @@ export class TurbzGame {
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
-		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; save.campGround = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; save.wildGhosts = []; this.wildOpen = null; }
+		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.restoreCampGround(); save.campGround = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; save.wildGhosts = []; this.wildOpen = null; }
 		save.kyo = Math.floor(save.kyo * .85);
 		save.bag = {
 			potion: 2,
