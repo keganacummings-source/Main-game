@@ -1,5 +1,20 @@
 # Patch Notes
 
+## New looks for the ten casters
+
+The ten caster classes were recolours of older classes. Each now has an original design, with its own silhouette in every facing:
+
+- **Embermage:** flame hair and a fire orb.
+- **Tidewitch:** a fin crest and a trident.
+- **Stonecaller:** stone pauldrons, a gem circlet and orbiting boulders.
+- **Stormwitch:** a storm-swept crest with a lightning streak, a streaming scarf and a crescent rod.
+- **Frostweaver:** an ice-shard tiara, a fur collar and a floating crystal.
+- **Radiant:** a great sun disc and a sun sceptre.
+- **Gravemage:** a pointed hood, a skull mask and a scythe.
+- **Arcanist:** a scholar's cap, spectacles and a floating tome.
+- **Ruinmage:** a horned cowl, burning eyes, a tattered hem and a void orb.
+- **Veilsinger:** a sheer veil, a moon-flower and a lyre.
+
 ## Economy rebalance, Quest Board revamp, Black Market and Bag
 
 - **Economy rebalanced.** Money came in far too fast, mostly from selling armor.

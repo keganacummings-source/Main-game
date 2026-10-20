@@ -1,4 +1,6 @@
 """
+SUPERSEDED by caster-designs.py (original designs, not recolours). Kept for reference.
+
 Builds the ten caster classes' own sprites on public/sprites/class_warriors.png.
 
 Each caster used to borrow another class's sprite (Embermage drew as the Channeler, and so on). This
