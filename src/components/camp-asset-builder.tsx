@@ -7,7 +7,40 @@ import {
 
 type Tool = "pen" | "erase" | "fill" | "pick";
 const SHOW = 320; // on-screen size of the editing canvas, in CSS pixels
-const SWATCHES = ["#000000", "#ffffff", "#6b3e26", "#9a6a3c", "#4f9a45", "#2d5a2a", "#6e6258", "#3a322c", "#2a78b0", "#7ec8ff", "#c56a3c", "#ff4d2e", "#ffc45b", "#e8dcc4", "#7d62c8", "#d2486e"];
+/** A ready-made palette, grouped so it is quick to find a colour: greens, earth, stone, water, fire, magic, light/dark. */
+const PALETTE: { name: string; colors: string[] }[] = [
+  { name: "Greens", colors: ["#1f3d1c", "#2d5a2a", "#4f9a45", "#7cc35a", "#a8dc7a", "#d4f0a0"] },
+  { name: "Earth", colors: ["#2b1a0e", "#4a2e1a", "#6b3e26", "#9a6a3c", "#c79a5e", "#e4c48e"] },
+  { name: "Stone", colors: ["#141214", "#2a2226", "#3d3338", "#6e6258", "#a08478", "#cfc3b4"] },
+  { name: "Water", colors: ["#0c2a4a", "#14507e", "#2a78b0", "#4ea4d8", "#7ec8ff", "#cdeeff"] },
+  { name: "Fire", colors: ["#4a0f0a", "#8a1c10", "#c8341c", "#ff4d2e", "#ff8a2e", "#ffc45b"] },
+  { name: "Magic", colors: ["#2a1648", "#4c3a6e", "#7d62c8", "#a98af0", "#d2486e", "#ff9ac0"] },
+  { name: "Light & dark", colors: ["#000000", "#26211e", "#7a726a", "#bdb5a8", "#e8dcc4", "#ffffff"] },
+];
+const ALL_PALETTE = new Set(PALETTE.flatMap((g) => g.colors));
+const COLORS_KEY = "turbz-asset-colors-v1";
+const GRID_KEY = "turbz-asset-grid-v1";
+const GRID_N = 6;
+const MAX_CUSTOM = 36;
+
+function loadColors(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(COLORS_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((c): c is string => typeof c === "string" && /^#[0-9a-f]{6}$/i.test(c)).slice(0, MAX_CUSTOM) : [];
+  } catch { return []; }
+}
+function saveColors(list: string[]) { try { localStorage.setItem(COLORS_KEY, JSON.stringify(list)); } catch { /* private mode */ } }
+function loadGrid(): (string | null)[] {
+  const blank = Array<string | null>(GRID_N * GRID_N).fill(null);
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRID_KEY) ?? "null");
+    if (!Array.isArray(raw)) return blank;
+    return blank.map((_, i) => (typeof raw[i] === "string" ? raw[i] : null));
+  } catch { return blank; }
+}
+function saveGrid(g: (string | null)[]) { try { localStorage.setItem(GRID_KEY, JSON.stringify(g)); } catch { /* storage full: the grid is a scratchpad */ } }
+
+const CANVAS_BRUSH = "__canvas";
 const CHECKER = "repeating-conic-gradient(#2a2a2a 0% 25%, #3a3a3a 0% 50%) 0 0 / 32px 32px";
 
 function hexToRgba(hex: string): [number, number, number, number] {
@@ -40,6 +73,15 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
   const [pickFolder, setPickFolder] = useState("");
   const [note, setNote] = useState("");
   const [preview, setPreview] = useState("");
+  const [mirrorX, setMirrorX] = useState(false);
+  const [mirrorY, setMirrorY] = useState(false);
+  const [custom, setCustom] = useState<string[]>(loadColors);
+  const [grid, setGrid] = useState<(string | null)[]>(loadGrid);
+  const [brush, setBrush] = useState<string | null>(null);
+  const [gridErase, setGridErase] = useState(false);
+  const [gridLines, setGridLines] = useState(true);
+  const [libFilter, setLibFilter] = useState<"tile" | "camp" | "all">("tile");
+  const lastPt = useRef<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const undo = useRef<ImageData[]>([]);
@@ -77,6 +119,30 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
     return { x: Math.max(0, Math.min(size - 1, x)), y: Math.max(0, Math.min(size - 1, y)) };
   }
 
+  /** Remember a colour you used so it is one click away next time. Palette colours are not duplicated. */
+  function rememberColor(hex: string) {
+    const c = hex.toLowerCase();
+    if (ALL_PALETTE.has(c)) return;
+    setCustom((prev) => {
+      const next = [c, ...prev.filter((x) => x !== c)].slice(0, MAX_CUSTOM);
+      saveColors(next);
+      return next;
+    });
+  }
+  function chooseColor(hex: string) {
+    setColor(hex);
+    if (tool === "erase" || tool === "pick") setTool("pen");
+  }
+
+  /** The point plus its mirror images, without repeats. */
+  function mirrored(x: number, y: number) {
+    const pts = [{ x, y }];
+    if (mirrorX) pts.push({ x: size - 1 - x, y });
+    if (mirrorY) pts.push({ x, y: size - 1 - y });
+    if (mirrorX && mirrorY) pts.push({ x: size - 1 - x, y: size - 1 - y });
+    return pts.filter((p, i) => pts.findIndex((q) => q.x === p.x && q.y === p.y) === i);
+  }
+
   function floodFill(sx: number, sy: number) {
     const g = ctx2d();
     const img = g.getImageData(0, 0, size, size);
@@ -98,35 +164,76 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
     g.putImageData(img, 0, 0);
   }
 
-  function apply(x: number, y: number, first: boolean) {
+  function dot(x: number, y: number) {
     const g = ctx2d();
-    if (tool === "pick") {
-      const p = g.getImageData(x, y, 1, 1).data;
-      if (p[3]) setColor(rgbToHex(p[0]!, p[1]!, p[2]!));
-      setTool("pen");
-      return;
+    for (const p of mirrored(x, y)) {
+      if (tool === "erase") g.clearRect(p.x, p.y, 1, 1);
+      else { g.fillStyle = color; g.fillRect(p.x, p.y, 1, 1); }
     }
-    if (tool === "fill") { if (first) { snapshot(); floodFill(x, y); refreshPreview(); } return; }
-    if (tool === "erase") g.clearRect(x, y, 1, 1);
-    else { g.fillStyle = color; g.fillRect(x, y, 1, 1); }
+  }
+  /** A straight run of pixels between two points, so a fast drag leaves no gaps. */
+  function line(x0: number, y0: number, x1: number, y1: number) {
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy, x = x0, y = y0;
+    for (let guard = 0; guard < 400; guard++) {
+      dot(x, y);
+      if (x === x1 && y === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x += sx; }
+      if (e2 < dx) { err += dx; y += sy; }
+    }
   }
 
   function onDown(e: RPointerEvent) {
     try { (e.target as HTMLElement).setPointerCapture(e.pointerId); } catch { /* not capturable */ }
     const p = getPos(e);
-    if (tool === "pen" || tool === "erase") snapshot();
-    drawing.current = tool === "pen" || tool === "erase";
-    apply(p.x, p.y, true);
-    if (!drawing.current) return;
+    if (tool === "pick") {
+      const px = ctx2d().getImageData(p.x, p.y, 1, 1).data;
+      if (px[3]) { const hex = rgbToHex(px[0]!, px[1]!, px[2]!); setColor(hex); rememberColor(hex); }
+      setTool("pen");
+      return;
+    }
+    snapshot();
+    if (tool === "fill") {
+      for (const q of mirrored(p.x, p.y)) floodFill(q.x, q.y);
+      rememberColor(color);
+      refreshPreview();
+      return;
+    }
+    if (tool === "pen") rememberColor(color);
+    drawing.current = true;
+    lastPt.current = p;
+    dot(p.x, p.y);
     refreshPreview();
   }
   function onMove(e: RPointerEvent) {
     if (!drawing.current) return;
     const p = getPos(e);
-    apply(p.x, p.y, false);
+    const l = lastPt.current ?? p;
+    if (l.x !== p.x || l.y !== p.y) { line(l.x, l.y, p.x, p.y); lastPt.current = p; refreshPreview(); }
+  }
+  function onUp() { drawing.current = false; lastPt.current = null; }
+
+  /** Flip or turn the whole piece. */
+  function transform(kind: "flipH" | "flipV" | "rotate") {
+    const c = canvasRef.current;
+    if (!c) return;
+    snapshot();
+    const copy = document.createElement("canvas");
+    copy.width = size; copy.height = size;
+    copy.getContext("2d")!.drawImage(c, 0, 0);
+    const g = ctx2d();
+    g.clearRect(0, 0, size, size);
+    g.save();
+    g.imageSmoothingEnabled = false;
+    if (kind === "flipH") { g.translate(size, 0); g.scale(-1, 1); }
+    else if (kind === "flipV") { g.translate(0, size); g.scale(1, -1); }
+    else { g.translate(size, 0); g.rotate(Math.PI / 2); }
+    g.drawImage(copy, 0, 0);
+    g.restore();
     refreshPreview();
   }
-  function onUp() { drawing.current = false; }
 
   function clearCanvas() { snapshot(); ctx2d().clearRect(0, 0, size, size); refreshPreview(); }
 
@@ -233,7 +340,7 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
         const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.assets) ? parsed.assets : null;
         if (!list) { setNote("That file is not an asset pack."); return; }
         const ok: Asset[] = list.filter(validAsset);
-        const byId = new Map(assets.map((a) => [a.id, a] as const));
+        const byId = new Map<string, Asset>(assets.map((a): [string, Asset] => [a.id, a]));
         for (const a of ok) byId.set(a.id, a);
         const next: Asset[] = Array.from(byId.values()) as Asset[];
         setAssets(next);
@@ -245,9 +352,74 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
     reader.readAsText(file);
   }
 
-  const shown = assets.filter((a) => groupOf(a) === group);
+  const byId = new Map<string, Asset>(assets.map((a): [string, Asset] => [a.id, a]));
+  /** What a grid cell shows: a saved piece (follows later edits) or a snapshot of the canvas. */
+  function cellSrc(v: string | null): string | null {
+    if (!v) return null;
+    if (v.startsWith("data:")) return v;
+    return byId.get(v)?.pixels ?? null;
+  }
+  function placeCell(i: number) {
+    const next = grid.slice();
+    if (gridErase) next[i] = null;
+    else if (brush === CANVAS_BRUSH) next[i] = preview || null;
+    else if (brush && byId.has(brush)) next[i] = brush;
+    else { setNote("Pick a tile from the list first (or choose Current canvas)."); return; }
+    setGrid(next);
+    saveGrid(next);
+  }
+  function setAllCells(v: string | null) {
+    const next = Array<string | null>(GRID_N * GRID_N).fill(v);
+    setGrid(next);
+    saveGrid(next);
+  }
+  function fillGrid() {
+    if (brush === CANVAS_BRUSH) return setAllCells(preview || null);
+    if (brush && byId.has(brush)) return setAllCells(brush);
+    setNote("Pick a tile from the list first.");
+  }
+  async function exportGridPng() {
+    const cell = 32;
+    const out = document.createElement("canvas");
+    out.width = GRID_N * cell; out.height = GRID_N * cell;
+    const g = out.getContext("2d")!;
+    g.imageSmoothingEnabled = false;
+    await Promise.all(grid.map((v, i) => new Promise<void>((done) => {
+      const src = cellSrc(v);
+      if (!src) return done();
+      const img = new Image();
+      img.onload = () => { g.drawImage(img, (i % GRID_N) * cell, Math.floor(i / GRID_N) * cell, cell, cell); done(); };
+      img.onerror = () => done();
+      img.src = src;
+    })));
+    download("tile-test-grid.png", out.toDataURL("image/png"));
+  }
+
+  // Keyboard: B pen, E eraser, G fill, I pick, H / V mirror, Ctrl+Z undo. Ignored while typing in a field.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); undoLast(); return; }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "b") setTool("pen");
+      else if (k === "e") setTool("erase");
+      else if (k === "g") setTool("fill");
+      else if (k === "i") setTool("pick");
+      else if (k === "h") setMirrorX((v) => !v);
+      else if (k === "v") setMirrorY((v) => !v);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const library = assets.filter((a) => libFilter === "all" || groupOf(a) === libFilter);
   const cats: { id: string; label: string }[] = group === "tile" ? TILE_CATEGORIES.map((c) => ({ id: c.id, label: c.label })) : CAMP_CATEGORIES.map((c) => ({ id: c, label: c }));
   const tileUrl = preview ? `url(${preview})` : "none";
+  const on = (v: boolean) => (v ? { outline: "3px solid #ffc45b" } : undefined);
+  const brushAsset = brush && brush !== CANVAS_BRUSH ? byId.get(brush) ?? null : null;
+  const cellPx = 48;
 
   return (
     <div className="designer-screen">
@@ -260,11 +432,12 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
       </header>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "0 16px" }}>
-        <button type="button" className="px-btn" onClick={() => pickGroup("tile")} style={group === "tile" ? { outline: "3px solid #ffc45b" } : undefined}>Map tiles</button>
-        <button type="button" className="px-btn" onClick={() => pickGroup("camp")} style={group === "camp" ? { outline: "3px solid #ffc45b" } : undefined}>Camp pieces</button>
+        <button type="button" className="px-btn" onClick={() => pickGroup("tile")} style={on(group === "tile")}>Map tiles</button>
+        <button type="button" className="px-btn" onClick={() => pickGroup("camp")} style={on(group === "camp")}>Camp pieces</button>
       </div>
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: 16 }}>
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: 16, alignItems: "flex-start" }}>
+        {/* ---- Left: settings ---- */}
         <div style={{ display: "grid", gap: 8, minWidth: 220, maxWidth: 300 }}>
           <label>Kind
             <select value={category} onChange={(e) => { setCategory(e.target.value); setPickFolder(""); }}>
@@ -307,45 +480,79 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
             </>
           )}
 
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {(["pen", "erase", "fill", "pick"] as Tool[]).map((t) => (
-              <button key={t} type="button" className="px-btn" onClick={() => setTool(t)} style={tool === t ? { outline: "3px solid #ffc45b" } : undefined}>
-                {t === "pen" ? "Pen" : t === "erase" ? "Eraser" : t === "fill" ? "Fill" : "Pick colour"}
-              </button>
-            ))}
-          </div>
-          <label>Colour
-            <input type="color" value={color} onChange={(e) => { setColor(e.target.value); if (tool === "erase" || tool === "pick") setTool("pen"); }} />
-          </label>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-            {SWATCHES.map((s) => (
-              <button key={s} type="button" aria-label={s} onClick={() => { setColor(s); if (tool === "erase" || tool === "pick") setTool("pen"); }} style={{ width: 24, height: 24, background: s, border: s === color ? "3px solid #ffc45b" : "2px solid #666", padding: 0, cursor: "pointer" }} />
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button type="button" className="px-btn" onClick={undoLast}>Undo</button>
-            <button type="button" className="px-btn" onClick={clearCanvas}>Clear</button>
-            <button type="button" className="px-btn" onClick={newPiece}>New piece</button>
-          </div>
           <button type="button" className="px-btn" onClick={saveAsset}>{editingId ? "Update piece" : "Save piece"}</button>
+          <button type="button" className="px-btn" onClick={newPiece}>New piece</button>
           <button type="button" className="px-btn" onClick={() => preview && download(`${(name.trim() || "piece").replace(/\W+/g, "_")}.png`, preview)}>Download this as PNG</button>
           {note && <p style={{ fontSize: 12, color: "#ffc45b" }}>{note}</p>}
         </div>
 
-        <div>
-          <canvas
-            ref={canvasRef}
-            width={size}
-            height={size}
-            style={{ width: SHOW, height: SHOW, imageRendering: "pixelated", border: "2px solid #666", background: CHECKER, cursor: tool === "pick" ? "copy" : "crosshair", touchAction: "none" }}
-            onPointerDown={onDown}
-            onPointerMove={onMove}
-            onPointerUp={onUp}
-            onPointerCancel={onUp}
-          />
-          <p style={{ fontSize: 12, opacity: 0.7, maxWidth: SHOW }}>Click, drag or touch to paint. Unpainted pixels stay see-through.</p>
+        {/* ---- Middle: the editor ---- */}
+        <div style={{ maxWidth: SHOW + 8 }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {(["pen", "erase", "fill", "pick"] as Tool[]).map((t) => (
+              <button key={t} type="button" className="px-btn" onClick={() => setTool(t)} style={on(tool === t)} title={`Shortcut: ${t === "pen" ? "B" : t === "erase" ? "E" : t === "fill" ? "G" : "I"}`}>
+                {t === "pen" ? "Pen" : t === "erase" ? "Eraser" : t === "fill" ? "Fill" : "Pick"}
+              </button>
+            ))}
+            <button type="button" className="px-btn" onClick={undoLast} title="Ctrl+Z">Undo</button>
+            <button type="button" className="px-btn" onClick={clearCanvas}>Clear</button>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            <button type="button" className="px-btn" onClick={() => setMirrorX((v) => !v)} style={on(mirrorX)} title="Shortcut: H">Mirror ↔</button>
+            <button type="button" className="px-btn" onClick={() => setMirrorY((v) => !v)} style={on(mirrorY)} title="Shortcut: V">Mirror ↕</button>
+            <button type="button" className="px-btn" onClick={() => transform("flipH")}>Flip ↔</button>
+            <button type="button" className="px-btn" onClick={() => transform("flipV")}>Flip ↕</button>
+            <button type="button" className="px-btn" onClick={() => transform("rotate")}>Rotate ⟳</button>
+          </div>
+
+          <div style={{ position: "relative", width: SHOW, height: SHOW }}>
+            <canvas
+              ref={canvasRef}
+              width={size}
+              height={size}
+              style={{ width: SHOW, height: SHOW, imageRendering: "pixelated", border: "2px solid #666", background: CHECKER, cursor: tool === "pick" ? "copy" : "crosshair", touchAction: "none", boxSizing: "content-box" }}
+              onPointerDown={onDown}
+              onPointerMove={onMove}
+              onPointerUp={onUp}
+              onPointerCancel={onUp}
+            />
+            {/* Centre lines show where mirroring folds the drawing. */}
+            {mirrorX && <div style={{ position: "absolute", left: SHOW / 2 + 1, top: 2, width: 0, height: SHOW, borderLeft: "1px dashed #ffc45b", pointerEvents: "none" }} />}
+            {mirrorY && <div style={{ position: "absolute", top: SHOW / 2 + 1, left: 2, height: 0, width: SHOW, borderTop: "1px dashed #ffc45b", pointerEvents: "none" }} />}
+          </div>
+          <p style={{ fontSize: 12, opacity: 0.7 }}>Click, drag or touch to paint. Keys: B pen, E eraser, G fill, I pick, H / V mirror, Ctrl+Z undo.</p>
+
+          {/* Palette */}
+          <div style={{ marginTop: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <input type="color" value={color} aria-label="Pick any colour" onChange={(e) => chooseColor(e.target.value)} style={{ width: 44, height: 32, padding: 0 }} />
+              <code style={{ fontSize: 12 }}>{color}</code>
+              <button type="button" className="px-btn" onClick={() => rememberColor(color)}>Save colour</button>
+            </div>
+            {PALETTE.map((grp) => (
+              <div key={grp.name} style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 3 }}>
+                <span style={{ fontSize: 10, opacity: 0.6, width: 64 }}>{grp.name}</span>
+                {grp.colors.map((c) => (
+                  <button key={c} type="button" aria-label={c} title={c} onClick={() => chooseColor(c)} style={{ width: 26, height: 26, background: c, border: c === color.toLowerCase() ? "3px solid #ffc45b" : "2px solid #555", padding: 0, cursor: "pointer" }} />
+                ))}
+              </div>
+            ))}
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 10, opacity: 0.6, marginBottom: 3 }}>Your colours ({custom.length}) — saved automatically as you paint</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, maxWidth: SHOW }}>
+                {custom.map((c) => (
+                  <button key={c} type="button" aria-label={c} title={`${c} (shift-click to remove)`} onClick={(e) => {
+                    if (e.shiftKey) { const next = custom.filter((x) => x !== c); setCustom(next); saveColors(next); } else chooseColor(c);
+                  }} style={{ width: 26, height: 26, background: c, border: c === color.toLowerCase() ? "3px solid #ffc45b" : "2px solid #555", padding: 0, cursor: "pointer" }} />
+                ))}
+                {!custom.length && <em style={{ fontSize: 12, opacity: 0.6 }}>None yet</em>}
+              </div>
+              {custom.length > 0 && <button type="button" className="px-btn" style={{ marginTop: 6 }} onClick={() => { setCustom([]); saveColors([]); }}>Clear my colours</button>}
+            </div>
+          </div>
+
           {group === "tile" && (
-            <div>
+            <div style={{ marginTop: 10 }}>
               <p style={{ fontSize: 12, opacity: 0.7 }}>Seamless check (3×3 repeat) and actual size:</p>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <div style={{ width: 96, height: 96, backgroundImage: tileUrl, backgroundSize: "32px 32px", imageRendering: "pixelated", border: "1px solid #444", backgroundColor: "#222" }} />
@@ -355,21 +562,68 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
           )}
         </div>
 
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <h3>Saved {group === "tile" ? "map tiles" : "camp pieces"} ({shown.length})</h3>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, maxHeight: 440, overflow: "auto" }}>
-            {shown.map((a) => (
-              <div key={a.id} style={{ textAlign: "center", fontSize: 11, maxWidth: 96 }}>
-                <img src={a.pixels} alt={a.name} style={{ width: 64, height: 64, imageRendering: "pixelated", border: a.live ? "2px solid #4f9a45" : "1px solid #444", background: CHECKER }} />
-                <div>{a.name}</div>
-                <div style={{ opacity: 0.6 }}>{TILE_CATEGORIES.find((c) => c.id === a.category)?.label ?? a.category}{a.live ? " · live" : ""}</div>
-                <button type="button" className="px-btn" onClick={() => editAsset(a)}>Edit</button>
-                <button type="button" className="px-btn" onClick={() => removeAsset(a.id)}>Delete</button>
+        {/* ---- Right: your tiles + 6x6 test grid ---- */}
+        <div style={{ flex: 1, minWidth: 260, maxWidth: 340, display: "grid", gap: 10 }}>
+          <div>
+            <h3>Your tiles ({library.length})</h3>
+            <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              {(["tile", "camp", "all"] as const).map((f) => (
+                <button key={f} type="button" className="px-btn" onClick={() => setLibFilter(f)} style={on(libFilter === f)}>{f === "tile" ? "Tiles" : f === "camp" ? "Camp" : "All"}</button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(56px, 1fr))", gap: 6, maxHeight: 250, overflowY: "auto", padding: 4, border: "2px solid #444" }}>
+              <button type="button" onClick={() => { setBrush(CANVAS_BRUSH); setGridErase(false); }} title="Place what you are drawing right now" style={{ padding: 2, background: "#222", border: brush === CANVAS_BRUSH ? "3px solid #ffc45b" : "2px solid #555", cursor: "pointer", color: "inherit", fontSize: 10 }}>
+                <div style={{ width: "100%", aspectRatio: "1", backgroundImage: tileUrl, backgroundSize: "100% 100%", imageRendering: "pixelated", backgroundColor: "#111" }} />
+                Current
+              </button>
+              {library.map((a) => (
+                <button key={a.id} type="button" onClick={() => { setBrush(a.id); setGridErase(false); }} title={a.name} style={{ padding: 2, background: "#222", border: brush === a.id ? "3px solid #ffc45b" : a.live ? "2px solid #4f9a45" : "2px solid #555", cursor: "pointer", color: "inherit", fontSize: 10, overflow: "hidden" }}>
+                  <div style={{ width: "100%", aspectRatio: "1", imageRendering: "pixelated", background: `url(${a.pixels}) center / 100% 100% no-repeat, ${CHECKER}` }} />
+                  <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</div>
+                </button>
+              ))}
+            </div>
+            {!library.length && <p style={{ fontSize: 12, opacity: 0.6 }}>Nothing saved here yet. Draw something and press Save piece.</p>}
+            {brushAsset && (
+              <div style={{ marginTop: 6, fontSize: 12 }}>
+                <strong>{brushAsset.name}</strong> · {TILE_CATEGORIES.find((c) => c.id === brushAsset.category)?.label ?? brushAsset.category}{brushAsset.live ? " · live in game" : ""}
+                <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                  <button type="button" className="px-btn" onClick={() => editAsset(brushAsset)}>Edit</button>
+                  <button type="button" className="px-btn" onClick={() => { removeAsset(brushAsset.id); setBrush(null); }}>Delete</button>
+                </div>
               </div>
-            ))}
-            {!shown.length && <em>None yet</em>}
+            )}
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+
+          <div>
+            <h3>6×6 test grid</h3>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+              <button type="button" className="px-btn" onClick={() => setGridErase((v) => !v)} style={on(gridErase)}>{gridErase ? "Erasing" : "Place"}</button>
+              <button type="button" className="px-btn" onClick={fillGrid}>Fill all</button>
+              <button type="button" className="px-btn" onClick={() => setAllCells(null)}>Clear</button>
+              <button type="button" className="px-btn" onClick={() => setGridLines((v) => !v)} style={on(gridLines)}>Lines</button>
+              <button type="button" className="px-btn" onClick={() => void exportGridPng()}>PNG</button>
+            </div>
+            <div
+              style={{ display: "grid", gridTemplateColumns: `repeat(${GRID_N}, ${cellPx}px)`, width: GRID_N * cellPx, border: "2px solid #666", background: "#1a1a1a", touchAction: "manipulation", userSelect: "none" }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              {grid.map((v, i) => {
+                const src = cellSrc(v);
+                return (
+                  <div
+                    key={i}
+                    onPointerDown={() => placeCell(i)}
+                    onPointerEnter={(e) => { if (e.buttons === 1 && e.pointerType === "mouse") placeCell(i); }}
+                    style={{ width: cellPx, height: cellPx, boxSizing: "border-box", border: gridLines ? "1px solid rgba(255,255,255,.12)" : "none", background: src ? `url(${src}) center / 100% 100% no-repeat` : undefined, imageRendering: "pixelated", cursor: "pointer" }}
+                  />
+                );
+              })}
+            </div>
+            <p style={{ fontSize: 12, opacity: 0.7 }}>Pick a tile above, then click or drag across the grid to see how it tiles next to your others. Edits to a saved tile show up here too.</p>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" className="px-btn" onClick={exportJSON}>Export pack JSON</button>
             <label className="px-btn" style={{ display: "inline-block" }}>
               Import pack JSON
@@ -379,7 +633,7 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      <p className="designer-status">Pieces stay on this device. Tiles marked "use in game now" replace the pack art in your game right away. Export the pack JSON to ship them in a game update.</p>
+      <p className="designer-status">Pieces, colours and the grid stay on this device. Tiles marked "use in game now" replace the pack art in your game right away. Export the pack JSON to ship them in a game update.</p>
     </div>
   );
 }
