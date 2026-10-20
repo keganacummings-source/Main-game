@@ -53,13 +53,26 @@ export function getTileCatalogSync(): TileCatalog | null {
   return catalog;
 }
 
+/** Tiles drawn from a designer-made image (a data URL) instead of the pack file at that path. */
+let tileOverrides: Record<string, string> = {};
+
+/** Swap in designer-made tiles for pack tiles. Cached images for any path that changed are dropped and the terrain repaints. */
+export function setTileOverrides(next: Record<string, string>): void {
+  const changed = new Set<string>();
+  for (const k of Object.keys(tileOverrides)) if (tileOverrides[k] !== next[k]) changed.add(k);
+  for (const k of Object.keys(next)) if (tileOverrides[k] !== next[k]) changed.add(k);
+  tileOverrides = { ...next };
+  for (const k of changed) imgCache.delete(k);
+  if (changed.size) imageRevision++;
+}
+
 export function tileImage(path: string): HTMLImageElement {
   let img = imgCache.get(path);
   if (!img) {
     img = new Image();
     img.decoding = "async";
     img.onload = img.onerror = () => { imageRevision++; };
-    img.src = path;
+    img.src = tileOverrides[path] ?? path;
     imgCache.set(path, img);
   }
   return img;

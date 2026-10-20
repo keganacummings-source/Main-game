@@ -271,7 +271,7 @@ export function Hub(props: {
         <Tile title="Last Man Standing" about="You and 99 rival witches from level 1. Always night, only ghosts. Be the last one alive." onClick={props.onLms} badge="NEW" />
         <Tile title="TurboCircle" about="Battle simulator: Classic 6v6, or War up to 100 vs 100." onClick={props.onCircle} />
         <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
-        <Tile title="Designer Mode" about="Map Builder and Enemy Designer." onClick={props.onDesigner} />
+        <Tile title="Designer Mode" about="Map Builder, Enemy Designer, and the Camp & Tile Asset Builder." onClick={props.onDesigner} />
         <Tile title="Shinys Seen" about={shinyCount ? `Your collection: ${shinyCount} shiny ghost${shinyCount === 1 ? "" : "s"}.` : "Every shiny you pick up is kept here."} onClick={props.onShinies} testid="shinies-tile" badge={shinyCount ? `✦ ${shinyCount}` : undefined} />
         <Tile title="Options" about="Account and friends." onClick={props.onOptions} />
         <Tile title="Ascension" about="Wipe all account progress and begin again. You will be warned first." onClick={() => setAscend(1)} testid="ascend-tile" badge={asc ? roman(asc) : undefined} />

@@ -5,6 +5,7 @@ import { CampAssetBuilder } from "./camp-asset-builder";
 import { installEnemyDesigns, localEnemyDesigns } from "@/game/enemy-design";
 import { savedMaps } from "@/game/map-format";
 import { Tile } from "./ui-kit";
+import { loadPack } from "@/game/camp-assets";
 
 export function DesignerMode({ onBack }: { onBack: () => void }) {
   const [tool, setTool] = useState<"map" | "enemy" | "camp" | null>(null);
@@ -31,7 +32,7 @@ export function DesignerMode({ onBack }: { onBack: () => void }) {
       <div className="tile-grid designer-tiles">
         <Tile primary title="Map Builder" about="Bossrooms, dungeons and whole worlds: terrain, collision, spawn zones, NPCs, quests, import / export." onClick={() => setTool("map")} badge={`${savedMaps().length} saved`} />
         <Tile title="Enemy Designer" about="Make new enemies or replace built-in ones: sprite, element, stats, enchantments, moves, where they spawn and what they drop." onClick={() => setTool("enemy")} badge={`${localEnemyDesigns().length} saved`} />
-        <Tile title="Camp Asset Builder" about="Design walls, floors, chests, Ghost Boxes, campfires, doors, beds, decorations, sinks, fences, counters, stove, fridge and more. Export packs as JSON for later implementation." onClick={() => setTool("camp")} />
+        <Tile title="Camp & Tile Asset Builder" about="Pixel-paint camp pieces (walls, floors, chest, Ghost Box, campfire, doors, beds, sinks, fences, counters, stove, fridge) and map tiles (floor, wall, water, lava, portals, arena, hearts) to replace the pack art. Export packs as JSON." onClick={() => setTool("camp")} badge={`${loadPack().length} saved`} />
       </div>
       <p className="designer-status">Designs are saved on this device and are live in your games. Export JSON to ship them in a game update.</p>
     </div>
