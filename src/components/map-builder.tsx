@@ -95,7 +95,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
   const bump = useCallback(() => redraw((n) => n + 1), []);
   const [tab, setTab] = useState<Tab>("tiles");
   const [tool, setTool] = useState<Tool>("paint");
-  const [brush, setBrush] = useState<Brush>({ mode: "floor", floor: 0 });
+  const [brush, setBrush] = useState<Brush>({ mode: "sprite", tile: { id: "/MapAssets/01_Floor_and_Ground_Tiles/cobalt_stone_1.png", file: "Stone Floor", path: "/MapAssets/01_Floor_and_Ground_Tiles/cobalt_stone_1.png", category: "curated", solid: false, slow: 0 }, liquid: false });
   const [size, setSize] = useState(1);
   const [opts, setOpts] = useState<PlaceOpts>(DEFAULT_OPTS);
   const [sel, setSel] = useState<Sel>(null);
@@ -197,10 +197,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
       if (old.sprite) { const { sprite: _s, ...rest } = old; return { ...rest, block: old.floor === 1 ? 1 : 0 }; }
       return old;
     }
-    if (brush.mode === "floor") {
-      const { sprite: _s, layers: _l, ...rest } = old;
-      return { ...rest, floor: brush.floor, block: brush.floor === 1 ? 1 : 0 };
-    }
+    // floor brush mode removed — only sprite brushes remain
     const solid = brush.tile.solid ? 1 : 0;
     // "Mix variants": paint a random sibling of the chosen tile so ground does not look stamped.
     const sibs = mix ? families?.get(familyOf(brush.tile.path)) : undefined;
@@ -404,7 +401,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
     if (tool === "pick") {
       const t = m.tiles[ty * m.w + tx]!;
       if (t.sprite) { const a = findAtlasTile(t.sprite); if (a) setBrush({ mode: "sprite", tile: a, liquid: t.floor === 2 }); else setStatus("That tile's art is not in the pack list yet."); }
-      else setBrush({ mode: "floor", floor: t.floor });
+      // plain floor tile picked — keep current brush unchanged
       setTool("paint");
       return;
     }
@@ -1050,7 +1047,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="grid text-dim">Width<input className="w-20 border-2 border-bone bg-ink px-1" type="number" min={4} max={512} value={form.w} onChange={(e) => setForm({ ...form, w: Number(e.target.value) })} /></label>
                   <label className="grid text-dim">Height<input className="w-20 border-2 border-bone bg-ink px-1" type="number" min={4} max={512} value={form.h} onChange={(e) => setForm({ ...form, h: Number(e.target.value) })} /></label>
-                  <button type="button" className="px-btn" onClick={() => { const m = mapRef.current; pushUndo({ full: m }); setMap(resizeMap(m, form.w, form.h, brush.mode === "floor" ? brush.floor : 0)); setStatus("Resized. New ground uses the current plain ground colour."); bump(); }}>Resize</button>
+                  <button type="button" className="px-btn" onClick={() => { const m = mapRef.current; pushUndo({ full: m }); setMap(resizeMap(m, form.w, form.h, 0)); setStatus("Resized. New tiles added as bare ground."); bump(); }}>Resize</button>
                 </div>
                 <p className="text-dim">Growing adds ground on the right and bottom. Shrinking removes what falls off the edge. Up to 512×512.</p>
                 <p className="font-display text-xs text-kyo">QUICK TERRAIN</p>
