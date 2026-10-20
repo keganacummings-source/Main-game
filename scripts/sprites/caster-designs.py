@@ -117,19 +117,47 @@ def shade(cells, light, mid, dark, axis="x"):
 
 
 # Hand anchors per facing (x, y at bob 0): where a held item sits.
-HAND = {FRONT: (24, 34), BACK: (7, 34), RIGHT: (21, 34), LEFT: (10, 34)}
+# Where the hand actually is on the base body (bob 0). Front: the sleeve's end at her side.
+# Right: the near arm brought forward, clear of the face. Back: her right hand, mostly hidden.
+GRIP = {FRONT: (21, 34), BACK: (9, 34), RIGHT: (23, 32)}
+SHAFT_X = {FRONT: 22, BACK: 8, RIGHT: 23}
+SKIN = (rgba("#f2b586"), rgba("#e48676"))
 HEAD_TOP = 15  # minus bob
 
 
-def staff(fr, top, color_shaft, x=None, under_back=True):
-    """A tall staff in the held hand; `top` paints the head of it at (x, y)."""
-    hx, hy = HAND[fr.f]
-    if x is not None:
-        hx = x
-    y_top = 9 - fr.bob
-    behind = fr.f == BACK and under_back
-    fr.shape(shade(rect(hx, y_top + 4, hx + 1, 42), color_shaft[0], color_shaft[1], color_shaft[2]), None, under=behind)
-    top(fr, hx, y_top)
+def grip(fr):
+    x, y = GRIP[fr.f]
+    return x, y - fr.bob
+
+
+def held_point(fr):
+    """Centre of something held up in the open hand: it rests right on the hand, never floats off."""
+    x, y = grip(fr)
+    return (x + 1, y - 3) if fr.f == FRONT else (x + 1, y - 3) if fr.f == RIGHT else (x, y - 3)
+
+
+def hand(fr, sleeve=None):
+    """Draws the gripping hand (and, side-on, the forearm reaching forward) on top of whatever it holds."""
+    x, y = grip(fr)
+    if fr.f == BACK:
+        return
+    if fr.f == RIGHT:
+        arm = rect(16, y, x - 1, y + 1)
+        fr.shape({p: (sleeve or rgba("#4a3a2a")) for p in arm}, None)
+        fr.shape({(x, y): SKIN[0], (x + 1, y): SKIN[0], (x, y + 1): SKIN[1], (x + 1, y + 1): SKIN[1]}, None)
+    else:
+        fr.shape({(x, y): SKIN[0], (x + 1, y): SKIN[0], (x, y + 1): SKIN[1], (x + 1, y + 1): SKIN[1]}, None)
+
+
+def staff(fr, top, color_shaft, sleeve=None):
+    """A tall staff gripped in the hand. The shaft runs right up into the head, so nothing floats.
+    `top(fr, x, y)` paints the head joined at the shaft's tip (x, y) = (left shaft column, tip row)."""
+    sx = SHAFT_X[fr.f]
+    y_top = 10 - fr.bob
+    behind = fr.f == BACK
+    fr.shape(shade(rect(sx, y_top, sx + 1, 42), color_shaft[0], color_shaft[1], color_shaft[2]), None, under=behind)
+    top(fr, sx, y_top)
+    hand(fr, sleeve)
 
 
 # ---------------------------------------------------------------------------
@@ -152,13 +180,12 @@ def embermage(fr):
                 cells[(x + w, t + 1 - k)] = hair[2] if k > h - 3 else hair[1] if k > 1 else hair[0]
     fr.shape(cells, None)
     # Ember-trimmed short cape (shoulders) and a fire orb in the open hand.
-    hx, hy = HAND[fr.f]
-    oy = hy - 6 - (fr.bob)
-    if fr.f != BACK:
-        orb = disc(hx + (1 if fr.f != LEFT else 0), oy, 2.3)
-        fr.shape({p: (rgba("#fff1a8") if (p[0] - hx) ** 2 + (p[1] - oy) ** 2 < 1.5 else rgba("#ff8a2a") if p[1] < oy + 1 else rgba("#d8401c")) for p in orb}, None)
-        for dx, dy in ((-1, -4), (2, -5), (0, -7)):
-            fr.put(hx + dx, oy + dy - fr.bob, rgba("#ffb03a"))
+    hx, oy = held_point(fr)
+    orb = disc(hx, oy, 2.3)
+    fr.shape({p: (rgba("#fff1a8") if (p[0] - hx) ** 2 + (p[1] - oy) ** 2 < 1.5 else rgba("#ff8a2a") if p[1] < oy + 1 else rgba("#d8401c")) for p in orb}, None, under=fr.f == BACK)
+    for dx, dy in ((-1, -4), (2, -5), (0, -7)):
+        fr.put(hx + dx, oy + dy + (fr.bob and -1), rgba("#ffb03a"))
+    hand(fr, rgba("#5a1c18"))
 
 
 def tidewitch(fr):
@@ -175,9 +202,13 @@ def tidewitch(fr):
         fr.shape(shade(fin, rgba("#9af0e8"), rgba("#3ab8b0"), rgba("#1a7a80")), None)
     # Trident.
     def top(fr, x, y):
-        prongs = rect(x - 2, y + 2, x + 3, y + 3) | line(x - 2, y + 2, x - 2, y - 1) | line(x + 3, y + 2, x + 3, y - 1) | line(x, y + 2, x, y - 3) | line(x + 1, y + 2, x + 1, y - 3)
-        fr.shape({p: rgba("#e8d08a") if p[1] < y else rgba("#c09040") for p in prongs}, None, under=fr.f == BACK)
-    staff(fr, top, [rgba("#5ad0d0"), rgba("#2a8a9a"), rgba("#14505a")])
+        # Crossbar on the shaft's tip, two outer prongs and a taller centre prong, all one piece.
+        # Crossbar on the tip, two outer tines curving in at the points, and a long centre tine.
+        prongs = rect(x - 2, y, x + 3, y) | line(x - 2, y, x - 2, y - 4) | line(x + 3, y, x + 3, y - 4) | line(x, y, x, y - 7) | line(x + 1, y, x + 1, y - 6)
+        prongs |= {(x - 3, y - 4), (x + 4, y - 4), (x - 1, y - 6)} - {(x - 1, y - 6)}
+        cells = {p: rgba("#fff4c0") if p[1] <= y - 5 or p in {(x - 3, y - 4), (x + 4, y - 4)} else rgba("#e0b060") if p[1] < y else rgba("#a07030") for p in prongs}
+        fr.shape(cells, None, under=fr.f == BACK)
+    staff(fr, top, [rgba("#5ad0d0"), rgba("#2a8a9a"), rgba("#14505a")], rgba("#1e5070"))
 
 
 def stonecaller(fr):
@@ -198,8 +229,11 @@ def stonecaller(fr):
         fr.shape(rect(9, t + 4, 22, t + 4) | {(15, t + 3), (16, t + 3)}, rgba("#9a8a5a"), outline=False)
         fr.put(15, t + 3, rgba("#5ae07a")); fr.put(16, t + 3, rgba("#2a9a4a"))
     # Two boulders orbiting.
-    for i, (ox, oy) in enumerate(((2, 22), (27, 18)) if fr.f != BACK else ((27, 22), (2, 18))):
-        oy -= (b + i) % 2
+    # Two boulders held up by her magic, hovering just over her palms (they bob with the walk).
+    for i, (ox, oy) in enumerate(((5, 31), (26, 31)) if fr.f in (FRONT, BACK) else ((23, 29), (23, 29))):
+        if fr.f == RIGHT and i == 1:
+            continue
+        oy -= b
         fr.shape(shade(disc(ox, oy, 1.6), *stone), None)
 
 
@@ -228,9 +262,11 @@ def stormwitch(fr):
         fr.shape(line(20, 29 - fr.bob, 22, 34), sc)
     # Crescent rod.
     def top(fr, x, y):
-        cres = ring(x + 0.5, y, 3, 1.2) - rect(x - 1, y - 4, x + 4, y - 1 + 0)
-        fr.shape({p: rgba("#ffe24a") for p in ring(x + 0.5, y, 3, 1.3) if p[1] >= y - 1 or p[0] <= x}, None, under=fr.f == BACK)
-    staff(fr, top, [rgba("#c0c8e0"), rgba("#8088a8"), rgba("#4a5070")])
+        # A crescent cradled on the tip: its bottom sits on the shaft, horns open upward.
+        cres = {p for p in ring(x + 0.5, y - 3, 3.2, 1.3) if p[1] >= y - 4}
+        fr.shape({p: rgba("#fff6a0") if p[1] < y - 2 else rgba("#ffe24a") for p in cres}, None, under=fr.f == BACK)
+        fr.put(x, y - 3, rgba("#bff4ff")); fr.put(x + 1, y - 3, rgba("#bff4ff"))
+    staff(fr, top, [rgba("#c0c8e0"), rgba("#8088a8"), rgba("#4a5070")], rgba("#30368a"))
 
 
 def frostweaver(fr):
@@ -251,11 +287,11 @@ def frostweaver(fr):
     fur = rect(8, 27 - b, 23, 29 - b) if fr.f in (FRONT, BACK) else rect(9 if fr.f == RIGHT else 13, 27 - b, 18 if fr.f == RIGHT else 22, 29 - b)
     fr.shape({p: rgba("#ffffff") if (p[0] + p[1]) % 3 else rgba("#d0dcea") for p in fur}, None)
     # A floating ice crystal.
-    if fr.f != BACK:
-        hx, hy = HAND[fr.f]
-        cy = hy - 7 - b
-        dia = {(x, y) for x in range(hx - 2, hx + 3) for y in range(cy - 4, cy + 4) if abs(x - hx) * 2 + abs(y - cy) <= 4}
-        fr.shape(shade(dia, *ice), None)
+    hx, cy = held_point(fr)
+    cy -= 1
+    dia = {(x, y) for x in range(hx - 2, hx + 3) for y in range(cy - 4, cy + 4) if abs(x - hx) * 2 + abs(y - cy) <= 4}
+    fr.shape(shade(dia, *ice), None, under=fr.f == BACK)
+    hand(fr, rgba("#2a5a9a"))
 
 
 def radiant(fr):
@@ -273,8 +309,10 @@ def radiant(fr):
     fr.shape({p: rgba("#fff1a8") if (p[0] + p[1]) % 2 else rgba("#f0c040") for p in sun}, None, under=True, outline=False)
     # Sun sceptre.
     def top(fr, x, y):
-        fr.shape({p: rgba("#fff1a8") if (p[0] - x - 0.5) ** 2 + (p[1] - y) ** 2 < 2 else rgba("#f0c040") for p in disc(x + 0.5, y, 2.5)}, None, under=fr.f == BACK)
-    staff(fr, top, gold[::-1])
+        cy = y - 2
+        sun = disc(x + 0.5, cy, 2.6) | {(x, cy - 4), (x + 1, cy - 4), (x - 3, cy), (x + 4, cy)}
+        fr.shape({p: rgba("#ffffff") if (p[0] - x - 0.5) ** 2 + (p[1] - cy) ** 2 < 1 else rgba("#fff1a8") if (p[0] - x - 0.5) ** 2 + (p[1] - cy) ** 2 < 3 else rgba("#f0c040") for p in sun}, None, under=fr.f == BACK)
+    staff(fr, top, gold[::-1], rgba("#e8dcc0"))
 
 
 def gravemage(fr):
@@ -308,13 +346,22 @@ def gravemage(fr):
         fr.shape(cells, None, outline=False)
     # Scythe.
     def top(fr, x, y):
-        side = -1 if fr.f in (LEFT, BACK) else 1
-        blade = set()
-        for k in range(8):
-            yy = y + k // 3
-            blade |= {(x - side * (k + 1), yy), (x - side * (k + 1), yy + 1)} if k < 7 else {(x - side * (k + 1), yy + 1)}
-        fr.shape({p: rgba("#d8dccc") if p[1] <= y + 1 else rgba("#9aa094") for p in blade}, None, under=fr.f == BACK)
-    staff(fr, top, [rgba("#6a5a46"), rgba("#4a3e30"), rgba("#2a221a")])
+        # A real scythe: an iron collar on the snath's tip, and a long curved blade sweeping out from it,
+        # thick at the heel and tapering to a drooping point. Front: it sweeps away from her body.
+        side = 1 if fr.f in (FRONT, RIGHT) else -1
+        heel = x + 1 if side > 0 else x
+        collar = rect(x, y, x + 1, y + 1)
+        cells = {p: rgba("#5a5a5a") for p in collar}
+        n = 9 if fr.f != RIGHT else 8
+        for i in range(n):
+            cx = heel + side * (i + 1)
+            top_y = y - 2 + (i * i) // 9
+            thick = 4 if i < 3 else 3 if i < 5 else 2 if i < n - 1 else 1
+            for k in range(thick):
+                cells[(cx, top_y + k)] = rgba("#f0f2e8") if k == 0 else rgba("#c8ccc0") if k == 1 else rgba("#8a8e84")
+        cells[(heel, y - 1)] = rgba("#c8ccc0"); cells[(heel, y - 2)] = rgba("#f0f2e8")
+        fr.shape(cells, None, under=fr.f == BACK)
+    staff(fr, top, [rgba("#6a5a46"), rgba("#4a3e30"), rgba("#2a221a")], rgba("#2a362a"))
 
 
 def arcanist(fr):
@@ -338,9 +385,9 @@ def arcanist(fr):
                 fr.put(*p, rgba("#e8c040"))
     # An open tome floating at her side, pages glowing.
     if fr.f != BACK:
-        hx, hy = HAND[fr.f]
-        bx = hx - 2 if fr.f != LEFT else hx - 3
-        by = hy - 8 - fr.bob
+        hx, hy = held_point(fr)
+        bx = hx - 3
+        by = hy
         book = rect(bx, by, bx + 5, by + 3)
         cells = {p: rgba("#f4ecd0") for p in book}
         for p in rect(bx, by + 3, bx + 5, by + 3):
@@ -350,6 +397,7 @@ def arcanist(fr):
             cells[p] = rgba("#5ad0ff")
         fr.shape(cells, None)
         fr.put(bx + 2, by - 2, rgba("#5ad0ff")); fr.put(bx + 4, by - 3, rgba("#e8c040"))
+        hand(fr, rgba("#1e3270"))
 
 
 def ruinmage(fr):
@@ -388,13 +436,14 @@ def ruinmage(fr):
             fr.put(x, y + 1, cowl[1]); fr.put(x, y + 2, OUT)
     # A void orb ringed with a red halo.
     if fr.f != BACK:
-        hx, hy = HAND[fr.f]
-        cy = hy - 7 - fr.bob
+        hx, cy = held_point(fr)
+        cy -= 2
         fr.shape({p: rgba("#000000") for p in disc(hx, cy, 2)}, None, outline=False)
         for p in ring(hx, cy, 3.4, 0.9):
             if p[1] != cy - 3:
                 fr.put(*p, rgba("#ff3a3a"))
         fr.put(hx - 1, cy - 1, rgba("#c09aff"))
+        hand(fr, rgba("#2e1236"))
 
 
 def veilsinger(fr):
@@ -415,10 +464,10 @@ def veilsinger(fr):
     fx = 21 if fr.f in (FRONT, RIGHT) else 10
     fr.shape({(fx, t + 2): rgba("#ffffff"), (fx + 1, t + 2): rgba("#f0c0ff"), (fx, t + 3): rgba("#f0c0ff"), (fx + 1, t + 3): rgba("#ffe24a"), (fx - 1, t + 2): rgba("#f0c0ff"), (fx, t + 1): rgba("#f0c0ff")}, None)
     # A lyre held at the hip.
-    hx, hy = HAND[fr.f]
     if fr.f != BACK:
-        x0 = hx - 1 if fr.f != LEFT else hx - 3
-        y0 = hy - 6 - fr.bob
+        hx, hy = held_point(fr)
+        x0 = hx - 2
+        y0 = hy - 3
         frame = line(x0, y0, x0, y0 + 5) | line(x0 + 4, y0, x0 + 4, y0 + 5) | rect(x0, y0 + 5, x0 + 4, y0 + 6) | {(x0 - 1, y0 - 1), (x0 + 5, y0 - 1)}
         fr.shape({p: rgba("#e8c040") for p in frame}, None)
         for x in range(x0 + 1, x0 + 4):
@@ -426,6 +475,7 @@ def veilsinger(fr):
                 fr.put(x, y, rgba("#f4e8ff") if x % 2 else (0, 0, 0, 0))
         # Notes drifting up.
         fr.put(x0 + 6, y0 - 3, rgba("#e0b8f4")); fr.put(x0 + 6, y0 - 4, rgba("#e0b8f4")); fr.put(x0 + 7, y0 - 4, rgba("#e0b8f4"))
+        hand(fr, rgba("#7a4a8a"))
 
 
 DESIGNS = {"embermage": embermage, "tidewitch": tidewitch, "stonecaller": stonecaller, "stormwitch": stormwitch, "frostweaver": frostweaver,
