@@ -1,5 +1,22 @@
 # Patch Notes
 
+## TURBZ: any class, full XP, eat and sleep; menus touched up
+
+- **TURBZ: play any class.** The Crying Lady is no longer forced, and the −50% XP for other classes is gone. Every class levels at the full rate.
+- **TURBZ Crying Lady builder:** the TURBZ start screen now uses the full builder: perks, borrowed passives, elements and a trait. The every-50-levels rebuild also lets you change her perks and passives.
+- **TURBZ: eat, drink and sleep.** There is still no hunger or thirst, but meals and drinking water now give experience. Sleeping at a campfire or bed after dusk skips the night and you wake **well rested** with bonus XP. The Camp menu (H) shows what each does in TURBZ.
+- **TURBZ camp fixes:**
+  - Boxed ghosts always come back with a Ghost Box, even if you had packed the box on its own.
+  - The Ghost Box, Storage Chest and beds land on the nearest open tile if the new site has a tree, rock, water or wall where they used to stand.
+  - Ghosts boxed since the camp was packed are kept, not overwritten.
+- **Menus touched up** to match the Character sheet and Build bar: status chips, search, sorting, filters and remembered tabs.
+  - **Skills (K):** search; sort perks by invested or closest to max; filter by in progress, not started or maxed. Skills sort by level or by closest to the next level.
+  - **Quests (Q):** your contract is pinned at the top with its progress. Filter by tier and kind, sort by pay, hardness or speed. Map quests and Story have their own tabs.
+  - **Spirits (G):** search and sort your party and Ghost Box by level, rarity, element or name.
+  - **Crafting (X):** search by recipe, result or ingredient, a Can-make filter, how many you can make, and **×5** and **All** brew buttons.
+  - **Storage Chest:** search, sort, Take or Store 10, **Store materials**, **Store everything** and **Take everything**.
+  - **Pause (Esc):** tabs for Menus (shortcuts to every window), Audio, searchable Controls and Worlds.
+
 ## Class passives, Crying Girl builder, Trophy Skins, music and fixes
 
 - **Every class has its own passive.** 39 new always-on passives, one per class, shown on the select screen and in the Character sheet (C). See [Classes](Classes). Highlights:

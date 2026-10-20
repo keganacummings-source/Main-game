@@ -138,3 +138,24 @@ export function Tile({ title, about, onClick, primary, hero, disabled, testid, b
     </button>
   );
 }
+
+/**
+ * A remembered per-viewer UI choice (a tab, a sort, a filter). Kept in localStorage when it can be,
+ * so a menu reopens the way you left it; it falls back to the default in private mode or with storage cleared.
+ */
+export function usePref<T extends string>(key: string, ok: readonly T[], fallback: T): [T, (v: T) => void] {
+  const [v, setV] = useState<T>(() => {
+    try { const s = localStorage.getItem(key) as T | null; return s && ok.includes(s) ? s : fallback; } catch { return fallback; }
+  });
+  const set = (n: T) => { setV(n); try { localStorage.setItem(key, n); } catch { /* per-viewer convenience only */ } };
+  return [v, set];
+}
+
+/** A one-line row of status chips for the top of a menu. */
+export function StatusChips({ items }: { items: (false | null | undefined | { label: ReactNode; tone?: "on" | "bad" | "kyo" })[] }) {
+  return (
+    <div className="camp-status">
+      {items.filter(Boolean).map((it, i) => it && <span key={i} className={`chip ${it.tone === "on" ? "chip-on" : it.tone === "bad" ? "chip-bad" : it.tone === "kyo" ? "chip-kyo" : ""}`}>{it.label}</span>)}
+    </div>
+  );
+}

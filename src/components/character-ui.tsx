@@ -508,7 +508,7 @@ export function CharacterSheet({ sheet, game }: { sheet: Sheet | null; game?: Tu
 }
 
 /** The Crying Girl's custom build: any 4 perks from the full pool. */
-function PerkBuilder({ onChange }: { onChange: () => void }) {
+export function PerkBuilder({ onChange }: { onChange: () => void }) {
   const [q, setQ] = useState("");
   const picked = getCustomBuild();
   const f = q.trim().toLowerCase();

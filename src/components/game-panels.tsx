@@ -12,7 +12,7 @@ import { onSync, syncState, type SyncState } from "@/game/account-save";
 import { ClassPicker, type Pick } from "./character-ui";
 import { AccountChip } from "./hub-ui";
 import { useSnapPick } from "./use-snap";
-import { Chips, ConfirmButton, Empty, Field, Meter, Pips, Section, Tabs } from "./ui-kit";
+import { Chips, ConfirmButton, Empty, Field, Meter, Pips, Section, StatusChips, Tabs, usePref } from "./ui-kit";
 
 /** TurboHunt: kyo price of a Ghost Box without materials (matches the engine). */
 const GHOST_BOX_KYO = 150;
@@ -31,15 +31,53 @@ const PERK_CATS: { id: string; label: string }[] = [
 
 export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
   const s = useSnapPick(["accountLevel", "accountXp", "accountNeed", "perkPoints", "perks", "accountScore", "skills", "skillPoints"] as const);
-  const [tab, setTab] = useState<"perks" | "skills">("perks");
-  const [cat, setCat] = useState("all");
+  const [tab, setTab] = usePref("turbz-skills-tab", ["perks", "skills"] as const, "perks");
+  const [cat, setCat] = usePref("turbz-skills-cat", PERK_CATS.map((c) => c.id), "all");
+  const [show, setShow] = usePref("turbz-skills-show", ["all", "started", "fresh", "maxed"] as const, "all");
+  const [sort, setSort] = usePref("turbz-skills-sort", ["default", "name", "power", "progress"] as const, "default");
+  const [skillSort, setSkillSort] = usePref("turbz-skills-ssort", ["default", "level", "name", "next"] as const, "default");
+  const [q, setQ] = useState("");
+  const term = q.trim().toLowerCase();
   const earned = Math.max(0, s.accountLevel - 1) * 5;
   const spent = Math.max(0, earned - s.perkPoints);
   const cats = PERK_CATS.filter((c) => c.id === "all" || s.perks.some((p) => p.cat === c.id));
-  const shown = s.perks.filter((p) => cat === "all" || p.cat === cat);
+  const maxed = s.perks.filter((p) => p.power >= p.max).length;
+  const shown = s.perks
+    .filter((p) => cat === "all" || p.cat === cat)
+    .filter((p) => show === "all" || (show === "maxed" ? p.power >= p.max : show === "fresh" ? p.power <= 0 : p.power > 0 && p.power < p.max))
+    .filter((p) => !term || p.name.toLowerCase().includes(term) || p.about.toLowerCase().includes(term))
+    .slice()
+    .sort((a, b) => sort === "name" ? a.name.localeCompare(b.name) : sort === "power" ? b.power - a.power : sort === "progress" ? b.power / Math.max(1, b.max) - a.power / Math.max(1, a.max) : 0);
+  const skills = s.skills
+    .filter((sk) => !term || sk.name.toLowerCase().includes(term) || sk.line.toLowerCase().includes(term))
+    .slice()
+    .sort((a, b) => skillSort === "level" ? b.level - a.level : skillSort === "name" ? a.name.localeCompare(b.name) : skillSort === "next" ? b.xp / Math.max(1, b.need) - a.xp / Math.max(1, a.need) : 0);
+  const totalSkill = s.skills.reduce((a, sk) => a + sk.level, 0);
+  const best = s.skills.reduce<(typeof s.skills)[number] | null>((a, sk) => (!a || sk.level > a.level ? sk : a), null);
+  const resetOn = !!term || cat !== "all" || show !== "all";
   return (
-    <div className="ui-stack">
-      <Tabs value={tab} onChange={setTab} tabs={[{ id: "perks", label: `Account perks · ${s.perkPoints}` }, { id: "skills", label: "Skills" }]} />
+    <div className="ui-stack" data-testid="skills-panel">
+      <StatusChips items={[
+        { label: <>Account <b>{s.accountLevel}</b></>, tone: "kyo" },
+        { label: `${s.perkPoints} perk point${s.perkPoints === 1 ? "" : "s"}`, tone: s.perkPoints > 0 ? "on" : undefined },
+        { label: `${maxed}/${s.perks.length} perks maxed` },
+        { label: `Skills total ${totalSkill}` },
+        best && { label: `Best: ${best.name} ${best.level}` },
+      ]} />
+      <Tabs value={tab} onChange={setTab} tabs={[{ id: "perks", label: `Account perks · ${s.perkPoints}`, testid: "skills-tab-perks" }, { id: "skills", label: `Skills · ${s.skills.length}`, testid: "skills-tab-skills" }]} />
+      <div className="menu-toolbar">
+        <input className="px-input" aria-label={tab === "perks" ? "Search perks" : "Search skills"} placeholder={tab === "perks" ? "Search perks" : "Search skills"} value={q} onChange={(e) => setQ(e.target.value)} data-testid="skills-search" />
+        {tab === "perks" ? (
+          <select className="px-input" aria-label="Sort perks" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+            <option value="default">Default order</option><option value="name">By name</option><option value="power">Most invested</option><option value="progress">Closest to max</option>
+          </select>
+        ) : (
+          <select className="px-input" aria-label="Sort skills" value={skillSort} onChange={(e) => setSkillSort(e.target.value as typeof skillSort)}>
+            <option value="default">Default order</option><option value="level">Highest level</option><option value="name">By name</option><option value="next">Closest to next level</option>
+          </select>
+        )}
+        {tab === "perks" && <button type="button" className="px-btn ui-btn-sm" disabled={!resetOn} onClick={() => { setQ(""); setCat("all"); setShow("all"); }}>Clear filters</button>}
+      </div>
       {tab === "perks" && (
         <>
           <div className="ui-card ui-stack-sm" data-testid="account-card">
@@ -55,6 +93,8 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
             <p className="text-dim">Every account level gives 5 perk points. Account XP comes from all the XP your witches earn. Perks, points and skills stay on the account: death, a new witch and Hardcore all keep them.</p>
           </div>
           <Chips value={cat} onChange={setCat} label="Perk kind" options={cats.map((c) => ({ id: c.id, label: c.id === "all" ? c.label : `${c.label} ${s.perks.filter((p) => p.cat === c.id).length}` }))} />
+          <Chips value={show} onChange={setShow} label="Progress" options={[{ id: "all", label: "Any" }, { id: "started", label: "In progress" }, { id: "fresh", label: "Not started" }, { id: "maxed", label: `Maxed ${maxed}` }]} />
+          <p className="menu-count">{shown.length} of {s.perks.length} perks</p>
           <div className="ui-grid" style={{ "--min": "230px" } as React.CSSProperties}>
             {shown.map((p) => (
               <div key={p.id} className={`ui-card perk-card ${p.power >= p.max ? "ui-card-done" : ""}`} data-testid={`perk-${p.id}`}>
@@ -70,23 +110,25 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
               </div>
             ))}
           </div>
+          {!shown.length && <Empty>No perks match.</Empty>}
         </>
       )}
       {tab === "skills" && (
         <>
-          <p className="text-dim">Skills stay on the account and do not cap. Chance bonuses bend before they can break a fight. {s.skillPoints} skill points to spend in Verses.</p>
-          <div className="ui-list">
-            {s.skills.map((sk) => (
-              <div key={sk.id} className="ui-card skill-row">
+          <p className="text-dim">Skills stay on the account and do not cap. Chance bonuses bend before they can break a fight. {s.skillPoints} skill points to spend in Verses (V).</p>
+          <div className="ui-grid" style={{ "--min": "240px" } as React.CSSProperties}>
+            {skills.map((sk) => (
+              <div key={sk.id} className={`ui-card skill-row skill-row-top ${best && sk.id === best.id ? "menu-pinned" : ""}`} data-testid={`skill-${sk.id}`}>
                 <div className="ui-row">
                   <span className="text-kyo">{sk.name}</span>
-                  <span>{sk.level}</span>
+                  <span>Lv {sk.level}</span>
                 </div>
-                <Meter value={sk.xp} max={sk.need} small />
+                <Meter value={sk.xp} max={sk.need} small detail={`${sk.xp.toLocaleString()}/${sk.need.toLocaleString()}`} />
                 <p className="ui-card-about">{sk.line}</p>
               </div>
             ))}
           </div>
+          {!skills.length && <Empty>No skills match.</Empty>}
         </>
       )}
     </div>
@@ -308,9 +350,16 @@ function VerseNums({ m, crit }: { m: Snap["abilities"][number]; crit?: boolean }
 
 const TIER_LABEL: Record<BoardView["tier"], string> = { easy: "EASY", normal: "NORMAL", hard: "HARD", elite: "ELITE" };
 
+const TIER_ORDER: BoardView["tier"][] = ["easy", "normal", "hard", "elite"];
+const KIND_GROUP = (k: string) => (/kill|boss/.test(k) ? "fight" : /ore|tree|shroom|fish|catch/.test(k) ? "gather" : "other");
+
 export const QuestsPanel = memo(function QuestsPanel({ game }: GameProp) {
-  const s = useSnapPick(["mapQuests", "questName", "questAbout", "setLabel", "setBonus", "unlocked"] as const);
+  const s = useSnapPick(["mapQuests", "questName", "questAbout", "setLabel", "setBonus", "unlocked", "kyo"] as const);
   const [board, setBoard] = useState<BoardView[]>([]);
+  const [tab, setTab] = usePref("turbz-quests-tab", ["board", "map", "story"] as const, "board");
+  const [tier, setTier] = usePref("turbz-quests-tier", ["all", ...TIER_ORDER] as const, "all");
+  const [kind, setKind] = usePref("turbz-quests-kind", ["all", "fight", "gather", "other"] as const, "all");
+  const [sort, setSort] = usePref("turbz-quests-sort", ["board", "reward", "tier", "short"] as const, "board");
   useEffect(() => {
     const pull = () => setBoard(game?.questBoardSnap() ?? []);
     pull();
@@ -318,56 +367,92 @@ export const QuestsPanel = memo(function QuestsPanel({ game }: GameProp) {
     return () => window.clearInterval(id);
   }, [game]);
   const secs = board[0]?.refreshIn ?? 0;
+  const clock = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`;
   const active = board.find((q) => q.active);
+  const rest = board
+    .filter((q) => !q.active)
+    .filter((q) => tier === "all" || q.tier === tier)
+    .filter((q) => kind === "all" || KIND_GROUP(q.kind) === kind)
+    .slice()
+    .sort((a, b) => sort === "reward" ? b.rewardKyo - a.rewardKyo : sort === "tier" ? TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) : sort === "short" ? a.need - b.need : 0);
+  const ready = s.mapQuests.filter((q) => q.ready).length;
+  const reroll = game?.questBoardRerollCost() ?? 0;
   return (
-    <div className="ui-stack">
-      <Section
-        title="CONTRACT BOARD"
-        right={<span className="text-dim">refresh {Math.floor(secs / 60)}:{String(Math.floor(secs % 60)).padStart(2, "0")}</span>}
-      >
-        <div className="ui-row-gap">
-          {active && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.abandonQuest()}>Drop contract</button>}
-          <ConfirmButton className="ui-btn-sm" label={`New board · ${game?.questBoardRerollCost() ?? 0} kyo`} confirm="Tap again to reroll" onConfirm={() => game?.rerollQuestBoard()} />
-        </div>
-        <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
-          {board.map((q) => (
-            <div key={q.id} className={`ui-card quest-card tier-${q.tier} ${q.active ? "ui-card-hl" : ""}`}>
+    <div className="ui-stack" data-testid="quests-panel">
+      <StatusChips items={[
+        active ? { label: `On contract · ${active.progress}/${active.need}`, tone: active.progress >= active.need ? "on" : "kyo" } : { label: "No contract taken" },
+        { label: `Board refresh ${clock}` },
+        s.mapQuests.length > 0 && { label: `${s.mapQuests.length} map quest${s.mapQuests.length === 1 ? "" : "s"}${ready ? ` · ${ready} ready` : ""}`, tone: ready ? "on" : undefined },
+        { label: `${(s.kyo ?? 0).toLocaleString()} kyo` },
+      ]} />
+      <Tabs value={tab} onChange={setTab} label="Quest sections" tabs={[
+        { id: "board", label: `Contracts · ${board.length}`, testid: "quests-tab-board" },
+        { id: "map", label: ready ? `This map · ${ready}!` : `This map · ${s.mapQuests.length}`, testid: "quests-tab-map" },
+        { id: "story", label: "Story", testid: "quests-tab-story" },
+      ]} />
+      {tab === "board" && (
+        <>
+          {active && (
+            <div className={`ui-card quest-card tier-${active.tier} menu-pinned`} data-testid="quest-active">
               <div className="ui-row">
-                <span className="text-kyo">{q.name}</span>
-                <span className={`quest-tier tier-${q.tier}`}>{TIER_LABEL[q.tier]}</span>
+                <span className="text-kyo">▶ {active.name}</span>
+                <span className={`quest-tier tier-${active.tier}`}>{TIER_LABEL[active.tier]}</span>
               </div>
-              <p className="ui-card-about">{q.about}</p>
-              {q.active ? (
-                <Meter value={q.progress} max={q.need} small label="DONE" />
-              ) : (
-                <div className="ui-row">
-                  <span className="text-dim">{q.rewardKyo} kyo</span>
-                  <button type="button" className="px-btn ui-btn-sm" disabled={!!active} onClick={() => game?.acceptQuest(q.id)}>Accept</button>
-                </div>
-              )}
+              <p className="ui-card-about">{active.about}</p>
+              <Meter value={active.progress} max={active.need} small label="DONE" detail={`${active.progress}/${active.need}`} />
+              <div className="ui-row">
+                <span className="text-dim">Pays {active.rewardKyo.toLocaleString()} kyo</span>
+                <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.abandonQuest()}>Drop contract</button>
+              </div>
             </div>
-          ))}
-        </div>
-      </Section>
-      {s.mapQuests.length > 0 && (
-        <Section title="THIS MAP">
+          )}
+          <div className="menu-toolbar">
+            <select className="px-input" aria-label="Sort contracts" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+              <option value="board">Board order</option><option value="reward">Best pay</option><option value="tier">Hardest first</option><option value="short">Quickest first</option>
+            </select>
+            <ConfirmButton className="ui-btn-sm" label={`New board · ${reroll} kyo`} confirm="Tap again to reroll" disabled={(s.kyo ?? 0) < reroll} onConfirm={() => game?.rerollQuestBoard()} />
+          </div>
+          <Chips value={tier} onChange={setTier} label="Tier" options={[{ id: "all", label: "Any tier" }, ...TIER_ORDER.map((t) => ({ id: t, label: `${TIER_LABEL[t]} ${board.filter((q) => q.tier === t).length}` }))]} />
+          <Chips value={kind} onChange={setKind} label="Kind" options={[{ id: "all", label: "Any kind" }, { id: "fight", label: "Fighting" }, { id: "gather", label: "Gathering" }, { id: "other", label: "Other" }]} />
+          <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
+            {rest.map((q) => (
+              <div key={q.id} className={`ui-card quest-card tier-${q.tier}`}>
+                <div className="ui-row">
+                  <span className="text-kyo">{q.name}</span>
+                  <span className={`quest-tier tier-${q.tier}`}>{TIER_LABEL[q.tier]}</span>
+                </div>
+                <p className="ui-card-about">{q.about}</p>
+                <div className="ui-row">
+                  <span className="text-dim">{q.rewardKyo.toLocaleString()} kyo · need {q.need}</span>
+                  <button type="button" className="px-btn ui-btn-sm" disabled={!!active} title={active ? "Finish or drop your current contract first" : undefined} onClick={() => game?.acceptQuest(q.id)}>Accept</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          {!rest.length && <Empty>{board.length ? "No contracts match these filters." : "The board is empty right now."}</Empty>}
+        </>
+      )}
+      {tab === "map" && (
+        s.mapQuests.length ? (
           <div className="ui-list" data-testid="map-quest-log">
-            {s.mapQuests.map((q) => (
-              <div key={q.id} className="ui-card">
-                <p className="text-kyo">{q.name}{q.ready ? ` · report to ${q.turnIn}` : ""}</p>
+            {[...s.mapQuests].sort((a, b) => Number(b.ready) - Number(a.ready)).map((q) => (
+              <div key={q.id} className={`ui-card ${q.ready ? "menu-pinned" : ""}`}>
+                <p className="text-kyo">{q.name}{q.ready ? ` · ✓ report to ${q.turnIn}` : ""}</p>
                 {q.lines.map((l, i) => <p key={i} className="text-dim">{l}</p>)}
               </div>
             ))}
           </div>
-        </Section>
+        ) : <Empty>No quests on this map. Talk to the people here (E) to find some.</Empty>
       )}
-      <Section title="STORY">
-        <div className="ui-card">
-          <p className="text-kyo">{s.questName}</p>
-          <p>{s.questAbout}</p>
-        </div>
-        <p className="text-dim">Set: {s.setLabel} · {s.setBonus} · {s.unlocked.length} sets unlocked</p>
-      </Section>
+      {tab === "story" && (
+        <>
+          <div className="ui-card">
+            <p className="text-kyo">{s.questName}</p>
+            <p>{s.questAbout}</p>
+          </div>
+          <p className="text-dim">Set: {s.setLabel} · {s.setBonus} · {s.unlocked.length} sets unlocked</p>
+        </>
+      )}
     </div>
   );
 });
@@ -695,7 +780,13 @@ type SpiritTab = "party" | "box" | "bonus";
 
 export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
   const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "ghostStore", "ghostBox", "ghostInspect", "ghostBonus", "rules", "bag", "kyo"] as const);
-  const [tab, setTab] = useState<SpiritTab>("party");
+  const [tab, setTab] = usePref<SpiritTab>("turbz-spirits-tab", ["party", "box", "bonus"], "party");
+  const [gsort, setGsort] = usePref("turbz-spirits-sort", ["default", "level", "rarity", "name", "type"] as const, "default");
+  const [gq, setGq] = useState("");
+  const gterm = gq.trim().toLowerCase();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ghostMatch = (g: any) => !gterm || g.name.toLowerCase().includes(gterm) || String(g.type ?? "").includes(gterm) || String(g.species ?? "").toLowerCase().includes(gterm) || (g.abilities ?? []).some((a: unknown) => String((a as { name?: string })?.name ?? a).toLowerCase().includes(gterm));
+  const ghostSort = <G extends { name: string; level: number; rarity: number; type?: string }>(list: G[]) => gsort === "default" ? list : list.slice().sort((a, b) => gsort === "level" ? b.level - a.level : gsort === "rarity" ? b.rarity - a.rarity || b.level - a.level : gsort === "type" ? String(a.type).localeCompare(String(b.type)) || b.level - a.level : a.name.localeCompare(b.name));
   const [open, setOpen] = useState<string | null>(null);
   const [swap, setSwap] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "tagged" | "shiny">("all");
@@ -707,7 +798,9 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
   const boxCost = Object.entries(BUILD_PIECES.ghostbox.cost).map(([id, n]) => `${n} ${ITEM_BY_ID[id]?.name ?? id}`).join(", ");
   const haveBoxMats = Object.entries(BUILD_PIECES.ghostbox.cost).every(([id, n]) => (s.bag.find((it) => it.id === id)?.count ?? 0) >= n);
   const tagged = s.ghostStore.filter((g) => g.tagged).length;
-  const shown = s.ghostStore.filter((g) => filter === "all" || (filter === "tagged" ? g.tagged : g.shiny)).slice().sort((a, b) => Number(b.tagged) - Number(a.tagged) || Number(b.shiny) - Number(a.shiny) || b.rarity - a.rarity || b.level - a.level);
+  const shownBase = s.ghostStore.filter((g) => (filter === "all" || (filter === "tagged" ? g.tagged : g.shiny)) && ghostMatch(g)).slice().sort((a, b) => Number(b.tagged) - Number(a.tagged) || Number(b.shiny) - Number(a.shiny) || b.rarity - a.rarity || b.level - a.level);
+  const shown = ghostSort(shownBase);
+  const party = ghostSort(s.spirits.filter(ghostMatch));
   const inspect = s.ghostInspect;
   const inspectRow = inspect ? s.ghostStore.find((g) => g.uid === inspect.uid) ?? null : null;
   useEffect(() => { if (open && !sel) setOpen(null); }, [open, sel]);
@@ -736,10 +829,19 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
         { id: "box", label: `Ghost Box ${s.ghostStore.length}` },
         { id: "bonus", label: `Bonuses ${s.ghostBonus.passive.length + s.ghostBonus.timed.length}` },
       ]} />
+      {tab !== "bonus" && (
+        <div className="menu-toolbar">
+          <input className="px-input" aria-label="Search ghosts" placeholder="Search name, element, ability" value={gq} onChange={(e) => setGq(e.target.value)} data-testid="spirit-search" />
+          <select className="px-input" aria-label="Sort ghosts" value={gsort} onChange={(e) => setGsort(e.target.value as typeof gsort)}>
+            <option value="default">Default order</option><option value="level">Highest level</option><option value="rarity">Rarest</option><option value="type">By element</option><option value="name">By name</option>
+          </select>
+        </div>
+      )}
 
       {tab === "party" && (
         <div className="ui-stack" data-testid="spirit-party">
           <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Ghosts out with you fight, earn XP from every kill, and their abilities work.</p>
+          {s.spirits.length > 0 && !party.length && <Empty>No party ghosts match.</Empty>}
           {!s.spirits.length && <Empty>No spirits yet. A fallen foe may stay and join you; a ghost jar raises the odds for a minute.</Empty>}
           {sel && (
             <GhostDetailCard g={sel} onClose={() => setOpen(null)} onToggleMove={(id) => game?.toggleSpiritMove(sel.uid, id)} tasks={tasks}
@@ -753,7 +855,7 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
             />
           )}
           <div className="ui-grid" style={{ "--min": "200px" } as React.CSSProperties}>
-            {s.spirits.map((sp) => (
+            {party.map((sp) => (
               <GhostCard key={sp.uid} g={sp} on={sp.active} selected={open === sp.uid} testid={`spirit-${sp.uid}`} onClick={() => setOpen(open === sp.uid ? null : sp.uid)}>
                 <Meter value={sp.hp} max={sp.max} small kind={sp.hp / sp.max < 0.3 ? "bad" : "good"} />
                 <Meter value={sp.level >= sp.levelCap ? 1 : sp.xp} max={sp.level >= sp.levelCap ? 1 : sp.xpNeed} small kind="xp" />
@@ -862,29 +964,48 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
 export const CraftPanel = memo(function CraftPanel({ game }: GameProp) {
   const { bag } = useSnapPick(["bag"] as const);
   const count = (id: string) => bag.find((it) => it.id === id)?.count ?? 0;
+  const [q, setQ] = useState("");
+  const [show, setShow] = usePref("turbz-craft-show", ["all", "can", "missing"] as const, "all");
+  const [sort, setSort] = usePref("turbz-craft-sort", ["default", "name", "most"] as const, "default");
+  const term = q.trim().toLowerCase();
+  const rows = ALCHEMY_RECIPES.map((r) => ({ r, n: timesCraftable(r.costs, count) }))
+    .filter(({ r, n }) => (show === "all" || (show === "can" ? n > 0 : n === 0)) && (!term || r.name.toLowerCase().includes(term) || r.about.toLowerCase().includes(term) || (ITEM_BY_ID[r.output]?.name ?? r.output).toLowerCase().includes(term) || Object.keys(r.costs).some((id) => (ITEM_BY_ID[id]?.name ?? id).toLowerCase().includes(term))))
+    .sort((a, b) => sort === "name" ? a.r.name.localeCompare(b.r.name) : sort === "most" ? b.n - a.n : 0);
+  const canAny = ALCHEMY_RECIPES.filter((r) => timesCraftable(r.costs, count) > 0).length;
+  const brewN = (id: string, n: number) => { for (let k = 0; k < n; k++) game?.brew(id); };
   return (
     <div className="ui-stack" data-testid="craft-panel">
-      <p className="text-dim">Combine what you gathered. Meals cook at a campfire; potions are mixed here.</p>
-      <div className="ui-grid" style={{ "--min": "230px" } as React.CSSProperties}>
-        {ALCHEMY_RECIPES.map((r) => {
-          const have = Object.entries(r.costs).every(([id, n]) => count(id) >= n);
-          return (
-            <div key={r.id} className={`ui-card ${have ? "ui-card-hl" : ""}`}>
-              <div className="ui-row">
-                <span className="text-kyo">{r.name}</span>
-                <span className="text-dim">→ {ITEM_BY_ID[r.output]?.name ?? r.output}{r.n > 1 ? ` ×${r.n}` : ""}</span>
-              </div>
-              <p className="ui-card-about">{r.about}</p>
-              <div className="cost-row">
-                {Object.entries(r.costs).map(([id, n]) => (
-                  <span key={id} className={`cost-chip ${count(id) >= n ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[id]?.name ?? id} {count(id)}/{n}</span>
-                ))}
-              </div>
-              <button type="button" className="px-btn ui-btn-sm" disabled={!have} onClick={() => game?.brew(r.id)}>Brew</button>
-            </div>
-          );
-        })}
+      <StatusChips items={[{ label: `${canAny}/${ALCHEMY_RECIPES.length} recipes ready`, tone: canAny ? "on" : undefined }, { label: "Meals cook at a campfire (H → Cooking)" }]} />
+      <div className="menu-toolbar">
+        <input className="px-input" aria-label="Search recipes" placeholder="Search recipe, result or ingredient" value={q} onChange={(e) => setQ(e.target.value)} data-testid="craft-search" />
+        <select className="px-input" aria-label="Sort recipes" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+          <option value="default">Default order</option><option value="name">By name</option><option value="most">Most I can make</option>
+        </select>
       </div>
+      <Chips value={show} onChange={setShow} label="Show" options={[{ id: "all", label: "All" }, { id: "can", label: `Can make ${canAny}` }, { id: "missing", label: "Missing items" }]} />
+      <div className="ui-grid" style={{ "--min": "230px" } as React.CSSProperties}>
+        {rows.map(({ r, n }) => (
+          <div key={r.id} className={`ui-card ${n > 0 ? "ui-card-hl" : ""}`} data-testid={`recipe-${r.id}`}>
+            <div className="ui-row">
+              <span className="text-kyo">{r.name}</span>
+              <span className="text-dim">→ {ITEM_BY_ID[r.output]?.name ?? r.output}{r.n > 1 ? ` ×${r.n}` : ""}</span>
+            </div>
+            <p className="ui-card-about">{r.about}</p>
+            <div className="cost-row">
+              {Object.entries(r.costs).map(([id, need]) => (
+                <span key={id} className={`cost-chip ${count(id) >= need ? "cost-ok" : "cost-miss"}`}>{ITEM_BY_ID[id]?.name ?? id} {count(id)}/{need}</span>
+              ))}
+            </div>
+            <div className="qty-row">
+              <button type="button" className="px-btn ui-btn-sm" disabled={n < 1} onClick={() => game?.brew(r.id)}>Brew</button>
+              {n >= 5 && <button type="button" className="px-btn ui-btn-sm" onClick={() => brewN(r.id, 5)}>×5</button>}
+              {n >= 2 && <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => brewN(r.id, n)}>All ×{n}</button>}
+              <span className="text-dim">{n > 0 ? `can make ${n}` : "missing items"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      {!rows.length && <Empty>No recipes match.</Empty>}
     </div>
   );
 });
@@ -940,11 +1061,11 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, show, sort, s.bag]);
   if (!s.survival) return <Empty>Survival is a Hardcore system.</Empty>;
-  const food = bestFood(bag, s.survival.hunger);
+  const food = bestFood(bag, s.turbz ? 0 : s.survival.hunger);
   const night = s.clock.phase === "night" && s.clock.active;
   const c = s.build.counts;
   const low = (v: number) => v < 15;
-  const warn = [low(s.survival.hunger) && "hungry", low(s.survival.thirst) && "thirsty", low(s.survival.rest) && "exhausted"].filter(Boolean) as string[];
+  const warn = s.turbz ? [] : [low(s.survival.hunger) && "hungry", low(s.survival.thirst) && "thirsty", low(s.survival.rest) && "exhausted"].filter(Boolean) as string[];
   const campLine = s.camp.near ? "Campfire in reach" : s.camp.lit ? (s.turbz ? "Your camp is elsewhere" : "No campfire in reach") : s.turbz && s.camp.packed ? `Camp packed · ${s.camp.pieces} pieces` : "No campfire yet";
   const ready = CAMP_RECIPE_LIST.filter((r) => timesCraftable(r.costs, count) > 0).length;
 
@@ -968,18 +1089,19 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
 
       {tab === "needs" && (
         <>
-          <div className="surv-meters">
+          {s.turbz && <p className="text-kyo">TURBZ has no hunger or thirst. Meals and water still grant experience, and sleeping at a campfire or bed after dusk skips the night and wakes you well rested (bonus XP).</p>}
+          {!s.turbz && <div className="surv-meters">
             <Meter kind={low(s.survival.hunger) ? "bad" : "good"} label="HUNGER" value={s.survival.hunger} max={100} detail={Math.ceil(s.survival.hunger)} />
             <Meter kind={low(s.survival.thirst) ? "bad" : "good"} label="THIRST" value={s.survival.thirst} max={100} detail={Math.ceil(s.survival.thirst)} />
             <Meter kind={low(s.survival.rest) ? "bad" : "good"} label="SLEEP" value={s.survival.rest} max={100} detail={Math.ceil(s.survival.rest)} />
-          </div>
+          </div>}
           <div className="gear-actions">
-            <button type="button" className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${s.bag.find((it) => it.id === food)?.name}` : "Not hungry / no food"}</button>
-            <button type="button" className="px-btn" disabled={!count("drinking_water") || s.survival.thirst >= 100} onClick={() => game?.useBag("drinking_water")}>Drink · {count("drinking_water")}</button>
+            <button type="button" className="px-btn" disabled={!food} onClick={() => game?.eatFood()}>{food ? `Eat ${s.bag.find((it) => it.id === food)?.name}` : s.turbz ? "No food" : "Not hungry / no food"}</button>
+            <button type="button" className="px-btn" disabled={!count("drinking_water") || (!s.turbz && s.survival.thirst >= 100)} onClick={() => game?.useBag("drinking_water")}>Drink · {count("drinking_water")}</button>
             <button type="button" className="px-btn" disabled={!s.sleeping && !s.nearCamp && !s.nearBed} title="Sleep by a campfire, or in a bed you built (rest comes half again as fast)" onClick={() => game?.survivalAction("sleep")}>{s.sleeping ? "Wake up" : s.nearBed ? (night ? "Sleep in bed to dawn" : "Sleep in bed") : night ? "Sleep to dawn" : "Sleep"}</button>
           </div>
           {s.clock.active && <p className="text-dim">{night ? "Foes have twice the health and damage and give three times the experience. Sleep at a campfire to skip to dawn." : "Day lasts 10 minutes, night 15."}</p>}
-          <p className="text-dim">Wounds do not heal by themselves in Hardcore. Healing spells, potions (¾ strength) and meals do.</p>
+          {!s.turbz && <p className="text-dim">Wounds do not heal by themselves in Hardcore. Healing spells, potions (¾ strength) and meals do.</p>}
           <Section title="GATHER">
             <div className="gear-actions">
               <button type="button" className="px-btn" disabled={!s.nearTree} onClick={() => game?.survivalAction("chop")}>Chop tree</button>
@@ -1125,36 +1247,61 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
 /** TURBZ storage chest: stash any bag items here and they survive death. Deposit from the bag, withdraw back. */
 export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp) {
   const s = useSnapPick(["turbzChest", "bag"] as const);
-  if (!s.turbzChest.placed) return <Empty>Build a Storage Chest at your camp first.</Empty>;
+  const [q, setQ] = useState("");
+  const [sort, setSort] = usePref("turbz-chest-sort", ["name", "count"] as const, "name");
+  if (!s.turbzChest.placed) return <Empty>Build a Storage Chest at your camp first (F → Furniture).</Empty>;
   if (!s.turbzChest.near) return <Empty>Walk to your Storage Chest to open it.</Empty>;
-  const bag = s.bag.filter((it) => it.count > 0);
+  const term = q.trim().toLowerCase();
+  const order = <T extends { name: string; count: number }>(list: T[]) => list.filter((it) => !term || it.name.toLowerCase().includes(term)).sort((a, b) => sort === "count" ? b.count - a.count || a.name.localeCompare(b.name) : a.name.localeCompare(b.name));
+  const stored = order([...s.turbzChest.items]);
+  const bag = order(s.bag.filter((it) => it.count > 0).map((it) => ({ ...it })));
+  const mats = bag.filter((it) => !it.quickable);
+  const storeAll = (list: { id: string; count: number }[]) => { for (const it of list) game?.turbzChestDeposit(it.id, it.count); };
+  const takeAll = () => { for (const it of stored) game?.turbzChestWithdraw(it.id, it.count); };
+  const bagTotal = s.bag.reduce((a, it) => a + it.count, 0);
   return (
-    <div className="ui-stack">
+    <div className="ui-stack" data-testid="turbzchest-panel">
+      <StatusChips items={[{ label: `${s.turbzChest.count} stored · ${s.turbzChest.items.length} kinds`, tone: "kyo" }, { label: `Bag ${bagTotal}` }, { label: "Survives death", tone: "on" }]} />
       <p className="text-dim">Anything you stash here stays safe when you die — rebuild your camp and it is still inside. Kyo and worn gear are not stored here.</p>
-      <Section title={`STORED · ${s.turbzChest.count}`}>
+      <div className="menu-toolbar">
+        <input className="px-input" aria-label="Search items" placeholder="Search items" value={q} onChange={(e) => setQ(e.target.value)} data-testid="turbzchest-search" />
+        <select className="px-input" aria-label="Sort items" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+          <option value="name">By name</option><option value="count">Most first</option>
+        </select>
+      </div>
+      <Section title={`STORED · ${s.turbzChest.count}`} right={stored.length > 0 && <ConfirmButton className="ui-btn-sm" label="Take everything" confirm="Tap again" onConfirm={takeAll} />}>
         {s.turbzChest.items.length === 0
           ? <p className="text-dim">Empty. Deposit items from your bag below.</p>
+          : !stored.length ? <Empty>Nothing stored matches.</Empty>
           : <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="turbzchest-stored">
-              {s.turbzChest.items.map((it) => (
+              {stored.map((it) => (
                 <div key={it.id} className="ui-card">
-                  <span className="text-kyo">{it.name} · {it.count}</span>
+                  <span className="ui-row"><span className="text-kyo">{it.name}</span><span className="text-dim">×{it.count}</span></span>
                   <span className="cost-row">
                     <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestWithdraw(it.id, 1)}>Take 1</button>
+                    {it.count >= 10 && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestWithdraw(it.id, 10)}>Take 10</button>}
                     <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestWithdraw(it.id, it.count)}>Take all</button>
                   </span>
                 </div>
               ))}
             </div>}
       </Section>
-      <Section title="YOUR BAG">
-        {bag.length === 0
+      <Section title="YOUR BAG" right={bag.length > 0 && (
+        <span className="ui-row-gap">
+          {mats.length > 0 && <button type="button" className="px-btn ui-btn-sm" data-testid="turbzchest-store-mats" onClick={() => storeAll(mats)}>Store materials</button>}
+          <ConfirmButton className="ui-btn-sm" label="Store everything" confirm="Tap again" onConfirm={() => storeAll(bag)} />
+        </span>
+      )}>
+        {s.bag.filter((it) => it.count > 0).length === 0
           ? <p className="text-dim">Your bag is empty.</p>
+          : !bag.length ? <Empty>Nothing in your bag matches.</Empty>
           : <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="turbzchest-bag">
               {bag.map((it) => (
                 <div key={it.id} className="ui-card">
-                  <span className="text-kyo">{it.name} · {it.count}</span>
+                  <span className="ui-row"><span className="text-kyo">{it.name}</span><span className="text-dim">×{it.count}</span></span>
                   <span className="cost-row">
                     <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestDeposit(it.id, 1)}>Store 1</button>
+                    {it.count >= 10 && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestDeposit(it.id, 10)}>Store 10</button>}
                     <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.turbzChestDeposit(it.id, it.count)}>Store all</button>
                   </span>
                 </div>
@@ -1171,7 +1318,7 @@ export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp)
 
 const CONTROLS: [string, string][] = [
   ["WASD", "Move"], ["E", "Gather · talk"], ["1-9", "Cast verse"], ["0", "Attack"], ["I", "Gear"], ["B", "Bag"], ["V", "Verses"], ["K", "Skills"], ["G", "Spirits"],
-  ["C", "Sheet"], ["X", "Crafting"], ["Q", "Quests"], ["M", "Map"], ["T", "Market"], ["H", "Camp (HC)"], ["F", "Build (HC)"], ["Esc", "Close · pause"],
+  ["C", "Sheet"], ["X", "Crafting"], ["Q", "Quests"], ["M", "Map"], ["T", "Market"], ["H", "Camp (Hardcore / TURBZ)"], ["F", "Build (Hardcore / TURBZ)"], ["R", "Class gimmick"], ["Space", "Quick item"], ["Esc", "Close · pause"],
 ];
 
 /** Where your progress stands: always on this device, and whether the cloud copy has caught up. */
@@ -1194,18 +1341,40 @@ export function SaveStatus({ game }: GameProp) {
 }
 
 export const PausePanel = memo(function PausePanel({ game }: GameProp) {
-  const { map, unstuck } = useSnapPick(["map", "unstuck"] as const);
+  const { map, unstuck, level, className, clock } = useSnapPick(["map", "unstuck", "level", "className", "clock"] as const);
   const maps = game?.customMaps() ?? [];
   const [audio, setAudio] = useState(() => ({ ...(game?.audioPrefs ?? { master: 1, music: 0.35, musicMuted: false }) }));
+  const [tab, setTab] = usePref("turbz-pause-tab", ["game", "audio", "controls", "worlds"] as const, "game");
+  const [keyQ, setKeyQ] = useState("");
+  const keys = CONTROLS.filter(([k, v]) => !keyQ.trim() || `${k} ${v}`.toLowerCase().includes(keyQ.trim().toLowerCase()));
+  const menus: [string, string, string][] = [["gear", "Gear", "I"], ["sheet", "Character", "C"], ["moves", "Verses", "V"], ["skills", "Skills", "K"], ["ghost", "Spirits", "G"], ["bag", "Bag", "B"], ["quests", "Quests", "Q"], ["map", "Map", "M"], ["craft", "Crafting", "X"]];
   return (
-    <div className="ui-stack">
+    <div className="ui-stack" data-testid="pause-panel">
+      <StatusChips items={[
+        { label: "Paused", tone: "kyo" },
+        { label: `${className} · Lv ${level}` },
+        clock?.active && { label: `${clock.phase === "night" ? "☾" : "☀"} ${clock.label} · ${clock.left}` },
+        map.startsWith("custom-") && { label: "On a designer map" },
+      ]} />
       <div className="ui-row-gap">
         <button type="button" className="px-btn px-btn-kyo" onClick={() => game?.closePanel()}>Resume</button>
         <button type="button" className="px-btn" data-testid="unstuck-menu-btn" onClick={() => game?.beginUnstuck()}>{unstuck ? `Unstuck ${unstuck}` : "Unstuck · 3s"}</button>
-        <button type="button" className="px-btn" onClick={() => game?.toggle("skills")}>Skills (K)</button>
       </div>
       <SaveStatus game={game} />
-      <Section title="AUDIO">
+      <Tabs value={tab} onChange={setTab} label="Pause sections" tabs={[
+        { id: "game", label: "Menus", testid: "pause-tab-game" },
+        { id: "audio", label: audio.musicMuted ? "Audio · muted" : "Audio", testid: "pause-tab-audio" },
+        { id: "controls", label: "Controls", testid: "pause-tab-controls" },
+        { id: "worlds", label: `Worlds · ${maps.length}`, testid: "pause-tab-worlds" },
+      ]} />
+      {tab === "game" && (
+        <div className="ui-grid" style={{ "--min": "150px" } as React.CSSProperties}>
+          {menus.map(([id, label, key]) => (
+            <button key={id} type="button" className="px-btn text-left" onClick={() => game?.toggle(id as Parameters<TurbzGame["toggle"]>[0])}><kbd className="key-badge">{key}</kbd> {label}</button>
+          ))}
+        </div>
+      )}
+      {tab === "audio" && (
         <div className="ui-stack">
           <label className="ui-slider">
             <span>Volume · {Math.round(audio.master * 100)}%</span>
@@ -1218,17 +1387,22 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
           <div className="ui-row-gap">
             <button type="button" className={`px-btn ui-btn-sm ${audio.musicMuted ? "px-btn-kyo" : ""}`} data-testid="music-mute-btn" aria-pressed={audio.musicMuted} onClick={() => { game?.setMusicMuted(!audio.musicMuted); setAudio({ ...game!.audioPrefs }); }}>{audio.musicMuted ? "Unmute music" : "Mute music"}</button>
           </div>
+          <p className="text-dim">A new song starts every 10 minutes.</p>
         </div>
-      </Section>
-      <Section title="CONTROLS">
-        <div className="controls-grid">
-          {CONTROLS.map(([k, v]) => (
-            <span key={k} className="controls-row"><kbd className="key-badge">{k}</kbd> {v}</span>
-          ))}
-        </div>
-        <p className="text-dim">Right-click for more actions. Drag windows by their title bar, resize from the corner, pin to keep them open.</p>
-      </Section>
-      <Section title="WORLDS & DESIGNER MAPS">
+      )}
+      {tab === "controls" && (
+        <>
+          <div className="menu-toolbar"><input className="px-input" aria-label="Search controls" placeholder="Search keys or actions" value={keyQ} onChange={(e) => setKeyQ(e.target.value)} /></div>
+          <div className="controls-grid">
+            {keys.map(([k, v]) => (
+              <span key={k} className="controls-row"><kbd className="key-badge">{k}</kbd> {v}</span>
+            ))}
+          </div>
+          {!keys.length && <Empty>No controls match.</Empty>}
+          <p className="text-dim">Right-click for more actions. Drag windows by their title bar, resize from the corner, pin to keep them open.</p>
+        </>
+      )}
+      {tab === "worlds" && (
         <div className="ui-list" data-testid="designer-maps">
           {map.startsWith("custom-") && <button type="button" className="px-btn px-btn-kyo" data-testid="leave-custom-map-btn" onClick={() => game?.leaveCustom()}>Return to the overworld</button>}
           {maps.map((m) => (
@@ -1238,7 +1412,7 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
           ))}
           {!maps.length && <Empty>Build and save maps in Designer Mode, then enter them here.</Empty>}
         </div>
-      </Section>
+      )}
       <div className="ui-row-gap">
         <button type="button" className="px-btn ui-btn-sm" data-testid="reset-layout-btn" onClick={() => resetLayout()}>Reset window layout</button>
         <AccountChip />

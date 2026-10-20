@@ -2141,7 +2141,7 @@ export class TurbzGame {
 		this.tickGhostTasks(dt);
 		this.tickTurns(dt);
 		if (this.rules === "hardcore" && !this.dead && !this.turbz) this.tickSurvival(dt);
-		if (this.turbz) { this.tickPools?.(dt); this.tickTurbz?.(dt); }
+		if (this.turbz) { this.tickPools?.(dt); this.tickTurbz?.(dt); this.tickTurbzSleep(dt); }
 		this.tickParty(dt);
 		this.tickChests(dt);
 		this.tickWildGhosts(dt);
@@ -2267,6 +2267,8 @@ export class TurbzGame {
 				this.sleeping = false;
 				if (save.survival) save.survival.rest = 100;
 				this.say("You slept through the night and wake at dawn.");
+				if (this.turbz) { const xp = Math.max(10, Math.round(xpNeed(save.level) * 0.12)); this.gainXp(xp); this.float(save.x, save.y - 60, `Well rested +${xp} xp`, "#c8beff"); }
+				if (this.resumeAuto) this.wakeUp();
 			} else this.say("Dawn breaks. Foes weaken again.");
 			this.cue("swell", { rate: 1.25, len: 1.8 }, [520, .2, "triangle"]);
 		}
@@ -2828,6 +2830,7 @@ export class TurbzGame {
 			save.y = bed.ty * 32 + 20;
 			this.say(this.isNightNow() ? "You climb into your bed. You will wake at dawn, rested half again as fast. Food and water still drain." : "You climb into your bed. Rest comes half again as fast. Food and water still drain.");
 		} else this.say(this.isNightNow() ? "Sleeping by the fire. You will wake at dawn. Food and water still drain." : "Sleeping by the fire. Food and water still drain.");
+		if (this.turbz) this.say(this.isNightNow() ? "You sleep. The night will pass quickly; you wake at dawn well rested." : "Only nights can be slept through. Wait for dusk.");
 		this.syncHud(true);
 	}
 	wakeUp() {
@@ -2840,6 +2843,14 @@ export class TurbzGame {
 			this.say("Rested. Autoplay continues.");
 		}
 		this.syncHud(true);
+	}
+	/** TURBZ: no hunger or thirst, but you can still sleep at a bed or campfire to skip the night. */
+	tickTurbzSleep(dt) {
+		if (!this.sleeping || this.dead) { if (!this.sleeping) this.sleepBed = null; return; }
+		if (!this.canSleepHere() || this.combat > 0 || this.inFight()) { this.wakeUp(); return; }
+		this.zT = (this.zT ?? 0) - dt;
+		if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40, "z", "#c8beff"); }
+		if (!this.isNightNow()) { this.wakeUp(); this.gainSkill("survival", 15); this.say("Rested. Sleep is for skipping the night: it only works after dusk."); }
 	}
 	tickSurvival(dt) {
 		const s = this.save.survival, before = s.elapsed;
@@ -5929,8 +5940,6 @@ export class TurbzGame {
 		const save = this.save;
 		n = Math.max(1, Math.round(n * bendDown(1 + this.mod("xp") / 100, 0.2, 0.05)));
 		let grant = this.rules === "hardcore" ? Math.max(1, Math.floor(n * 0.72)) : n;
-		// TURBZ class pick trades the Crying Lady's power for any class at half the XP.
-		if (this.turbz && save.turbzPickedClass) grant = Math.max(1, Math.floor(grant * 0.5));
 		save.xp += grant;
 		this.gainAccount(grant);
 		if (this.turbz) this.growWornGear?.(grant);
@@ -8486,11 +8495,11 @@ export class TurbzGame {
 	}
 	itemProblem(def) {
 		const save = this.save;
-		return itemUseProblem(def, { hardcore: this.rules === "hardcore", hp: save.hp, maxHp: this.maxHp(), hunger: save.survival?.hunger, thirst: save.survival?.thirst, level: save.level });
+		return itemUseProblem(def, { hardcore: this.rules === "hardcore", hp: save.hp, maxHp: this.maxHp(), hunger: this.turbz ? 0 : save.survival?.hunger, thirst: this.turbz ? 0 : save.survival?.thirst, level: save.level });
 	}
 	eatFood() {
 		if (!this.save || this.rules !== "hardcore" || this.dead) return;
-		const id = bestFood(this.save.bag, this.save.survival.hunger);
+		const id = bestFood(this.save.bag, this.turbz ? 0 : this.save.survival.hunger);
 		if (id) this.useBag(id);
 	}
 	useBag(id) {
@@ -8523,6 +8532,8 @@ export class TurbzGame {
 			if (id === "drinking_water") save.survival.thirst = Math.min(100, save.survival.thirst + 50);
 			else save.survival.hunger = Math.min(100, save.survival.hunger + FOOD[id]);
 			this.gainSkill("survival", 3);
+			// TURBZ has no hunger or thirst, so a meal or a drink pays out in experience instead.
+			if (this.turbz) { const xp = Math.max(4, Math.round(xpNeed(save.level) * (id === "drinking_water" ? 0.015 : 0.01 + (FOOD[id] ?? 0) / 2500))); this.gainXp(xp); this.float(save.x, save.y - 60, `+${xp} xp`, "#9ad8c8"); }
 			if (healing) this.drinkHeal(def, healing);
 			else this.say(`Used ${def.name}.`);
 			this.afterItem(id);

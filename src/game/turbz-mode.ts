@@ -30,6 +30,7 @@ import { cryingElements } from "./classes";
 import { enemyTargets, expectedHunterPower } from "./balance";
 import { generateWorld } from "./map-gen";
 import { lmsSpawns } from "./lms";
+import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
 import { nearestShore } from "./survival";
 import { combatRate } from "./pools";
@@ -111,13 +112,13 @@ export function installTurbz(game: any): void {
     // swapRules clears the turbz flag; set it true again afterwards, before begin, so the run is TURBZ.
     this.swapRules("hardcore");
     this.turbz = true;
-    // TURBZ is normally the Crying Lady's mode. With the class toggle on you may wake as any class instead,
-    // at a 50% XP penalty (see gainXp). Her own build keeps the full rate.
-    const classId = pickClass && _classId ? _classId : "cryinggirl";
+    // Any class can play TURBZ at the full XP rate (the Crying Girl is no longer forced). `pickClass` is kept for old callers.
+    void pickClass;
+    const classId = _classId || "cryinggirl";
     const race = (CLASS_RACE as Record<string, string>)[classId] ?? _race ?? "tide";
     this.begin(name, race, undefined, classId, traitId, female);
     const save = this.save;
-    if (save) save.turbzPickedClass = pickClass && classId !== "cryinggirl";
+    if (save) save.turbzPickedClass = false;
     if (!save) return;
     save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
     save.mergeArmor = true; // TURBZ: duplicate pieces merge/level up instead of cluttering the bag.
@@ -518,16 +519,42 @@ export function installTurbz(game: any): void {
       if (save.survival.beds.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty)) continue;
       save.survival.beds.push({ map: save.map, tx, ty });
     }
+    // Furniture must land on open ground: the new site may have a tree, rock or water where the old one didn't,
+    // or a wall the camp itself just put down. Spiral out to the nearest free tile instead of losing the piece.
+    const taken = (tx: number, ty: number) =>
+      save.survival.logs.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty && e.kind !== "woodfloor" && e.kind !== "stonefloor") ||
+      save.survival.beds.some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty) ||
+      (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty) ||
+      (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty) ||
+      (tx === bx && ty === by);
+    const freeNear = (tx0: number, ty0: number) => {
+      for (let r = 0; r <= 6; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const tx = tx0 + dx, ty = ty0 + dy;
+        if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2) continue;
+        if (taken(tx, ty) || blocked(this.world, tx * 32 + 16, ty * 32 + 16)) continue;
+        return { tx, ty };
+      }
+      return null;
+    };
     if (camp.chest) {
-      const tx = bx + camp.chest.dx, ty = by + camp.chest.dy;
-      if (tx >= 2 && ty >= 2 && tx < w - 2 && ty < h - 2) save.turbzChest = { map: save.map, tx, ty };
+      const at = freeNear(bx + camp.chest.dx, by + camp.chest.dy);
+      if (at) save.turbzChest = { map: save.map, ...at };
     }
-    if (camp.ghostBox) {
-      const tx = bx + camp.ghostBox.dx, ty = by + camp.ghostBox.dy;
-      if (tx >= 2 && ty >= 2 && tx < w - 2 && ty < h - 2) save.ghostBox = { map: save.map, tx, ty };
+    // Boxed ghosts always come back with a box to reach them, even if the box itself was packed on its own.
+    if (camp.ghostBox || camp.ghostStore?.length) {
+      const at = freeNear(bx + (camp.ghostBox?.dx ?? 1), by + (camp.ghostBox?.dy ?? 1));
+      if (at) save.ghostBox = { map: save.map, ...at };
     }
     if (camp.ghostStore?.length) {
-      save.ghostStore = camp.ghostStore.map((s: any) => ({ ...s }));
+      // Merge rather than overwrite, so a ghost boxed since the camp was packed is not lost.
+      const have = new Set((save.ghostStore ?? []).map((g: any) => g.uid));
+      save.ghostStore = [...(save.ghostStore ?? []), ...camp.ghostStore.filter((g: any) => !have.has(g.uid)).map((g: any) => ({ ...g, active: false }))];
+    }
+    // Beds go through the same open-ground check (walls and floors keep their exact layout).
+    for (const b of save.survival.beds) if (b.map === save.map && blocked(this.world, b.tx * 32 + 16, b.ty * 32 + 16)) {
+      const at = freeNear(b.tx, b.ty);
+      if (at) { b.tx = at.tx; b.ty = at.ty; }
     }
     save.turbzCamp = null;
     this.syncSolids?.(save.map);

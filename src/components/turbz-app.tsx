@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { staticSignIn, staticSignUp, useStaticAccount } from "@/lib/auth/static-account";
 import { CLASS_RACE } from "@/game/content";
 import { CLASSES, classGendered } from "@/game/classes";
-import { CharacterSheet, ClassPicker, CryingCustomizer, type Pick } from "@/components/character-ui";
+import { CharacterSheet, ClassPicker, CryingCustomizer, PerkBuilder, type Pick } from "@/components/character-ui";
 import { FloatWin, narrow, vh, vw } from "@/components/float-win";
 import { HudDock, HudFabs, HudHover, HudTarget, HudTracker, HudVitals } from "@/components/hud";
 import { BuildBar } from "@/components/build-bar";
@@ -124,7 +124,6 @@ function Hunt() {
   const [name, setName] = useState("Mira");
   const [pick, setPick] = useState<Pick>({ classId: "warden", traitId: null, female: true });
   const race = CLASS_RACE[pick.classId];
-  const [turbzPickClass, setTurbzPickClass] = useState(false);
   const [screen, setScreen] = useState<ScreenId>("hub");
   const [arenaSeed, setArenaSeed] = useState<unknown>(null);
   const [booted, setBooted] = useState(false);
@@ -284,17 +283,11 @@ function Hunt() {
           <Screen kicker="TURBZ" title="A hard wild. Other witches." wide>
             <div className="ui-stack" data-testid="turbz-screen">
               <p className="text-dim">You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
-              <p className="text-kyo font-display text-[9px]">TURBZ is the Crying Lady's mode. She is the only one you play here — build her exactly how you want.</p>
+              <p className="text-kyo font-display text-[9px]">Wake as any class at the full XP rate, or pick the Crying Lady and build her: perks, borrowed passives, elements and a trait.</p>
               <Field label="Name">
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
               </Field>
-              <label className="chip chip-check" title="Off: play the Crying Lady at full XP. On: wake as any class instead, but gain 50% less XP.">
-                <input type="checkbox" checked={turbzPickClass} onChange={(e) => setTurbzPickClass(e.target.checked)} data-testid="turbz-pick-class" />
-                Pick a class instead (−50% XP)
-              </label>
-              {turbzPickClass
-                ? <ClassPicker pick={pick} setPick={setPick} game={g()} />
-                : <CryingCustomizer onChange={() => setPick((p) => ({ ...p }))} />}
+              <ClassPicker pick={pick} setPick={setPick} game={g()} />
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
                 {hasTurbzSave() && (
@@ -302,13 +295,9 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                {turbzPickClass
-                  ? <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true)}>
-                      Wake as {CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
-                    </button>
-                  : <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, "cryinggirl", null, true, false)}>
-                      Wake as the Crying Lady
-                    </button>}
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true)}>
+                  Wake as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
+                </button>
               </div>
             </div>
           </Screen>
@@ -555,8 +544,9 @@ const Overlays = memo(function Overlays({ game }: GameProp) {
         <div className="px-overlay" data-testid="cry-rebuild" style={{ position: "fixed", inset: 0, background: "rgba(10,8,14,0.82)", zIndex: 60, overflow: "auto", display: "flex" }}>
           <div className="px-panel ui-stack" style={{ maxWidth: 560, margin: "auto", padding: 16, maxHeight: "90vh", overflow: "auto" }}>
             <h2 className="font-display text-kyo text-[12px]">REBUILD HER?</h2>
-            <p className="text-dim">Fifty levels down. Reshape the Crying Lady however you like — element, role, fight style, stat lean and R skill — or just resume. Changes apply at once.</p>
+            <p className="text-dim">Fifty levels down. Reshape the Crying Lady however you like — element, role, fight style, stat lean, R skill, perks and borrowed passives — or just resume. Changes apply at once.</p>
             <CryingCustomizer onChange={() => { /* live */ }} />
+            <PerkBuilder onChange={() => { /* live */ }} />
             <button type="button" className="px-btn px-btn-kyo" data-testid="cry-rebuild-done" onClick={() => (game as unknown as { endCryRebuild?: () => void } | null)?.endCryRebuild?.()}>Done — resume</button>
           </div>
         </div>

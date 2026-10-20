@@ -1421,3 +1421,13 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .class-grid { grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); }
 .class-canvas { display: block; width: 100%; max-width: 132px; height: auto; aspect-ratio: 4 / 5; margin: 0 auto; image-rendering: pixelated; background: #1c1412; }
 .class-card-on .class-canvas { outline: 2px solid var(--color-kyo); outline-offset: -2px; }
+
+/* Menu touch-up: shared toolbar (search + selects + buttons) and small helpers used by every menu. */
+.chip-kyo { color: var(--color-kyo); border-color: var(--color-kyo); }
+.menu-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.menu-toolbar > .px-input:first-child { flex: 1 1 180px; min-width: 0; }
+.menu-toolbar select.px-input { flex: 0 1 190px; }
+.menu-count { font-size: 17px; color: var(--color-dim); }
+.menu-pinned { border-color: var(--color-kyo); box-shadow: 3px 3px 0 #0b0706, inset 0 0 0 2px #3a2a12; }
+.skill-row-top .ui-row > span:last-child { color: var(--color-kyo); }
+.qty-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
