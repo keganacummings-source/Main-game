@@ -385,15 +385,27 @@ def ruinmage(fr):
     fr.recolor(hair=cowl, tunic=[rgba("#1a0a1e"), rgba("#2e1236"), rgba("#c02a3a")])
     dx, t = head(fr)
     horn = (rgba("#e0d8c8"), rgba("#a89a88"), rgba("#5a4e44"))
-    # Two great horns curling up out of the cowl, both rooted on the head in every facing.
+    # Two great horns: thick where they leave the cowl, sweeping out and curling up to a point.
+    # Path of the right horn's spine (dx from the root, dy from the head top) with its thickness.
+    spine = [(0, 3, 3), (1, 2, 3), (2, 1, 3), (3, 0, 3), (4, -1, 2), (4, -2, 2), (5, -3, 2), (5, -4, 2), (5, -5, 1), (4, -6, 1), (4, -7, 1)]
+    root = 4 if fr.f in (FRONT, BACK) else 3
     for side in (-1, 1):
-        base_x = 15.5 + dx + side * (6 if fr.f in (FRONT, BACK) else 4.5)
-        pts = set()
-        for k in range(8):
-            x = round(base_x + side * (k * 0.55 if k < 5 else 2.8 - (k - 5) * 0.4))
-            y = t + 2 - k
-            pts |= {(x, y), (x + (1 if side < 0 else -1) * (1 if k < 4 else 0), y)}
-        fr.shape(shade(pts, *horn, axis="y"), None)
+        rx = round(15.5 + dx + side * root) if side > 0 else round(15.5 + dx + side * root) - 1
+        cells = {}
+        for k, (ox, oy, w) in enumerate(spine):
+            for i2 in range(w):
+                # Thickness grows inward (toward the head) so the outer curve stays clean.
+                x = rx + side * (ox - i2)
+                y = t + oy
+                tone = horn[0] if i2 == 0 and k >= 3 else horn[2] if i2 == w - 1 and w > 1 else horn[1]
+                if k >= len(spine) - 2:
+                    tone = horn[0]
+                cells[(x, y)] = tone
+        # Ridges across the base of the horn.
+        for k in (1, 3):
+            ox, oy, _ = spine[k]
+            cells[(rx + side * (ox - 1), t + oy)] = horn[2]
+        fr.shape(cells, None)
     t = HEAD_TOP - fr.bob
     # Shadowed face with burning eyes.
     if fr.f == FRONT:
@@ -411,7 +423,7 @@ def ruinmage(fr):
                 fr.put(*p, rgba("#2a1430"))
         fr.put(x0 + 3 if fr.f == RIGHT else x0 + 2, t + 8, rgba("#ff3a3a"))
     # Tattered hem.
-    for x in range(8, 24, 3):
+    for x in range(11, 21, 3):
         y = 35 - fr.bob
         if fr.get(x, y) and fr.get(x, y)[3] and fr.get(x, y + 1) and fr.get(x, y + 1)[3] == 0:
             fr.put(x, y + 1, cowl[1]); fr.put(x, y + 2, OUT)
