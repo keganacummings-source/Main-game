@@ -1,5 +1,15 @@
 # Patch Notes
 
+## Witch sprites cleaned up
+
+- **Every class sprite** (all 40) got a clean-up pass:
+  - Pale classes have crisp dark edges now instead of soft grey ones that blurred into light ground. This covers the Spirit Caller, Absolver, Seraph, Moonhopper, Vanguard, Nightlord and others.
+  - Stray specks are removed.
+- **The ten casters** now have their own boots and leggings in their colours, and the same soft foot shadow as every other class.
+  - Their weapons are gripped in the hand, and staff heads are joined to their shafts. The scythe was rebuilt.
+  - Hats sit on the head in every facing.
+  - The Ruinmage's horns were redone.
+
 ## New looks for the ten casters
 
 The ten caster classes were recolours of older classes. Each now has an original design, with its own silhouette in every facing:

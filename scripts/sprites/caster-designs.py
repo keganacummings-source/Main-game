@@ -470,6 +470,25 @@ def veilsinger(fr):
         hand(fr, rgba("#7a4a8a"))
 
 
+# Boots and leggings per caster (the base body's brown ones read as the same character from the waist down).
+LEGS = {(72, 54, 44): 1, (90, 74, 58): 1, (46, 30, 25): 0, (54, 35, 29): 0, (58, 42, 34): 0, (82, 71, 62): 2, (128, 115, 101): 2}
+BOOTS = {
+    "embermage": ("#2a0e0a", "#5a1c14", "#a0402a"), "tidewitch": ("#0e2a30", "#1e4a52", "#4a8a90"), "stonecaller": ("#2a2418", "#4a4030", "#7a6a50"),
+    "stormwitch": ("#14163a", "#262a6a", "#5a68d0"), "frostweaver": ("#1a2a4a", "#3a5a8a", "#a8c8e8"), "radiant": ("#5a3a0a", "#b08030", "#f0d080"),
+    "gravemage": ("#0e120e", "#1e261e", "#3a4636"), "arcanist": ("#10183a", "#1e2a5a", "#c0a040"), "ruinmage": ("#0a040e", "#1e0a24", "#5a1a2a"),
+    "veilsinger": ("#2a1a3a", "#4a2a5a", "#a878c0"),
+}
+
+
+def legs(fr, name):
+    ramp = [rgba(h) for h in BOOTS[name]]
+    for y in range(34, FH):
+        for x in range(FW):
+            c = fr.px[y][x]
+            if c[3] and c[:3] in LEGS:
+                fr.px[y][x] = ramp[LEGS[c[:3]]]
+
+
 DESIGNS = {"embermage": embermage, "tidewitch": tidewitch, "stonecaller": stonecaller, "stormwitch": stormwitch, "frostweaver": frostweaver,
            "radiant": radiant, "gravemage": gravemage, "arcanist": arcanist, "ruinmage": ruinmage, "veilsinger": veilsinger}
 
@@ -494,6 +513,7 @@ def main(sheet_in, sheet_out, base_path="public/sprites/warrior_base.png"):
                     px = [list(reversed(r)) for r in px]
                 bob = 1 if f % 2 else 0
                 fr = Frame(px, RIGHT if row == LEFT else row, bob)
+                legs(fr, name)
                 DESIGNS[name](fr)
                 out = fr.px if row != LEFT else [list(reversed(r)) for r in fr.px]
                 for y in range(FH):
