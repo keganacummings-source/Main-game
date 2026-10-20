@@ -19,7 +19,7 @@ Three warlords roam the overworld, and each dungeon has a boss in its last room.
 
 Two fixed dungeons on the overworld. Walk to the door and press **E**.
 
-- **Tiny Crypt**: skeletons and ghouls, ending in the **Bone King**. Story quests *Bone Patrol* and *The Bone King* happen here.
+- **Tiny Crypt**: skeletons and ghouls, ending in the **Bone King**.
 - **Ash Kiln**: fire spirits, ending in the **Ash Regent**.
 
 Each visit is its own **instance**: foes you kill inside **stay dead** (they don't respawn, even if you reload the page in there). Walk out and back in to start a new instance with every foe back. The layout itself changes once per in-game day.

@@ -1,46 +1,35 @@
 # Quests
 
-There are three kinds of quests: the **story**, the **Contract Board**, and **map quests** on designer maps. Open **Quests** (**Q**) to see all three.
+All quests come from the **Quest Board**. Open **Quests** (**Q**). Story quests and quest givers on the map were retired: townsfolk still talk, but every quest is a board contract.
 
-## Story quests
+## How the board works
 
-Seven chapters that walk you around the world. Talk to the giver (they offer **Quest** on their hover card).
+- **Ten contracts** are posted at a time. The whole board **refreshes every 30 minutes**, and your accepted contracts stay.
+- **Take up to three contracts at once.** They show in the HUD with each objective's progress.
+- **Each contract has one to three objectives.** All of them count at the same time; the contract is done when every objective is full.
+- **Finished contracts are replaced right away** by a fresh one.
+- **Drop** a contract at any time (its progress is lost).
+- **New board** rewrites the unaccepted contracts for about eight kills' worth of kyo at your level.
 
-<!-- gen:story-quests -->
-
-Story rewards are boosted by your **Social** skill (+0.15% per level). Each gives 24 Adventuring and 12 Social experience.
-
-## Contract Board
-
-Ten random contracts, **refreshed every 30 minutes**. Open the **Contract Board** tab in Quests.
-
-- **Accept one** at a time. Progress shows in the HUD and messages.
-- **Drop** your contract at any time.
-- **Reroll** the whole board early for **25 + 3 × your level** kyo.
-- Your accepted contract survives a refresh.
-
-### Contract types
+## Objectives
 
 <!-- gen:contract-kinds -->
 
-The count needed and the pay both rise with your level, up to level 60: the count by 3% per level, the pay per unit by 4% per level. Pay also varies ±10%.
+The count rises with your level (1.2% per level, up to level 150). On Hard and above, kill objectives can carry a **condition**:
 
-### Difficulty tiers
+- **At night:** only kills after dusk count (pays ×1.35).
+- **Inside a dungeon:** only kills in a dungeon count (pays ×1.5).
+
+## Tiers and rewards
 
 <!-- gen:contract-tiers -->
 
-Boss contracts always need 1 boss (2 on Elite), and catch contracts at most 3 spirits. Pay is also boosted by **Social** (+0.15% per level). Each finished contract gives 8 Social experience.
+- **Kyo** is paid in "kills' worth" at your level: the objectives' worth × the tier's pay, +15% for each extra objective. Pay varies ±10%. **Social** adds up to +50% (0.15% per level).
+- **XP** is a share of what your current level needs, so contracts keep pace at every level.
+- **Gear** is rolled at your level with a boss-grade bonus: **Hard** pays a Rare+ piece, **Elite** an Epic+ piece and an enchantment, **Legend** (level 15+) a Legendary piece and two enchantments. Normal contracts have a 50% chance of a Fine+ piece.
+- **Supplies:** Big Potions from Normal up, Ghost Jars on Elite and Legend, and field rations on Hard and up in Hardcore.
+- Every contract also gives Adventuring and 8 Social skill experience.
 
-## Map quests
+## Old maps
 
-Maps made in the [Map Builder](Designer-Mode) can have their own NPCs, story and quests: talk, reach places, gather, defeat foes. They show under **This map** in Quests. The **Green Cave** (Hardcore) has one that starts over each time you enter.
-
-[Veilreach](World-and-Regions#veilreach) has the biggest set:
-
-- **The Sundered Crown**, a chained main story. Chapter I starts with the elder in Hearthmere's capital. Each later chapter takes you by ferry to another continent's capital, has you talk to people in its sister towns, gather, fight, and visit a landmark, and ends with a shard. The finale is on Crownfall Isle.
-- **Three side quests in every town**:
-  - clear the roads (defeat foes);
-  - a supply run (gather and bring back);
-  - a letter to deliver to an NPC in another town.
-
-Travel steps name the place ("Travel to Ulbrook Ruins"), and the gold ring on the map shows where your next step is.
+Designer maps made before this change keep their quest data, but nothing hands those quests out any more, and the Map Builder no longer has a Quests tab.

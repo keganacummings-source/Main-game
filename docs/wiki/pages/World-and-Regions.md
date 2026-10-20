@@ -83,7 +83,7 @@ The overworld: 500×500 tiles, built with the [Map Builder](Designer-Mode#worlds
 - **Ferries.** Walk to the end of a pier to sail to the next port. The ports form a ring, so every continent can be reached.
 - **Wilds.** Woods, mines, fisheries and mushroom groves are full of gathering nodes. You will also find ruins, barrows, altars and watchstones, about 200 enemy camps, and a boss on each continent.
 - **Areas.** Walking into a continent, town or landmark announces its name and levels. Your first visit gives a little Adventuring XP, and a first visit to a town or continent also trains **Wayfinding** (+30 and +20). Walking trains it too, and it makes you faster. Fast travel does not.
-- **Story.** *The Sundered Crown* sends you to every capital for a shard of the crown, then to Crownfall Isle. Each town also has three side quests: clearing roads, supply runs and letters. See [Quests](Quests#map-quests).
+- **Quests.** Veilreach's old story and town quests were retired: every quest now comes from the [Quest Board](Quests).
 
 ## Designer maps
 

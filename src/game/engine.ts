@@ -36,6 +36,7 @@ import {
   LEGACY_CLASS,
   type ClassId,
   ENCHANTS,
+  rollEnchantPower,
   ENCHANT_BY_ID,
   MAX_GEAR_ENCHANTS,
   perkText,
@@ -196,7 +197,7 @@ import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
 import { applyStatus, cleanseStatuses, endStatus, HARD_CC, hasStatus, IMMUNE_PREFIX, SOFT_CAP, struggle, tickStatuses } from "./status-rules";
 import {
-	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, rerollBoard, rerollCost, TIER_XP,
+	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, MAX_ACTIVE, rerollBoard, rerollCost, stepLabel, TIER_XP,
 	type BoardEventDetail, type BoardKind,
 } from "./quest-board";
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
@@ -207,7 +208,7 @@ import { installEnemySkins, rollEnemySkin, rollEnemyName, rollEnemyTypes, typeCh
 import {
 	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_ENRAGE, DEATH_MARK, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
 	adaptToward, bountyInventory, bountyKyo, bountyQuality, bountyStarChance, clearNameCost, defenseVs, enemyHitDamage, enemyTargets,
-	expectedHunterPower, gearSellValue, hardcoreGrowth, itemSellValue, killXpAmount, openWorldLevelEdge, rollEnemyKit, standardGrowth,
+	expectedHunterPower, gearSellValue, hardcoreGrowth, killKyo, tradeSellMult, itemSellValue, killXpAmount, openWorldLevelEdge, rollEnemyKit, standardGrowth,
 } from "./balance";
 import {
 	breakMelee, commitMelee, commitSpell, freshMelee, freshWeave, pickRushTargets, planMelee, planSpell, schoolMult, shatterWeave, tickMelee, tickWeave,
@@ -297,6 +298,8 @@ export type Snap = {
   talk: { id: string; name: string; role: string; line: string; shop: string | null; shrine: TypeId | null; more?: boolean; quests?: { offers: { id: string; name: string; about: string; steps: string[]; reward: string }[]; active: { id: string; name: string; lines: string[]; ready: boolean }[] } } | null;
   /** Open quests on the designer map you are standing in. */
   mapQuests: { id: string; name: string; lines: string[]; ready: boolean; turnIn: string }[];
+  /** Accepted Quest Board contracts, for the HUD tracker: name, tier and the objectives left. */
+  contracts: { id: string; name: string; tier: string; steps: { label: string; progress: number; need: number; done: boolean }[] }[];
   gear: Gear[];
   equipped: string[];
   /** TURBZ only: whether a pickup that beats your gear is worn automatically. */
@@ -306,7 +309,7 @@ export type Snap = {
   setCount: number;
   totals: { id: string; name: string; power: number }[];
   skills: { id: SkillId; name: string; level: number; xp: number; need: number; line: string }[];
-  bag: { id: string; name: string; count: number; about: string; useProblem: string | null; effect: string; quickable: boolean }[];
+  bag: { id: string; name: string; count: number; about: string; useProblem: string | null; effect: string; quickable: boolean; sell?: number; kind?: "food" | "use" | "material" }[];
   /** Items queued on the Space bar (the first is used); the potion cooldown in seconds. */
   quick: { id: string; name: string; count: number }[];
   quickCd: number;
@@ -629,6 +632,8 @@ function gritCurve(): Float32Array {
 }
 /** Quest XP: written rewards are multiplied, plus a share of the current level's XP bar. */
 const QUEST_XP_MULT = 2;
+/** Map quest givers (designer-map NPC quests) are retired: the Quest Board is the one quest system. */
+const MAP_QUESTS_ON = false;
 const QUEST_XP_SHARE = 0.15;
 const BOARD_XP_SHARE = { easy: 0.2, normal: 0.3, hard: 0.45, elite: 0.7 };
 /** Ghosts out with you at once, ghosts in the party, and ghosts the Ghost Box can hold. */
@@ -787,6 +792,7 @@ const emptySnap = (): Snap => ({
 	sheet: null,
 	clock: { phase: "day", label: "Day", left: "", dark: 0, active: false },
 	mapQuests: [],
+	contracts: [],
 	build: { on: false, logs: 0, placed: 0, inZone: false, holding: false, piece: "wood", beds: 0, ghostBox: false, counts: { walls: 0, floors: 0, doors: 0, beds: 0, ghostBox: false, chest: false, fires: 0 }, hover: null },
 	lobby: { code: "", role: "solo", net: "", members: [] }
 });
@@ -4867,14 +4873,13 @@ export class TurbzGame {
 		// Ghosts out with you and tagged tiny followers learn from every kill too.
 		this.feedGhostXp(Math.floor(amount * (this.isNightNow() ? NIGHT.xp : 1)));
 		this.gainSkill("hunting", mob.boss ? 28 : 10);
-		save.kyo += Math.floor((2 + mob.level) * (mob.boss ? 6 : 1) * (mob.lootMult ?? 1) * (1 + this.chan("kyo_find") / 100) * bendDown(1 + this.mod("kyo") / 100, 0.2, 0.05));
+		save.kyo += Math.floor(killKyo(mob.level, !!mob.boss) * (mob.lootMult ?? 1) * (1 + this.chan("kyo_find") / 100) * bendDown(1 + this.mod("kyo") / 100, 0.2, 0.05));
 		save.wins += 1;
 		const regen = this.chan("regen");
 		if (regen && this.rules !== "hardcore") save.hp = Math.min(this.maxHp(), save.hp + regen * .4);
 		this.say(`${mob.name} falls.`);
 		this.cue(mob.boss ? "boom" : "thud", { rate: mob.boss ? 0.7 : 1 }, [90, .08, "triangle"]);
-		this.questKill(mob);
-		if (!mob.ghost) this.boardEvent("kills", { species: mob.species, type: mob.type, boss: !!mob.boss });
+		if (!mob.ghost) this.boardEvent("kills", { species: mob.species, type: mob.type, boss: !!mob.boss, rarity: mob.rarity ?? 0, night: this.isNightNow(), dungeon: this.isDungeonMap(save.map), dungeonBoss: !!(mob.boss && (mob.dungeonBoss || this.isDungeonMap(save.map))), witch: !!(mob.witch && !mob.party) });
 		this.rollBountyStar(mob);
 		if (mob.bounty) {
 			for (const pool of [this.mobs, this.contract ?? []]) {
@@ -5510,39 +5515,37 @@ export class TurbzGame {
 	spiritPower(s: Spirit) {
 		return s.level * 10 + s.rarity * 12 + s.speed + Math.floor(s.hp);
 	}
-	noteCatch(mob: Mob) {
-		const save = this.save!;
-		if (this.world && biomeNameAt(this.world, save.x, save.y) === "ashen" && mob.type === "fire") {
-			const q = save.quests.ember_hunt!;
-			if (!q.done) {
-				q.n += 1;
-				if (q.n >= 2) this.completeQuest("ember_hunt");
-			}
-		}
-		if ((save.catches.fire ?? 0) >= 1 && (save.catches.light ?? 0) >= 1 && !save.quests.keeper_lanterns!.done) this.completeQuest("keeper_lanterns");
-		if (mob.type === "water" && save.quests.marsh_walk!.n >= 1 && !save.quests.marsh_walk!.done) this.completeQuest("marsh_walk");
-	}
+	/** Story quests were retired: catching only feeds the Quest Board now (see boardEvent("catch")). */
+	noteCatch(_mob: Mob) {}
 	/** The Quest Board: ten random contracts, refreshed every 30 minutes. State lives on the save. */
 	questBoardSnap() {
 		if (!this.save) return [];
 		const now = Date.now();
-		return boardView(ensureBoard(this.save, now), now);
+		return boardView(ensureBoard(this.boardHost(), now), now);
 	}
 	questBoardRerollCost(): number {
 		return rerollCost(this.save?.level ?? 1);
 	}
 	acceptQuest(id: string) {
 		if (!this.save) return;
-		const q = acceptContract(ensureBoard(this.save, Date.now()), id);
+		const st = ensureBoard(this.boardHost(), Date.now());
+		if (st.active.length >= MAX_ACTIVE) return this.say(`You can run ${MAX_ACTIVE} contracts at once. Finish or drop one first.`);
+		const q = acceptContract(st, id);
 		if (!q) return this.say("That contract is gone. Wait for the board to refresh.");
 		this.say(`Accepted: ${q.name}. ${q.about}`);
 		this.persist(); this.syncHud(true);
 	}
-	abandonQuest() {
+	abandonQuest(id?: string) {
 		if (!this.save) return;
-		const q = abandonContract(ensureBoard(this.save, Date.now()));
+		const q = abandonContract(ensureBoard(this.boardHost(), Date.now()), id);
 		if (q) this.say(`Dropped: ${q.name}.`);
 		this.persist(); this.syncHud(true);
+	}
+	/** The save, plus what the board needs to know about the mode (Hardcore adds field rations to rewards). */
+	boardHost() {
+		const save = this.save;
+		save.hardcore = this.rules === "hardcore";
+		return save;
 	}
 	rerollQuestBoard() {
 		const save = this.save;
@@ -5550,43 +5553,58 @@ export class TurbzGame {
 		const cost = this.questBoardRerollCost();
 		if (save.kyo < cost) return this.say(`A fresh board costs ${cost} kyo.`);
 		save.kyo -= cost;
-		rerollBoard(save, Date.now());
-		this.say(`The board is rewritten. -${cost} kyo.`);
+		rerollBoard(this.boardHost(), Date.now());
+		this.say(`The board is rewritten (accepted contracts stay). -${cost} kyo.`);
 		this.persist(); this.syncHud(true);
 	}
-	/** Something happened in the world; advance the accepted contract if it cares. */
+	/** Something happened in the world; advance every accepted contract that cares. */
 	boardEvent(kind: BoardKind, detail: BoardEventDetail = {}) {
 		const save = this.save;
 		if (!save) return;
-		const hit = applyBoardEvent(save, ensureBoard(save, Date.now()), kind, detail);
-		if (!hit) return;
-		if (!hit.complete) {
-			this.say(`${hit.quest.name}: ${hit.progress}/${hit.quest.need}`);
-			this.syncHud(true);
-			return;
+		const hits = applyBoardEvent(this.boardHost(), ensureBoard(this.boardHost(), Date.now()), kind, detail);
+		if (!hits.length) return;
+		for (const hit of hits) {
+			if (!hit.complete) {
+				const st = hit.quest.steps[hit.step];
+				const n = hit.progress[hit.step] ?? 0;
+				// Do not spam: announce every few steps, the last few, and when an objective finishes.
+				if (n >= st.need || n <= 3 || st.need - n <= 3 || n % Math.max(1, Math.ceil(st.need / 5)) === 0) this.say(`${hit.quest.name}: ${stepLabel(st)} ${Math.min(n, st.need)}/${st.need}${n >= st.need ? " ✓" : ""}`);
+				continue;
+			}
+			this.payContract(hit.quest);
 		}
-		const kyo = Math.floor(hit.quest.rewardKyo * (1 + this.skillN("social") * 0.0015));
-		save.kyo += kyo;
-		this.gainSkill("adventuring", TIER_XP[hit.quest.tier]);
-		this.gainSkill("social", 8);
-		const xp = this.questXp(TIER_XP[hit.quest.tier], BOARD_XP_SHARE[hit.quest.tier] ?? 0.25);
-		this.gainXp(xp);
-		this.say(`Contract complete: ${hit.quest.name}. +${kyo} kyo, +${xp} xp`);
 		this.persist(); this.syncHud(true);
 	}
-	questKill(mob) {
+	/** Pays a finished contract: kyo, a share of the level's XP, then gear, enchantments and supplies by tier. */
+	payContract(q) {
 		const save = this.save;
-		const q = save.quests;
-		if (!q.first_steps.done) {
-			q.first_steps.n += 1;
-			if (q.first_steps.n >= 3) this.completeQuest("first_steps");
+		const r = q.reward ?? { kyo: q.rewardKyo ?? 0, xpShare: 0.15 };
+		const kyo = Math.floor(r.kyo * (1 + Math.min(0.5, this.skillN("social") * 0.0015)));
+		save.kyo += kyo;
+		this.gainSkill("adventuring", TIER_XP[q.tier] ?? 18);
+		this.gainSkill("social", 8);
+		const xp = this.questXp(TIER_XP[q.tier] ?? 18, r.xpShare ?? 0.15);
+		this.gainXp(xp);
+		const got = [`+${kyo.toLocaleString()} kyo`, `+${xp.toLocaleString()} xp`];
+		if (r.gear) {
+			const luck = this.chan("loot_find") + this.chan("fortune");
+			const piece = rollGear(mulberry32(Math.random() * 1e9 | 0), { level: save.level, bonus: SOURCE_BONUS.boss, luck: luck + 30, raceBias: save.race, floor: r.gear });
+			this.receiveGear(piece);
+			got.push(piece.name);
 		}
-		if (save.map === "crypt" && mob.species === "gaikotsu" && !mob.boss && !q.bone_patrol.done) {
-			q.bone_patrol.n += 1;
-			if (q.bone_patrol.n >= 2) this.completeQuest("bone_patrol");
+		for (let i = 0; i < (r.enchants ?? 0); i++) {
+			const def = ENCHANTS[Math.floor(Math.random() * ENCHANTS.length)];
+			if (!def) continue;
+			save.stash = save.stash ?? [];
+			save.stash.push({ id: def.id, power: rollEnchantPower(Math.random, def, save.level, 4) });
+			got.push(`${def.name} enchant`);
 		}
-		if (mob.bossId === "bone_king" && !q.bone_king.done) this.completeQuest("bone_king");
+		for (const [id, n] of Object.entries(r.items ?? {})) if (n > 0 && ITEM_BY_ID[id]) { this.giveItem(id, n); got.push(`${n} ${ITEM_BY_ID[id].name}`); }
+		this.say(`Contract complete: ${q.name}. ${got.join(" · ")}`);
+		this.cue("burst", { rate: 1.25, len: 1.3 }, [660, .15, "triangle"]);
 	}
+	/** Story quests were retired; kills feed the Quest Board (boardEvent). */
+	questKill(_mob) {}
 	/**
 	 * Quest experience. A quest's written XP is doubled, and every quest also pays a share of the level you
 	 * are working on, so questing keeps pace with grinding at every level.
@@ -5597,23 +5615,8 @@ export class TurbzGame {
 		if (!b && !share) return 0;
 		return Math.round(b * QUEST_XP_MULT + xpNeed(lv) * share);
 	}
-	completeQuest(id) {
-		const save = this.save;
-		const st = save.quests[id];
-		if (!st || st.done) return;
-		st.done = true;
-		const def = QUESTS.find((q) => q.id === id);
-		save.kyo += Math.floor(def.rewardKyo * (1 + this.skillN("social") * 0.0015));
-		if (def.rewardItems) {
-			for (const [k, n] of Object.entries(def.rewardItems)) if (n > 0 && ITEM_BY_ID[k]) this.giveItem(k, n);
-		}
-		this.gainSkill("adventuring", 24);
-		this.gainSkill("social", 12);
-		const xp = this.questXp(40, 0.35);
-		this.gainXp(xp);
-		this.say(`Quest complete: ${def.name}. +${xp} xp`);
-		this.cue("burst", { rate: 1.25, len: 1.3 }, [660, .15, "triangle"]);
-	}
+	/** Story quests were retired. Kept so old calls and saves are harmless. */
+	completeQuest(_id) {}
 	giveItem(id, n) {
 		const save = this.save;
 		save.bag[id] = (save.bag[id] ?? 0) + n;
@@ -7927,10 +7930,9 @@ export class TurbzGame {
 		this.talkI = 0;
 		this.talkOverride = null;
 		this.shop = null;
-		// Talking can finish "talk" and "bring" steps and hand in finished quests.
-		this.mapQuestEvent({ t: "talk", npcId: n.id });
+		// Map quest givers were retired (the Quest Board is the only quest system); townsfolk just talk.
 		let q;
-		while ((q = turnInMapQuest(file, n.id, save.mapQuests))) {
+		while (MAP_QUESTS_ON && (q = turnInMapQuest(file, n.id, save.mapQuests))) {
 			const r = q.reward ?? {};
 			if (r.kyo) save.kyo += r.kyo;
 			if (r.xp) this.gainXp(r.xp);
@@ -7945,6 +7947,7 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	acceptMapQuestById(qid) {
+		if (!MAP_QUESTS_ON) return;
 		const save = this.save;
 		const file = this.customFile;
 		const n = this.mapNpcs.find((x) => `cm:${x.id}` === this.talkId);
@@ -7969,11 +7972,11 @@ export class TurbzGame {
 		if (!n || !file || !save) return null;
 		const c = this.questCtx();
 		const states = save.mapQuests ?? {};
-		const offers = offerableQuests(file, n.id, states).map((q) => ({
+		const offers = (MAP_QUESTS_ON ? offerableQuests(file, n.id, states) : []).map((q) => ({
 			id: q.id, name: q.name, about: q.offer || q.about, steps: q.steps.map((s) => stepText(s, q, c)),
 			reward: [q.reward?.kyo ? `${q.reward.kyo} kyo` : "", q.reward?.xp ? `${this.questXp(q.reward.xp)} xp` : "", ...(q.reward?.items ?? []).map((i) => `${i.count} ${c.itemName(i.itemId)}`)].filter(Boolean).join(", ")
 		}));
-		const active = openQuests(file, states, n.id).map((q) => ({ id: q.id, name: q.name, lines: progressLines(q, states[qkey(file.id, q.id)], c), ready: states[qkey(file.id, q.id)].status === "ready", say: q.progress }));
+		const active = (MAP_QUESTS_ON ? openQuests(file, states, n.id) : []).map((q) => ({ id: q.id, name: q.name, lines: progressLines(q, states[qkey(file.id, q.id)], c), ready: states[qkey(file.id, q.id)].status === "ready", say: q.progress }));
 		const lines = this.talkLines(n);
 		let line = this.talkOverride ?? lines[this.talkI] ?? lines[0];
 		if (!this.talkOverride && this.talkI === 0) {
@@ -7983,6 +7986,7 @@ export class TurbzGame {
 		return { id: n.id, name: n.name, role: n.role || "Villager", line, shop: null, shrine: null, quests: { offers, active }, more: !this.talkOverride && this.talkI < lines.length - 1 };
 	}
 	mapQuestLog() {
+		if (!MAP_QUESTS_ON) return [];
 		const file = this.customFile;
 		const save = this.save;
 		if (!file || !save) return [];
@@ -7995,7 +7999,7 @@ export class TurbzGame {
 	mapQuestEvent(ev) {
 		const save = this.save;
 		const file = this.customFile;
-		if (!save || !file || !file.quests?.length) return;
+		if (!MAP_QUESTS_ON || !save || !file || !file.quests?.length) return;
 		save.mapQuests = save.mapQuests ?? {};
 		let touched = false;
 		for (const q of file.quests) {
@@ -8015,7 +8019,7 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save || !this.customFile) return;
 		this.tickMapRegion(dt);
-		if (!this.customFile?.quests?.length) return;
+		if (!MAP_QUESTS_ON || !this.customFile?.quests?.length) return;
 		this.questTick = (this.questTick ?? 0) - dt;
 		if (this.questTick > 0) return;
 		this.questTick = .4;
@@ -8447,9 +8451,6 @@ export class TurbzGame {
 		if (map === "world" && this.customFile && !(save.mapSeen ?? []).includes(this.customFile.id)) { this.persist(); this.openMapStory(); return; }
 		const named = this.world?.layout && this.world.layout !== "halls" ? ` ${this.world.name}: ${this.world.blurb}` : "";
 		this.say(map === "world" ? "Back under the sky." : map === "crypt" ? `The Tiny Crypt breathes.${named}` : map.startsWith("rift-") ? (named ? `A new dungeon.${named}` : "A new dungeon. Its guardian waits in the final room.") : `The Ash Kiln is awake.${named}`);
-		if (map === "crypt") {
-			if (!save.quests.bone_king.done && save.regions.includes("bone")) {}
-		}
 		this.persist();
 	}
 	visitRegion() {
@@ -8460,15 +8461,6 @@ export class TurbzGame {
 			save.regions.push(b);
 			this.say(BIOME_LABEL[b]);
 			this.gainSkill("adventuring", 10);
-			const q = save.quests.marsh_walk;
-			if (b === "tide" && !q.done && q.n < 1) {
-				q.n = 1;
-				this.say("Tide land. Now catch a Water spirit.");
-			}
-			if (b === "bone") {
-				const bk = save.quests.bone_king;
-				if (!bk.done) bk.n = 1;
-			}
 		}
 	}
 	catchSpirit() {
@@ -8490,7 +8482,6 @@ export class TurbzGame {
 		if ((save.bag.cleanse_salt ?? 0) < 2) return this.say("Need 2 cleanse salt.");
 		save.bag.cleanse_salt -= 2;
 		save.saltTurned += 2;
-		if (!save.quests.salt_run.done) this.completeQuest("salt_run");
 		this.persist();
 	}
 	itemProblem(def) {
@@ -8712,6 +8703,7 @@ export class TurbzGame {
 		const value = gearSellValue(gearPrice(g), this.sellMult());
 		save.kyo += value;
 		save.gear.splice(i, 1);
+		this.noteSoldGear?.([g]);
 		if (this.selected === uid) this.selected = null;
 		this.gainSkill("trading", 8);
 		this.say(`Sold ${g.name} for ${value} kyo.`);
@@ -8720,7 +8712,7 @@ export class TurbzGame {
 	}
 	/** Trading skill and Merchant Tongue on every sale. */
 	sellMult() {
-		return (1 + this.skillN("trading") * 0.002) * (1 + this.chan("sell_boost") / 100);
+		return tradeSellMult(this.skillN("trading")) * (1 + this.chan("sell_boost") / 100);
 	}
 	/** Gear Sell All would take: not worn, not locked, optionally at or below a quality. */
 	sellableGear(maxQuality: string | null = null) {
@@ -8742,6 +8734,7 @@ export class TurbzGame {
 		let kyo = 0;
 		const gone = new Set(list.map((g) => g.uid));
 		for (const g of list) kyo += gearSellValue(gearPrice(g), mult);
+		this.noteSoldGear?.(list);
 		save.gear = save.gear.filter((g) => !gone.has(g.uid));
 		if (gone.has(this.selected)) this.selected = null;
 		save.kyo += kyo;
@@ -10850,11 +10843,15 @@ export class TurbzGame {
 				count: save.bag[it.id] ?? 0,
 				about: it.about, useProblem: this.itemProblem(it),
 				effect: healingLine(it.id, this.maxHp(), this.rules === "hardcore", this.chan("potion_sip")),
-				quickable: isConsumable(it)
+				quickable: isConsumable(it),
+				// Bag touch-up: what one sells for, and a category for the Bag's filters.
+				sell: itemSellValue(it.price, this.sellMult()),
+				kind: FOOD[it.id] || it.id === "drinking_water" || it.id === "raw_water" ? "food" : isConsumable(it) ? "use" : "material"
 			})),
 			quick: (save.quick ?? []).map((id) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, count: save.bag[id] ?? 0 })),
 			quickCd: Math.ceil(this.healCd ?? 0),
 			mapQuests: !slow ? snap.mapQuests : this.mapQuestLog(),
+			contracts: !slow ? snap.contracts : this.questBoardSnap().filter((q) => q.active).map((q) => ({ id: q.id, name: q.name, tier: q.tier, steps: q.steps.map((st) => ({ label: st.label, progress: st.progress, need: st.need, done: st.done })) })),
 			talk: !slow ? snap.talk : this.mapTalkSnap() ?? (npc ? {
 				id: npc.id,
 				name: npc.name,

@@ -282,8 +282,7 @@ GEN["npcs"] = () => table(["NPC", "Role", "Offers", "Notes"], C.NPCS.map((n) => 
   const offers = C.npcOffers(n);
   const shop = n.shop ? { general: "General store", armor: "Armor peddler", fence: "Fence (gear)", alchemy: "Alchemy stall", cook: "Cook" }[n.shop] : "";
   const shrine = n.shrine ? `${typeName(n.shrine)} shrine keeper` : "";
-  const quests = C.QUESTS.filter((q) => n.name.toLowerCase().includes(q.giver.toLowerCase())).map((q) => q.name);
-  return [`**${n.name}**`, n.role, offers.join(", ") || "Talk", [shop, shrine, quests.length ? `Quests: ${quests.join(", ")}` : ""].filter(Boolean).join(" · ") || "—"];
+  return [`**${n.name}**`, n.role, offers.join(", ") || "Talk", [shop, shrine].filter(Boolean).join(" · ") || "—"];
 }));
 GEN["taverns"] = () => table(["Tavern", "Region"], W.TAVERNS.map((t) => [`**${t.name}**`, W.BIOME_LABEL[t.biome]]));
 
@@ -291,15 +290,15 @@ GEN["items"] = () => table(["Item", "Base price", "Use"], C.ITEMS.map((i) => [`*
 GEN["alchemy"] = () => table(["Brew", "Ingredients", "Makes", "Notes"], C.ALCHEMY_RECIPES.map((r) => [`**${r.name}**`, Object.entries(r.costs).map(([id, n]) => `${n}× ${itemName(id)}`).join(", "), `${r.n}× ${itemName(r.output)}`, r.about]));
 GEN["camp-recipes"] = () => table(["Recipe", "Costs", "Makes"], SV.CAMP_RECIPE_LIST.map((r) => [`**${r.name}**`, Object.entries(r.costs).map(([id, n]) => `${n}× ${itemName(id)}`).join(", "), Object.entries(r.outputs).map(([id, n]) => `${n}× ${itemName(id)}`).join(", ")]));
 GEN["food"] = () => table(["Food", "Hunger restored"], Object.entries(SV.FOOD).map(([id, n]) => [`**${itemName(id)}**`, n]).concat([["**Drinking Water**", "50 thirst"]]));
-GEN["story-quests"] = () => table(["Chapter", "Quest", "Giver", "Goal", "Reward"], C.QUESTS.map((q) => [q.chapter, `**${q.name}**`, q.giver, q.about, [`${q.rewardKyo} kyo`, ...Object.entries(q.rewardItems ?? {}).filter(([id, n]) => n > 0 && C.ITEM_BY_ID[id]).map(([id, n]) => `${n}× ${itemName(id)}`)].join(", ")]));
 GEN["contract-kinds"] = () => {
   const total = QB.KIND_WEIGHT.reduce((s, [, w]) => s + w, 0);
-  const about = { kills: "Defeat any foes", kill_type: "Defeat foes of one element", kill_species: "Defeat one named monster", boss: "Defeat bosses (level 5+)", ore: "Mine ore", tree: "Fell trees", shroom: "Pick mushroom patches", fish: "Land fish", catch: "Have spirits stay with you", craft: "Craft at a campfire" };
-  return table(["Contract", "Goal", "How common", "Base count", "Kyo per unit (level 1)"], QB.KIND_WEIGHT.map(([k, w]) => [`**${cap(k.replace("_", " "))}**`, about[k], pct(w / total), QB.BASE_NEED[k], QB.UNIT_KYO[k]]));
+  const about = { kills: "Defeat any foes", kill_type: "Defeat foes of one element", kill_species: "Defeat one named monster", elite: "Defeat rare-or-better foes", boss: "Defeat bosses", dungeon: "Clear a dungeon (defeat its guardian)", witch: "Defeat rival witches", ore: "Mine ore", tree: "Fell trees", shroom: "Pick mushroom patches", fish: "Land fish", catch: "Befriend spirits", craft: "Craft at a campfire" };
+  return table(["Objective", "Goal", "How common", "From level", "Base count", "Worth (kills each)"], QB.KIND_WEIGHT.map(([k, w]) => [`**${cap(k.replace("_", " "))}**`, about[k], pct(w / total), QB.KIND_MIN_LEVEL[k] ?? 1, QB.BASE_NEED[k], QB.UNIT_WORTH[k]]));
 };
 GEN["contract-tiers"] = () => {
   const total = QB.TIER_WEIGHT.reduce((s, [, w]) => s + w, 0);
-  return table(["Tier", "How common", "Count multiplier", "Pay multiplier", "Adventuring XP"], QB.TIER_WEIGHT.map(([t, w]) => [`**${cap(t)}**`, pct(w / total), `×${QB.TIER_NEED[t]}`, `×${QB.TIER_PAY[t]}`, QB.TIER_XP[t]]));
+  const g = { rare: "Rare+", epic: "Epic+", legendary: "Legendary" };
+  return table(["Tier", "How common", "Objectives", "Count ×", "Pay ×", "XP (share of a level)", "Gear", "Enchants"], QB.TIER_WEIGHT.map(([t, w]) => [`**${cap(t)}**`, pct(w / total), QB.TIER_STEPS[t].join("–"), `×${QB.TIER_NEED[t]}`, `×${QB.TIER_PAY[t]}`, pct(QB.TIER_XP_SHARE[t]), QB.TIER_GEAR[t] ? g[QB.TIER_GEAR[t]] : t === "normal" ? "Fine (50%)" : "—", QB.TIER_ENCHANTS[t] || "—"]));
 };
 GEN["bounty-tiers"] = () => table(["Tier", "Mark level", "Health (your hits)", "Hit (share of your HP)", "Spirits", "Traits", "Gear quality", "Kyo at level 50"], [1, 2, 3, 5, 8, 10, 15, 20, 30].map((t) => {
   const s = B.enemyTargets({ kind: "bounty", tier: t });
@@ -409,7 +408,6 @@ for (const s of C.SKILLS) addTerm(s.name, `Account skill. ${C.skillLine(s.id, 2)
 for (const b of W.BIOMES) addTerm(W.BIOME_LABEL[b], "Overworld region.", "World-and-Regions", "Regions", [], "Place");
 for (const t of W.TAVERNS) addTerm(t.name, `Tavern with a bounty board in ${W.BIOME_LABEL[t.biome]}.`, "World-and-Regions", "Taverns", [], "Place");
 for (const s of C.SETS) addTerm(s.name, `${C.RACES.find((r) => r.id === s.race)?.name} armor set (${FX_NAME[s.fx]} aura). ${s.bonus}`, "Sets", `${C.RACES.find((r) => r.id === s.race)?.name} sets`, [], "Set");
-for (const q of C.QUESTS) addTerm(q.name, `Story quest from ${q.giver}. ${q.about}`, "Quests", "Story quests", [], "Quest");
 for (const p of C.POIS.filter((p) => p.kind === "boss")) addTerm(p.name, `${typeName(p.type)} world boss.`, "Bosses-and-Dungeons", "World bosses", [], "Boss");
 for (const q of C.QUALITIES) addTerm(q.name, `Gear quality (×${q.mult} value).`, "Gear", "Quality", [], "Quality");
 

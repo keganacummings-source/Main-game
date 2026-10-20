@@ -141,7 +141,7 @@ const TRACK_KEY = "turbz-hud-tracker-open";
 
 /** Top-right: everything you are tracking. Folds to one line. */
 export const HudTracker = memo(function HudTracker({ game }: GameProp) {
-  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "mapQuests", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck", "pools", "orders", "turbz"] as const);
+  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "contracts", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck", "pools", "orders", "turbz"] as const);
   const [open, setOpen] = useState(() => {
     try {
       const saved = localStorage.getItem(TRACK_KEY);
@@ -173,8 +173,10 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   s.bounties.forEach((line, i) => rows.push(<p key={`b${i}`} className="text-blood" data-testid={i === 0 ? "vitals-bounty" : undefined}>{line}</p>));
   if (s.hunt.wanted > 0) rows.push(<p key="wanted" className="text-blood">WANTED {s.hunt.wanted} · {s.hunt.hunters ? `${s.hunt.hunters} hunters on you` : `squad in ${s.hunt.waveIn}s`}</p>);
   else if (s.hunt.starsOn && s.hunt.stars > 0) rows.push(<p key="stars" className="text-kyo">Bounty Stars {"★".repeat(s.hunt.stars)}<span className="text-dim">{"☆".repeat(Math.max(0, s.hunt.need - s.hunt.stars))}</span></p>);
-  const mq = s.mapQuests?.[0];
-  if (mq) rows.push(<p key="mq" className="text-kyo" data-testid="vitals-map-quest">◆ {mq.name}: <span className="text-bone">{mq.ready ? `report to ${mq.turnIn}` : (mq.lines.find((l) => l.startsWith("[ ]")) ?? "").slice(4)}</span></p>);
+  for (const c of s.contracts ?? []) {
+    const left = c.steps.filter((st) => !st.done);
+    rows.push(<p key={`c${c.id}`} className="text-kyo" data-testid="vitals-contract">◆ {c.name}: <span className="text-bone">{left.length ? left.map((st) => `${st.label} ${st.progress}/${st.need}`).join(" · ") : "done"}</span></p>);
+  }
   if (s.shrine) rows.push(<p key="shrine" className="text-kyo">{s.shrine}</p>);
   if (s.jarLeft > 0) rows.push(<p key="jar" className="text-kyo">Ghost jar · {s.jarLeft}s</p>);
   if (s.turbz) rows.push(<p key="witches" className="text-kyo">Witches grinding · {s.turbz.witches}</p>);

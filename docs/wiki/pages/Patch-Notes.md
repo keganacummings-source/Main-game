@@ -1,5 +1,32 @@
 # Patch Notes
 
+## Economy rebalance, Quest Board revamp, Black Market and Bag
+
+- **Economy rebalanced.** Money came in far too fast, mostly from selling armor.
+  - Gear is worth much less: **10 + 2 × level × quality value + 3 × enchant power** (Legendary ×6). It sells for **40%** of that, about a quarter of what it used to.
+  - A typical drop now sells for one to a few kills' kyo, and a Legendary at your level for about ten.
+  - Kill kyo is down about 30% (2 + 0.7 × level).
+  - Trading's sell bonus now bends toward +50% instead of climbing forever.
+  - Market prices scale with your level. See [Economy](Economy).
+- **Quests revamped.** The Quest Board is now the only quest system. Story quests and quest givers on the map are gone, and the Map Builder's Quests tab was removed.
+  - **Up to three contracts at once.** Each has **one to three objectives** that all count at the same time.
+  - **New objectives:** rare-or-better foes, clearing a dungeon, and rival witches.
+  - **Conditions:** at night, or inside a dungeon. They pay extra.
+  - **Five tiers** up to **Legend**.
+  - **Rewards are worth it now:** 10 to a few hundred kills' worth of kyo, a share of a level's XP, Big Potions and Ghost Jars. Hard pays a Rare+ gear piece, Elite an Epic+ piece and an enchantment, Legend a Legendary and two enchantments.
+  - The HUD tracks every accepted contract. Rerolling keeps what you accepted. Old boards are replaced automatically. See [Quests](Quests).
+- **Black Market revamp:**
+  - Tabs for Sell, Gear, Items, Enchants, Spirits and the new **Buyback** (your last 10 sold pieces, until the next restock).
+  - Search, sorting (including biggest upgrade), slot and quality filters, and "I can afford it".
+  - ▲/▼ shows how stall gear compares with what you wear.
+  - **Restock now** for kyo.
+  - 10 gear pieces and 6 enchantments per stock. Enchantment power now rolls at your level, so bought enchants keep up with your gear.
+- **Bag touch-up:**
+  - Status chips (item count and what it is all worth).
+  - Search and sort by name, count, price or stack value.
+  - Filters for Usable, Food & water and Materials.
+  - A list view, sell prices on every item, and **Sell materials** in one tap.
+
 ## TURBZ: any class, full XP, eat and sleep; menus touched up
 
 - **TURBZ: play any class.** The Crying Lady is no longer forced, and the −50% XP for other classes is gone. Every class levels at the full rate.

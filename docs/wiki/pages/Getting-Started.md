@@ -38,11 +38,11 @@ Every level gives **3 skill points**. Open **Verses** (**V**) to unlock new vers
 ## 6. Things to try next
 
 - **Spirits**: some foes stay after you beat them and fight beside you. Crack a **Ghost Jar** to make it far more likely. See [Spirits](Spirits).
-- **Contract Board**: ten small jobs that refresh every 30 minutes. See [Quests](Quests).
+- **Quest Board** (**Q**): ten contracts with one to three objectives each. Run up to three at once for kyo, XP, and gear at the higher tiers. See [Quests](Quests).
 - **Bounties**: every tavern has a board with three marks to hunt. Big rewards, and in TurboHunt you pick a piece of their gear. See [Bounties](Bounties).
 - **Shrines**: talk to a shrine keeper for a 3-round fight with a guaranteed Rare-or-better reward. See [Bosses and Dungeons](Bosses-and-Dungeons).
 - **Dungeon rifts**: a new one opens every 10 minutes of play near you. See [Bosses and Dungeons](Bosses-and-Dungeons).
-- **The Map (M)**: explore the world — Hearthmere is just the beginning. Seven continents, 41 towns, and a main story called *The Sundered Crown* that sends you across all of them.
+- **The Map (M)**: explore the world — Hearthmere is just the beginning. Seven continents and 41 towns.
 
 ## Beginner tips
 

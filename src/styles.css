@@ -1431,3 +1431,10 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .menu-pinned { border-color: var(--color-kyo); box-shadow: 3px 3px 0 #0b0706, inset 0 0 0 2px #3a2a12; }
 .skill-row-top .ui-row > span:last-child { color: var(--color-kyo); }
 .qty-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* Quest Board v2: legend tier, objectives and payout rows. */
+.tier-legend { color: #c9a6ff; }
+.ui-card.tier-legend { border-color: #6a4aa8; box-shadow: 3px 3px 0 #0b0706, inset 0 0 0 1px #3a2a5a; }
+.quest-steps { display: grid; gap: 4px; margin: 4px 0; }
+.quest-step { display: grid; gap: 2px; font-size: 18px; }
+.quest-step-done { color: var(--color-good, #9ad8a0); }
+.quest-reward { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }

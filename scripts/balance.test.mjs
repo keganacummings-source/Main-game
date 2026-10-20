@@ -141,7 +141,7 @@ test("bounty stars only come from ordinary kills; bounties carry full bags", () 
 });
 
 test("sale prices are shared and always positive", () => {
-  assert.equal(bal.gearSellValue(1000, 1), 450);
+  assert.equal(bal.gearSellValue(1000, 1), 400);
   assert.ok(bal.gearSellValue(1000, 1.2) > bal.gearSellValue(1000, 1));
   assert.ok(bal.itemSellValue(0, 1) >= 1);
 });
@@ -305,4 +305,33 @@ test("melee works within 2 tiles, ranged and spells stay beyond it, and melee ig
   assert.equal(plated, naked, "armor makes no difference against melee");
   assert.equal(adapted, naked, "foes' armor adaptation makes no difference against melee");
   assert.ok(bal.enemyHitDamage({ ...base, form: "ranged", armor: 5000 }) < bal.enemyHitDamage({ ...base, form: "ranged", armor: 0 }), "ranged hits still face armor");
+});
+
+test("economy: selling gear is worth about as much as the kills themselves, not several times more", () => {
+  for (const level of [20, 100, 300]) {
+    const kill = bal.killKyo(level);
+    // Average sell value of what drops at this level (a mix of qualities), times a typical drop chance.
+    let sum = 0;
+    const n = 200;
+    for (let i = 0; i < n; i++) sum += bal.gearSellValue(content.gearPrice(content.rollGear(content.mulberry32(i + 7), { level, luck: 30 })), 1);
+    const perKill = (sum / n) * Math.min(0.85, 0.12 + Math.min(100, level) * 0.003 + 0.08);
+    assert.ok(perKill < kill * 2.5, `level ${level}: selling ${perKill.toFixed(0)}/kill vs kill ${kill.toFixed(0)}`);
+    assert.ok(perKill > kill * 0.3, `level ${level}: selling should still matter (${perKill.toFixed(0)} vs ${kill.toFixed(0)})`);
+  }
+});
+
+test("economy: a legendary at your level sells for about ten kills and costs about fifty at the market", () => {
+  for (const level of [30, 150]) {
+    const g = { level, quality: "legendary", enchants: [{ id: "x", power: 5 }, { id: "y", power: 5 }], slot: "chest" };
+    const worth = content.gearPrice(g);
+    const kill = bal.killKyo(level);
+    const sell = bal.gearSellValue(worth, 1);
+    const buy = bal.marketGearPrice(worth);
+    assert.ok(sell > kill * 4 && sell < kill * 20, `sell ${sell} vs kill ${kill}`);
+    assert.ok(buy > kill * 25 && buy < kill * 90, `buy ${buy} vs kill ${kill}`);
+    assert.ok(buy > sell * 6, "the market never buys back at a profit");
+  }
+  assert.ok(bal.tradeSellMult(10000) <= 1.5 && bal.tradeSellMult(0) === 1, "trading bends to +50%");
+  assert.ok(bal.marketEnchantPrice(100, 5, 0.5) > bal.marketEnchantPrice(10, 1, 0.5) * 4, "enchant prices keep up with level");
+  assert.ok(bal.marketRestockCost(100) > bal.marketRestockCost(1));
 });

@@ -48,4 +48,4 @@ Raw meat and raw fish can't be eaten in Hardcore: cook them first. Materials (or
 - **Animals:** meat and leather.
 - **Bounties:** a full bag. See [Bounties](Bounties).
 - **Shops:** Quartermaster Holt and the [Black Market](Economy).
-- **Story quests.** See [Quests](Quests).
+- **Quest Board contracts:** supplies, and gear at Hard and up. See [Quests](Quests).

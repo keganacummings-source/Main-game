@@ -8,14 +8,19 @@ import {
   MONSTERS,
   TYPES,
   gearPrice,
+  gearScore,
+  rollEnchantPower,
   type Gear,
   type Slot,
   type QualityId,
 } from "./content";
-import { SOURCE_BONUS, gearSellValue, itemSellValue } from "./balance";
+import { SOURCE_BONUS, gearSellValue, itemSellValue, marketEnchantPrice, marketGearPrice, marketItemPrice, marketRestockCost, marketSpiritPrice } from "./balance";
 
 type BmItem = { id: string; itemId: string; name: string; price: number; count: number };
-type BmEnchant = { id: string; enchantId: string; name: string; about: string; price: number };
+type BmEnchant = { id: string; enchantId: string; name: string; about: string; price: number; power: number };
+/** Recently sold gear the stall will sell back (at a premium) until the next restock. */
+export const BUYBACK_MAX = 10;
+export const BUYBACK_MARKUP = 1.25;
 type BmSpirit = { id: string; species: string; name: string; level: number; price: number };
 
 export function installBlackMarket(game: any): void {
@@ -29,14 +34,14 @@ export function installBlackMarket(game: any): void {
     const period = 5 * 60 * 1000;
     if (!force && this.blackMarket && this.blackMarket.until > now) return;
     const lvl = Math.max(1, save.level | 0);
-    const seed = (Math.floor(now / period) * 10007 + lvl * 13 + (save.name?.length || 0)) >>> 0;
+    const seed = (Math.floor(now / period) * 10007 + lvl * 13 + (save.name?.length || 0) + (this.bmRestocks ?? 0) * 7919) >>> 0;
     // Same window, same level: keep the stock (and anything already bought out of it).
     if (!force && this.blackMarket && this.blackMarket.seed === seed) return;
     const rng = mulberry32(seed);
     const slots: Slot[] = ["weapon", "head", "chest", "legs", "feet", "relic"];
     const floors: QualityId[] = ["fine", "rare", "epic", "legendary"];
     const gear: Gear[] = [];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
       // Market gear starts at your level; quality and a market premium push it up a little.
       const g = rollGear(rng, {
         slot: slots[Math.floor(rng() * slots.length)],
@@ -61,7 +66,7 @@ export function installBlackMarket(game: any): void {
     const items: BmItem[] = [];
     // Hardcore, level 30+: the stall sometimes has a Green Mushroom (the way into the Green Cave).
     if (this.rules === "hardcore" && lvl >= 30 && rng() < 0.4) {
-      items.push({ id: `bmi_${seed}_green`, itemId: "green_mushroom", name: ITEM_BY_ID.green_mushroom?.name ?? "Green Mushroom", price: 300 + lvl * 15, count: 1 });
+      items.push({ id: `bmi_${seed}_green`, itemId: "green_mushroom", name: ITEM_BY_ID.green_mushroom?.name ?? "Green Mushroom", price: 600 + lvl * 25, count: 1 });
     }
     for (let i = 0; i < 6; i++) {
       const id = itemIds[Math.floor(rng() * itemIds.length)];
@@ -71,20 +76,23 @@ export function installBlackMarket(game: any): void {
         id: `bmi_${seed}_${i}_${id}`,
         itemId: id,
         name: def.name,
-        price: Math.max(5, Math.floor((def.price || 10) * (1.4 + rng()))),
+        price: marketItemPrice(def.price || 10, lvl, rng()),
         count: 1 + Math.floor(rng() * 3),
       });
     }
     const enchants: BmEnchant[] = [];
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 6; i++) {
       const e = ENCHANTS[Math.floor(rng() * ENCHANTS.length)];
       if (!e) continue;
+      // The stall's enchants roll like an epic drop at your level, so their power keeps up with your gear.
+      const power = rollEnchantPower(rng, e, lvl, 4);
       enchants.push({
         id: `bme_${seed}_${i}_${e.id}`,
         enchantId: e.id,
         name: e.name,
-        about: typeof e.gear === "function" ? e.gear(1) : e.name,
-        price: 80 + Math.floor(rng() * 400) + lvl * 2,
+        about: typeof e.gear === "function" ? e.gear(power) : e.name,
+        price: marketEnchantPrice(lvl, power, rng()),
+        power,
       });
     }
     const spirits: BmSpirit[] = [];
@@ -97,7 +105,7 @@ export function installBlackMarket(game: any): void {
         species: m.id,
         name: m.name,
         level: sl,
-        price: 120 + sl * 8 + Math.floor(rng() * 200),
+        price: marketSpiritPrice(sl, rng()),
       });
     }
     const until = Math.floor(now / period) * period + period;
@@ -116,12 +124,17 @@ export function installBlackMarket(game: any): void {
     const mult = typeof this.sellMult === "function" ? this.sellMult() : 1;
     const worn = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
     const locked = new Set(save.locked ?? []);
+    // Upgrade hint: how a stall piece compares with what you wear in that slot.
+    const wornIn = (slot: string) => (save.gear as Gear[]).find((g) => g.uid === save.equipped?.[slot]) ?? null;
+    const delta = (g: Gear) => { const w = wornIn(g.slot); return w ? gearScore(g) - gearScore(w) : gearScore(g); };
     return {
       refreshIn,
+      restockCost: price(marketRestockCost(Math.max(1, save.level | 0))),
+      buyback: (this.bmBuyback ?? []).map((g: Gear) => ({ uid: g.uid, name: g.name, level: g.level, quality: g.quality, slot: g.slot, price: price(Math.ceil(gearSellValue(gearPrice(g), mult) * BUYBACK_MARKUP)) })),
       sell: {
         gear: (save.gear as Gear[])
           .filter((g) => !worn.has(g.uid))
-          .map((g) => ({ uid: g.uid, name: g.name, level: g.level, quality: g.quality, slot: g.slot, locked: locked.has(g.uid), price: gearSellValue(gearPrice(g), mult) })),
+          .map((g) => ({ uid: g.uid, name: g.name, level: g.level, quality: g.quality, slot: g.slot, locked: locked.has(g.uid), price: gearSellValue(gearPrice(g), mult), delta: delta(g) })),
         items: Object.entries(save.bag as Record<string, number>)
           .filter(([id, n]) => n > 0 && ITEM_BY_ID[id])
           .map(([id, n]) => ({ id, name: ITEM_BY_ID[id]!.name, count: n, each: itemSellValue(ITEM_BY_ID[id]!.price, mult) })),
@@ -132,7 +145,10 @@ export function installBlackMarket(game: any): void {
         level: g.level,
         quality: g.quality,
         type: TYPES[g.type]?.name ?? g.type,
-        price: price(gearPrice(g) * 1.35),
+        slot: g.slot,
+        enchants: (g.enchants ?? []).length,
+        delta: delta(g),
+        price: price(marketGearPrice(gearPrice(g))),
       })),
       items: bm.items.map((it: BmItem) => ({
         id: it.id,
@@ -145,6 +161,7 @@ export function installBlackMarket(game: any): void {
         id: e.id,
         name: e.name,
         about: e.about,
+        power: e.power ?? 1,
         price: price(e.price),
         enchantId: e.enchantId,
       })),
@@ -164,7 +181,7 @@ export function installBlackMarket(game: any): void {
     const save = this.save;
     const row = this.blackMarket?.gear?.find((g: Gear) => g.uid === uid);
     if (!save || !row) return origBuyGear?.(uid);
-    const p = this.price(gearPrice(row) * 1.35);
+    const p = this.price(marketGearPrice(gearPrice(row)));
     if (save.kyo < p) return this.say("Need more Kyo.");
     save.kyo -= p;
     this.receiveGear(row);
@@ -172,6 +189,40 @@ export function installBlackMarket(game: any): void {
     this.shopStock = (this.shopStock ?? []).filter((g: Gear) => g.uid !== uid);
     this.gainSkill?.("trading", 8);
     this.say(`Bought ${row.name}.`);
+    this.persist?.();
+    this.syncHud?.(true);
+  };
+
+  /** Pay to restock the stall now instead of waiting for the five-minute refresh. */
+  game.restockBlackMarket = function () {
+    const save = this.save;
+    if (!save) return;
+    const cost = this.price(marketRestockCost(Math.max(1, save.level | 0)));
+    if (save.kyo < cost) return this.say(`A fresh stall costs ${cost} kyo.`);
+    save.kyo -= cost;
+    this.bmRestocks = (this.bmRestocks ?? 0) + 1;
+    this.ensureBlackMarket(true);
+    this.bmBuyback = [];
+    this.say(`The stall is restocked. -${cost} kyo.`);
+    this.persist?.();
+    this.syncHud?.(true);
+  };
+
+  /** Remember sold gear so the stall can sell it back (newest first, capped). */
+  game.noteSoldGear = function (list: Gear[]) {
+    this.bmBuyback = [...list.map((g) => ({ ...g, enchants: (g.enchants ?? []).map((e) => ({ ...e })) })), ...(this.bmBuyback ?? [])].slice(0, BUYBACK_MAX);
+  };
+  game.buyBack = function (uid: string) {
+    const save = this.save;
+    const row = (this.bmBuyback ?? []).find((g: Gear) => g.uid === uid);
+    if (!save || !row) return this.say("That piece is gone.");
+    const mult = typeof this.sellMult === "function" ? this.sellMult() : 1;
+    const p = this.price(Math.ceil(gearSellValue(gearPrice(row), mult) * BUYBACK_MARKUP));
+    if (save.kyo < p) return this.say("Need more Kyo.");
+    save.kyo -= p;
+    this.bmBuyback = this.bmBuyback.filter((g: Gear) => g.uid !== uid);
+    this.receiveGear(row);
+    this.say(`Bought back ${row.name}.`);
     this.persist?.();
     this.syncHud?.(true);
   };
@@ -220,7 +271,7 @@ export function installBlackMarket(game: any): void {
     if (save.kyo < p) return this.say("Need more Kyo.");
     save.kyo -= p;
     save.stash = save.stash || [];
-    save.stash.push({ id: row.enchantId, power: 1 + Math.floor(Math.random() * 3) });
+    save.stash.push({ id: row.enchantId, power: row.power ?? 1 });
     this.blackMarket.enchants = this.blackMarket.enchants.filter((e: BmEnchant) => e.id !== id);
     this.gainSkill?.("trading", 6);
     this.say(`Bought ${row.name}.`);

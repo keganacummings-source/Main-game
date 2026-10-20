@@ -992,7 +992,7 @@ export function MapBuilder({ onBack }: { onBack: () => void }) {
             {tabBtn("tiles", "Tiles")}
             {tabBtn("place", "Places")}
             {tabBtn("areas", "Areas")}
-            {tabBtn("quests", "Quests")}
+            {/* Map quests were retired in favour of the Quest Board; old maps keep their data but nothing hands them out. */}
             {tabBtn("map", "Map")}
             {tabBtn("files", "Files")}
           </div>

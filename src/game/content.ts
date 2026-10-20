@@ -13,7 +13,7 @@
  *   ENCHANTS      — gear enchantments and their stat lines
  *   SKILLS        — skill tree ids (hunting, cooking, etc.)
  *   SETS          — gear-set bonuses
- *   QUESTS        — hard-coded quest-giver conversations
+ *   QUESTS        — retired story quests (kept only so old saves load; nothing hands them out)
  *
  * The engine.ts imports from here are read-only; this file never imports back
  * from the engine.
@@ -1210,10 +1210,16 @@ function rollEnchants(rng: Rng, slot: Slot, level: number, quality: QualityId, p
   return picked;
 }
 
+/** How much each quality is worth, relative to common. The economy's one gear-value table. */
+export const QUALITY_VALUE: Record<QualityId, number> = { worn: 0.5, common: 1, fine: 1.6, rare: 2.6, epic: 4, legendary: 6 };
+/**
+ * A piece's worth in kyo. Selling pays a share of it and the market charges a markup on it (balance.ts).
+ * Tuned so a typical drop sells for one to a few kills' kyo, and a legendary for about ten.
+ */
 export function gearPrice(g: Gear): number {
-  const q = QUALITIES.findIndex((x) => x.id === g.quality) + 1;
-  const ep = g.enchants.reduce((s, e) => s + e.power * 8, 0);
-  return Math.max(12, Math.floor(20 + g.level * 6 * q + ep));
+  const qv = QUALITY_VALUE[g.quality] ?? 1;
+  const ep = (g.enchants ?? []).reduce((s, e) => s + e.power * 3, 0);
+  return Math.max(8, Math.floor(10 + (g.level || 1) * 2 * qv + ep));
 }
 
 /** Validate a Gear object on load: drop unknown enchantments, cap counts, clear stray moves, clamp level. */
@@ -1721,7 +1727,8 @@ export function npcOffers(n: NpcDef): ("Trade" | "Quest" | "Companionship")[] {
   const offers: ("Trade" | "Quest" | "Companionship")[] = [];
   if (n.shop) offers.push("Trade");
   const last = n.name.split(" ").slice(-1)[0]!.toLowerCase();
-  if (n.shrine || QUESTS.some((q) => q.giver.toLowerCase().includes(last))) offers.push("Quest");
+  void last; // Quest givers were retired: the Quest Board (Q) is the only quest system. Shrines still offer their trial.
+  if (n.shrine) offers.push("Quest");
   if (COMPANION_IDS.has(n.id)) offers.push("Companionship");
   return offers;
 }

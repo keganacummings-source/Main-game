@@ -3,7 +3,7 @@ import { ENCHANT_BY_ID, GEAR_PURPOSES, PURPOSE_BY_ID, SET_BY_ID, TYPES, enchantT
 import { gearSellValue } from "@/game/balance";
 import { BOSS_COLOR, QUALITY_COLOR, QUALITY_ORDER as CHEST_QUALITIES, SUPPLIES_COLOR } from "@/game/chest-loot";
 import { fxGene, fxGeneLabel, fxTrait, fxTraitLabel, geneSeedOf } from "@/game/fx-gene";
-import { ConfirmButton, Section, Tabs } from "./ui-kit";
+import { Chips, ConfirmButton, Section, StatusChips, Tabs, usePref } from "./ui-kit";
 import type { getSnap, TurbzGame } from "@/game/engine";
 
 type Snap = ReturnType<typeof getSnap>;
@@ -214,9 +214,21 @@ const PURPOSE_ICON: Record<GearPurpose, string> = { combat: "⚔", defense: "�
 /** The bag: consumables, materials and crafting. Gear has its own Inventory window (I). */
 export function Bag({ snap, game }: Props) {
   const [search, setSearch] = useState("");
+  const [cat, setCat] = usePref("turbz-bag-cat", ["all", "use", "food", "material"] as const, "all");
+  const [sort, setSort] = usePref("turbz-bag-sort", ["name", "count", "value", "stack"] as const, "name");
+  const [compact, setCompact] = usePref("turbz-bag-view", ["cards", "list"] as const, "cards");
   const term = search.trim().toLowerCase();
-  const items = snap.bag.filter((it) => !term || it.name.toLowerCase().includes(term));
+  const kindOf = (it: Snap["bag"][number]) => it.kind ?? (it.quickable ? "use" : "material");
+  const items = snap.bag
+    .filter((it) => (cat === "all" || kindOf(it) === cat) && (!term || it.name.toLowerCase().includes(term) || it.about.toLowerCase().includes(term)))
+    .slice()
+    .sort((a, b) => sort === "count" ? b.count - a.count : sort === "value" ? (b.sell ?? 0) - (a.sell ?? 0) : sort === "stack" ? (b.sell ?? 0) * b.count - (a.sell ?? 0) * a.count : a.name.localeCompare(b.name));
   const count = (id: string) => snap.bag.find((it) => it.id === id)?.count ?? 0;
+  const total = snap.bag.reduce((a, it) => a + it.count, 0);
+  const worth = snap.bag.reduce((a, it) => a + (it.sell ?? 0) * it.count, 0);
+  const mats = snap.bag.filter((it) => kindOf(it) === "material");
+  const matWorth = mats.reduce((a, it) => a + (it.sell ?? 0) * it.count, 0);
+  const n = (k: string) => snap.bag.filter((it) => kindOf(it) === k).length;
   return (
     <div className="bag" data-testid="bag-items">
       <div className="bag-head">
@@ -226,6 +238,12 @@ export function Bag({ snap, game }: Props) {
         </div>
         <span className="bag-kyo">{snap.kyo.toLocaleString()} kyo</span>
       </div>
+      <StatusChips items={[
+        { label: `${total.toLocaleString()} items · ${snap.bag.length} kinds`, tone: "kyo" },
+        { label: `Worth ${worth.toLocaleString()} kyo` },
+        snap.quick.length > 0 && { label: `Space: ${snap.quick[0]!.name}`, tone: "on" },
+        snap.quickCd > 0 && { label: `Potion cooldown ${snap.quickCd}s`, tone: "bad" },
+      ]} />
       <Section title="SPACE BAR" right={<span className="text-dim">{snap.quick.length}/3{snap.quickCd > 0 ? ` · potion cooldown ${snap.quickCd}s` : ""}</span>}>
         <p className="text-dim">Press Space to use the first item. When it runs out, the next one in line takes over.</p>
         <div className="quick-queue" data-testid="quick-queue">
@@ -244,16 +262,35 @@ export function Bag({ snap, game }: Props) {
           })}
         </div>
       </Section>
-      <div className="bag-toolbar bag-toolbar-1">
-        <input className="px-input" aria-label="Search items" placeholder="Search items" value={search} onChange={(e) => setSearch(e.target.value)} />
+      <div className="menu-toolbar">
+        <input className="px-input" aria-label="Search items" placeholder="Search items" value={search} onChange={(e) => setSearch(e.target.value)} data-testid="bag-search" />
+        <select className="px-input" aria-label="Sort items" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} data-testid="bag-sort">
+          <option value="name">By name</option><option value="count">Most first</option><option value="value">Best price each</option><option value="stack">Most valuable stack</option>
+        </select>
+        <button type="button" className="px-btn ui-btn-sm" onClick={() => setCompact(compact === "cards" ? "list" : "cards")}>{compact === "cards" ? "List view" : "Card view"}</button>
+        {mats.length > 0 && <ConfirmButton className="ui-btn-sm" label={`Sell materials · ${matWorth.toLocaleString()}`} confirm="Tap again" onConfirm={() => { for (const it of mats) game?.sellItem(it.id, Infinity); }} />}
       </div>
-      {items.length ? (
+      <Chips value={cat} onChange={setCat} label="Item kind" options={[{ id: "all", label: `All ${snap.bag.length}` }, { id: "use", label: `Usable ${n("use")}` }, { id: "food", label: `Food & water ${n("food")}` }, { id: "material", label: `Materials ${n("material")}` }]} />
+      {items.length && compact === "list" ? (
+        <div className="bm-list" data-testid="bag-list">
+          {items.map((it) => (
+            <div key={it.id} className="bm-row" data-testid={`item-${it.id}`}>
+              <span className="bm-row-name">{it.name} <span className="text-kyo">×{it.count}</span><span className="block text-dim">{it.sell ?? 0} kyo each · {kindOf(it) === "use" ? "usable" : kindOf(it) === "food" ? "food" : "material"}</span></span>
+              <span className="bm-row-actions">
+                {it.quickable && <button type="button" className="px-btn ui-btn-sm" disabled={!!it.useProblem} title={it.useProblem ?? undefined} onClick={() => game?.useBag(it.id)}>Use</button>}
+                <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.sellItem(it.id, 1)}>Sell 1</button>
+                <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.sellItem(it.id, Infinity)}>All · {((it.sell ?? 0) * it.count).toLocaleString()}</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : items.length ? (
         <div className="item-grid">
           {items.map((it) => {
             const at = snap.quick.findIndex((q) => q.id === it.id);
             return (
               <div key={it.id} className="item-card" data-testid={`item-${it.id}`}>
-                <p className="item-card-name">{it.name} <span className="text-kyo">×{it.count}</span>{at >= 0 && <span className="text-good"> · {at === 0 ? "Space" : `Space queue ${at + 1}`}</span>}</p>
+                <p className="item-card-name">{it.name} <span className="text-kyo">×{it.count}</span> <span className="text-dim">· {it.sell ?? 0} kyo</span>{at >= 0 && <span className="text-good"> · {at === 0 ? "Space" : `Space queue ${at + 1}`}</span>}</p>
                 <p className="text-dim item-card-about">{it.about}</p>
                 {it.quickable && it.useProblem && <p className="item-card-problem">{it.useProblem}</p>}
                 {it.effect && <p className="item-card-effect">{it.effect}</p>}
@@ -261,14 +298,14 @@ export function Bag({ snap, game }: Props) {
                   {it.quickable && <button type="button" className="px-btn" disabled={!!it.useProblem} onClick={() => game?.useBag(it.id)}>Use</button>}
                   {it.quickable && at !== 0 && <button type="button" className="px-btn" data-testid={`set-space-${it.id}`} onClick={() => game?.setQuick(it.id, "set")}>Set to Space</button>}
                   {it.quickable && at < 0 && snap.quick.length > 0 && <button type="button" className="px-btn" data-testid={`queue-space-${it.id}`} disabled={snap.quick.length >= 3} onClick={() => game?.setQuick(it.id, "queue")}>Queue</button>}
-                  <button type="button" className="px-btn" onClick={() => game?.sellItem(it.id, Infinity)}>Sell all</button>
+                  <button type="button" className="px-btn" onClick={() => game?.sellItem(it.id, Infinity)}>Sell all · {((it.sell ?? 0) * it.count).toLocaleString()}</button>
                 </div>
               </div>
             );
           })}
         </div>
       ) : (
-        <p className="text-dim">{term ? "No matching items." : "Your bag is empty."}</p>
+        <p className="text-dim">{term || cat !== "all" ? "No matching items." : "Your bag is empty."}</p>
       )}
       <div className="bag-crafts">
         <button type="button" className="px-btn px-btn-kyo" onClick={() => game?.toggle("craft")}>Crafting · potions</button>
@@ -627,22 +664,45 @@ export function GearInventory({ snap, game }: Props) {
 // Black Market
 // ---------------------------------------------------------------------------
 
-type SellRow = { uid: string; name: string; level: number; quality: QualityId; slot: Slot; locked: boolean; price: number };
+type SellRow = { uid: string; name: string; level: number; quality: QualityId; slot: Slot; locked: boolean; price: number; delta?: number };
 type SellItem = { id: string; name: string; count: number; each: number };
 type Stock = {
   refreshIn: number;
+  restockCost?: number;
+  buyback?: { uid: string; name: string; level: number; quality: QualityId; slot: Slot; price: number }[];
   sell: { gear: SellRow[]; items: SellItem[] };
-  gear: { uid: string; name: string; level: number; quality: QualityId; price: number; type?: string }[];
+  gear: { uid: string; name: string; level: number; quality: QualityId; price: number; type?: string; slot?: Slot; enchants?: number; delta?: number }[];
   items: { id: string; name: string; price: number; count?: number }[];
-  enchants: { id: string; name: string; price: number; about?: string }[];
+  enchants: { id: string; name: string; price: number; about?: string; power?: number }[];
   spirits: { id: string; name: string; price: number; level?: number }[];
 };
-type BmGame = TurbzGame & { blackMarketSnap?: () => Stock | null; ensureBlackMarket?: (f?: boolean) => void; buyEnchant?: (id: string) => void; buySpirit?: (id: string) => void };
+type BmGame = TurbzGame & {
+  blackMarketSnap?: () => Stock | null; ensureBlackMarket?: (f?: boolean) => void; buyEnchant?: (id: string) => void; buySpirit?: (id: string) => void;
+  restockBlackMarket?: () => void; buyBack?: (uid: string) => void;
+};
+const BM_TABS = ["sell", "gear", "items", "enchants", "spirits", "buyback"] as const;
+type BmTab = (typeof BM_TABS)[number];
+
+type MarketRow = { price: number; name: string; level?: number; delta?: number };
+function marketOrder<T extends MarketRow>(list: T[], sort: string): T[] {
+  return list.slice().sort((a, b) =>
+    sort === "cheap" ? a.price - b.price : sort === "level" ? (b.level ?? 0) - (a.level ?? 0) : sort === "upgrade" ? (b.delta ?? -1e9) - (a.delta ?? -1e9) : sort === "name" ? a.name.localeCompare(b.name) : b.price - a.price);
+}
+/** ▲ +n / ▼ −n against what you wear in that slot. */
+function MarketDelta({ d }: { d?: number }) {
+  if (d == null) return null;
+  return d > 0 ? <span className="text-good"> ▲ +{d}</span> : d < 0 ? <span className="text-bad"> ▼ {d}</span> : <span className="text-dim"> = worn</span>;
+}
 
 export function BlackMarket({ snap, game }: Props) {
   const g = game as BmGame | null;
-  const [cat, setCat] = useState<"sell" | "items" | "gear" | "enchants" | "spirits">("sell");
+  const [cat, setCat] = usePref<BmTab>("turbz-bm-tab", BM_TABS, "sell");
   const [stock, setStock] = useState<Stock | null>(null);
+  const [q, setQ] = useState("");
+  const [slot, setSlot] = useState<Slot | "all">("all");
+  const [minQ, setMinQ] = useState<QualityId | "all">("all");
+  const [sort, setSort] = usePref("turbz-bm-sort", ["price", "cheap", "level", "upgrade", "name"] as const, "price");
+  const [afford, setAfford] = useState(false);
   const pull = useCallback(() => setStock(g?.blackMarketSnap?.() ?? null), [g]);
   useEffect(() => {
     pull();
@@ -651,113 +711,146 @@ export function BlackMarket({ snap, game }: Props) {
   }, [pull]);
   // Re-read the stall the moment the bag changes (a sale or a purchase).
   useEffect(pull, [snap.gear, snap.bag, snap.kyo, pull]);
-  const act = (fn: () => void) => () => {
-    fn();
-    pull();
-  };
+  const act = (fn: () => void) => () => { fn(); pull(); };
   const secs = stock?.refreshIn ?? 0;
-  const tabs = ["sell", "gear", "items", "enchants", "spirits"] as const;
+  const term = q.trim().toLowerCase();
+  const textOk = (name: string, extra = "") => !term || `${name} ${extra}`.toLowerCase().includes(term);
+  const gearOk = (r: { name: string; slot?: Slot; quality: QualityId; price: number }) =>
+    textOk(r.name) && (slot === "all" || r.slot === slot) && (minQ === "all" || QUALITY_ORDER.indexOf(r.quality) >= QUALITY_ORDER.indexOf(minQ)) && (!afford || cat === "sell" || snap.kyo >= r.price);
+  const sellGear = marketOrder((stock?.sell.gear ?? []).filter((r) => gearOk(r)), sort);
+  const buyGear = marketOrder((stock?.gear ?? []).filter((r) => gearOk(r)), sort);
+  const upgrades = (stock?.gear ?? []).filter((r) => (r.delta ?? 0) > 0).length;
+  const itemsWorth = (stock?.sell.items ?? []).reduce((a, it) => a + it.each * it.count, 0);
+  const label: Record<BmTab, string> = {
+    sell: `Sell · ${stock?.sell.gear.length ?? 0}`, gear: `Gear · ${stock?.gear.length ?? 0}${upgrades ? ` ▲${upgrades}` : ""}`, items: `Items · ${stock?.items.length ?? 0}`,
+    enchants: `Enchants · ${stock?.enchants.length ?? 0}`, spirits: `Spirits · ${stock?.spirits.length ?? 0}`, buyback: `Buyback · ${stock?.buyback?.length ?? 0}`,
+  };
+  const gearFilters = cat === "sell" || cat === "gear";
   return (
-    <div className="grid gap-2">
+    <div className="ui-stack" data-testid="black-market">
       <div className="bag-head">
         <p className="font-display text-xs text-blood">BLACK MARKET</p>
         <span className="bag-kyo">{snap.kyo.toLocaleString()} kyo</span>
       </div>
-      <p className="text-dim">Sell anything here. Stock refreshes in {Math.floor(secs / 60)}:{String(Math.floor(secs % 60)).padStart(2, "0")}; gear on the stall starts at your level.</p>
-      <div className="bm-tabs">
-        {tabs.map((c) => (
-          <button key={c} type="button" className={`px-btn ui-btn-sm capitalize ${cat === c ? "px-btn-kyo" : ""}`} onClick={() => setCat(c)}>
-            {c === "sell" ? "Sell" : `Buy ${c}`}
-          </button>
-        ))}
+      <StatusChips items={[
+        { label: `Restock in ${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}` },
+        upgrades > 0 && { label: `${upgrades} upgrade${upgrades === 1 ? "" : "s"} on the stall`, tone: "on" },
+        { label: `Sell rate ×${(snap.sellMult ?? 1).toFixed(2)}`, tone: "kyo" },
+      ]} />
+      <div className="ui-row-gap">
+        <ConfirmButton className="ui-btn-sm" label={`Restock now · ${(stock?.restockCost ?? 0).toLocaleString()} kyo`} confirm="Tap again to pay" disabled={snap.kyo < (stock?.restockCost ?? Infinity)} onConfirm={act(() => g?.restockBlackMarket?.())} />
+        <span className="text-dim">Stall gear starts at your level and shows ▲ when it beats what you wear. Sold gear can be bought back until the next restock.</span>
+      </div>
+      <Tabs value={cat} onChange={setCat} label="Market sections" tabs={BM_TABS.map((t) => ({ id: t, label: label[t], testid: `bm-tab-${t}` }))} />
+      <div className="menu-toolbar">
+        <input className="px-input" aria-label="Search the market" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} data-testid="bm-search" />
+        <select className="px-input" aria-label="Sort" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+          <option value="price">Priciest first</option><option value="cheap">Cheapest first</option><option value="level">Highest level</option><option value="upgrade">Biggest upgrade</option><option value="name">By name</option>
+        </select>
+        {gearFilters && (
+          <>
+            <select className="px-input" aria-label="Slot" value={slot} onChange={(e) => setSlot(e.target.value as Slot | "all")}>
+              <option value="all">Any slot</option>
+              {(Object.keys(SLOT_LABEL) as Slot[]).map((sl) => <option key={sl} value={sl}>{SLOT_LABEL[sl]}</option>)}
+            </select>
+            <select className="px-input" aria-label="Quality at least" value={minQ} onChange={(e) => setMinQ(e.target.value as QualityId | "all")}>
+              <option value="all">Any quality</option>
+              {QUALITY_ORDER.map((qq) => <option key={qq} value={qq}>{QUALITY_LABEL[qq]}+</option>)}
+            </select>
+          </>
+        )}
+        {cat !== "sell" && <label className="chip chip-check"><input type="checkbox" checked={afford} onChange={(e) => setAfford(e.target.checked)} /> I can afford it</label>}
       </div>
 
       {cat === "sell" && (
-        <div className="grid gap-2">
+        <div className="ui-stack">
           <SellAllBar snap={snap} game={game} />
-          <p className="font-display text-[9px] text-kyo">SPARE GEAR · {stock?.sell.gear.length ?? 0}</p>
-          {stock?.sell.gear.length ? (
-            <div className="bm-list">
-              {[...stock.sell.gear].sort((a, b) => b.price - a.price).map((row) => (
-                <div key={row.uid} className={`bm-row q-${row.quality}`}>
-                  <span className="bm-row-name">
-                    {row.name}
-                    <span className="block text-dim">Lv {row.level} · {SLOT_LABEL[row.slot]} · {QUALITY_LABEL[row.quality]}</span>
-                  </span>
-                  {row.locked ? (
-                    <button type="button" className="px-btn ui-btn-sm" onClick={act(() => game?.toggleLock(row.uid))}>Unlock</button>
-                  ) : (
-                    <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={act(() => game?.sell(row.uid))}>Sell {row.price}</button>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-dim">No spare gear. Worn pieces cannot be sold.</p>
-          )}
-          <p className="font-display text-[9px] text-kyo">BAG ITEMS · {stock?.sell.items.length ?? 0}</p>
-          {stock?.sell.items.length ? (
-            <div className="bm-list">
-              {stock.sell.items.map((it) => (
-                <div key={it.id} className="bm-row">
-                  <span className="bm-row-name">
-                    {it.name} <span className="text-kyo">×{it.count}</span>
-                    <span className="block text-dim">{it.each} kyo each</span>
-                  </span>
-                  <span className="bm-row-actions">
-                    <button type="button" className="px-btn ui-btn-sm" onClick={act(() => game?.sellItem(it.id, 1))}>Sell 1</button>
-                    <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={act(() => game?.sellItem(it.id, Infinity))}>All · {it.each * it.count}</button>
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-dim">Nothing in the bag to sell.</p>
-          )}
+          <Section title={`SPARE GEAR · ${sellGear.length}`}>
+            {sellGear.length ? (
+              <div className="bm-list">
+                {sellGear.map((row) => (
+                  <div key={row.uid} className={`bm-row q-${row.quality}`}>
+                    <span className="bm-row-name">
+                      {row.name}<MarketDelta d={row.delta} />
+                      <span className="block text-dim">Lv {row.level} · {SLOT_LABEL[row.slot]} · {QUALITY_LABEL[row.quality]}</span>
+                    </span>
+                    {row.locked
+                      ? <button type="button" className="px-btn ui-btn-sm" onClick={act(() => game?.toggleLock(row.uid))}>Unlock</button>
+                      : <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={act(() => game?.sell(row.uid))}>Sell {row.price.toLocaleString()}</button>}
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-dim">{stock?.sell.gear.length ? "No spare gear matches." : "No spare gear. Worn pieces cannot be sold."}</p>}
+          </Section>
+          <Section title={`BAG ITEMS · ${stock?.sell.items.length ?? 0}`} right={itemsWorth > 0 && <span className="text-dim">worth {itemsWorth.toLocaleString()}</span>}>
+            {stock?.sell.items.filter((it) => textOk(it.name)).length ? (
+              <div className="bm-list">
+                {marketOrder(stock.sell.items.filter((it) => textOk(it.name)).map((it) => ({ ...it, price: it.each * it.count })), sort).map((it) => (
+                  <div key={it.id} className="bm-row">
+                    <span className="bm-row-name">{it.name} <span className="text-kyo">×{it.count}</span><span className="block text-dim">{it.each} kyo each</span></span>
+                    <span className="bm-row-actions">
+                      <button type="button" className="px-btn ui-btn-sm" onClick={act(() => game?.sellItem(it.id, 1))}>Sell 1</button>
+                      <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={act(() => game?.sellItem(it.id, Infinity))}>All · {(it.each * it.count).toLocaleString()}</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : <p className="text-dim">Nothing in the bag to sell.</p>}
+          </Section>
         </div>
       )}
 
       {cat === "gear" && (
         <div className="bm-list">
-          {stock?.gear.length ? stock.gear.map((row) => (
+          {buyGear.length ? buyGear.map((row) => (
             <div key={row.uid} className={`bm-row q-${row.quality}`}>
-              <span className="bm-row-name">{row.name}<span className="block text-dim">Lv {row.level} · {QUALITY_LABEL[row.quality] ?? row.quality}</span></span>
-              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < row.price} onClick={act(() => game?.buyGear?.(row.uid))}>{row.price} kyo</button>
+              <span className="bm-row-name">{row.name}<MarketDelta d={row.delta} /><span className="block text-dim">Lv {row.level} · {row.slot ? SLOT_LABEL[row.slot] : ""} · {QUALITY_LABEL[row.quality] ?? row.quality}{row.type ? ` · ${row.type}` : ""}{row.enchants ? ` · ${row.enchants} enchant${row.enchants === 1 ? "" : "s"}` : ""}</span></span>
+              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < row.price} onClick={act(() => game?.buyGear?.(row.uid))}>{row.price.toLocaleString()} kyo</button>
             </div>
-          )) : <p className="text-dim">No gear this cycle. Wait for refresh.</p>}
+          )) : <p className="text-dim">{stock?.gear.length ? "No stall gear matches." : "No gear this cycle. Wait for the restock."}</p>}
         </div>
       )}
       {cat === "items" && (
         <div className="bm-list">
-          {stock?.items.length ? stock.items.map((it) => (
+          {stock?.items.filter((it) => textOk(it.name) && (!afford || snap.kyo >= it.price)).length ? marketOrder(stock.items.filter((it) => textOk(it.name) && (!afford || snap.kyo >= it.price)), sort).map((it) => (
             <div key={it.id} className="bm-row">
               <span className="bm-row-name">{it.name}{it.count ? ` ×${it.count}` : ""}</span>
-              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < it.price} onClick={act(() => game?.buyItem?.(it.id))}>{it.price} kyo</button>
+              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < it.price} onClick={act(() => game?.buyItem?.(it.id))}>{it.price.toLocaleString()} kyo</button>
             </div>
-          )) : <p className="text-dim">No items this cycle.</p>}
+          )) : <p className="text-dim">No items match this cycle.</p>}
         </div>
       )}
       {cat === "enchants" && (
         <div className="bm-list">
-          {stock?.enchants.length ? stock.enchants.map((e) => (
+          {stock?.enchants.filter((e) => textOk(e.name, e.about) && (!afford || snap.kyo >= e.price)).length ? marketOrder(stock.enchants.filter((e) => textOk(e.name, e.about) && (!afford || snap.kyo >= e.price)), sort).map((e) => (
             <div key={e.id} className="bm-row">
-              <span className="bm-row-name">{e.name}{e.about ? <span className="block text-dim">{e.about}</span> : null}</span>
-              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < e.price} onClick={act(() => g?.buyEnchant?.(e.id))}>{e.price} kyo</button>
+              <span className="bm-row-name">{e.name}{e.power ? <span className="text-kyo"> · power {e.power}</span> : null}{e.about ? <span className="block text-dim">{e.about}</span> : null}</span>
+              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < e.price} onClick={act(() => g?.buyEnchant?.(e.id))}>{e.price.toLocaleString()} kyo</button>
             </div>
-          )) : <p className="text-dim">No enchants this cycle.</p>}
+          )) : <p className="text-dim">No enchants match this cycle.</p>}
+          <p className="text-dim">Bought enchantments go to your stash (Gear → Stash) to apply to any piece.</p>
         </div>
       )}
       {cat === "spirits" && (
         <div className="bm-list">
-          {stock?.spirits.length ? stock.spirits.map((sp) => (
+          {stock?.spirits.filter((sp) => textOk(sp.name) && (!afford || snap.kyo >= sp.price)).length ? marketOrder(stock.spirits.filter((sp) => textOk(sp.name) && (!afford || snap.kyo >= sp.price)), sort).map((sp) => (
             <div key={sp.id} className="bm-row">
               <span className="bm-row-name">{sp.name}{sp.level != null ? <span className="text-dim"> · lv {sp.level}</span> : null}</span>
-              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < sp.price} onClick={act(() => g?.buySpirit?.(sp.id))}>{sp.price} kyo</button>
+              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < sp.price} onClick={act(() => g?.buySpirit?.(sp.id))}>{sp.price.toLocaleString()} kyo</button>
             </div>
-          )) : <p className="text-dim">No spirits this cycle.</p>}
+          )) : <p className="text-dim">No spirits match this cycle.</p>}
         </div>
       )}
-
+      {cat === "buyback" && (
+        <div className="bm-list">
+          {stock?.buyback?.filter((r) => textOk(r.name)).length ? stock.buyback.filter((r) => textOk(r.name)).map((row) => (
+            <div key={row.uid} className={`bm-row q-${row.quality}`}>
+              <span className="bm-row-name">{row.name}<span className="block text-dim">Lv {row.level} · {SLOT_LABEL[row.slot]} · {QUALITY_LABEL[row.quality]}</span></span>
+              <button type="button" className="px-btn ui-btn-sm" disabled={snap.kyo < row.price} onClick={act(() => g?.buyBack?.(row.uid))}>Buy back · {row.price.toLocaleString()}</button>
+            </div>
+          )) : <p className="text-dim">Nothing to buy back. Gear you sell shows up here until the next restock (the last 10 pieces).</p>}
+        </div>
+      )}
     </div>
   );
 }

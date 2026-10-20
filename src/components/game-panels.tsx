@@ -348,18 +348,47 @@ function VerseNums({ m, crit }: { m: Snap["abilities"][number]; crit?: boolean }
 // Quests
 // ---------------------------------------------------------------------------
 
-const TIER_LABEL: Record<BoardView["tier"], string> = { easy: "EASY", normal: "NORMAL", hard: "HARD", elite: "ELITE" };
+const TIER_LABEL: Record<BoardView["tier"], string> = { easy: "EASY", normal: "NORMAL", hard: "HARD", elite: "ELITE", legend: "LEGEND" };
+const TIER_ORDER: BoardView["tier"][] = ["easy", "normal", "hard", "elite", "legend"];
+const KIND_GROUP = (k: string) => (/kill|elite|boss|dungeon|witch/.test(k) ? "fight" : /ore|tree|shroom|fish|catch|craft/.test(k) ? "gather" : "other");
+const MAX_CONTRACTS = 3;
 
-const TIER_ORDER: BoardView["tier"][] = ["easy", "normal", "hard", "elite"];
-const KIND_GROUP = (k: string) => (/kill|boss/.test(k) ? "fight" : /ore|tree|shroom|fish|catch/.test(k) ? "gather" : "other");
+/** One contract card: objectives with their own bars, the payout, and Accept / Drop. */
+function ContractCard({ q, game, full }: { q: BoardView; game: TurbzGame | null; full: boolean }) {
+  return (
+    <div className={`ui-card quest-card tier-${q.tier} ${q.active ? "menu-pinned" : ""}`} data-testid={q.active ? "quest-active" : `quest-${q.id}`}>
+      <div className="ui-row">
+        <span className="text-kyo">{q.active ? "▶ " : ""}{q.name}</span>
+        <span className={`quest-tier tier-${q.tier}`}>{TIER_LABEL[q.tier]}</span>
+      </div>
+      <div className="quest-steps">
+        {q.steps.map((st, i) => (
+          <div key={i} className={`quest-step ${st.done ? "quest-step-done" : ""}`}>
+            <span>{st.done ? "✓" : "○"} {st.label}</span>
+            {q.active ? <Meter value={st.progress} max={st.need} small detail={`${st.progress}/${st.need}`} kind={st.done ? "good" : undefined} /> : null}
+          </div>
+        ))}
+      </div>
+      <div className="quest-reward">
+        {q.rewardLines.map((l, i) => <span key={i} className={`cost-chip ${i === 0 ? "cost-ok" : ""}`}>{l}</span>)}
+      </div>
+      <div className="ui-row-gap">
+        {q.active
+          ? <ConfirmButton className="ui-btn-sm" label="Drop" confirm="Tap again to drop" onConfirm={() => game?.abandonQuest(q.id)} />
+          : <button type="button" className="px-btn px-btn-kyo ui-btn-sm" disabled={full} title={full ? `You can run ${MAX_CONTRACTS} contracts at once` : undefined} onClick={() => game?.acceptQuest(q.id)}>Accept</button>}
+      </div>
+    </div>
+  );
+}
 
+/** The Quest Board: the game's one quest system. Up to three contracts at once, each with one to three objectives. */
 export const QuestsPanel = memo(function QuestsPanel({ game }: GameProp) {
-  const s = useSnapPick(["mapQuests", "questName", "questAbout", "setLabel", "setBonus", "unlocked", "kyo"] as const);
+  const s = useSnapPick(["kyo", "level"] as const);
   const [board, setBoard] = useState<BoardView[]>([]);
-  const [tab, setTab] = usePref("turbz-quests-tab", ["board", "map", "story"] as const, "board");
   const [tier, setTier] = usePref("turbz-quests-tier", ["all", ...TIER_ORDER] as const, "all");
   const [kind, setKind] = usePref("turbz-quests-kind", ["all", "fight", "gather", "other"] as const, "all");
   const [sort, setSort] = usePref("turbz-quests-sort", ["board", "reward", "tier", "short"] as const, "board");
+  const [gearOnly, setGearOnly] = useState(false);
   useEffect(() => {
     const pull = () => setBoard(game?.questBoardSnap() ?? []);
     pull();
@@ -368,91 +397,47 @@ export const QuestsPanel = memo(function QuestsPanel({ game }: GameProp) {
   }, [game]);
   const secs = board[0]?.refreshIn ?? 0;
   const clock = `${Math.floor(secs / 60)}:${String(Math.floor(secs % 60)).padStart(2, "0")}`;
-  const active = board.find((q) => q.active);
+  const active = board.filter((q) => q.active);
+  const full = active.length >= MAX_CONTRACTS;
   const rest = board
     .filter((q) => !q.active)
     .filter((q) => tier === "all" || q.tier === tier)
-    .filter((q) => kind === "all" || KIND_GROUP(q.kind) === kind)
+    .filter((q) => kind === "all" || q.steps.some((st) => KIND_GROUP(st.kind) === kind))
+    .filter((q) => !gearOnly || !!q.reward.gear || !!q.reward.enchants)
     .slice()
     .sort((a, b) => sort === "reward" ? b.rewardKyo - a.rewardKyo : sort === "tier" ? TIER_ORDER.indexOf(b.tier) - TIER_ORDER.indexOf(a.tier) : sort === "short" ? a.need - b.need : 0);
-  const ready = s.mapQuests.filter((q) => q.ready).length;
   const reroll = game?.questBoardRerollCost() ?? 0;
+  const pending = active.reduce((a, q) => a + q.rewardKyo, 0);
   return (
     <div className="ui-stack" data-testid="quests-panel">
       <StatusChips items={[
-        active ? { label: `On contract · ${active.progress}/${active.need}`, tone: active.progress >= active.need ? "on" : "kyo" } : { label: "No contract taken" },
+        { label: `Contracts ${active.length}/${MAX_CONTRACTS}`, tone: active.length ? "kyo" : undefined },
+        pending > 0 && { label: `${pending.toLocaleString()} kyo waiting`, tone: "on" },
         { label: `Board refresh ${clock}` },
-        s.mapQuests.length > 0 && { label: `${s.mapQuests.length} map quest${s.mapQuests.length === 1 ? "" : "s"}${ready ? ` · ${ready} ready` : ""}`, tone: ready ? "on" : undefined },
         { label: `${(s.kyo ?? 0).toLocaleString()} kyo` },
       ]} />
-      <Tabs value={tab} onChange={setTab} label="Quest sections" tabs={[
-        { id: "board", label: `Contracts · ${board.length}`, testid: "quests-tab-board" },
-        { id: "map", label: ready ? `This map · ${ready}!` : `This map · ${s.mapQuests.length}`, testid: "quests-tab-map" },
-        { id: "story", label: "Story", testid: "quests-tab-story" },
-      ]} />
-      {tab === "board" && (
-        <>
-          {active && (
-            <div className={`ui-card quest-card tier-${active.tier} menu-pinned`} data-testid="quest-active">
-              <div className="ui-row">
-                <span className="text-kyo">▶ {active.name}</span>
-                <span className={`quest-tier tier-${active.tier}`}>{TIER_LABEL[active.tier]}</span>
-              </div>
-              <p className="ui-card-about">{active.about}</p>
-              <Meter value={active.progress} max={active.need} small label="DONE" detail={`${active.progress}/${active.need}`} />
-              <div className="ui-row">
-                <span className="text-dim">Pays {active.rewardKyo.toLocaleString()} kyo</span>
-                <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.abandonQuest()}>Drop contract</button>
-              </div>
-            </div>
-          )}
-          <div className="menu-toolbar">
-            <select className="px-input" aria-label="Sort contracts" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
-              <option value="board">Board order</option><option value="reward">Best pay</option><option value="tier">Hardest first</option><option value="short">Quickest first</option>
-            </select>
-            <ConfirmButton className="ui-btn-sm" label={`New board · ${reroll} kyo`} confirm="Tap again to reroll" disabled={(s.kyo ?? 0) < reroll} onConfirm={() => game?.rerollQuestBoard()} />
+      <p className="text-dim">The Quest Board is where all quests come from. Take up to {MAX_CONTRACTS} contracts at once; every objective on a contract counts at the same time. Hard and up pay gear, Elite and Legend add enchantments, and conditions (at night, inside a dungeon) pay extra. Finished contracts are replaced right away; the whole board refreshes every 30 minutes (accepted contracts stay).</p>
+      {active.length > 0 && (
+        <Section title={`YOUR CONTRACTS · ${active.length}/${MAX_CONTRACTS}`}>
+          <div className="ui-grid" style={{ "--min": "260px" } as React.CSSProperties}>
+            {active.map((q) => <ContractCard key={q.id} q={q} game={game} full={full} />)}
           </div>
-          <Chips value={tier} onChange={setTier} label="Tier" options={[{ id: "all", label: "Any tier" }, ...TIER_ORDER.map((t) => ({ id: t, label: `${TIER_LABEL[t]} ${board.filter((q) => q.tier === t).length}` }))]} />
-          <Chips value={kind} onChange={setKind} label="Kind" options={[{ id: "all", label: "Any kind" }, { id: "fight", label: "Fighting" }, { id: "gather", label: "Gathering" }, { id: "other", label: "Other" }]} />
-          <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
-            {rest.map((q) => (
-              <div key={q.id} className={`ui-card quest-card tier-${q.tier}`}>
-                <div className="ui-row">
-                  <span className="text-kyo">{q.name}</span>
-                  <span className={`quest-tier tier-${q.tier}`}>{TIER_LABEL[q.tier]}</span>
-                </div>
-                <p className="ui-card-about">{q.about}</p>
-                <div className="ui-row">
-                  <span className="text-dim">{q.rewardKyo.toLocaleString()} kyo · need {q.need}</span>
-                  <button type="button" className="px-btn ui-btn-sm" disabled={!!active} title={active ? "Finish or drop your current contract first" : undefined} onClick={() => game?.acceptQuest(q.id)}>Accept</button>
-                </div>
-              </div>
-            ))}
-          </div>
-          {!rest.length && <Empty>{board.length ? "No contracts match these filters." : "The board is empty right now."}</Empty>}
-        </>
+        </Section>
       )}
-      {tab === "map" && (
-        s.mapQuests.length ? (
-          <div className="ui-list" data-testid="map-quest-log">
-            {[...s.mapQuests].sort((a, b) => Number(b.ready) - Number(a.ready)).map((q) => (
-              <div key={q.id} className={`ui-card ${q.ready ? "menu-pinned" : ""}`}>
-                <p className="text-kyo">{q.name}{q.ready ? ` · ✓ report to ${q.turnIn}` : ""}</p>
-                {q.lines.map((l, i) => <p key={i} className="text-dim">{l}</p>)}
-              </div>
-            ))}
-          </div>
-        ) : <Empty>No quests on this map. Talk to the people here (E) to find some.</Empty>
-      )}
-      {tab === "story" && (
-        <>
-          <div className="ui-card">
-            <p className="text-kyo">{s.questName}</p>
-            <p>{s.questAbout}</p>
-          </div>
-          <p className="text-dim">Set: {s.setLabel} · {s.setBonus} · {s.unlocked.length} sets unlocked</p>
-        </>
-      )}
+      <Section title={`BOARD · ${board.length - active.length}`} right={<ConfirmButton className="ui-btn-sm" label={`New board · ${reroll.toLocaleString()} kyo`} confirm="Tap again to reroll" disabled={(s.kyo ?? 0) < reroll} onConfirm={() => game?.rerollQuestBoard()} />}>
+        <div className="menu-toolbar">
+          <select className="px-input" aria-label="Sort contracts" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+            <option value="board">Board order</option><option value="reward">Best pay</option><option value="tier">Hardest first</option><option value="short">Quickest first</option>
+          </select>
+          <label className="chip chip-check"><input type="checkbox" checked={gearOnly} onChange={(e) => setGearOnly(e.target.checked)} /> Pays gear or enchants</label>
+        </div>
+        <Chips value={tier} onChange={setTier} label="Tier" options={[{ id: "all", label: "Any tier" }, ...TIER_ORDER.map((t) => ({ id: t, label: `${TIER_LABEL[t]} ${board.filter((q) => !q.active && q.tier === t).length}` }))]} />
+        <Chips value={kind} onChange={setKind} label="Kind" options={[{ id: "all", label: "Any kind" }, { id: "fight", label: "Fighting" }, { id: "gather", label: "Gathering" }]} />
+        <div className="ui-grid" style={{ "--min": "260px" } as React.CSSProperties}>
+          {rest.map((q) => <ContractCard key={q.id} q={q} game={game} full={full} />)}
+        </div>
+        {!rest.length && <Empty>{board.length ? "No contracts match these filters." : "The board is empty right now."}</Empty>}
+      </Section>
     </div>
   );
 });

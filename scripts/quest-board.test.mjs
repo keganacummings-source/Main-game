@@ -22,16 +22,23 @@ const content = await import(contentUrl);
 const host = (over = {}) => ({ name: "Mina", seed: 4242, level: 1, kyo: 0, ...over });
 const T0 = 1_800_000_000_000;
 
-test("a board has ten distinct contracts, none of the same kind and target", () => {
-  const st = qb.ensureBoard(host(), T0);
+const allSteps = (st) => st.quests.flatMap((q) => q.steps);
+const boards = (h, n) => Array.from({ length: n }, (_, i) => qb.ensureBoard({ ...h, board: undefined }, T0 + i * qb.BOARD_PERIOD_MS));
+
+test("a board has ten distinct contracts with 1-3 real objectives and a real payout", () => {
+  const st = qb.ensureBoard(host({ level: 30 }), T0);
+  assert.equal(st.version, qb.BOARD_VERSION);
   assert.equal(st.quests.length, qb.BOARD_SLOTS);
-  const keys = st.quests.map((q) => `${q.kind}:${q.target ?? ""}`);
-  assert.equal(new Set(keys).size, keys.length);
   assert.equal(new Set(st.quests.map((q) => q.id)).size, st.quests.length);
   for (const q of st.quests) {
-    assert.ok(q.need >= 1 && q.rewardKyo >= 5 && q.name && q.about, JSON.stringify(q));
-    if (q.kind === "kill_type") assert.ok(content.TYPES[q.target], `bad type ${q.target}`);
-    if (q.kind === "kill_species") assert.ok(content.MONSTERS.some((m) => m.id === q.target), `bad species ${q.target}`);
+    assert.ok(q.steps.length >= 1 && q.steps.length <= 3, JSON.stringify(q));
+    assert.ok(q.name && q.about && q.reward.kyo >= 10 && q.reward.xpShare > 0, JSON.stringify(q));
+    for (const s of q.steps) {
+      assert.ok(s.need >= 1);
+      if (s.kind === "kill_type") assert.ok(content.TYPES[s.target], `bad type ${s.target}`);
+      if (s.kind === "kill_species") assert.ok(content.MONSTERS.some((m) => m.id === s.target), `bad species ${s.target}`);
+    }
+    assert.deepEqual(new Set(q.steps.map((s) => `${s.kind}:${s.target ?? ""}`)).size, q.steps.length, "no duplicate objectives");
   }
 });
 
@@ -45,105 +52,107 @@ test("the same player in the same window always sees the same board; windows and
   assert.notDeepEqual(other, qb.ensureBoard(host(), T0).quests.map((q) => q.about));
 });
 
-test("boards are actually random: many windows produce many different contracts", () => {
-  const seen = new Set();
-  const kinds = new Set();
-  for (let i = 0; i < 40; i++) {
-    for (const q of qb.ensureBoard(host(), T0 + i * qb.BOARD_PERIOD_MS).quests) {
-      seen.add(q.about);
-      kinds.add(q.kind);
-    }
+test("boards are varied: many kinds, multi-objective contracts, conditions and every tier", () => {
+  const kinds = new Set(), tiers = new Set(), conds = new Set();
+  let multi = 0;
+  for (const st of boards(host({ level: 40 }), 40)) for (const q of st.quests) {
+    tiers.add(q.tier);
+    if (q.steps.length > 1) multi++;
+    for (const s of q.steps) { kinds.add(s.kind); if (s.cond) conds.add(s.cond); }
   }
-  assert.ok(seen.size > 60, `only ${seen.size} distinct contracts across 40 boards`);
-  assert.ok(kinds.size >= 8, `only ${kinds.size} kinds appeared`);
+  assert.ok(kinds.size >= 12, `only ${kinds.size} kinds`);
+  assert.deepEqual([...tiers].sort(), ["easy", "elite", "hard", "legend", "normal"]);
+  assert.ok(conds.has("night") && conds.has("dungeon"));
+  assert.ok(multi > 120, `only ${multi} multi-objective contracts`);
 });
 
-test("difficulty scales with level, bosses wait for level 5, and rewards are paid in proportion", () => {
-  const avg = (level, field) => {
+test("level gates: no bosses before 5, dungeons before 8, witches before 10, legends before 15", () => {
+  for (const st of boards(host({ level: 3 }), 40)) for (const q of st.quests) {
+    assert.ok(!q.steps.some((s) => ["boss", "dungeon", "witch"].includes(s.kind)));
+    assert.notEqual(q.tier, "legend");
+  }
+});
+
+test("rewards are worth it: kyo scales with level and difficulty, top tiers pay gear and enchants", () => {
+  const avgKyo = (level, tier) => {
     let sum = 0, n = 0;
-    for (let i = 0; i < 30; i++) {
-      for (const q of qb.ensureBoard(host({ level }), T0 + i * qb.BOARD_PERIOD_MS).quests) { sum += q[field]; n++; }
-    }
-    return sum / n;
+    for (const st of boards(host({ level }), 40)) for (const q of st.quests) if (!tier || q.tier === tier) { sum += q.reward.kyo; n++; }
+    return sum / Math.max(1, n);
   };
-  assert.ok(avg(40, "need") > avg(1, "need"));
-  assert.ok(avg(40, "rewardKyo") > avg(1, "rewardKyo") * 2);
-  for (let i = 0; i < 60; i++) {
-    const bosses = qb.ensureBoard(host({ level: 3 }), T0 + i * qb.BOARD_PERIOD_MS).quests.filter((q) => q.kind === "boss");
-    assert.equal(bosses.length, 0);
+  assert.ok(avgKyo(100) > avgKyo(10) * 5, "pay grows with level");
+  assert.ok(avgKyo(60, "legend") > avgKyo(60, "easy") * 6, "legend pays far more than easy");
+  // An easy contract is worth at least ten kills; a legend at least a hundred.
+  assert.ok(avgKyo(60, "easy") >= qb.boardKillKyo(60) * 10);
+  assert.ok(avgKyo(60, "legend") >= qb.boardKillKyo(60) * 100);
+  for (const st of boards(host({ level: 50 }), 20)) for (const q of st.quests) {
+    if (q.tier === "hard") assert.equal(q.reward.gear, "rare");
+    if (q.tier === "elite") { assert.equal(q.reward.gear, "epic"); assert.equal(q.reward.enchants, 1); }
+    if (q.tier === "legend") { assert.equal(q.reward.gear, "legendary"); assert.equal(q.reward.enchants, 2); }
+    assert.ok(qb.rewardLines(q.reward).length >= 2);
   }
-  let sawBoss = false;
-  for (let i = 0; i < 60 && !sawBoss; i++) {
-    sawBoss = qb.ensureBoard(host({ level: 20 }), T0 + i * qb.BOARD_PERIOD_MS).quests.some((q) => q.kind === "boss");
-  }
-  assert.ok(sawBoss);
 });
 
-test("kills advance the right contracts; finishing one pays out and posts a replacement", () => {
-  const h = host({ level: 8 });
-  const st = qb.ensureBoard(h, T0);
-  const target = st.quests.find((q) => q.kind === "kill_species");
-  assert.ok(target, "expected a species contract on this board");
-  qb.acceptContract(st, target.id);
-
-  // wrong species / wrong event does nothing
-  assert.equal(qb.applyBoardEvent(h, st, "kills", { species: "not-this", type: "x" }), null);
-  assert.equal(qb.applyBoardEvent(h, st, "ore"), null);
-
-  let last = null;
-  for (let i = 0; i < target.need; i++) last = qb.applyBoardEvent(h, st, "kills", { species: target.target, type: "x" });
-  assert.equal(last.complete, true);
-  assert.equal(st.activeId, null);
-  assert.equal(st.quests.length, qb.BOARD_SLOTS, "board is topped back up to ten");
-  assert.ok(!st.quests.some((q) => q.id === target.id), "finished contract is gone");
-  const keys = st.quests.map((q) => `${q.kind}:${q.target ?? ""}`);
-  assert.equal(new Set(keys).size, keys.length, "replacement does not duplicate a contract");
-});
-
-test("generic kill, element, boss and gathering contracts match only what they should", () => {
+test("up to three contracts at once; every matching objective advances; finishing pays out and posts a replacement", () => {
   const h = host({ level: 30 });
-  const mk = (kind, target, need = 2) => ({ id: "t", name: "t", about: "t", kind, target, need, rewardKyo: 10, tier: "normal" });
-  const run = (q, kind, detail) => {
-    const st = { period: 1, rerolls: 0, quests: [q], activeId: q.id, progress: {}, serial: 0 };
-    return qb.applyBoardEvent(h, st, kind, detail);
-  };
-  assert.ok(run(mk("kills"), "kills", { species: "a", type: "fire" }));
-  assert.ok(run(mk("kill_type", "fire"), "kills", { type: "fire" }));
-  assert.equal(run(mk("kill_type", "fire"), "kills", { type: "water" }), null);
-  assert.ok(run(mk("boss"), "kills", { boss: true }));
-  assert.equal(run(mk("boss"), "kills", { boss: false }), null);
-  for (const k of ["ore", "tree", "shroom", "fish", "catch", "craft"]) {
-    assert.ok(run(mk(k), k), k);
-    assert.equal(run(mk(k), "kills", { species: "a", type: "fire" }), null, `${k} must not advance on kills`);
-  }
-});
-
-test("an accepted contract and its progress survive the 30-minute refresh and a reroll resets the rest", () => {
-  const h = host({ level: 6 });
   const st = qb.ensureBoard(h, T0);
-  const q = st.quests.find((x) => x.need >= 2) ?? st.quests[0];
-  qb.acceptContract(st, q.id);
-  qb.applyBoardEvent(h, st, q.kind, { species: q.target, type: q.target });
-  const progress = st.progress[q.id] ?? 0;
-
-  const next = qb.ensureBoard(h, T0 + qb.BOARD_PERIOD_MS);
-  assert.equal(next.quests.length, qb.BOARD_SLOTS);
-  if (progress > 0) {
-    assert.equal(next.activeId, q.id);
-    assert.equal(next.progress[q.id], progress);
-    assert.ok(next.quests.some((x) => x.id === q.id));
-  }
-
-  const before = next.quests.map((x) => x.about).join("|");
-  const rerolled = qb.rerollBoard(h, T0 + qb.BOARD_PERIOD_MS);
-  assert.equal(rerolled.activeId, null);
-  assert.notEqual(rerolled.quests.map((x) => x.about).join("|"), before);
-  assert.ok(qb.rerollCost(20) > qb.rerollCost(1));
+  const q = { id: "x1", name: "Test", about: "", tier: "normal", kind: "kills", need: 3, rewardKyo: 50, reward: { kyo: 50, xpShare: 0.1 },
+    steps: [{ kind: "kill_type", target: "fire", need: 2 }, { kind: "ore", need: 1 }] };
+  st.quests[0] = q;
+  assert.ok(qb.acceptContract(st, "x1"));
+  assert.equal(qb.acceptContract(st, "x1"), null, "cannot take the same contract twice");
+  qb.acceptContract(st, st.quests[1].id); qb.acceptContract(st, st.quests[2].id);
+  assert.equal(st.active.length, 3);
+  assert.equal(qb.acceptContract(st, st.quests[3].id), null, "a fourth is refused");
+  assert.equal(qb.applyBoardEvent(h, st, "kills", { type: "water" }).filter((x) => x.quest.id === "x1").length, 0);
+  qb.applyBoardEvent(h, st, "kills", { type: "fire" });
+  qb.applyBoardEvent(h, st, "kills", { type: "fire" });
+  qb.applyBoardEvent(h, st, "kills", { type: "fire" }); // objective already full: no overflow
+  assert.deepEqual(st.progress.x1, [2, 0]);
+  const done = qb.applyBoardEvent(h, st, "ore").find((x) => x.quest.id === "x1");
+  assert.equal(done.complete, true);
+  assert.ok(!st.active.includes("x1") && !st.quests.some((x) => x.id === "x1"));
+  assert.equal(st.quests.length, qb.BOARD_SLOTS, "board is topped back up to ten");
+  assert.equal(st.done, 1);
+  assert.ok(qb.abandonContract(st, st.active[0]));
+  assert.equal(st.active.length, 1);
 });
 
-test("old or damaged saves without a board are given a fresh one", () => {
-  for (const bad of [undefined, null, {}, { period: "x" }, { period: 1, quests: "no", progress: {} }]) {
+test("objective matching: elites, bosses, dungeons, witches and conditions", () => {
+  const m = qb.stepMatches;
+  assert.ok(m({ kind: "elite", need: 1 }, "kills", { rarity: 2 }));
+  assert.ok(!m({ kind: "elite", need: 1 }, "kills", { rarity: 1 }));
+  assert.ok(m({ kind: "boss", need: 1 }, "kills", { boss: true }));
+  assert.ok(!m({ kind: "dungeon", need: 1 }, "kills", { boss: true }));
+  assert.ok(m({ kind: "dungeon", need: 1 }, "kills", { boss: true, dungeonBoss: true }));
+  assert.ok(m({ kind: "witch", need: 1 }, "kills", { witch: true }));
+  assert.ok(!m({ kind: "kills", need: 1, cond: "night" }, "kills", { night: false }));
+  assert.ok(m({ kind: "kills", need: 1, cond: "night" }, "kills", { night: true }));
+  assert.ok(!m({ kind: "kills", need: 1, cond: "dungeon" }, "kills", {}));
+  for (const k of ["ore", "tree", "shroom", "fish", "catch", "craft"]) {
+    assert.ok(m({ kind: k, need: 1 }, k), k);
+    assert.ok(!m({ kind: k, need: 1 }, "kills", { type: "fire" }), `${k} must not advance on kills`);
+  }
+});
+
+test("accepted contracts and their progress survive the refresh and a reroll", () => {
+  const h = host({ level: 12 });
+  const st = qb.ensureBoard(h, T0);
+  const q = st.quests[0];
+  qb.acceptContract(st, q.id);
+  st.progress[q.id][0] = 1;
+  const next = qb.ensureBoard(h, T0 + qb.BOARD_PERIOD_MS);
+  assert.ok(next.active.includes(q.id) && next.progress[q.id][0] === 1 && next.quests.length === qb.BOARD_SLOTS);
+  const rerolled = qb.rerollBoard(h, T0 + qb.BOARD_PERIOD_MS);
+  assert.ok(rerolled.active.includes(q.id), "a reroll keeps what you accepted");
+  assert.ok(qb.rerollCost(60) > qb.rerollCost(1));
+});
+
+test("old (v1) or damaged boards are replaced with a fresh one", () => {
+  const v1 = { period: 1, rerolls: 0, quests: [{ id: "a", kind: "kills", need: 3, rewardKyo: 10, tier: "easy", name: "a", about: "a" }], activeId: "a", progress: { a: 1 }, serial: 0 };
+  for (const bad of [undefined, null, {}, { period: "x" }, v1]) {
     const h = host({ board: bad });
-    assert.equal(qb.ensureBoard(h, T0).quests.length, qb.BOARD_SLOTS);
+    const st = qb.ensureBoard(h, T0);
+    assert.equal(st.quests.length, qb.BOARD_SLOTS);
+    assert.equal(st.version, qb.BOARD_VERSION);
   }
 });

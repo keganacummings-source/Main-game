@@ -573,9 +573,44 @@ export function bountyInventory(rng: Rng, tier: number, hardcore: boolean): Reco
   return bag;
 }
 
+// ---------------------------------------------------------------------------
+// Economy. One place for every kyo rate, so income and prices move together.
+//   Income: kills (killKyo) and selling (SELL_SHARE of a piece's worth).
+//   Sinks:  the Black Market (MARKET_GEAR_MARKUP, marketEnchantPrice, ...), building, rerolls.
+//   Quests: pay in "kills' worth" of kyo at your level, plus gear and enchants at the top tiers.
+// ---------------------------------------------------------------------------
+export const SELL_SHARE = 0.4;
+export const MARKET_GEAR_MARKUP = 3.5;
+/** Kyo a normal kill pays at this level (bosses x6). Before fortune/charm multipliers. */
+export function killKyo(level: number, boss = false): number {
+  return (2 + Math.max(1, level) * 0.7) * (boss ? 6 : 1);
+}
+/** Trading skill bends toward +50% on every sale instead of climbing forever. */
+export function tradeSellMult(tradingSkill: number): number {
+  return 1 + 0.5 * (1 - Math.exp(-Math.max(0, tradingSkill) / 250));
+}
+/** Market prices: stall gear, a bought enchant and a bound ghost, all scaled to your level. */
+export function marketGearPrice(worth: number): number {
+  return Math.max(10, Math.floor(Math.max(0, worth) * MARKET_GEAR_MARKUP));
+}
+export function marketEnchantPrice(level: number, power: number, roll: number): number {
+  return Math.floor(120 + Math.max(1, level) * 8 + power * (40 + level * 2) + roll * 150);
+}
+export function marketSpiritPrice(spiritLevel: number, roll: number): number {
+  return Math.floor(200 + spiritLevel * 14 + roll * 250);
+}
+/** Items on the stall cost more as you level, so potions are not free forever. */
+export function marketItemPrice(base: number, level: number, roll: number): number {
+  return Math.max(5, Math.floor(Math.max(10, base) * (1.4 + roll) * (1 + Math.max(1, level) * 0.012)));
+}
+/** Restocking the stall early. */
+export function marketRestockCost(level: number): number {
+  return Math.floor(150 + Math.max(1, level) * 12);
+}
+
 /** What a gear piece sells for. Shared by the bag, the market and Sell All. */
 export function gearSellValue(price: number, mult: number): number {
-  return Math.max(1, Math.floor(Math.max(0, price) * 0.45 * Math.max(0, mult)));
+  return Math.max(1, Math.floor(Math.max(0, price) * SELL_SHARE * Math.max(0, mult)));
 }
 
 /** What a bag item sells for. Quest salt and unpriced crafts still fetch a little. */
