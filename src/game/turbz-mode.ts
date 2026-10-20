@@ -185,6 +185,12 @@ export function installTurbz(game: any): void {
     this.giveTurbzHeirloom();
     // Bring back the camp you were packed up with, so placing a campfire drops it where you stand.
     try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+    // A Ghost Box still standing in the old run's wild is folded into the packed camp, so it comes back with it.
+    if (save.ghostBox) {
+      save.turbzCamp = save.turbzCamp ?? { logs: [], beds: [], chest: null, ghostBox: null, ghostStore: [] };
+      save.turbzCamp.ghostBox = save.turbzCamp.ghostBox ?? { dx: 1, dy: 1 };
+      save.ghostBox = null;
+    }
     this.persistTurbz();
     this.syncHud(true);
   };
@@ -271,6 +277,7 @@ export function installTurbz(game: any): void {
     if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {
       try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
     }
+    this.fixTurbzGhostBox?.();
     this.say("TURBZ resumed. Your witch, your gear and your grind are right where you left them.");
     this.persistTurbz();
     this.syncHud(true);
@@ -557,9 +564,49 @@ export function installTurbz(game: any): void {
       if (at) { b.tx = at.tx; b.ty = at.ty; }
     }
     save.turbzCamp = null;
+    this.fixTurbzGhostBox?.();
     this.syncSolids?.(save.map);
     // The off-run copy now follows the camp that is standing (it is not erased, so a crash cannot lose it).
     this.mirrorTurbzCamp();
+  };
+
+  /**
+   * TURBZ keeps the Ghost Box with the camp. A box left from an earlier run (or a different map, a far
+   * corner, or now-blocked ground) said "you have a Ghost Box" but could not be seen; it is moved to the
+   * nearest open tile beside your campfire. With no fire lit, a stray box is folded into the packed camp.
+   */
+  game.fixTurbzGhostBox = function () {
+    const save = this.save;
+    if (!this.turbz || !save?.ghostBox || !this.world) return false;
+    const fire = (save.survival?.campfires ?? []).find((c: any) => c.map === save.map);
+    const b = save.ghostBox;
+    const w = this.world.w, h = this.world.h;
+    const inside = b.map === save.map && b.tx >= 2 && b.ty >= 2 && b.tx < w - 2 && b.ty < h - 2;
+    if (!fire) {
+      if (!inside) {
+        save.turbzCamp = save.turbzCamp ?? { logs: [], beds: [], chest: null, ghostBox: null, ghostStore: [] };
+        save.turbzCamp.ghostBox = save.turbzCamp.ghostBox ?? { dx: 1, dy: 1 };
+        save.ghostBox = null;
+        return true;
+      }
+      return false;
+    }
+    const fx = Math.floor(fire.x / 32), fy = Math.floor(fire.y / 32);
+    const ok = inside && Math.hypot(b.tx - fx, b.ty - fy) <= 10 && !blocked(this.world, b.tx * 32 + 16, b.ty * 32 + 16);
+    if (ok) return false;
+    const taken = (tx: number, ty: number) => (tx === fx && ty === fy) ||
+      (save.survival.logs ?? []).some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty && e.kind !== "woodfloor" && e.kind !== "stonefloor") ||
+      (save.survival.beds ?? []).some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty) ||
+      (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty);
+    for (let r = 1; r <= 6; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+      const tx = fx + dx, ty = fy + dy;
+      if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2 || taken(tx, ty) || blocked(this.world, tx * 32 + 16, ty * 32 + 16)) continue;
+      save.ghostBox = { map: save.map, tx, ty };
+      this.say?.("Your Ghost Box is back beside your campfire.");
+      return true;
+    }
+    return false;
   };
 
   game.growWornGear = function (grant: number) {

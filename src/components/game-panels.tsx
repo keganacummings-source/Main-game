@@ -269,7 +269,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
       )}
       {tab === "library" && (
         <>
-          <p className="text-dim">Auras: slot one and cast it to switch it on or off. While on it holds back part of your max health (up to 3 auras, never more than 60%). 1 point unlocks a verse or adds a rank. Ranks 1–5 add 15% each (rank 5 is ×1.6). Further ranks still stack at +8% each.</p>
+          <p className="text-dim">Auras: slot one and cast it to switch it on or off. While on it holds back part of your max health (up to 3 auras, never more than 60%). 1 point unlocks a verse or adds a rank. Ranks 1–5 add 15% each (rank 5 is ×1.6). Past that each rank adds less, toward ×3 at the top rank (60), so spreading points pays more than piling them on one verse. Heals and wards scale with your max health.</p>
           <div className="bag-toolbar">
             <input className="px-input" aria-label="Search verses" placeholder="Search name, effect, words" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <select className="px-input" aria-label="Sort verses" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
@@ -764,7 +764,7 @@ export const WildGhostPanel = memo(function WildGhostPanel({ game }: GameProp) {
 type SpiritTab = "party" | "box" | "bonus";
 
 export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
-  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "ghostStore", "ghostBox", "ghostInspect", "ghostBonus", "rules", "bag", "kyo"] as const);
+  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "ghostStore", "ghostBox", "ghostInspect", "ghostBonus", "rules", "bag", "kyo", "ghostAuto", "wildHere"] as const);
   const [tab, setTab] = usePref<SpiritTab>("turbz-spirits-tab", ["party", "box", "bonus"], "party");
   const [gsort, setGsort] = usePref("turbz-spirits-sort", ["default", "level", "rarity", "name", "type"] as const, "default");
   const [gq, setGq] = useState("");
@@ -823,9 +823,21 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
         </div>
       )}
 
+      <Section title="CATCHING" right={s.wildHere > 0 && <button type="button" className="px-btn px-btn-kyo ui-btn-sm" data-testid="keep-all-wild" onClick={() => game?.keepAllWild?.()}>Keep all {s.wildHere} lingering here</button>}>
+        <Chips value={(s.ghostAuto ?? "off") as "off" | "shiny" | "rare" | "epic" | "all"} onChange={(v) => game?.setGhostAuto?.(v)} label="Auto-keep caught ghosts" options={[{ id: "off", label: "Ask me" }, { id: "shiny", label: "Auto-keep shinies" }, { id: "rare", label: "Rare+" }, { id: "epic", label: "Epic+" }, { id: "all", label: "Keep all" }]} />
+        <p className="text-dim">Auto-kept ghosts join your party, or the Ghost Box when the party is full, without walking back to them. Shinies always count.</p>
+      </Section>
+
       {tab === "party" && (
         <div className="ui-stack" data-testid="spirit-party">
-          <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Ghosts out with you fight, earn XP from every kill, and their abilities work.</p>
+          <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Ghosts out with you fight, earn XP from every kill, and their abilities and aid verses work: heals, wards, regen, barriers, a last-light save and more.</p>
+          {s.spirits.length > 0 && (
+            <div className="gear-actions" data-testid="spirit-bulk">
+              <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.setAllSpiritsActive?.(true)} disabled={following >= Math.min(s.spiritSlots, s.spirits.length)}>Send all out</button>
+              <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.setAllSpiritsActive?.(false)} disabled={!following}>Call all back</button>
+              {s.ghostBox.near && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.boxIdleSpirits?.()} disabled={s.spirits.every((x) => x.active || x.task)}>Box the idle ones</button>}
+            </div>
+          )}
           {s.spirits.length > 0 && !party.length && <Empty>No party ghosts match.</Empty>}
           {!s.spirits.length && <Empty>No spirits yet. A fallen foe may stay and join you; a ghost jar raises the odds for a minute.</Empty>}
           {sel && (

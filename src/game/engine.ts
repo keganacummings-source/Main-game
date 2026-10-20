@@ -27,7 +27,7 @@ import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine,
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
 import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
-import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, POINTS_PER_LEVEL } from "./ability-progression";
+import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, healAmount, shieldAmount, RANK_MAX, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
 import { ALL_ORDERS, thinkLikePlayer, type PlayOrders } from "./player-brain";
 import { dungeonSeed, generateDungeon } from "./map-gen";
@@ -130,6 +130,7 @@ import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
 import { captureDeathGif } from "./death-gif";
 import { gearImbue } from "./gear-fx";
 import { drawGhostFx, ghostImbue } from "./ghost-fx";
+import { drawSpectralActor } from "./witch-ghost";
 import { clampRarity, rarityName, rollGhostRarity, rollShinyPalette, shinyPalette, PALETTE_BY_ID, DEFAULT_PALETTE, MAX_GHOST_RARITY } from "./ghost-style";
 import { aggregateGhostAbilities, describeAbilities, normalizeAbilities as normalizeGhostAbilities, rollGhostAbilities, GHOST_ABILITY_BY_ID, type GhostAbilityRoll, type GhostAggregate } from "./ghost-abilities";
 import { combatRate, derivePools } from "./pools";
@@ -332,6 +333,9 @@ export type Snap = {
   /** Ghosts kept in the Ghost Box. */
   ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean; tagged: boolean; palette: string | null; abilities: string[] }[];
   ghostBox: { placed: boolean; near: boolean; max: number };
+  /** Ghost QOL: the auto-keep setting and how many caught ghosts linger on this map. */
+  ghostAuto: string;
+  wildHere: number;
   /** TURBZ storage chest: whether one is built, whether you're beside it, and its persistent contents. */
   turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[] };
   /** Your camp: a fire lit (anywhere), one in reach of you here, and (TURBZ) a camp packed up waiting to be dropped. */
@@ -632,6 +636,8 @@ function gritCurve(): Float32Array {
 }
 /** Quest XP: written rewards are multiplied, plus a share of the current level's XP bar. */
 const QUEST_XP_MULT = 2;
+/** Ghost aid verse cooldowns (seconds, before ghostkeeping speeds them up). */
+const AID_CD = { regen: 10, mana: 16, hasten: 14, barrier: 14, lifelink: 14, fury: 14, guardian: 45, mark: 10, chill: 10, tether: 16 };
 /** Map quest givers (designer-map NPC quests) are retired: the Quest Board is the one quest system. */
 const MAP_QUESTS_ON = false;
 const QUEST_XP_SHARE = 0.15;
@@ -735,6 +741,8 @@ const emptySnap = (): Snap => ({
 	ghostInspect: null,
 	ghostBonus: { passive: [], timed: [], working: 0 },
 	ghostBox: { placed: false, near: false, max: 300 },
+	ghostAuto: "off",
+	wildHere: 0,
 	turbzChest: { placed: false, near: false, count: 0, items: [] },
 	camp: { lit: false, near: false, packed: false, pieces: 0 },
 	chest: null,
@@ -4052,13 +4060,14 @@ export class TurbzGame {
 		if (!this.save || this.dead) return false;
 		this.syncArsenal(this.save);
 		const first = !this.save.abilityRanks?.[id];
+		if ((this.save.abilityRanks?.[id] ?? 0) >= RANK_MAX) { this.say(`${MOVE_BY_ID[id]?.name ?? "That verse"} is at the top rank (${RANK_MAX}). Spend points on another verse.`); return false; }
 		if (!spendAbilityPoint(this.save, id)) return false;
 		// A newly unlocked verse goes straight onto the bar while there is room.
 		if (first && this.save.loadout.length < MAX_EQUIPPED) this.save.loadout.push(id);
 		this.syncArsenal(this.save);
 		{
 			const mv = MOVE_BY_ID[id], rank = this.save.abilityRanks[id];
-			const v = verseValues(mv, rank, moveTactic(mv));
+			const v = verseValues(mv, rank, moveTactic(mv), this.maxHp());
 			const what = v.heal ? `heals ${v.heal}` : v.shield ? `wards ${v.shield}` : `power ${v.power}`;
 			this.say(`${mv.name} rank ${rank}: ${what} (×${v.mult.toFixed(2)}).`);
 		}
@@ -4226,14 +4235,14 @@ export class TurbzGame {
 		else if (target) this.facing = 1;
 		if (tactic === "ward") {
 			this.wardT = 3;
-			this.shield = Math.max(this.shield, (12 + move.power) * abilityMultiplier(save, move.id));
+			this.shield = Math.max(this.shield, shieldAmount(move.power, abilityMultiplier(save, move.id), this.maxHp()));
 			this.float(save.x, save.y - 48, "WARD", "#fff1a8");
 			this.say("Warded for three seconds.");
 			this.playMoveFx(move, save.x, save.y - 24, save.x, save.y - 24);
 			return true;
 		}
 		if (tactic === "heal" || move.effect === "mend") {
-			const heal = (18 + Math.max(8, move.power) * .45) * abilityMultiplier(save, move.id);
+			const heal = healAmount(move.power, abilityMultiplier(save, move.id), this.maxHp()) * (1 + Math.max(0, this.chan("mender") ?? 0) / 100);
 			save.hp = Math.min(this.maxHp(), save.hp + heal);
 			if (this.rules === "hardcore") this.persist();
 			this.float(save.x, save.y - 48, `+${Math.floor(heal)}`, "#9ad8c8");
@@ -4808,7 +4817,10 @@ export class TurbzGame {
 	damageMob(mob, dmg, crit, form?, fromPet = false, moveId = undefined) {
 		const gm = this.gim ? this.gim.dealMult(mob, !!crit, form, fromPet) : 1;
 		if (gm <= 0) { this.float(mob.x, mob.y - 30, "PHASED", "#9ad8ff"); return; }
-		const amount = Math.floor(dmg * gm);
+		const aid = this.aidT ?? {};
+		const amount = Math.floor(dmg * gm * (!fromPet && (aid.fury ?? 0) > 0 ? 1.15 : 1));
+		// Blood Pact (ghost aid): your own hits heal you for a tenth of what they deal.
+		if (!fromPet && (aid.lifelink ?? 0) > 0 && this.save && !this.dead) this.save.hp = Math.min(this.maxHp(), this.save.hp + amount * 0.1);
 		if (this.role === "guest") {
 			this.room?.send({
 				t: "dmg",
@@ -5060,8 +5072,28 @@ export class TurbzGame {
 	}
 	// ---------- Lingering ghosts ----------
 	/** The ghost of a fallen foe stands where it fell for 5 minutes, until you look at it and decide. */
+	/** Ghost QOL: does this caught ghost match the "auto-keep" setting? */
+	autoKeeps(spirit) {
+		const mode = this.save?.ghostAuto ?? "off";
+		if (mode === "off") return false;
+		if (mode === "all") return true;
+		if (spirit.shiny) return true;
+		if (mode === "shiny") return false;
+		return (spirit.rarity ?? 0) >= (mode === "epic" ? 3 : 2);
+	}
+	setGhostAuto(mode) {
+		if (!this.save || !["off", "shiny", "rare", "epic", "all"].includes(mode)) return;
+		this.save.ghostAuto = mode;
+		this.say({ off: "Caught ghosts linger for you to decide.", shiny: "Shiny ghosts now join you on their own.", rare: "Rare-or-better (and shiny) ghosts now join you on their own.", epic: "Epic-or-better (and shiny) ghosts now join you on their own.", all: "Every caught ghost now joins you on its own (party first, then the Ghost Box)." }[mode]);
+		this.persist(); this.syncHud(true);
+	}
 	lingerGhost(mob, spirit) {
 		const save = this.save;
+		// Auto-keep: straight into the party (or the Ghost Box when the party is full), no walking back.
+		if (this.autoKeeps(spirit)) {
+			if (spirit.shiny) { this.announceShiny(spirit); this.recordShiny(spirit); }
+			if (this.adoptSpirit(spirit, `${spirit.name}'s ghost would have joined`)) { this.creditCatch(mob.type); this.gainSkill("ghostkeeping", 2); return; }
+		}
 		save.wildGhosts = save.wildGhosts ?? [];
 		const g = { id: `wg-${nextUid()}`, map: save.map, x: mob.x + 18, y: mob.y - 4, t: WILD_GHOST_LIFE, spirit, catchType: mob.type };
 		save.wildGhosts.push(g);
@@ -5155,6 +5187,50 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
+	/** Ghost QOL: keep every lingering ghost on this map at once (party first, then the box). */
+	keepAllWild() {
+		const save = this.save;
+		if (!save || this.dead) return;
+		const here = (save.wildGhosts ?? []).filter((g) => g.map === save.map);
+		if (!here.length) return this.say("No ghosts are lingering here.");
+		let kept = 0;
+		for (const g of here) {
+			if (!this.adoptSpirit(g.spirit, `${g.spirit.name}'s ghost`)) break;
+			save.wildGhosts = save.wildGhosts.filter((x) => x !== g);
+			this.creditCatch(g.catchType ?? g.spirit.type);
+			kept++;
+		}
+		this.say(kept ? `Kept ${kept} ghost${kept === 1 ? "" : "s"}.${kept < here.length ? " No room for the rest." : ""}` : "No room: the party and the Ghost Box are full.");
+		this.persist(); this.syncHud(true);
+	}
+	/** Ghost QOL: everyone out (up to the cap) or everyone back. */
+	setAllSpiritsActive(on) {
+		const save = this.save;
+		if (!save?.spirits?.length) return;
+		let out = 0;
+		for (const sp of save.spirits) {
+			if (on && out < this.spiritCap() && sp.hp > 0) { sp.active = true; sp.task = null; sp.taskT = 0; out++; }
+			else if (!on || out >= this.spiritCap()) sp.active = false;
+		}
+		this.say(on ? `${out} ghost${out === 1 ? "" : "s"} follow you.` : "Every ghost waits in the party.");
+		this.persist(); this.syncHud(true);
+	}
+	/** Ghost QOL: at the Ghost Box, store every party ghost that is not out with you or working. */
+	boxIdleSpirits() {
+		const save = this.save;
+		if (!save || !this.nearGhostBox()) return this.say("Walk to your Ghost Box first.");
+		save.ghostStore = save.ghostStore ?? [];
+		const idle = (save.spirits ?? []).filter((sp) => !sp.active && !sp.task);
+		let n = 0;
+		for (const sp of idle) {
+			if (save.ghostStore.length >= GHOST_STORE_MAX) break;
+			save.spirits = save.spirits.filter((x) => x !== sp);
+			save.ghostStore.push({ ...sp, active: false });
+			n++;
+		}
+		this.say(n ? `${n} ghost${n === 1 ? "" : "s"} put in the Ghost Box.` : "Every party ghost is out or working.");
+		this.persist(); this.syncHud(true);
+	}
 	dismissWild(id) {
 		const save = this.save;
 		const g = this.wildById(id);
@@ -5188,11 +5264,12 @@ export class TurbzGame {
 		if (sp?.classId) {
 			// A witch's ghost wears the class sprite, which has real up/down/left/right rows.
 			// Use the direction it is actually moving or looking; fall back to its left/right facing.
-			drawActor(ctx, {
+			// ...and is drawn as a ghost: see-through, washed in her element, glowing and hovering.
+			drawSpectralActor(ctx, {
 				x, y, race: sp.race || "vesper", classId: sp.classId, female: sp.female !== false,
 				hair: 0, skin: 2, facing, direction: direction ?? (facing < 0 ? "left" : "right"), moving: walk > 0, walk, attack: 0, hurt: 0,
 				pieces: sp.pieces ?? [], setFx: null, setOn: false, time: this.clock, scale: 1, tall: 1,
-			});
+			}, { type: sp.type, rarity: sp.rarity, shiny: !!sp.shiny, palette: sp.palette, seed: sp.uid }, this.clock, drawActor);
 			return;
 		}
 		drawMonster(ctx, {
@@ -5508,6 +5585,20 @@ export class TurbzGame {
 			if (!sp.palette || !PALETTE_BY_ID[sp.palette]) sp.palette = fresh ? rollShinyPalette(Math.random, sp.rarity) : DEFAULT_PALETTE;
 		} else delete sp.palette;
 		sp.abilities = normalizeGhostAbilities(sp.abilities, Math.random, sp.rarity, sp.shiny);
+		// Ghosts from before the aid update learn one of the new aid verses (of their element if one fits).
+		if (!sp.aidV2 && Array.isArray(sp.known)) {
+			sp.aidV2 = 1;
+			if (!sp.known.some((id) => MOVE_BY_ID[id]?.aid)) {
+				const pool = MOVES.filter((m) => m.aid);
+				const mine = pool.filter((m) => m.type === sp.type || m.type === "spirit");
+				const pickFrom = mine.length ? mine : pool;
+				const learn = pickFrom[Math.floor(Math.random() * pickFrom.length)];
+				if (learn) {
+					if (sp.known.length >= 10) sp.known = sp.known.filter((id, i, arr) => i !== arr.findIndex((x) => !(sp.slots ?? []).includes(x)));
+					if (sp.known.length < 10) sp.known.push(learn.id);
+				}
+			}
+		}
 		sp.level = Math.max(1, Math.floor(Number(sp.level) || 1));
 		sp.xp = Number.isFinite(sp.xp) ? Math.max(0, Math.floor(sp.xp)) : 0;
 		return sp;
@@ -6447,6 +6538,14 @@ export class TurbzGame {
 			}
 		}
 		let dmg = amount * (this.gim?.hurtMult(amount) ?? 1);
+		const aidT = this.aidT ?? {};
+		// Veil Bulwark (ghost aid): a quarter less damage.
+		if ((aidT.barrier ?? 0) > 0) dmg *= 0.75;
+		// Soul Tether (ghost aid): the tethered ghost shoulders a third of the blow.
+		if ((aidT.tether ?? 0) > 0 && this.aidTether) {
+			const g = this.activeSpirits().find((sp) => sp.uid === this.aidTether && sp.hp > 0);
+			if (g) { const share = Math.min(dmg / 3, g.hp - 1); if (share > 0) { g.hp -= share; dmg -= share; } }
+		}
 		if (this.shield > 0) {
 			const use = Math.min(this.shield, dmg);
 			this.shield -= use;
@@ -6464,6 +6563,13 @@ export class TurbzGame {
 		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60, "AWAKE", "#fff1a8");
 		save.hp -= dmg;
 		if (save.hp <= 0 && this.gim?.saveFromDeath()) save.hp = 1;
+		// Last Light (ghost aid): one killing blow is turned aside.
+		if (save.hp <= 0 && (this.aidT?.guardian ?? 0) > 0) {
+			this.aidT.guardian = 0;
+			save.hp = Math.max(1, Math.floor(this.maxHp() * 0.25));
+			this.float(save.x, save.y - 64, "LAST LIGHT", "#fff1a8");
+			this.cue("swell", { rate: 1.4, len: 1.2 }, [700, .2, "triangle"]);
+		}
 		this.gim?.afterHurt(dmg);
 		if (save.hp > 0) this.ghostSecondWind();
 		if (this.rules === "hardcore") this.persist();
@@ -6983,6 +7089,7 @@ export class TurbzGame {
 		if (tactic === "ward" || move.effect === "shell") cd = Math.max(cd, 8);
 		if (move.effect === "cleanse") cd = Math.max(cd, 5);
 		if (tactic === "surge") cd = Math.max(cd, 10);
+		if (move.aid) cd = Math.max(cd, AID_CD[move.aid] ?? 12);
 		cd *= rateMult(this.skillN(masteryOf(move.type)) * 0.1);
 		return Math.max(.6, cd * (spirit.shiny ? 0.9 : 1));
 	}
@@ -6996,6 +7103,10 @@ export class TurbzGame {
 		if (!save || this.dead || this.role === "guest" || this.holdActive()) return;
 		const list = this.activeSpirits();
 		this.ghostCd = this.ghostCd ?? {};
+		// Ghost aid timers (Wisp Bloom's regen ticks here too).
+		const aidT = this.aidT = this.aidT ?? {};
+		for (const k of Object.keys(aidT)) aidT[k] = Math.max(0, aidT[k] - dt);
+		if ((aidT.regen ?? 0) > 0 && !this.dead) save.hp = Math.min(this.maxHp(), save.hp + this.maxHp() * 0.03 * dt);
 		list.forEach((spirit, i) => {
 			const cds = this.ghostCd[spirit.uid] = this.ghostCd[spirit.uid] ?? { gap: .4 };
 			for (const k of Object.keys(cds)) cds[k] = Math.max(0, cds[k] - dt);
@@ -7015,7 +7126,8 @@ export class TurbzGame {
 		if (save.hp < this.maxHp() * 0.5) move = aid.find((m) => m.effect === "mend" || moveTactic(m) === "heal") ?? null;
 		if (!move && this.status.some((st) => !GOOD_STATUS.has(st.id)) && Math.random() < 0.7) move = aid.find((m) => m.effect === "cleanse") ?? null;
 		if (!move && this.wardT <= 0 && save.hp < this.maxHp() * 0.8 && this.inFight()) move = aid.find((m) => m.effect === "shell" || moveTactic(m) === "ward") ?? null;
-		if (!move && this.inFight() && Math.random() < 0.18) move = aid.find((m) => moveTactic(m) === "surge") ?? null;
+		if (!move && this.inFight() && Math.random() < 0.18) move = aid.find((m) => !m.aid && moveTactic(m) === "surge") ?? null;
+		if (!move) move = this.pickAid(aid);
 		if (move) {
 			cds[move.id] = this.ghostCooldown(spirit, move);
 			this.applySpiritAid(spirit, move);
@@ -7357,6 +7469,26 @@ export class TurbzGame {
 			}
 		});
 	}
+	/** Which of a ghost's new aid verses fits the moment (null when none do). */
+	pickAid(aid) {
+		const save = this.save;
+		const hp = save.hp / Math.max(1, this.maxHp());
+		const fight = this.inFight();
+		const aidT = this.aidT ?? {};
+		const has = (k) => aid.find((m) => m.aid === k) ?? null;
+		const foes = fight ? this.foesNear(save.x, save.y, 170).length : 0;
+		if (fight && hp < 0.35 && !(aidT.guardian > 0) && has("guardian")) return has("guardian");
+		if (fight && hp < 0.6 && !(aidT.barrier > 0) && has("barrier")) return has("barrier");
+		if (fight && hp < 0.6 && !(aidT.tether > 0) && has("tether")) return has("tether");
+		if (hp < 0.7 && !(aidT.regen > 0) && has("regen")) return has("regen");
+		if (has("mana") && ((this.pools && (this.pools.mana < this.pools.maxMana * 0.35 || this.pools.stam < this.pools.maxStam * 0.35)) || (!this.pools && hp < 0.5))) return has("mana");
+		if (fight && has("hasten") && Object.values(this.cds ?? {}).reduce((a, v) => a + v, 0) > 6) return has("hasten");
+		if (fight && foes >= 2 && has("mark") && Math.random() < 0.5) return has("mark");
+		if (fight && foes >= 2 && has("chill") && Math.random() < 0.5) return has("chill");
+		if (fight && hp < 0.8 && !(aidT.lifelink > 0) && has("lifelink")) return has("lifelink");
+		if (fight && !(aidT.fury > 0) && has("fury") && Math.random() < 0.5) return has("fury");
+		return null;
+	}
 	applySpiritAid(spirit, move) {
 		const save = this.save;
 		if (!save) return;
@@ -7366,11 +7498,31 @@ export class TurbzGame {
 		if (slot >= 0) this.mates[slot] = at;
 		this.playMoveFx(move, at.x, at.y - 12, save.x, save.y - 16);
 		const tactic = moveTactic(move);
+		const aidT = this.aidT = this.aidT ?? {};
+		const word = (t, c = "#fff1a8") => this.float(save.x, save.y - 48, t, c);
+		if (move.aid) {
+			const k = move.aid;
+			if (k === "regen") { aidT.regen = 5; word("BLOOM", "#9ad8c8"); }
+			else if (k === "mana") {
+				if (this.pools) { this.pools.mana = Math.min(this.pools.maxMana, this.pools.mana + this.pools.maxMana * 0.25); this.pools.stam = Math.min(this.pools.maxStam, this.pools.stam + this.pools.maxStam * 0.25); this.pools.manaSlow = 0; this.pools.stamSlow = 0; word("REFILL", "#5ad0ff"); }
+				else { save.hp = Math.min(this.maxHp(), save.hp + this.maxHp() * 0.1); word("WELL", "#5ad0ff"); }
+			} else if (k === "hasten") { for (const id of Object.keys(this.cds)) this.cds[id] = Math.max(0, this.cds[id] - 1.5); word("TIME", "#ffe24a"); }
+			else if (k === "barrier") { aidT.barrier = 6; word("BULWARK"); }
+			else if (k === "lifelink") { aidT.lifelink = 6; word("GHOST PACT", "#ff6a6a"); }
+			else if (k === "fury") { aidT.fury = 6; this.buff = { ...this.buff, crit: Math.max(this.buff?.crit || 0, 10), t: Math.max(this.buff?.t || 0, 6) }; word("WAR CHANT", "#ff8a3a"); }
+			else if (k === "guardian") { aidT.guardian = 20; word("LAST LIGHT"); }
+			else if (k === "mark") { for (const m of this.foesNear(save.x, save.y, 170)) this.applyMobStatus(m, "expose", 6); word("MARKED", "#e6c15a"); }
+			else if (k === "chill") { for (const m of this.foesNear(save.x, save.y, 140)) this.applyMobStatus(m, "soak", 4); word("CHILL", "#bfefff"); }
+			else if (k === "tether") { aidT.tether = 6; this.aidTether = spirit.uid; word("TETHER", "#c9a6ff"); }
+			this.gainSkill("ghostkeeping", 2);
+			return;
+		}
 		if (move.effect === "cleanse") {
 			this.status = cleanseStatuses(this.status, GOOD_STATUS);
 			this.float(save.x, save.y - 48, "CLEAN", "#fff1a8");
 		} else if (move.effect === "mend" || tactic === "heal") {
-			const n = Math.max(6, Math.floor((move.power || 12) * 0.7 + spirit.level * 1.2));
+			// Ghost heals scale with your health pool now (they were a flat few points).
+			const n = Math.max(6, Math.floor(this.maxHp() * (0.06 + Math.min(0.06, (move.power || 12) * 0.001 + spirit.level * 0.0002) + (spirit.rarity ?? 0) * 0.008)));
 			save.hp = Math.min(this.maxHp(), save.hp + n);
 			this.float(save.x, save.y - 50, `+${n}`, "#9ad8c8");
 		} else if (move.effect === "shell" || tactic === "ward") {
@@ -10630,7 +10782,7 @@ export class TurbzGame {
 			const tactic = moveTactic(mv), form = attackForm(mv);
 			const rank = save.abilityRanks?.[m.id] ?? 0;
 			const out = { form, acc: mv.accuracy, range: Math.round(this.playerReach(mv)), cd: Math.round(this.moveCooldown(mv) * 100) / 100, kind: "utility", hit: 0, critHit: 0, critPct: 0, heal: 0, shield: 0, rankMult: abilityMultiplier(save, m.id), shape: [], note: "" };
-			if (tactic === "heal" || mv.effect === "mend") { out.kind = "heal"; out.heal = Math.floor((18 + Math.max(8, mv.power) * .45) * abilityMultiplier(save, m.id)); }
+			if (tactic === "heal" || mv.effect === "mend") { out.kind = "heal"; out.heal = healAmount(mv.power, abilityMultiplier(save, m.id), this.maxHp()); }
 			else if (tactic === "ward") { out.kind = "ward"; out.shield = Math.floor((12 + mv.power) * abilityMultiplier(save, m.id)); }
 			else if (mv.power > 0 && tactic !== "surge") {
 				out.kind = "damage";
@@ -10724,7 +10876,7 @@ export class TurbzGame {
 			this.abilityCache = [...MOVES, ...AURA_LIST].map((m) => {
 				const rank = ranks[m.id] ?? 0;
 				const tactic = moveTactic(m);
-				return { ...m, rank, reachNow: Math.round(this.playerReach(m)), cdNow: Math.round(this.moveCooldown(m) * 100) / 100, now: verseValues(m, rank, tactic), next: verseValues(m, rank + 1, tactic) };
+				return { ...m, rank, reachNow: Math.round(this.playerReach(m)), cdNow: Math.round(this.moveCooldown(m) * 100) / 100, now: verseValues(m, rank, tactic, this.maxHp()), next: verseValues(m, Math.min(RANK_MAX, rank + 1), tactic, this.maxHp()) };
 			});
 		}
 		return this.abilityCache;
@@ -10885,6 +11037,8 @@ export class TurbzGame {
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),
 			ghostBox: { placed: !!save.ghostBox, near: this.nearGhostBox(), max: GHOST_STORE_MAX },
+			ghostAuto: save.ghostAuto ?? "off",
+			wildHere: (save.wildGhosts ?? []).filter((g) => g.map === save.map).length,
 			camp: (() => {
 				const sv = save.survival;
 				const packed = this.turbz && !!this.turbzCampHasPieces?.(save.turbzCamp);
@@ -11185,14 +11339,17 @@ export class TurbzGame {
 			if (!m.alive) continue;
 			if (Math.abs(m.x - this.cam.x) > w / this.zoom * 0.62 + 140) continue;
 			if (Math.abs(m.y - this.cam.y) > h / this.zoom * 0.62 + 160) continue;
-			if ((m.witch || m.bounty || m.hunter) && (m.classId || m.race)) {
+			if (((m.witch || m.bounty || m.hunter) && (m.classId || m.race)) || (m.classId && (m.ghost || m.enemyGhost || m.bountySpirit))) {
 				// Witches, bounties and hunters look and act like player classes: they draw with the
 				// class actor model and wear their own gear.
 				const cls = m.classId ? CLASS_BY_ID[m.classId] : null;
 				const raceId = m.race ?? (cls ? CLASS_RACE[cls.id] : null) ?? "vesper";
 				const rr = RACES.find((r) => r.id === raceId) ?? RACES[0];
 				const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
-				drawActor(ctx, {
+				const spectral = !!(m.ghost || m.enemyGhost || m.bountySpirit);
+				const wgfx = spectral ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity ?? 0, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
+				if (wgfx) drawGhostFx(ctx, wgfx, this.clock, "back");
+				(spectral ? (c, a) => drawSpectralActor(c, a, { type: m.type, rarity: m.rarity ?? 0, shiny: !!m.shiny, palette: m.palette, seed: m.id }, this.clock, drawActor) : drawActor)(ctx, {
 					x: m.x, y: m.y, race: raceId, classId: m.classId,
 					direction: m.direction ?? "down", moving: !!m.moving,
 					female: m.female !== false, hair: rr?.hair ?? 0, skin: 2,
@@ -11201,6 +11358,7 @@ export class TurbzGame {
 					pieces: (m.lootGear ?? []).map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) })),
 					setFx: null, setOn: false,
 				});
+				if (wgfx) drawGhostFx(ctx, wgfx, this.clock, "front");
 			} else {
 				// World and dungeon bosses wear the full directional creature sheets (boss-sprites.ts);
 					// drawBossSprite returns false until its sheet loads, so it falls through to the creature draw.

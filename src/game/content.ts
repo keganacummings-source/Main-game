@@ -139,6 +139,8 @@ export type Move = {
   form?: AttackForm;
   /** Spirit aid verses land on the witch instead of a foe. */
   target?: "foe" | "player";
+  /** Ghost aid behaviour beyond heal / ward / cleanse / haste (see engine applySpiritAid). */
+  aid?: AidKind;
   /** Exact reach in pixels (overrides the reach worked out from form, style and power). */
   reach?: number;
   /** Cooldown multiplier on top of the worked-out base (signature verses get a shape of their own). */
@@ -353,6 +355,16 @@ export const MOVES: Move[] = [
   { id: "frostmail", name: "Frost Mail", type: "ice", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "shell", anim: ["prism", "shield"], range: 40, about: "A coat of rime on the witch.", tactic: "ward", target: "player" },
   { id: "voidshelter", name: "Void Shelter", type: "void", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "shell", anim: ["orbit", "shield"], range: 40, about: "The dark leans over the witch.", tactic: "ward", target: "player" },
   { id: "sparkhaste", name: "Spark Haste", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "none", anim: ["spark", "spiral"], range: 40, about: "Lightning in the witch's heels.", tactic: "surge", target: "player" },
+  { id: "wispbloom", name: "Wisp Bloom", type: "spirit", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["orbit", "rain"], range: 40, about: "Little lights settle on the witch and mend her over five seconds.", target: "player", aid: "regen" },
+  { id: "wellspring", name: "Wellspring", type: "water", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["rain", "shield"], range: 40, about: "Pours mana and breath back into the witch.", target: "player", aid: "mana" },
+  { id: "timewisp", name: "Time Wisp", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "none", anim: ["spark", "spiral"], range: 40, about: "Winds the witch's verses forward: every cooldown 1.5 s shorter.", target: "player", aid: "hasten" },
+  { id: "veilbulwark", name: "Veil Bulwark", type: "spirit", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "none", anim: ["prism", "shield"], range: 40, about: "The veil thickens: the witch takes a quarter less damage for six seconds.", target: "player", aid: "barrier" },
+  { id: "ghostpact", name: "Ghost Pact", type: "ghoul", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["orbit", "slash"], range: 40, about: "For six seconds the witch's hits drink a tenth of what they deal.", target: "player", aid: "lifelink" },
+  { id: "warchant", name: "War Chant", type: "fire", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["spark", "shield"], range: 40, about: "A battle hymn: 15% more damage and sharper crits for six seconds.", target: "player", aid: "fury" },
+  { id: "lastlight", name: "Last Light", type: "light", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "none", anim: ["prism", "orbit"], range: 40, about: "For twenty seconds, a killing blow leaves the witch standing at a quarter health instead. Once.", target: "player", aid: "guardian" },
+  { id: "huntersmark", name: "Hunter's Mark", type: "air", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["spiral", "spark"], range: 40, about: "Marks every foe around the witch: Exposed for six seconds.", target: "player", aid: "mark" },
+  { id: "gravechill", name: "Grave Chill", type: "ice", power: 0, accuracy: 100, crit: 0, priority: 2, effect: "none", anim: ["prism", "rain"], range: 40, about: "A cold that clings: every foe around the witch is Soaked for four seconds.", target: "player", aid: "chill" },
+  { id: "soultether", name: "Soul Tether", type: "void", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "none", anim: ["orbit", "shield"], range: 40, about: "The ghost shoulders a third of every blow the witch takes for six seconds.", target: "player", aid: "tether" },
   { id: "ghoulgift", name: "Ghoul Gift", type: "ghoul", power: 16, accuracy: 100, crit: 0, priority: 1, effect: "mend", anim: ["orbit", "slash"], range: 40, about: "A sip of stolen life, offered back.", tactic: "heal", target: "player" },
   // The Starfall batch: verses with animations of their own, and area, chain and boomerang hits.
   { id: "starfall", name: "Starfall", type: "fire", power: 64, accuracy: 84, crit: 10, priority: 0, effect: "burn", anim: ["burst", "spark"], range: 160, about: "Pull a burning star down on them. Everything close burns too.", tactic: "channel", fx: "meteor", splash: { radius: 70, mult: 0.5 }, cdMult: 1.2 },
@@ -507,6 +519,21 @@ export function moveCdFactor(m: Move): number {
 }
 
 /** Verses a spirit spends on the witch: heals, wards, haste, and marked aid spells. */
+/**
+ * What a ghost aid verse does for the witch:
+ *   regen    heals 3% of your max health a second for 5 s
+ *   mana     refills a quarter of your mana and stamina (TURBZ) or a chunk of health elsewhere
+ *   hasten   takes 1.5 s off every verse cooldown you have
+ *   barrier  you take 25% less damage for 6 s
+ *   lifelink your hits heal you for 10% of the damage for 6 s
+ *   fury     you deal 15% more damage and crit more for 6 s
+ *   guardian for 20 s, a killing blow leaves you at 25% instead (once)
+ *   mark     every foe near you is Exposed for 6 s
+ *   chill    every foe near you is Soaked (slowed) for 4 s
+ *   tether   the ghost takes a third of the damage you take for 6 s
+ */
+export type AidKind = "regen" | "mana" | "hasten" | "barrier" | "lifelink" | "fury" | "guardian" | "mark" | "chill" | "tether";
+
 export function spiritAidsPlayer(m: Move): boolean {
   if (m.target === "foe") return false;
   if (m.target === "player") return true;

@@ -4,6 +4,7 @@
  */
 import { drawMonster, drawActor } from "./sprites";
 import { drawGhostFx } from "./ghost-fx";
+import { drawSpectralActor } from "./witch-ghost";
 import { tryDrawActorSprite } from "./actor-sprites";
 import { bytesToBase64, encodeGif, type GifFrame } from "./gif-encode";
 import type { GhostLook, TypeId } from "./content";
@@ -44,7 +45,8 @@ export function drawRecordGhost(ctx: CanvasRenderingContext2D, g: RecordGhost, x
       facing: 1, direction: "down", walk: t, attack: 0, hurt: 0, moving: true,
       classId: g.classId, time: t, pieces: g.pieces ?? [], setFx: null, setOn: false, scale: 1,
     };
-    if (!tryDrawActorSprite(ctx, actor)) drawActor(ctx, actor);
+    // Witch ghosts get the ghost treatment (see-through, washed, glowing), same as in the world.
+    drawSpectralActor(ctx, actor, { type: g.type, rarity: g.rarity ?? 0, shiny, palette: g.palette, seed: g.uid ?? g.name }, t, (c, a) => { if (!tryDrawActorSprite(c, a)) drawActor(c, a); });
   } else {
     drawMonster(ctx, {
       x, y, template: g.template ?? 0, type: g.type as TypeId, facing: 1, walk: t * 3, hurt: 0, boss: false, rarity: g.rarity ?? 0,

@@ -1,5 +1,29 @@
 # Patch Notes
 
+## Ghost update, healing rework, verse rank rebalance
+
+- **Ghost QOL:**
+  - **Auto-keep** caught ghosts: Ask me, Shinies, Rare+, Epic+ or Keep all. Auto-kept ghosts join your party, or the Ghost Box when the party is full, with no walking back to them.
+  - **Keep all lingering** ghosts on the map in one tap.
+  - **Send all out** and **Call all back** for the party, and **Box the idle ones** at the Ghost Box.
+- **Witch ghosts look like ghosts.** A witch's ghost used to draw as a solid witch. Now she is see-through and washed in her element colour (or her shiny palette), with the ghost glow, rarity aura, hover and gleam, in the world, in your party and in portraits.
+- **Ten new ghost aid verses:**
+  - **Wisp Bloom:** regenerate 3% a second for 5 s.
+  - **Wellspring:** refills mana and stamina.
+  - **Time Wisp:** every cooldown 1.5 s shorter.
+  - **Veil Bulwark:** 25% less damage taken.
+  - **Ghost Pact:** your hits heal you for 10% of the damage.
+  - **War Chant:** +15% damage and sharper crits.
+  - **Last Light:** survive one killing blow at 25% health.
+  - **Hunter's Mark:** Exposes nearby foes.
+  - **Grave Chill:** Soaks nearby foes.
+  - **Soul Tether:** your ghost takes a third of the damage you take.
+  
+  Ghosts choose them when they fit the moment. Every ghost you already own learns one.
+- **Healing reworked.** Heal verses restored a flat 40–60 health and were useless at high level. They now heal **9% of your max health + 0.1% per point of power**, times the rank bonus. Wards and ghost heals scale with your health pool too.
+- **Maxing one verse no longer breaks balance.** Past rank 5, each rank adds less, toward **×3** at the new top rank, **60**. One verse used to reach ×70 or more. Points above rank 60 on existing saves are refunded.
+- **TURBZ Ghost Box fix:** after dying and relighting your camp, the game said you had a Ghost Box but it could not be seen. It now always comes back beside your campfire.
+
 ## Witch sprites cleaned up
 
 - **Every class sprite** (all 40) got a clean-up pass:

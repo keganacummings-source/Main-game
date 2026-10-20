@@ -5,7 +5,7 @@
 ## In short
 
 - You start with your class's verses. Each level gives **3 skill points**: open **Verses** (**V**) to unlock more or rank up the ones you have.
-- **Ranks** start at 1. Ranks 1–5 each add **+15%** to damage, heals and shields (rank 5 = ×1.6). Ranks past 5 keep stacking at **+8%** each. There is no rank cap.
+- **Ranks** start at 1. Ranks 1–5 each add **+15%** to damage, heals and shields (rank 5 = ×1.6). Past rank 5 each rank adds less, bending toward **×3** at the top rank, **60** (rank 10 ≈ ×1.9, rank 20 ≈ ×2.3, rank 40 ≈ ×2.75). Points spent past rank 60 on an older save are refunded.
 - Equip up to **9** verses. Only equipped verses are used, by you and by auto-battle.
 - Every verse has an **element**, a **tactic** (how it plays), a **form** (melee, ranged or spell), a **reach** and a **base cooldown**.
 - Tapping an equipped verse on the bar opens **Upgrade**, **Move**, **Unequip** and **Cancel**. Drag slots to reorder them; Move + tap another slot swaps the two.
@@ -109,7 +109,7 @@ The verse's card in the Loadout shows the exact area numbers. Ghosts that know t
 The Loadout and Library show each verse's live power (or heal/ward amount) at its current rank, the rank multiplier, and what the next rank gives. Ranking up shows the new value.
 
 - Ranks 1–5: ×1.15 per rank (rank 5 = ×1.6 total).
-- Ranks past 5: +8% each, no cap.
+- Ranks past 5: diminishing, toward ×3 at rank 60 (the top rank).
 
 ## Under the hood
 

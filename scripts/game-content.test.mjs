@@ -134,7 +134,8 @@ test("skill migration grants historical level points once and preserves purchase
   assert.equal(abilities.abilityMultiplier(save, "shard"), 1.6);
   assert.equal(abilities.spendAbilityPoint(save, "shard"), true);
   assert.equal(save.abilityRanks.shard, 6);
-  assert.ok(Math.abs(abilities.abilityMultiplier(save, "shard") - 1.68) < 1e-9);
+  const r6 = abilities.abilityMultiplier(save, "shard");
+  assert.ok(r6 > 1.65 && r6 < 1.7, `rank 6 still adds about +7% (${r6})`);
   assert.equal(abilities.spendAbilityPoint(save, "bogus"), false);
   save.skillPoints = 0;
   assert.equal(abilities.spendAbilityPoint(save, "lantern"), false);
@@ -738,4 +739,28 @@ test("class stats match what each class claims to be best at", () => {
   assert.equal(lead("hp", -1), "ruinmage", "Ruinmage: weakest health pool");
   const claims = { guard: "warden", crit: "nightblade", haste: "ironpalm", might: "bloodrager", leech: "ghoulknight", hp: "frostblade", regen: "tidecaller", speed: "stormrider", kyo: "coinmaster", xp: "songweaver" };
   for (const [k, id] of Object.entries(claims)) assert.equal(lead(k), id, `${id} leads ${k}`);
+});
+
+test("one verse cannot be maxed into a balance breaker: overmax bends to x3, extra points are refunded", () => {
+  const mult = (rank) => abilities.abilityMultiplier({ level: 1, abilityRanks: { shard: rank } }, "shard");
+  assert.equal(mult(5), 1.6);
+  assert.ok(mult(10) > 1.8 && mult(10) < 2, `rank 10 ${mult(10)}`);
+  assert.ok(mult(60) < abilities.RANK_CEILING && mult(60) > 2.85, `rank 60 ${mult(60)}`);
+  assert.equal(mult(900), mult(60), "nothing past the top rank");
+  // A save that sank 900 points into one verse gets the excess back.
+  const save = { level: 300, progressionVersion: 1, skillPoints: 0, abilityRanks: { shard: 900, ember: 3 } };
+  abilities.normalizeAbilities(save);
+  assert.equal(save.abilityRanks.shard, abilities.RANK_MAX);
+  assert.equal(save.skillPoints, 900 - abilities.RANK_MAX);
+  assert.equal(abilities.spendAbilityPoint(save, "shard"), false, "cannot pass the top rank");
+});
+
+test("healing and ward verses scale with your health pool", () => {
+  for (const hp of [200, 2000, 20000]) {
+    const h = abilities.healAmount(50, 1, hp);
+    assert.ok(h >= hp * 0.13 && h <= hp * 0.16 + 20, `heal ${h} of ${hp}`);
+    assert.ok(abilities.shieldAmount(50, 1, hp) >= hp * 0.1);
+  }
+  assert.ok(abilities.healAmount(50, 1.6, 2000) > abilities.healAmount(50, 1, 2000) * 1.5, "ranks still matter");
+  assert.ok(abilities.healAmount(50, 1, 0) > 0, "no health pool given: the old flat heal");
 });

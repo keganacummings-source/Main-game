@@ -24,7 +24,7 @@ There is no level cap. Experience keeps paying out and each level still gives th
 Spend skill points in **Verses** (**V**, Library tab):
 
 - **Unlock** a new verse for 1 point. **Any verse in the game** can be unlocked by any class.
-- **Rank up** a verse for 1 point. Ranks 1–5 are **+15%** each (rank 5 = ×1.6). Ranks past 5 keep stacking at **+8%** each.
+- **Rank up** a verse for 1 point. Ranks 1–5 are **+15%** each (rank 5 = ×1.6). Past rank 5 each rank adds less, toward ×3 at the top rank (60).
 - **No rank cap** — ranks go as high as you push them.
 
 Your **loadout** holds up to **9** equipped verses. Reorder or swap them in the Loadout tab or by tapping a verse on the bar. Hotkeys 1–9 follow that order.
