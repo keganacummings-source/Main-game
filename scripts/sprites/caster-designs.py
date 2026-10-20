@@ -125,6 +125,18 @@ SKIN = (rgba("#f2b586"), rgba("#e48676"))
 HEAD_TOP = 15  # minus bob
 
 
+def head(fr):
+    """(dx, top) of the head: side-on the head sits 1px right and 1px lower than front/back."""
+    side = fr.f in (RIGHT, LEFT)
+    return (1 if side else 0), HEAD_TOP + (1 if side else 0) - fr.bob
+
+
+def shift(cells, dx):
+    if isinstance(cells, dict):
+        return {(x + dx, y): c for (x, y), c in cells.items()}
+    return {(x + dx, y) for x, y in cells}
+
+
 def grip(fr):
     x, y = GRIP[fr.f]
     return x, y - fr.bob
@@ -168,11 +180,9 @@ def embermage(fr):
     hair = [rgba("#8a1e10"), rgba("#d8401c"), rgba("#ffb03a")]
     fr.recolor(hair=hair, tunic=[rgba("#2a1a1e"), rgba("#4a2a2a"), rgba("#7a4a3a")])
     fr.trim_hair_below(30, [rgba("#3a1414"), rgba("#5a1c18"), rgba("#7a2a1e")])
-    t = HEAD_TOP - fr.bob
+    dx, t = head(fr)
     # Flame hair: tongues of fire rising from the crown.
-    tongues = [(10, 4), (13, 7), (16, 3), (19, 6), (22, 5)] if fr.f in (FRONT, BACK) else [(9, 5), (12, 3), (15, 6), (18, 4)]
-    if fr.f == LEFT:
-        tongues = [(31 - x, h) for x, h in tongues]
+    tongues = [(10 + dx, 4), (13 + dx, 7), (16 + dx, 3), (19 + dx, 6), (22 + dx - (1 if dx else 0), 5)]
     cells = {}
     for x, h in tongues:
         for k in range(h):
@@ -190,16 +200,10 @@ def embermage(fr):
 
 def tidewitch(fr):
     fr.recolor(hair=[rgba("#0e4a52"), rgba("#1a8a8a"), rgba("#6ee0d0")], tunic=[rgba("#14304a"), rgba("#1e5070"), rgba("#4a8ab0")])
-    t = HEAD_TOP - fr.bob
-    # A fin crest running over the crown, and coral beads.
-    if fr.f in (FRONT, BACK):
-        fin = {(x, y) for x in range(12, 20) for y in range(t - 6, t + 1) if y >= t - 6 + abs(x - 15.5) * 0.9}
-        fr.shape(shade(fin, rgba("#9af0e8"), rgba("#3ab8b0"), rgba("#1a7a80")), None)
-    else:
-        fin = {(x, y) for x in range(9, 20) for y in range(t - 5, t + 1) if y >= t - 5 + (19 - x) * 0.45}
-        if fr.f == LEFT:
-            fin = {(31 - x, y) for x, y in fin}
-        fr.shape(shade(fin, rgba("#9af0e8"), rgba("#3ab8b0"), rgba("#1a7a80")), None)
+    dx, t = head(fr)
+    # A fin crest running over the crown, seated on the head in every facing.
+    fin = shift({(x, y) for x in range(12, 20) for y in range(t - 6, t + 1) if y >= t - 6 + abs(x - 15.5) * 0.9}, dx)
+    fr.shape(shade(fin, rgba("#9af0e8"), rgba("#3ab8b0"), rgba("#1a7a80")), None)
     # Trident.
     def top(fr, x, y):
         # Crossbar on the shaft's tip, two outer prongs and a taller centre prong, all one piece.
@@ -241,25 +245,12 @@ def stormwitch(fr):
     hair = [rgba("#8a96b0"), rgba("#d0d8f0"), rgba("#ffffff")]
     fr.recolor(hair=hair, tunic=[rgba("#1e2050"), rgba("#30368a"), rgba("#5a68d0")])
     fr.trim_hair_below(27, [rgba("#1e2050"), rgba("#262a6a"), rgba("#30368a")])
-    t = HEAD_TOP - fr.bob
+    dx, t = head(fr)
     # Hair swept straight up into a storm crest, with a lightning streak.
-    crest = {(x, y) for x in range(10, 22) for y in range(t - 5, t + 2) if y >= t - 5 + abs(x - 15.5) * 0.7} if fr.f in (FRONT, BACK) else \
-        {(x, y) for x in range(8, 21) for y in range(t - 6, t + 2) if y >= t - 6 + max(0, x - 13) * 0.9 + max(0, 11 - x)}
-    if fr.f == LEFT:
-        crest = {(31 - x, y) for x, y in crest}
+    crest = shift({(x, y) for x in range(10, 22) for y in range(t - 5, t + 2) if y >= t - 5 + abs(x - 15.5) * 0.7}, dx)
     fr.shape(shade(crest, hair[2], hair[1], hair[0], axis="y"), None)
-    bolt = [(15, t - 3), (16, t - 2), (15, t - 1), (16, t)] if fr.f in (FRONT, BACK) else [(13 if fr.f == RIGHT else 18, t - 3), (14 if fr.f == RIGHT else 17, t - 2), (13 if fr.f == RIGHT else 18, t - 1)]
-    for p in bolt:
+    for p in ((15 + dx, t - 3), (16 + dx, t - 2), (15 + dx, t - 1), (16 + dx, t)):
         fr.put(*p, rgba("#ffe24a"))
-    # A long scarf streaming behind her.
-    sc = rgba("#ffe24a")
-    if fr.f == RIGHT:
-        fr.shape(line(9, 28 - fr.bob, 3, 31) | line(9, 29 - fr.bob, 2, 33) | line(4, 31, 1, 35), sc, under=True)
-    elif fr.f == LEFT:
-        fr.shape(line(22, 28 - fr.bob, 28, 31) | line(22, 29 - fr.bob, 29, 33) | line(27, 31, 30, 35), sc, under=True)
-    else:
-        fr.shape(rect(10, 28 - fr.bob, 21, 28 - fr.bob), sc, outline=False)
-        fr.shape(line(20, 29 - fr.bob, 22, 34), sc)
     # Crescent rod.
     def top(fr, x, y):
         # A crescent cradled on the tip: its bottom sits on the shaft, horns open upward.
@@ -271,22 +262,18 @@ def stormwitch(fr):
 
 def frostweaver(fr):
     fr.recolor(hair=[rgba("#7aa0c8"), rgba("#c0dcf4"), rgba("#f4fbff")], tunic=[rgba("#1a3a6a"), rgba("#2a5a9a"), rgba("#6a9ad8")])
-    t = HEAD_TOP - fr.bob
+    dx, t = head(fr)
     ice = (rgba("#ffffff"), rgba("#a8e4ff"), rgba("#4a9ad8"))
-    # Tiara of ice shards.
-    shards = [(11, 3), (15, 6), (16, 6), (20, 3)] if fr.f in (FRONT, BACK) else [(11, 3), (14, 5), (17, 3)]
-    if fr.f == LEFT:
-        shards = [(31 - x, h) for x, h in shards]
-    cells = set()
-    for x, h in shards:
-        cells |= line(x, t, x, t - h)
-    cells |= rect(10 if fr.f in (FRONT, BACK) else 10, t, 21 if fr.f in (FRONT, BACK) else 18, t) if fr.f != LEFT else rect(13, t, 21, t)
-    fr.shape(shade(cells, *ice, axis="y"), None)
-    # White fur collar.
     b = fr.bob
-    fur = rect(8, 27 - b, 23, 29 - b) if fr.f in (FRONT, BACK) else rect(9 if fr.f == RIGHT else 13, 27 - b, 18 if fr.f == RIGHT else 22, 29 - b)
-    fr.shape({p: rgba("#ffffff") if (p[0] + p[1]) % 3 else rgba("#d0dcea") for p in fur}, None)
-    # A floating ice crystal.
+    # Tiara of ice shards on a thin band across the crown.
+    cells = rect(10 + dx, t, 21 + dx, t)
+    for x, h in ((11, 3), (15, 6), (16, 6), (20, 3)):
+        cells |= line(x + dx, t, x + dx, t - h)
+    fr.shape(shade(cells, *ice, axis="y"), None)
+    # A small ice clasp at the throat (not a band across the body).
+    if fr.f != BACK:
+        cx = 15 if fr.f == FRONT else 18
+        fr.shape({(cx, 28 - b): ice[1], (cx + 1, 28 - b): ice[0], (cx, 29 - b): ice[2], (cx + 1, 29 - b): ice[1]}, None, outline=False)
     hx, cy = held_point(fr)
     cy -= 1
     dia = {(x, y) for x in range(hx - 2, hx + 3) for y in range(cy - 4, cy + 4) if abs(x - hx) * 2 + abs(y - cy) <= 4}
@@ -318,15 +305,12 @@ def radiant(fr):
 def gravemage(fr):
     hood = [rgba("#141a14"), rgba("#243024"), rgba("#3a4a36")]
     fr.recolor(hair=hood, tunic=[rgba("#1a221a"), rgba("#2a362a"), rgba("#4a5a44")])
-    t = HEAD_TOP - fr.bob
-    # A pointed hood over the head.
-    if fr.f in (FRONT, BACK):
-        peak = {(x, y) for x in range(11, 21) for y in range(t - 5, t + 1) if y >= t - 5 + abs(x - 15.5) * 1.1}
-    else:
-        peak = {(x, y) for x in range(9, 21) for y in range(t - 4, t + 1) if y >= t - 4 + abs(x - (12 if fr.f == RIGHT else 19)) * 0.6}
-        if fr.f == LEFT:
-            peak = {(31 - x, y) if False else (x, y) for x, y in peak}
+    dx, t = head(fr)
+    # A pointed hood over the head; side-on its point droops back a little.
+    lean = -1 if fr.f == RIGHT else 0
+    peak = shift({(x, y) for x in range(11, 21) for y in range(t - 5, t + 1) if y >= t - 5 + abs(x - 15.5 - lean * (t - y) * 0.3) * 1.1}, dx)
     fr.shape(shade(peak, *hood[::-1]), None)
+    t = HEAD_TOP - fr.bob  # the mask is placed on the face rows of the base body
     # Bone skull mask over the face.
     if fr.f == FRONT:
         mask = rect(11, t + 6, 20, t + 11) - {(11, t + 11), (20, t + 11)}
@@ -367,17 +351,13 @@ def gravemage(fr):
 def arcanist(fr):
     fr.recolor(hair=[rgba("#3a2a10"), rgba("#6a4a1e"), rgba("#9a7034")], tunic=[rgba("#1a2a5a"), rgba("#2a4a9a"), rgba("#e8c040")])
     fr.trim_hair_below(28, [rgba("#14204a"), rgba("#1e3270"), rgba("#2a4a9a")])
+    dx, t = head(fr)
+    # Square scholar's cap seated on the crown, with a gold tassel.
+    cap = shift(rect(8, t - 1, 23, t) | rect(11, t + 1, 20, t + 2), dx)
+    fr.shape({p: rgba("#2a3a7a") if p[1] >= t + 1 else rgba("#1a2450") for p in cap}, None)
+    tx = 23 + dx if fr.f != RIGHT else 9 + dx
+    fr.shape(line(tx, t, tx + (1 if fr.f != RIGHT else -1), t + 5), rgba("#e8c040"))
     t = HEAD_TOP - fr.bob
-    # Square scholar's cap with a gold tassel.
-    if fr.f in (FRONT, BACK):
-        cap = rect(8, t - 1, 23, t) | rect(11, t + 1, 20, t + 2)
-        fr.shape({p: rgba("#2a3a7a") if p[1] >= t + 1 else rgba("#1a2450") for p in cap}, None)
-        fr.shape(line(23, t, 24, t + 5), rgba("#e8c040"))
-    else:
-        cap = rect(7, t - 1, 22, t) | rect(10, t + 1, 19, t + 2)
-        if fr.f == LEFT:
-            cap = {(31 - x - 2, y) for x, y in cap}
-        fr.shape({p: rgba("#2a3a7a") if p[1] >= t + 1 else rgba("#1a2450") for p in cap}, None)
     # Round spectacles.
     if fr.f == FRONT:
         for x in (12, 18):
@@ -403,17 +383,18 @@ def arcanist(fr):
 def ruinmage(fr):
     cowl = [rgba("#0e0614"), rgba("#1e0e2a"), rgba("#3a1a4a")]
     fr.recolor(hair=cowl, tunic=[rgba("#1a0a1e"), rgba("#2e1236"), rgba("#c02a3a")])
-    t = HEAD_TOP - fr.bob
+    dx, t = head(fr)
     horn = (rgba("#e0d8c8"), rgba("#a89a88"), rgba("#5a4e44"))
-    # Two great horns curling up out of the cowl.
-    for side in ((-1, 1) if fr.f in (FRONT, BACK) else ((1,) if fr.f == RIGHT else (-1,))):
-        base_x = 15.5 + side * 6 if fr.f in (FRONT, BACK) else (12 if fr.f == RIGHT else 19)
+    # Two great horns curling up out of the cowl, both rooted on the head in every facing.
+    for side in (-1, 1):
+        base_x = 15.5 + dx + side * (6 if fr.f in (FRONT, BACK) else 4.5)
         pts = set()
         for k in range(8):
             x = round(base_x + side * (k * 0.55 if k < 5 else 2.8 - (k - 5) * 0.4))
             y = t + 2 - k
             pts |= {(x, y), (x + (1 if side < 0 else -1) * (1 if k < 4 else 0), y)}
         fr.shape(shade(pts, *horn, axis="y"), None)
+    t = HEAD_TOP - fr.bob
     # Shadowed face with burning eyes.
     if fr.f == FRONT:
         for p in rect(11, t + 6, 20, t + 10):
@@ -451,15 +432,14 @@ def veilsinger(fr):
     fr.recolor(hair=hair, tunic=[rgba("#4a2a5a"), rgba("#7a4a8a"), rgba("#d8c0e8")])
     t = HEAD_TOP - fr.bob
     veil = rgba("#f4e8ff")
-    # A sheer veil from the crown down past the shoulders (every other pixel, so the hair shows through).
-    for y in range(t - 1, 33 - fr.bob):
-        for x in range(6, 26):
-            c = fr.get(x, y)
-            if c is None:
-                continue
-            on_edge = c[3] == 0 and any((fr.get(x + dx, y) or (0, 0, 0, 0))[3] for dx in (-1, 1))
-            if c[3] and c[:3] in HAIR and (x + y) % 2 == 0:
-                fr.put(x, y, veil)
+    # A solid veil draped over the crown and down the outer edge of the hair (no dithering).
+    for y in range(t, 33 - fr.bob):
+        row = [x for x in range(FW) if (fr.get(x, y) or (0, 0, 0, 0))[3] and fr.get(x, y)[:3] in {c[:3] for c in hair}]
+        if not row:
+            continue
+        edge = {min(row), max(row)} if y > t + 3 else set(row)
+        for x in edge:
+            fr.put(x, y, veil)
     # Moon-flower in the hair.
     fx = 21 if fr.f in (FRONT, RIGHT) else 10
     fr.shape({(fx, t + 2): rgba("#ffffff"), (fx + 1, t + 2): rgba("#f0c0ff"), (fx, t + 3): rgba("#f0c0ff"), (fx + 1, t + 3): rgba("#ffe24a"), (fx - 1, t + 2): rgba("#f0c0ff"), (fx, t + 1): rgba("#f0c0ff")}, None)
