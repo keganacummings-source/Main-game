@@ -523,6 +523,8 @@ type Save = {
   quick?: string[];
   /** When this save was last written (picks the newer of the cloud's copy and this device's). */
   savedAt?: number;
+  /** Cleared camp zones per map: list of [tx0, ty0, tx1, ty1] rects turned to grass. */
+  campGround?: Record<string, number[][]>;
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -902,7 +904,7 @@ function loadAudioPrefs(): AudioPrefs {
 }
 
 /** The background songs, played in rotation. Add a file to public/music and list it here. */
-const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg", "Track4.ogg"];
+const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg", "Track4.ogg", "WINGRIDDENTURBZ.ogg"];
 /**
  * A new song starts every 10 minutes, counted from when the last one started. A song is never cut
  * short: if one runs longer than this, the next starts right after it ends.
@@ -1793,6 +1795,7 @@ export class TurbzGame {
 		}
 		if (!map.startsWith("custom-") && !(map === "world" && this.overworldFile)) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
 		this.applyTakenNodes(map);
+		this.applyCampGround(map);
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
 		// Rebuild when the map's population isn't this map's. Returning from a rift or crypt used to
@@ -2497,6 +2500,69 @@ export class TurbzGame {
 		this.syncHud(true);
 		return true;
 	}
+
+	/**
+	 * Clear the safe zone around a newly placed campfire to grass. Stores the rect so it
+	 * is reapplied on every map load. Removes gathering nodes and non-boss spawns inside.
+	 */
+	clearCampGround(fire) {
+		const save = this.save;
+		if (!save || !fire || !this.world) return;
+		const r = zoneRect(fire);
+		const tx0 = Math.floor(r.x0 / 32);
+		const ty0 = Math.floor(r.y0 / 32);
+		const tx1 = Math.floor(r.x1 / 32) - 1;
+		const ty1 = Math.floor(r.y1 / 32) - 1;
+		const rect = [tx0, ty0, tx1, ty1];
+		save.campGround = save.campGround ?? {};
+		const list = (save.campGround[fire.map] = save.campGround[fire.map] ?? []);
+		const key = rect.join(",");
+		if (!list.some((q) => q.join(",") === key)) list.push(rect);
+		if (list.length > 40) list.splice(0, list.length - 40);
+		this.applyCampGround(fire.map);
+		// Remove live mobs (non-boss) and dormant that are inside the new zone.
+		const inside = (x: number, y: number) => x >= rect[0] * 32 && x < (rect[2] + 1) * 32 && y >= rect[1] * 32 && y < (rect[3] + 1) * 32;
+		this.mobs = this.mobs.filter((m) => !m.alive || m.boss || m.dungeonBoss || m.witch || m.bounty || m.hunter || !inside(m.x, m.y));
+		if (this.dormant) this.dormant = this.dormant.filter((d) => !inside(d.x, d.y));
+	}
+
+	/** Reapply all stored camp ground clears for the current map: grass tiles + strip nodes/spawns. */
+	applyCampGround(map: string) {
+		const save = this.save;
+		if (!save?.campGround?.[map] || !this.world) return;
+		const rects = save.campGround[map];
+		const w = this.world.w;
+		const tiles = this.world.tiles;
+		const GRASS = 0; // FL.grass
+		for (const rect of rects) {
+			const [tx0, ty0, tx1, ty1] = rect;
+			for (let ty = ty0; ty <= ty1; ty++) {
+				for (let tx = tx0; tx <= tx1; tx++) {
+					if (tx < 0 || ty < 0 || tx >= w || ty >= this.world.h) continue;
+					const i = ty * w + tx;
+					const t = tiles[i];
+					if (!t) continue;
+					t.floor = GRASS;
+					t.block = 0;
+					t.decor = 0;
+					delete t.sprite;
+					delete t.layers;
+				}
+			}
+		}
+		// Strip nodes and non-boss mob spawns that fall inside any cleared rect.
+		this.world.spawns = this.world.spawns.filter((s) => {
+			if (s.boss || s.dungeonBoss) return true;
+			const tx = Math.floor(s.x / 32);
+			const ty = Math.floor(s.y / 32);
+			for (const rect of rects) {
+				if (tx >= rect[0] && tx <= rect[2] && ty >= rect[1] && ty <= rect[3]) return false;
+			}
+			return true;
+		});
+		this.world.cache = null;
+	}
+
 	// ---------- TURBZ storage chest (contents persist across death) ----------
 	/** The chest's stored items ({ itemId: count }), read from its own store so they outlive the run. */
 	turbzChestItems() {
@@ -2901,6 +2967,7 @@ export class TurbzGame {
 				if (!this.isOverworld(save.map)) return this.say("Make camp out on the wild, not in a dungeon.");
 				if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 				save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
+				this.clearCampGround(save.survival.campfires[save.survival.campfires.length - 1]);
 				this.gainSkill("survival", 12);
 				if (this.turbzCampHasPieces?.(save.turbzCamp)) {
 					this.restoreTurbzCamp?.(save.x, save.y);
@@ -2911,6 +2978,7 @@ export class TurbzGame {
 			}
 			if (!consumeMaterials(save.bag, { timber: 3 })) return this.say("Chop trees for 3 logs first.");
 			save.survival.campfires.push({ map: save.map, x: save.x, y: save.y });
+				this.clearCampGround(save.survival.campfires[save.survival.campfires.length - 1]);
 			save.survival.campfires = save.survival.campfires.slice(-100);
 			this.gainSkill("survival", 12);
 			this.say("Campfire built. Each cook or boil uses another log.");
@@ -6783,7 +6851,7 @@ export class TurbzGame {
 		save.level = 1;
 		save.xp = 0;
 		save.hp = 90;
-		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; save.wildGhosts = []; this.wildOpen = null; }
+		if (this.rules === "hardcore") { save.survival = normalizeSurvival(); save.dayNight = freshDayNight(); save.mapQuests = {}; save.campGround = {}; this.sleeping = false; this.buildMode = false; this.syncSolids(save.map); save.ghostBox = null; save.chests = []; this.chestOpen = null; save.wildGhosts = []; this.wildOpen = null; }
 		save.kyo = Math.floor(save.kyo * .85);
 		save.bag = {
 			potion: 2,
@@ -11327,14 +11395,14 @@ export class TurbzGame {
 			drawRift(ctx, portal.x, portal.y);
 			drawShadowName(ctx, `DUNGEON ${portal.id.slice(5)}`, portal.x, portal.y - 100, "#e7d9ff");
 		}
+		// Gathering nodes first, so a tree or rock never covers the chest or Ghost Box.
+		for (const node of this.world.spawns) if (node.kind === "node") {
+			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
+			paintNode(ctx, node.node, node.x, node.y + 2);
+		}
 		// Campfires are drawn inside drawBuild (after walls/floors) so a block on the tile above never covers them.
 		if (this.rules === "hardcore") this.drawBuild(ctx, w, h);
 		this.drawExtras(ctx, w, h);
-		for (const node of this.world.spawns) if (node.kind === "node") {
-			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
-			// No label: you find out what a node is by walking up to it (the "E  Chop / Mine / Forage" prompt).
-			paintNode(ctx, node.node, node.x, node.y + 2);
-		}
 		for (const m of this.mobs) {
 			if (!m.alive) continue;
 			if (Math.abs(m.x - this.cam.x) > w / this.zoom * 0.62 + 140) continue;

@@ -134,6 +134,7 @@ export function installTurbz(game: any): void {
     save.spirits = [];
     save.ghostStore = [];
     save.party = [];
+    save.campGround = {}; // new wild: previous cleared camp zones do not carry over
     save.kyo = 0;
     save.bag = { potion: 2 };
     if (save.hunt) { save.hunt.wanted = 0; save.hunt.stars = 0; save.hunt.board = []; save.hunt.waveIn = 0; }
