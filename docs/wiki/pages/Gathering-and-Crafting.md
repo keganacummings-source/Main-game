@@ -21,6 +21,21 @@ Mushroom patch bonuses:
 - **Shroom Sense** above 20 gives +1 reagent.
 - Your **Shroom** skill gives a 0.2%-per-level chance (at most 80%) of +1 shroom and +1 reagent.
 
+## Mining blocks (TURBZ, New Texture Mode)
+
+In a TURBZ run with **New Texture Mode** on, you can break the solid blocks of the wild (rock walls, sand walls, cabin walls, temple walls). **Click a block twice** while standing within about three tiles of it: the first click cracks it, the second breaks it. If you wait more than five seconds, or click another block, the crack heals.
+
+A broken block becomes its matching floor (stone wall → stone floor, hell wall → hell floor, and so on). A block with no matching floor becomes plain dirt. Water, lava, portals and the edge of the world cannot be mined. Holes you dig are saved with the run.
+
+| Block | You get |
+| --- | --- |
+| **Stone** in a hell biome | 25% chance of **Hell Ore** |
+| **Stone** anywhere else | 25% chance of **Rock Ore** |
+| **Dirt** or **sandstone** | 1 **Dirt Ore** |
+| **Wooden** | 1 **Logs** |
+
+Hell Ore, Rock Ore and Dirt Ore only drop from mining. For now they can only be collected and sold.
+
 ## Fishing
 
 Any water tile is a fishing spot. Stand beside water and press **E**.

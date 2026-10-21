@@ -23,6 +23,7 @@
  * — the file it came from almost certainly also exports the function you need.
  */
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
+import { mineInfo, rollMineDrop, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
 import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
@@ -526,6 +527,8 @@ type Save = {
   savedAt?: number;
   /** Cleared camp zones per map: list of [tx0, ty0, tx1, ty1] rects turned to grass. */
   campGround?: Record<string, number[][]>;
+  /** TURBZ mining: tile indices (y * width + x) of the blocks broken per map, so the holes survive a reload. */
+  mined?: Record<string, number[]>;
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -1151,6 +1154,7 @@ export class TurbzGame {
 			this.canvas.setPointerCapture(e.pointerId);
 			const w = this.screenToWorld(e.clientX, e.clientY);
 			if (this.buildMode && this.buildOn()) { this.buildAt(w.x, w.y); return; }
+			if (this.tryMine(w.x, w.y)) return;
 			this.pointer = {
 				x: w.x,
 				y: w.y,
@@ -1797,6 +1801,7 @@ export class TurbzGame {
 		if (!map.startsWith("custom-") && !(map === "world" && this.overworldFile)) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
 		this.applyTakenNodes(map);
 		this.applyCampGround(map);
+		this.applyMined(map);
 		const witch = this.mobs.find((m) => m.witch && m.alive && !m.bounty && !m.bountySpirit && !m.hunter && !m.party) ?? null;
 		this.stashContract();
 		// Rebuild when the map's population isn't this map's. Returning from a rift or crypt used to
@@ -2600,6 +2605,75 @@ export class TurbzGame {
 			invalidateTerrain(this.world);
 			this.mapImg = null;
 		}
+	}
+	// ---------- TURBZ mining ----------
+	/** Mining only exists in the TURBZ overworld with New Texture Mode on. */
+	miningOn() {
+		return !!(this.turbz && this.save?.turbzNewTex && this.save.map === "custom-turbz" && this.world && !this.dead && snap.mode === "play");
+	}
+	/**
+	 * Pointer-down on a solid block: the first click cracks it, the second breaks it. Returns true when the click
+	 * was a mining click (so the hunter does not also walk into the wall).
+	 */
+	tryMine(x, y) {
+		if (!this.miningOn() || snap.panel) return false;
+		const world = this.world;
+		const tx = Math.floor(x / 32), ty = Math.floor(y / 32);
+		if (tx < 0 || ty < 0 || tx >= world.w || ty >= world.h) return false;
+		const i = ty * world.w + tx;
+		const info = mineInfo(world.tiles[i], tx, ty, world.w, world.h);
+		if (!info) return false;
+		// Something standing on the block (a foe, a ghost, a chest) keeps its normal click.
+		if (this.nearestMob(tx * 32 + 16, ty * 32 + 16, 20)) return false;
+		const save = this.save;
+		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) > MINE_REACH) {
+			this.float(tx * 32 + 16, ty * 32 + 4, "Too far to mine", "#9aa0a6");
+			return true;
+		}
+		const r = mineClick(this.mineProgress ?? null, save.map, i, performance.now());
+		this.mineProgress = r.progress;
+		if (!r.broke) {
+			this.float(tx * 32 + 16, ty * 32 + 4, `Crack! ${r.progress.hits}/${MINE_HITS}`, "#cfd3d8");
+			this.cue("click", { rate: 0.8 }, [170, .05, "square"]);
+			return true;
+		}
+		const tile = world.tiles[i];
+		breakBlock(tile, info);
+		(save.mined = save.mined ?? {});
+		(save.mined[save.map] = save.mined[save.map] ?? []).push(i);
+		const drop = rollMineDrop(info, Math.random());
+		if (drop) {
+			this.giveItem(drop, 1);
+			this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[drop]?.name ?? drop}`, drop === "hell_ore" ? "#ff7a4a" : "#e6c15a");
+		} else this.float(tx * 32 + 16, ty * 32 + 4, "Broken", "#9aa0a6");
+		this.cue("click", { rate: 0.6 }, [120, .08, "square"]);
+		this.refreshTerrain();
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** Tiles changed in place: drop the cached terrain bitmap, minimap and nav cache. */
+	refreshTerrain() {
+		if (!this.world) return;
+		this.world.cache = null;
+		invalidateTerrain(this.world);
+		this.mapImg = null;
+	}
+	/** Reapply the saved holes for this map (the world is rebuilt from its seed on every load). */
+	applyMined(map: string) {
+		const list = this.save?.mined?.[map];
+		if (!list?.length || !this.world || !this.turbz || !this.save?.turbzNewTex) return;
+		const w = this.world.w;
+		let changed = false;
+		for (const i of list) {
+			const tile = this.world.tiles[i];
+			if (!tile || tile.block !== 1) continue;
+			const info = mineInfo(tile, i % w, Math.floor(i / w), w, this.world.h);
+			if (!info) continue;
+			breakBlock(tile, info);
+			changed = true;
+		}
+		if (changed) this.refreshTerrain();
 	}
 	/** New life / new run: put back the land the camps cleared (tiles, nodes and spawns). */
 	restoreCampGround() {

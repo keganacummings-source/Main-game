@@ -1,5 +1,10 @@
 # Patch Notes
 
+## Mining update (TURBZ, New Texture Mode)
+
+- **Break blocks.** Click a solid block twice to break it. It turns into its matching floor tile, or dirt when it has none.
+- **New drops:** 25% **Hell Ore** from stone in hell biomes, 25% **Rock Ore** from other stone, **Dirt Ore** from dirt and sandstone, **Logs** from wood. The three ores are collect-and-sell only for now.
+
 ## Ghost update, healing rework, verse rank rebalance
 
 - **Ghost QOL:**
