@@ -1438,3 +1438,24 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .quest-step { display: grid; gap: 2px; font-size: 18px; }
 .quest-step-done { color: var(--color-good, #9ad8a0); }
 .quest-reward { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
+
+/* Character Redesigner */
+.cr-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr) 280px; gap: 16px; margin-top: 12px; min-height: 0; }
+@media (max-width: 1100px) { .cr-layout { grid-template-columns: 180px minmax(0, 1fr); } .cr-tools { grid-column: 1 / -1; } }
+@media (max-width: 700px) { .cr-layout { grid-template-columns: 1fr; } }
+.cr-classlist { max-height: 72vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.cr-classlist input { margin-bottom: 6px; }
+.cr-main { min-width: 0; }
+.cr-tools { display: flex; flex-direction: column; gap: 12px; }
+.cr-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.cr-framegrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 12px; }
+.cr-framecell { border: 2px solid #3a3029; background: #1c1412; padding: 2px; text-align: center; cursor: pointer; }
+.cr-framecell.on { border-color: var(--color-kyo); }
+.cr-framecell img, .cr-framecell .empty { width: 100%; height: 56px; object-fit: contain; image-rendering: pixelated; }
+.cr-framecell .empty { background: #2a2220; }
+.cr-swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.cr-swatch { width: 22px; height: 22px; border: 2px solid #3a3029; cursor: pointer; padding: 0; }
+.cr-swatch.on { border-color: var(--color-kyo); }
+.cr-canvas-wrap { display: inline-block; background: #1c1412; border: 2px solid #3a3029; }
+.cr-status { font-family: var(--font-display); font-size: 9px; color: var(--color-dim); }
+.cr-dirty { color: var(--color-blood); }
