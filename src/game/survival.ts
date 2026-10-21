@@ -60,6 +60,7 @@ export const CAMP_RECIPE_LIST: CampRecipe[] = [
   { id: "field_ration", name: "Field Rations", about: "Pack cooked meat and a shroom into trail food.", costs: { cooked_meat: 1, mushroom: 1 }, outputs: { trail_ration: 2 }, skill: { id: "cooking", xp: 8 } },
   { id: "bone_broth", name: "Bone Broth", about: "A bone shard and a shroom, boiled.", costs: { bone_shard: 1, mushroom: 1, raw_water: 1, timber: 1 }, outputs: { bone_broth: 1 }, skill: { id: "cooking", xp: 10 } },
   { id: "resin_jerky", name: "Resin Jerky", about: "Meat dried with heartroot resin.", costs: { meat: 1, resin: 1, timber: 1 }, outputs: { resin_jerky: 1 }, skill: { id: "cooking", xp: 10 } },
+  { id: "wire", name: "Twist Wire", about: "Twist a Rock Ore into a Wire. Place it in build mode (TURBZ, New Textures) to carry Power.", costs: { rock_ore: 1 }, outputs: { wire: 1 }, skill: { id: "building", xp: 6 } },
 ];
 
 export const CAMP_RECIPES: Record<string, CampRecipe> = Object.fromEntries(CAMP_RECIPE_LIST.map((r) => [r.id, r]));

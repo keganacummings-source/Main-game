@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  CAMP_CATEGORIES, TILE_CATEGORIES, SPAWN_LOCATIONS, WALK_EFFECTS,
+  CAMP_CATEGORIES, TILE_CATEGORIES, POWER_TEXTURES, SPAWN_LOCATIONS, WALK_EFFECTS,
   loadPack, savePack, groupOf, type Asset, type AssetGroup, type AssetSize,
 } from "@/game/camp-assets";
 import { Field, Section, Tabs, Empty } from "./ui-kit";
@@ -92,12 +92,13 @@ function PixelCanvas({ size, dataUrl, onChange }: { size: AssetSize; dataUrl: st
 
 const EMPTY_ASSET = (group: AssetGroup): Asset => ({
   id: uid(),
-  name: group === "camp" ? "New piece" : "New tile",
+  name: group === "camp" ? "New piece" : group === "power" ? "New power texture" : "New tile",
   group,
-  category: group === "camp" ? "walls" : "floor",
+  category: group === "camp" ? "walls" : group === "power" ? "hellgen" : "floor",
   pixels: "",
   size: 32,
   created: Date.now(),
+  live: group === "power" ? true : undefined,
   holdMax: 0,
   holdItems: [],
   spawnIn: [],
@@ -141,7 +142,9 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
 
   const categories = group === "camp"
     ? CAMP_CATEGORIES.map((id) => ({ id, label: id }))
-    : TILE_CATEGORIES.map((c) => ({ id: c.id, label: c.label }));
+    : group === "power"
+      ? POWER_TEXTURES.map((c) => ({ id: c.id, label: c.label }))
+      : TILE_CATEGORIES.map((c) => ({ id: c.id, label: c.label }));
 
   return (
     <div className="designer-screen">
@@ -153,8 +156,8 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
         <button type="button" className="px-btn" onClick={onBack}>Back</button>
       </header>
       <p className="designer-status">
-        Paint camp pieces and map tiles. Tiles can replace pack art, hold items, set spawn rules, and apply walk-on effects.
-        Saved on this device. Export JSON to ship in an update.
+        Paint camp pieces, map tiles, and the Power blocks (HellStone Generator, Battery, Wire, XP Producer).
+        A power texture marked Live replaces that block's art in game. Saved on this device. Export JSON to ship in an update.
       </p>
 
       {!editing && (
@@ -162,6 +165,7 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
           <div style={{ margin: "12px 0", display: "flex", gap: 8 }}>
             <button type="button" className="px-btn px-btn-kyo" onClick={() => startNew("camp")}>New camp piece</button>
             <button type="button" className="px-btn" onClick={() => startNew("tile")}>New map tile</button>
+            <button type="button" className="px-btn" onClick={() => startNew("power")}>New power texture</button>
             <button type="button" className="px-btn" onClick={() => download("camp-tile-pack.json", assets)}>Export pack</button>
           </div>
           {assets.length === 0 && <Empty>No assets yet. Create a camp piece or map tile.</Empty>}
@@ -200,13 +204,23 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
                   <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
                 </Field>
                 <Field label="Group">
-                  <Tabs value={group} onChange={(g) => { setGroup(g); setEditing({ ...editing, group: g, category: g === "camp" ? "walls" : "floor" }); }} tabs={[{ id: "camp", label: "Camp" }, { id: "tile", label: "Map tile" }]} />
+                  <Tabs value={group} onChange={(g) => {
+                    const category = g === "camp" ? "walls" : g === "power" ? "hellgen" : "floor";
+                    setGroup(g);
+                    setEditing({ ...editing, group: g, category, live: g === "power" ? (editing.live ?? true) : editing.live });
+                  }} tabs={[{ id: "camp", label: "Camp" }, { id: "tile", label: "Map tile" }, { id: "power", label: "Power" }]} />
                 </Field>
                 <Field label="Category">
                   <select value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })}>
                     {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
                   </select>
                 </Field>
+
+                {group === "power" && (
+                  <Field label="Live in game">
+                    <label><input type="checkbox" checked={editing.live !== false} onChange={(e) => setEditing({ ...editing, live: e.target.checked })} /> Draw this on the placed block</label>
+                  </Field>
+                )}
 
                 {group === "tile" && (
                   <>

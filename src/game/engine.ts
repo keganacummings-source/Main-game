@@ -194,6 +194,7 @@ import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./buil
 import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
 import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
 import { tileImage, tileImageRevision, texModeOn, NEWTEX_DIR } from "./tile-atlas";
+import { powerTexture } from "./camp-assets";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
@@ -533,6 +534,10 @@ type Save = {
   powerGens?: { map: string; tx: number; ty: number; ore: number; t: number }[];
   /** TURBZ + New Textures: Batteries that store Power (max 100). */
   powerBats?: { map: string; tx: number; ty: number; power: number }[];
+  /** TURBZ + New Textures: Wire tiles that connect Power. */
+  powerWires?: { map: string; tx: number; ty: number }[];
+  /** TURBZ + New Textures: XP Producers. Press E to spend 200 Power. */
+  powerXps?: { map: string; tx: number; ty: number }[];
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -2375,6 +2380,10 @@ export class TurbzGame {
 			if (gen) return this.removePowerPiece("hellgen", gen);
 			const bat = (save.powerBats ?? []).find(b => b.map === save.map && b.tx === tx && b.ty === ty);
 			if (bat) return this.removePowerPiece("battery", bat);
+			const wr = (save.powerWires ?? []).find(w => w.map === save.map && w.tx === tx && w.ty === ty);
+			if (wr) return this.removePowerPiece("wire", wr);
+			const xp = (save.powerXps ?? []).find(x => x.map === save.map && x.tx === tx && x.ty === ty);
+			if (xp) return this.removePowerPiece("xpgen", xp);
 			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
 			this.say("Nothing to pick up there.");
 			return false;
@@ -2392,6 +2401,10 @@ export class TurbzGame {
 		if (gen) return this.removePowerPiece("hellgen", gen);
 		const bat = (save.powerBats ?? []).find(b => b.map === save.map && b.tx === tx && b.ty === ty);
 		if (bat) return this.removePowerPiece("battery", bat);
+		const wr = (save.powerWires ?? []).find(w => w.map === save.map && w.tx === tx && w.ty === ty);
+		if (wr) return this.removePowerPiece("wire", wr);
+		const xp = (save.powerXps ?? []).find(x => x.map === save.map && x.tx === tx && x.ty === ty);
+		if (xp) return this.removePowerPiece("xpgen", xp);
 		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
 		// that is the Pack up camp / Pick up campfire button in the Camp menu, so a stray click can't move your camp.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
@@ -2402,7 +2415,7 @@ export class TurbzGame {
 			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
-		if (piece === "hellgen" || piece === "battery") return this.placePowerPiece(piece, tx, ty);
+		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen") return this.placePowerPiece(piece, tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
@@ -2416,7 +2429,7 @@ export class TurbzGame {
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : []),
-			...(save.powerGens ?? []), ...(save.powerBats ?? [])];
+			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? [])];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2758,74 +2771,157 @@ export class TurbzGame {
 		this.syncHud(true);
 		return true;
 	}
-	/** TURBZ + New Textures only: place a HellStone Generator or Battery. */
-	placePowerPiece(piece: "hellgen" | "battery", tx: number, ty: number) {
+	/** TURBZ + New Textures only: place a HellStone Generator, Battery, Wire, or XP Producer. */
+	placePowerPiece(piece, tx, ty) {
 		const save = this.save;
 		if (!this.turbz || !save.turbzNewTex) { this.say("Power blocks are only available in TURBZ with New Textures on."); return false; }
 		if (!this.isOverworld(save.map)) { this.say("Place Power blocks in the overworld."); return false; }
 		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
 		this.payForPiece(piece, 15);
+		const here = { map: save.map, tx, ty };
 		if (piece === "hellgen") {
 			save.powerGens = save.powerGens ?? [];
-			save.powerGens.push({ map: save.map, tx, ty, ore: 0, t: 0 });
+			save.powerGens.push({ ...here, ore: 0, t: 0 });
 			this.say("HellStone Power Generator placed. Stand by it and press E to insert Hell Ore.");
-		} else {
+		} else if (piece === "battery") {
 			save.powerBats = save.powerBats ?? [];
-			save.powerBats.push({ map: save.map, tx, ty, power: 0 });
-			this.say("Battery placed. Put it beside a Generator to store Power.");
+			save.powerBats.push({ ...here, power: 0 });
+			this.say("Battery placed. Wire it to a Generator to store Power (100 max).");
+		} else if (piece === "wire") {
+			save.powerWires = save.powerWires ?? [];
+			save.powerWires.push(here);
+			this.say("Wire placed. It carries Power to adjacent Power blocks.");
+		} else {
+			save.powerXps = save.powerXps ?? [];
+			save.powerXps.push(here);
+			this.say("XP Producer placed. Wire it to Batteries, then press E to spend 200 Power.");
 		}
 		this.cue("rattle", { rate: 1.1 }, [380, .06, "triangle"]);
 		this.persist();
 		this.syncHud(true);
 		return true;
 	}
-	/** Adjacent (Chebyshev ≤ 1) battery for a generator, or null. */
-	adjacentBattery(gen: { map: string; tx: number; ty: number }) {
-		return (this.save.powerBats ?? []).find(b => b.map === gen.map && Math.max(Math.abs(b.tx - gen.tx), Math.abs(b.ty - gen.ty)) <= 1) ?? null;
-	}
-	tickPower(dt: number) {
+	/** Every Power block on the save, as a reference plus a kind. */
+	powerNodes() {
 		const save = this.save;
-		if (!save?.powerGens?.length) return;
-		for (const g of save.powerGens) {
-			if (g.map !== save.map) continue;
-			g.t += dt;
-			if (g.t >= 5 && g.ore > 0) {
-				g.t -= 5;
-				g.ore = Math.max(0, g.ore - 1);
-				const bat = this.adjacentBattery(g);
-				if (bat) {
-					const add = Math.min(10, 100 - bat.power);
-					bat.power += add;
-					if (add > 0) this.say(`Generator fed ${add} Power to the Battery (${bat.power}/100).`);
-				} else {
-					this.say("Generator produced Power, but nothing is hooked up — it dissipates.");
+		if (!save) return [];
+		return [
+			...(save.powerGens ?? []).map((n) => ({ n, kind: "gen" })),
+			...(save.powerBats ?? []).map((n) => ({ n, kind: "bat" })),
+			...(save.powerWires ?? []).map((n) => ({ n, kind: "wire" })),
+			...(save.powerXps ?? []).map((n) => ({ n, kind: "xp" })),
+		];
+	}
+	/** Generator, wires, batteries and machines touching this one (including itself). */
+	powerNetwork(start) {
+		const nodes = this.powerNodes().filter((w) => w.n.map === start.map);
+		const key = (n) => `${n.tx},${n.ty}`;
+		const seen = new Set([key(start)]);
+		const q = [start];
+		const out = [];
+		while (q.length) {
+			const cur = q.pop();
+			const hit = nodes.find((w) => w.n.tx === cur.tx && w.n.ty === cur.ty);
+			if (hit) out.push(hit);
+			for (const w of nodes) {
+				const k = key(w.n);
+				if (seen.has(k)) continue;
+				if (Math.max(Math.abs(w.n.tx - cur.tx), Math.abs(w.n.ty - cur.ty)) <= 1) {
+					seen.add(k);
+					q.push(w.n);
 				}
 			}
 		}
+		return out;
 	}
-	/** Interact with a nearby HellStone Generator: deposit one Hell Ore into its single input slot. */
-	interactPowerGen() {
+	tickPower(dt) {
+		const save = this.save;
+		if (!save?.powerGens?.length) return;
+		for (const g of save.powerGens) {
+			if (g.map !== save.map || g.ore <= 0) continue;
+			g.t += dt;
+			if (g.t < 5) continue;
+			g.t -= 5;
+			g.ore = Math.max(0, g.ore - 1);
+			const bats = this.powerNetwork(g).filter((w) => w.kind === "bat").map((w) => w.n);
+			let left = 10;
+			for (const b of bats) {
+				if (left <= 0) break;
+				const room = Math.max(0, 100 - (b.power ?? 0));
+				const add = Math.min(room, left);
+				b.power = (b.power ?? 0) + add;
+				left -= add;
+			}
+			const stored = 10 - left;
+			if (stored > 0) this.float(g.tx * 32 + 16, g.ty * 32 - 8, `+${stored} Power`, "#8fd0ff");
+			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
+		}
+	}
+	/** Hell Ore into a Generator, or 200 Power into an XP Producer. The closer block wins. */
+	interactPower() {
 		const save = this.save;
 		if (!save) return false;
-		const near = (save.powerGens ?? []).find(g => g.map === save.map && Math.hypot(g.tx * 32 + 16 - save.x, g.ty * 32 + 16 - save.y) <= 56);
-		if (!near) return false;
-		if ((save.bag["hell_ore"] ?? 0) <= 0) { this.say("The Generator needs Hell Ore. You have none."); return true; }
-		if (near.ore >= 1) { this.say("The Generator's input slot is full."); return true; }
-		save.bag["hell_ore"]--;
-		if (save.bag["hell_ore"] <= 0) delete save.bag["hell_ore"];
-		near.ore = 1;
-		this.say("Hell Ore inserted. The Generator will produce 10 Power every 5 seconds.");
-		this.persist();
-		this.syncHud(true);
-		return true;
+		const nearest = (list) => {
+			let best = null;
+			let d = 57;
+			for (const n of list ?? []) {
+				if (n.map !== save.map) continue;
+				const dd = Math.hypot(n.tx * 32 + 16 - save.x, n.ty * 32 + 16 - save.y);
+				if (dd <= 56 && dd < d) { d = dd; best = n; }
+			}
+			return best ? { n: best, d } : null;
+		};
+		const gen = nearest(save.powerGens);
+		const xp = nearest(save.powerXps);
+		if (gen && (!xp || gen.d <= xp.d)) {
+			const near = gen.n;
+			if ((save.bag["hell_ore"] ?? 0) <= 0) { this.say("The Generator needs Hell Ore. You have none."); return true; }
+			if (near.ore >= 1) { this.say("The Generator's input slot is full."); return true; }
+			save.bag["hell_ore"]--;
+			if (save.bag["hell_ore"] <= 0) delete save.bag["hell_ore"];
+			near.ore = 1;
+			near.t = 0;
+			this.say("Hell Ore inserted. The Generator makes 10 Power every 5 seconds.");
+			this.persist();
+			this.syncHud(true);
+			return true;
+		}
+		if (xp) {
+			const machine = xp.n;
+			const bats = this.powerNetwork(machine).filter((w) => w.kind === "bat").map((w) => w.n);
+			const have = bats.reduce((a, b) => a + (b.power ?? 0), 0);
+			if (have < 200) { this.say(`The XP Producer needs 200 Power. This network has ${Math.floor(have)}.`); return true; }
+			let need = 200;
+			for (const b of bats) {
+				if (need <= 0) break;
+				const take = Math.min(b.power ?? 0, need);
+				b.power -= take;
+				need -= take;
+			}
+			const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
+			const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
+			this.gainXp(gain);
+			this.float(save.x, save.y - 60 * WITCH_SIZE, `+${gain} xp`, "#c8beff");
+			this.say(`XP Producer spent 200 Power. +${gain} XP (about 50 kills at your level).`);
+			this.cue("sparkle", { rate: 1.1 }, [520, .08, "triangle"]);
+			this.persist();
+			this.syncHud(true);
+			return true;
+		}
+		return false;
 	}
-	removePowerPiece(piece: "hellgen" | "battery", f: { map: string; tx: number; ty: number }) {
+	removePowerPiece(piece, f) {
 		const save = this.save;
 		if (Math.hypot(f.tx * 32 + 16 - save.x, f.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
 		if (piece === "hellgen") save.powerGens = (save.powerGens ?? []).filter(g => g !== f);
-		else save.powerBats = (save.powerBats ?? []).filter(b => b !== f);
-		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) this.giveItem(id, n);
+		else if (piece === "battery") save.powerBats = (save.powerBats ?? []).filter(b => b !== f);
+		else if (piece === "wire") save.powerWires = (save.powerWires ?? []).filter(w => w !== f);
+		else save.powerXps = (save.powerXps ?? []).filter(x => x !== f);
+		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) {
+			if (id === "kyo") save.kyo = (save.kyo ?? 0) + n;
+			else this.giveItem(id, n);
+		}
 		this.say(`${BUILD_PIECES[piece].name} packed up.`);
 		this.cue("click", { rate: 0.8 }, [160, .05, "triangle"]);
 		this.persist();
@@ -8184,7 +8280,7 @@ export class TurbzGame {
 		// The TURBZ storage chest opens when you stand right beside it.
 		if (this.nearTurbzChest(48)) { this.openTurbzChest(); return; }
 		// HellStone Generator: deposit Hell Ore into its input slot.
-		if (this.interactPowerGen()) return;
+		if (this.interactPower()) return;
 		{
 			const chest = this.nearestChest();
 			const wild = this.nearestWild();
@@ -12183,25 +12279,45 @@ export class TurbzGame {
 			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
 			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
 		}
-		// HellStone Generators and Batteries (TURBZ + New Textures)
+		// HellStone Generators, Wires, Batteries and the XP Producer (TURBZ + New Textures)
+		const paintSlot = (slot, x, y, c1, c2) => {
+			const url = powerTexture(slot);
+			if (url) {
+				const img = tileImage(url);
+				if (img.complete && img.naturalWidth > 0) {
+					ctx.imageSmoothingEnabled = false;
+					ctx.drawImage(img, x, y, 32, 32);
+					return;
+				}
+			}
+			ctx.fillStyle = c1;
+			ctx.fillRect(x + 4, y + 4, 24, 24);
+			ctx.fillStyle = c2;
+			ctx.fillRect(x + 8, y + 8, 16, 16);
+		};
 		for (const g of save.powerGens ?? []) {
 			if (g.map !== save.map || Math.abs(g.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(g.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const gx = g.tx * 32, gy = g.ty * 32;
-			ctx.fillStyle = "#6b2a1a";
-			ctx.fillRect(gx + 4, gy + 4, 24, 24);
-			ctx.fillStyle = "#e25a32";
-			ctx.fillRect(gx + 8, gy + 8, 16, 16);
+			paintSlot("hellgen", gx, gy, "#6b2a1a", "#e25a32");
 			drawShadowName(ctx, `GEN · ${g.ore ? "ORE" : "EMPTY"}`, gx + 16, gy - 10, "#ff8a5a");
 			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, "E · INSERT ORE", gx + 16, gy - 22, "#ffd166");
+		}
+		for (const w of save.powerWires ?? []) {
+			if (w.map !== save.map || Math.abs(w.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(w.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			paintSlot("wire", w.tx * 32, w.ty * 32, "#3a3020", "#c4a35a");
 		}
 		for (const b of save.powerBats ?? []) {
 			if (b.map !== save.map || Math.abs(b.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(b.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const bx = b.tx * 32, by = b.ty * 32;
-			ctx.fillStyle = "#1a3a6b";
-			ctx.fillRect(bx + 4, by + 4, 24, 24);
-			ctx.fillStyle = "#4aa0ff";
-			ctx.fillRect(bx + 8, by + 8, 16, 16);
+			paintSlot("battery", bx, by, "#1a3a6b", "#4aa0ff");
 			drawShadowName(ctx, `BAT · ${b.power}/100`, bx + 16, by - 10, "#8fd0ff");
+		}
+		for (const m of save.powerXps ?? []) {
+			if (m.map !== save.map || Math.abs(m.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(m.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const mx = m.tx * 32, my = m.ty * 32;
+			paintSlot("xpgen", mx, my, "#2a1a4a", "#c9a6e8");
+			drawShadowName(ctx, "XP", mx + 16, my - 10, "#c8beff");
+			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · 200 POWER", mx + 16, my - 22, "#ffd166");
 		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;

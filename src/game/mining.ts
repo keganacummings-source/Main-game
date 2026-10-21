@@ -6,10 +6,11 @@
  *
  *   • Hell Ore (25%)  from stone-type blocks in a hell (ashen) biome
  *   • Rock Ore (25%)  from stone-type blocks everywhere else
- *   • Dirt Ore        from dirt and sandstone blocks
+ *   • Dirt            from dirt ground (dug once; the tile becomes grass)
+ *   • Sand            from sandstone / sand walls
  *   • Logs            from wooden blocks
  *
- * Hell / Rock / Dirt Ore only ever come from mining, and for now they are just collected and sold.
+ * Hell / Rock Ore, Dirt and Sand only ever come from mining.
  * This file is pure (no engine, no canvas) so scripts/mining.test.mjs can check it directly.
  */
 /** Same folder as NEWTEX_DIR in tile-atlas.ts (kept local so this file has no imports). */
@@ -29,7 +30,7 @@ export const MINE_REACH = 3.2 * 32;
 /** Drop chance for the ores. */
 export const ORE_CHANCE = 0.25;
 
-export type MineKind = "hell" | "stone" | "dirt" | "wood";
+export type MineKind = "hell" | "stone" | "dirt" | "sand" | "wood";
 export type MineInfo = {
   kind: MineKind;
   /** Item id dropped, and the chance (0..1) of getting it. */
@@ -40,7 +41,7 @@ export type MineInfo = {
 };
 export type MineTile = { floor: number; biome: number; block: number; decor?: number; sprite?: string; layers?: string[]; portal?: unknown };
 
-export const MINE_DROPS = { hell: "hell_ore", stone: "rock_ore", dirt: "dirt_ore", wood: "timber" } as const;
+export const MINE_DROPS = { hell: "hell_ore", stone: "rock_ore", dirt: "dirt", sand: "sand", wood: "timber" } as const;
 
 const NT = (n: string) => `${NEWTEX_DIR}${n}.png`;
 /** New Texture Mode: each wall and the floor it leaves behind. Anything not listed falls back to dirt. */
@@ -62,7 +63,8 @@ export function dirtFloor(sprite: string | undefined, tx: number, ty: number): {
 }
 
 const WOOD = /(^|[_\W])(wood|wooden|plank|planks|log|logs|timber)([_\W\d]|$)/;
-const DIRT = /(sand|sandstone|dirt|mud|clay)/;
+const SAND = /(sandstone|sand)/;
+const DIRT = /(dirt|mud|clay)/;
 /** Never mineable: liquids and anything that is really a doorway. */
 const NOT_ROCK = /(lava|water|deep|swamp|ocean|shallow|portal|gate|door|stairs)/;
 
@@ -71,16 +73,22 @@ const NOT_ROCK = /(lava|water|deep|swamp|ocean|shallow|portal|gate|door|stairs)/
  * `tx`/`ty`/`w`/`h` are the tile position and the map size.
  */
 export function mineInfo(t: MineTile | undefined, tx: number, ty: number, w: number, h: number): MineInfo | null {
-  if (!t || t.block !== 1) return null;
+  if (!t) return null;
   if (tx < 3 || ty < 3 || tx >= w - 3 || ty >= h - 3) return null;
   if (t.floor === 2 || t.floor === 11 || t.portal) return null; // water / lava
   const sprite = t.sprite ?? "";
   const name = baseName(sprite);
   if (NOT_ROCK.test(name) || t.layers?.some((l) => /portal/.test(l))) return null;
+  // Dirt ground is not a wall, but it can be dug once for Dirt. It becomes grass.
+  if (t.block !== 1) {
+    if (DIRT.test(name)) return { kind: "dirt", drop: MINE_DROPS.dirt, chance: 1, floor: { floor: 0, sprite: NT("grass") } };
+    return null;
+  }
 
   const tex = TEX_FLOOR[name];
   const floor = tex ?? dirtFloor(sprite, tx, ty);
   if (WOOD.test(name)) return { kind: "wood", drop: MINE_DROPS.wood, chance: 1, floor };
+  if (SAND.test(name)) return { kind: "sand", drop: MINE_DROPS.sand, chance: 1, floor };
   if (DIRT.test(name)) return { kind: "dirt", drop: MINE_DROPS.dirt, chance: 1, floor };
   if (t.biome === HELL_BIOME) return { kind: "hell", drop: MINE_DROPS.hell, chance: ORE_CHANCE, floor };
   return { kind: "stone", drop: MINE_DROPS.stone, chance: ORE_CHANCE, floor };

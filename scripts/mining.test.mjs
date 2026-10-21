@@ -21,8 +21,11 @@ test("drops follow the tile and the biome", () => {
   assert.equal(info(wall("stone_wall", 6)).drop, "hell_ore", "stone in a hell biome is hell ore");
   assert.equal(info(wall("stone_wall", 2)).drop, "rock_ore");
   assert.equal(info(wall("snow_wall", 1)).drop, "rock_ore");
-  assert.equal(info(wall("sand_wall", 3)).drop, "dirt_ore");
-  assert.equal(info(wall("sand_wall", 6)).drop, "dirt_ore", "sandstone is dirt ore even in hell");
+  assert.equal(info(wall("sand_wall", 3)).drop, "sand");
+  assert.equal(info(wall("sand_wall", 6)).drop, "sand", "sandstone is sand even in hell");
+  assert.equal(info(wall("dirt_wall", 2)).drop, "dirt");
+  assert.equal(info({ floor: 4, biome: 2, block: 0, decor: 0, sprite: `${NT}dirt_floor.png` }).drop, "dirt");
+  assert.equal(info({ floor: 4, biome: 2, block: 0, decor: 0, sprite: `${NT}dirt_floor.png` }).floor.sprite, `${NT}grass.png`);
   assert.equal(info(wall("wood_wall")).drop, "timber");
   assert.equal(info(wall("stone_wall")).chance, 0.25);
   assert.equal(info(wall("hell_wall", 6)).chance, 0.25);

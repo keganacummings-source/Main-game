@@ -1,9 +1,10 @@
 import { memo } from "react";
 import { ITEM_BY_ID } from "@/game/content";
-import { BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, TURBZ_ONLY_PIECES, type BuildPiece } from "@/game/building";
+import { BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, TURBZ_ONLY_PIECES, NEWTEX_ONLY_PIECES, type BuildPiece } from "@/game/building";
 import type { TurbzGame } from "@/game/engine";
 import { useSnapPick } from "./use-snap";
 import { NEWTEX_DIR } from "@/game/tile-atlas";
+import { powerTexture } from "@/game/camp-assets";
 
 type GameProp = { game: TurbzGame | null };
 
@@ -29,7 +30,8 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   const count = (id: string) => (id === "kyo" ? (s.kyo ?? 0) : (bag[id] ?? 0));
   const newTex = !!(game && (game as any).save?.turbzNewTex);
-  const hotkeys = BUILD_HOTKEY_ORDER.filter((id) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && ((id !== "hellgen" && id !== "battery") || newTex));
+  const shown = (id: BuildPiece) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && (!NEWTEX_ONLY_PIECES.has(id) || newTex);
+  const hotkeys = BUILD_HOTKEY_ORDER.filter(shown);
   const c = s.build.counts;
   const placedAlready = (id: BuildPiece) => (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && c.chest);
   const hover = s.build.hover;
@@ -45,7 +47,7 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
       </div>
       <div className="build-bar-groups">
         {BUILD_GROUPS.map((g) => {
-          const pieces = g.pieces.filter((id) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && ((id !== "hellgen" && id !== "battery") || newTex));
+          const pieces = g.pieces.filter(shown);
           if (!pieces.length) return null;
           return (
             <div key={g.id} className="build-bar-group">
@@ -57,7 +59,7 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
                   const key = hotkeys.indexOf(id) + 1;
                   const on = s.build.piece === id;
                   const done = placedAlready(id);
-                  const preview = newTex ? NEWTEX_PREVIEW[id] : undefined;
+                  const preview = powerTexture(id) || (newTex ? NEWTEX_PREVIEW[id] : undefined);
                   return (
                     <button key={id} type="button" data-testid={`build-piece-${id}`}
                       className={`build-piece ${on ? "build-piece-on" : ""} ${afford ? "" : "build-piece-poor"}`}

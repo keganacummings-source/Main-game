@@ -32,8 +32,16 @@ export const TILE_CATEGORIES = [
   { id: "tile-other", label: "Other map tile", folder: "12_Dungeon_Tiles_Other" },
 ] as const;
 
-export type AssetGroup = "camp" | "tile";
+export type AssetGroup = "camp" | "tile" | "power";
 export type AssetSize = 16 | 32 | 64;
+
+/** In-game blocks the Camp & Tile builder can paint. Category id is the build-piece id. */
+export const POWER_TEXTURES = [
+  { id: "hellgen", label: "HellStone Power Generator" },
+  { id: "battery", label: "Battery" },
+  { id: "wire", label: "Wire" },
+  { id: "xpgen", label: "XP Producer" },
+] as const;
 
 /** Suggested places a custom tile may spawn / appear. */
 export const SPAWN_LOCATIONS = [
@@ -59,7 +67,7 @@ export type Asset = {
   replaces?: string;
   /** Map tiles: blocks movement (walls, lava, deep water). */
   solid?: boolean;
-  /** Map tiles: draw this in the game now in place of `replaces`. */
+  /** Power art: draw this on the placed block in game. Defaults on for new power textures. */
   live?: boolean;
 
   // ─── Unique tile properties (tile group only) ───────────────────────────────────────────
@@ -78,14 +86,17 @@ export type Asset = {
 export const ASSET_KEY = "turbz-camp-assets-v1";
 
 export function groupOf(a: Pick<Asset, "group" | "category">): AssetGroup {
-  if (a.group) return a.group;
+  if (a.group === "power" || a.group === "camp" || a.group === "tile") return a.group;
+  if ((POWER_TEXTURES as readonly { id: string }[]).some((c) => c.id === a.category)) return "power";
   return TILE_CATEGORIES.some((c) => c.id === a.category) ? "tile" : "camp";
 }
 
 export function validAsset(a: any): a is Asset {
   if (!a || typeof a.id !== "string" || typeof a.pixels !== "string" || !a.pixels.startsWith("data:image/")) return false;
   if (typeof a.category !== "string") return false;
-  const okCat = (CAMP_CATEGORIES as readonly string[]).includes(a.category) || TILE_CATEGORIES.some((c) => c.id === a.category);
+  const okCat = (CAMP_CATEGORIES as readonly string[]).includes(a.category)
+    || TILE_CATEGORIES.some((c) => c.id === a.category)
+    || (POWER_TEXTURES as readonly { id: string }[]).some((c) => c.id === a.category);
   if (!okCat) return false;
   // Optional new fields are free-form; basic type checks only.
   if (a.holdMax !== undefined && (typeof a.holdMax !== "number" || a.holdMax < 0)) return false;
@@ -105,7 +116,26 @@ export function loadPack(): Asset[] {
 }
 
 export function savePack(assets: Asset[]): boolean {
+  powerTexRev++;
   try { localStorage.setItem(ASSET_KEY, JSON.stringify(assets)); return true; } catch { return false; }
+}
+
+/** Bumped when the pack is saved so the game picks up new power-block art. */
+let powerTexRev = 0;
+let powerTexCacheRev = -1;
+let powerTexCache: Record<string, string> = {};
+
+/** Latest live pixel art for a power block (hellgen, battery, wire, xpgen), or null. */
+export function powerTexture(slot: string): string | null {
+  if (powerTexCacheRev !== powerTexRev) {
+    powerTexCache = {};
+    powerTexCacheRev = powerTexRev;
+    const list = loadPack()
+      .filter((a) => groupOf(a) === "power" && a.live !== false && a.pixels.startsWith("data:image/"))
+      .sort((a, b) => a.created - b.created);
+    for (const a of list) powerTexCache[a.category] = a.pixels;
+  }
+  return powerTexCache[slot] ?? null;
 }
 
 /** Point the game's tile loader at every live replacement in the pack. */

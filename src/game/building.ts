@@ -24,7 +24,7 @@ export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; op
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery";
+export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen";
 /** Kinds that block movement (floors never do; a door blocks only while closed). */
 export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
 export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
@@ -40,11 +40,15 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
   bed: { name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here." },
   ghostbox: { name: "Ghost Box", cost: { timber: 4, ore: 4 }, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter." },
   turbzchest: { name: "Storage Chest", cost: { kyo: 10000 }, about: "Stores any items safely. Its contents survive death — rebuild your camp and they are still inside. TURBZ only." },
-  hellgen: { name: "HellStone Power Generator", cost: { kyo: 500, hell_ore: 4 }, about: "TURBZ + New Textures only. Insert Hell Ore; produces 10 Power every 5 seconds. Power dissipates unless a Battery is placed beside it." },
-  battery: { name: "Battery", cost: { kyo: 300, ore: 6 }, about: "TURBZ + New Textures only. Place beside a HellStone Generator to automatically store its Power (up to 100)." },
+  hellgen: { name: "HellStone Power Generator", cost: { hell_ore: 4, timber: 4 }, about: "TURBZ + New Textures. One Hell Ore input. Produces 10 Power every 5 seconds onto a wired Battery. Unstored Power fades." },
+  battery: { name: "Battery", cost: { dirt: 2, sand: 2 }, about: "TURBZ + New Textures. Stores up to 100 Power from a Generator on the same wire network." },
+  wire: { name: "Wire", cost: { wire: 1 }, about: "TURBZ + New Textures. Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore)." },
+  xpgen: { name: "XP Producer", cost: { kyo: 10000 }, about: "TURBZ + New Textures. Press E to spend 200 Power for the XP of about 50 kills at your level." },
 };
-/** TURBZ-only camp pieces (hidden from the build menu in other modes). Hellgen/Battery also require New Texture Mode. */
-export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery"]);
+/** TURBZ-only camp pieces (hidden from the build menu in other modes). Power pieces also require New Texture Mode. */
+export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen"]);
+/** Hidden unless New Texture Mode is on (still also TURBZ-only). */
+export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen"]);
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
 /** How the build menu and the build bar group the pieces. */
 export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "power"; label: string; pieces: BuildPiece[] }[] = [
@@ -52,10 +56,10 @@ export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "p
   { id: "floors", label: "Floors", pieces: ["woodfloor", "stonefloor"] },
   { id: "doors", label: "Doors", pieces: ["door"] },
   { id: "furniture", label: "Furniture", pieces: ["bed", "ghostbox", "turbzchest"] },
-  { id: "power", label: "Power", pieces: ["hellgen", "battery"] },
+  { id: "power", label: "Power", pieces: ["hellgen", "battery", "wire", "xpgen"] },
 ];
 /** Build-mode hotkeys: 1-8 pick these pieces in order (TURBZ-only pieces are skipped outside TURBZ). X is the Remove tool. */
-export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery"];
+export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen"];
 /** The piece a digit key picks in build mode (1-based), or null. */
 export function buildHotkeyPiece(digit: number, turbz: boolean): BuildPiece | null {
   const list = BUILD_HOTKEY_ORDER.filter((id) => turbz || !TURBZ_ONLY_PIECES.has(id));
@@ -213,7 +217,7 @@ export function checkPlaceLog(args: {
   const cost = args.cost ?? LOG_COST;
   const missing = Object.entries(cost).filter(([id, n]) => (bag[id] ?? 0) < n);
   if (missing.length) {
-    const label: Record<string, string> = { timber: "log", ore: "ore", leather: "hide" };
+    const label: Record<string, string> = { timber: "log", ore: "ore", leather: "hide", hell_ore: "Hell Ore", rock_ore: "Rock Ore", dirt: "Dirt", sand: "Sand", wire: "Wire" };
     return { ok: false, reason: `You need ${missing.map(([id, n]) => `${n} ${label[id] ?? id}`).join(" and ")}${missing.length === 1 && missing[0]![0] === "timber" && missing[0]![1] === 1 ? ". Chop a tree first." : "."}` };
   }
   return { ok: true };
