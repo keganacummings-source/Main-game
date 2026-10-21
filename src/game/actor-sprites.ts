@@ -19,6 +19,8 @@ import {
 import { CLASS_BY_ID, type ClassId } from "./classes";
 import { drawGearFx } from "./gear-fx";
 import { WITCH_SIZE } from "./actor-metrics";
+import { loadRedraws, FACINGS, WALK_FRAMES, frameKey, FRAME_W, FRAME_H } from "./class-redraws";
+import { stripBakedChecker } from "./pixel-edit";
 
 /** Gear effects were tuned for an 18-unit body; class sprites are ~27px tall (27 / 19). */
 const GEAR_FIT = 1.4;
@@ -33,10 +35,12 @@ export function initActorSprites(): Promise<void> {
   if (loading) return loading;
   loading = Promise.all(
     ACTOR_ATLASES.map(async ({ id, spec }) => [id, await loadAtlas(spec)] as const),
-  ).then((loaded) => {
+  ).then(async (loaded) => {
     const next: Partial<Record<SheetId, Atlas>> = {};
     for (const [id, atlas] of loaded) next[id] = atlas;
     atlases = next;
+    // Frames redrawn in Designer Mode go in before the first draw, so there is no flash of the old art.
+    await applyClassRedraws();
     ready = true;
   }).catch((error) => {
     loading = null;
@@ -47,6 +51,58 @@ export function initActorSprites(): Promise<void> {
 
 export function actorSpritesReady(): boolean {
   return ready;
+}
+
+function decodeRedrawFrame(url: string): Promise<HTMLCanvasElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = FRAME_W; c.height = FRAME_H;
+        const cx = c.getContext("2d", { willReadFrequently: true });
+        if (!cx) return resolve(null);
+        cx.imageSmoothingEnabled = false;
+        cx.drawImage(img, 0, 0, FRAME_W, FRAME_H);
+        const data = cx.getImageData(0, 0, FRAME_W, FRAME_H);
+        if (stripBakedChecker(data.data)) cx.putImageData(data, 0, 0);
+        resolve(c);
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
+}
+
+/**
+ * Paints the frames drawn in Designer Mode > Character Redesigner over the class sheet (this device only).
+ * Safe to call again any time: it rebuilds the class-sheet cache, so a reset class goes back to the sheet art.
+ */
+export async function applyClassRedraws(): Promise<void> {
+  const atlas = atlases.warrior;
+  if (!atlas) return;
+  const overrides: [string, HTMLCanvasElement][] = [];
+  for (const entry of loadRedraws()) {
+    const charId = `warrior:${entry.id}`;
+    if (charSheet(charId) !== "warrior") continue;
+    for (const facing of FACINGS) {
+      for (let i = 0; i < WALK_FRAMES; i++) {
+        const url = entry.frames[frameKey(facing, i)];
+        if (!url || !url.startsWith("data:image/")) continue;
+        const canvas = await decodeRedrawFrame(url);
+        if (canvas) overrides.push([spriteKey(charId, ACTOR_DIRECTION_ROWS[facing], i), canvas]);
+      }
+    }
+  }
+  atlas.cache.clear();
+  for (const [key, canvas] of overrides) atlas.cache.set(key, canvas);
+}
+
+let applyTimer: ReturnType<typeof setTimeout> | undefined;
+/** Debounced applyClassRedraws, for the designer to call after every stroke. */
+export function applyClassRedrawsSoon(ms = 300): void {
+  clearTimeout(applyTimer);
+  applyTimer = setTimeout(() => { void applyClassRedraws().catch(() => {}); }, ms);
 }
 
 type ActorExtras = { classId?: string; npcId?: string };

@@ -11,6 +11,7 @@ import {
 import {
   type Pix, newPix, hexToRgba, rgbaToHex, setPx, getPx, lineCells, floodFill, flipH, stripBakedChecker,
 } from "@/game/pixel-edit";
+import { applyClassRedrawsSoon } from "@/game/actor-sprites";
 import { Section, Empty } from "./ui-kit";
 
 /* ───────────────────────── constants ───────────────────────── */
@@ -62,6 +63,10 @@ function cropOriginal(sheet: ImageData, classId: string, facing: Facing, frame: 
   for (let y = 0; y < FRAME_H; y++) {
     const from = ((sy + y) * sheet.width + sx) * 4;
     out.set(sheet.data.subarray(from, from + FRAME_W * 4), y * FRAME_W * 4);
+  }
+  // The class sheet uses solid magenta as its "no pixel" colour; in the editor that must be see-through.
+  for (let i = 0; i < out.length; i += 4) {
+    if (out[i] === 255 && out[i + 1] === 0 && out[i + 2] === 255) { out[i] = out[i + 1] = out[i + 2] = out[i + 3] = 0; }
   }
   return out;
 }
@@ -361,6 +366,7 @@ export function CharacterRedesigner({ onBack }: { onBack: () => void }) {
     listRef.current = next;
     setList(next);
     setSaveState(saveRedraws(next) ? "saved" : "error");
+    applyClassRedrawsSoon();
   }, [selected]);
 
   /* ── undo / redo (per frame) ── */
@@ -448,6 +454,7 @@ export function CharacterRedesigner({ onBack }: { onBack: () => void }) {
     listRef.current = next;
     setList(next);
     setSaveState(saveRedraws(next) ? "saved" : "error");
+    applyClassRedrawsSoon();
     setReloadTick((n) => n + 1);
   };
 
@@ -470,6 +477,7 @@ export function CharacterRedesigner({ onBack }: { onBack: () => void }) {
         listRef.current = merged;
         setList(merged);
         setSaveState(saveRedraws(merged) ? "saved" : "error");
+        applyClassRedrawsSoon();
         setReloadTick((t) => t + 1);
         window.alert(`Imported ${n} class${n === 1 ? "" : "es"}.`);
       } catch { window.alert("Couldn't read that file."); }
