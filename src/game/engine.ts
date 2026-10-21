@@ -123,7 +123,7 @@ import { getCryingConfig, getCustomBuild, cryingElements } from "./classes";
 import { activePassives, aptitudeOf, buffLines, classProfile, classGendered, classSpiritOut, CLASS_PASSIVE_BY_ID, IMMUNE_LABEL, STAT_LABEL, TRAIT_BY_ID } from "./classes";
 import { Gimmicks, type GimmickView } from "./class-gimmicks";
 import { witchSteer } from "./witch-brain";
-import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor } from "./sprites";
+import { drawActor, drawMonster, drawSetAura, drawShadowName, fxColor, setAuraColor, WITCH_SIZE } from "./sprites";
 import { drawClassPreview } from "./class-preview";
 import { drawBossSprite, initBossSprites } from "./boss-sprites";
 import { fxTrait, fxTraitLabel, geneSeedOf } from "./fx-gene";
@@ -1074,7 +1074,7 @@ export class TurbzGame {
 				const held = this.status.find((s) => (s.id === "sleep" || s.id === "root") && s.t > 0);
 				if (held && struggle(this.status, held.id === "sleep" ? 0.3 : 0.18)) {
 					this.struggleN = (this.struggleN ?? 0) + 1;
-					if (this.struggleN % 3 === 0) this.float(this.save.x, this.save.y - 58, "STRUGGLE", "#e7d9ff");
+					if (this.struggleN % 3 === 0) this.float(this.save.x, this.save.y - 58 * WITCH_SIZE, "STRUGGLE", "#e7d9ff");
 				}
 			}
 			if (/^(Key[WASD]|Arrow(Up|Down|Left|Right))$/.test(e.code)) this.dest = null;
@@ -2285,7 +2285,7 @@ export class TurbzGame {
 				this.sleeping = false;
 				if (save.survival) save.survival.rest = 100;
 				this.say("You slept through the night and wake at dawn.");
-				if (this.turbz) { const xp = Math.max(10, Math.round(xpNeed(save.level) * 0.12)); this.gainXp(xp); this.float(save.x, save.y - 60, `Well rested +${xp} xp`, "#c8beff"); }
+				if (this.turbz) { const xp = Math.max(10, Math.round(xpNeed(save.level) * 0.12)); this.gainXp(xp); this.float(save.x, save.y - 60 * WITCH_SIZE, `Well rested +${xp} xp`, "#c8beff"); }
 				if (this.resumeAuto) this.wakeUp();
 			} else this.say("Dawn breaks. Foes weaken again.");
 			this.cue("swell", { rate: 1.25, len: 1.8 }, [520, .2, "triangle"]);
@@ -2421,7 +2421,7 @@ export class TurbzGame {
 		for (let r = procs(this.skillN("building") * 0.25); r > 0; r--) {
 			const ids = Object.keys(cost);
 			const id = ids[Math.floor(Math.random() * ids.length)];
-			if (id) { this.giveItem(id, 1); this.float(save.x, save.y - 52 - r * 8, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a"); }
+			if (id) { this.giveItem(id, 1); this.float(save.x, save.y - 52 * WITCH_SIZE - r * 8, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a"); }
 		}
 	}
 	placeLog(tx, ty, piece = "wood") {
@@ -2983,7 +2983,7 @@ export class TurbzGame {
 		if (!this.sleeping || this.dead) { if (!this.sleeping) this.sleepBed = null; return; }
 		if (!this.canSleepHere() || this.combat > 0 || this.inFight()) { this.wakeUp(); return; }
 		this.zT = (this.zT ?? 0) - dt;
-		if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40, "z", "#c8beff"); }
+		if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40 * WITCH_SIZE, "z", "#c8beff"); }
 		if (!this.isNightNow()) { this.wakeUp(); this.gainSkill("survival", 15); this.say("Rested. Sleep is for skipping the night: it only works after dusk."); }
 	}
 	tickSurvival(dt) {
@@ -2992,7 +2992,7 @@ export class TurbzGame {
 		if (!this.sleeping) this.sleepBed = null;
 		if (this.sleeping) {
 			this.zT = (this.zT ?? 0) - dt;
-			if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40, "z", "#c8beff"); }
+			if (this.zT <= 0) { this.zT = 1.3; this.float(this.save.x + 8, this.save.y - 40 * WITCH_SIZE, "z", "#c8beff"); }
 		}
 		// Pending walk to a clicked bed: climb in on arrival.
 		if (!this.sleeping && this.pendingBed) {
@@ -4030,7 +4030,7 @@ export class TurbzGame {
 		this.attackT = 1;
 		this.facing = mob.x < save.x ? -1 : 1;
 		this.cfx = this.cfx ?? new CombatFx();
-		this.cfx.swing(type, weapon ? ["worn", "common", "fine", "rare", "epic", "legendary"].indexOf(weapon.quality) : 0, save.x, save.y - 18, mob.x, mob.y - 12);
+		this.cfx.swing(type, weapon ? ["worn", "common", "fine", "rare", "epic", "legendary"].indexOf(weapon.quality) : 0, save.x, save.y - 18 * WITCH_SIZE, mob.x, mob.y - 12);
 		if (tm === 0) {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
 			return;
@@ -4343,7 +4343,7 @@ export class TurbzGame {
 		if (!selfCast && !target && tactic !== "blink" && tactic !== "lunge") return false;
 		const rootedNow = this.status.some((s) => s.id === "root" && s.t > 0);
 		if (tactic === "dash" && rootedNow) {
-			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
+			this.float(save.x, save.y - 40 * WITCH_SIZE, "ROOTED", "#6ecf6a");
 			return false;
 		}
 		const form = attackForm(move);
@@ -4361,24 +4361,24 @@ export class TurbzGame {
 		if (tactic === "ward") {
 			this.wardT = 3;
 			this.shield = Math.max(this.shield, shieldAmount(move.power, abilityMultiplier(save, move.id), this.maxHp()));
-			this.float(save.x, save.y - 48, "WARD", "#fff1a8");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "WARD", "#fff1a8");
 			this.say("Warded for three seconds.");
-			this.playMoveFx(move, save.x, save.y - 24, save.x, save.y - 24);
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x, save.y - 24 * WITCH_SIZE);
 			return true;
 		}
 		if (tactic === "heal" || move.effect === "mend") {
 			const heal = healAmount(move.power, abilityMultiplier(save, move.id), this.maxHp()) * (1 + Math.max(0, this.chan("mender") ?? 0) / 100);
 			save.hp = Math.min(this.maxHp(), save.hp + heal);
 			if (this.rules === "hardcore") this.persist();
-			this.float(save.x, save.y - 48, `+${Math.floor(heal)}`, "#9ad8c8");
-			this.playMoveFx(move, save.x, save.y - 24, save.x, save.y - 20);
+			this.float(save.x, save.y - 48 * WITCH_SIZE, `+${Math.floor(heal)}`, "#9ad8c8");
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x, save.y - 20 * WITCH_SIZE);
 			return true;
 		}
 		if (tactic === "surge") {
 			this.addStatus("swift", 4);
 			this.buff = { ...this.buff, crit: move.id === "rallycry" || move.id === "battlerush" ? 12 : 6, t: 4, type: move.type };
-			this.float(save.x, save.y - 48, "SWIFT", "#9ad8c8");
-			this.playMoveFx(move, save.x, save.y - 24, save.x, save.y - 24);
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "SWIFT", "#9ad8c8");
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x, save.y - 24 * WITCH_SIZE);
 			this.cue("sparkle", { rate: 1.3, len: 0.6, vol: 0.24 }, [520, .08, "triangle"]);
 			return true;
 		}
@@ -4397,8 +4397,8 @@ export class TurbzGame {
 			this.incoming = (this.incoming ?? []).filter((h) => h.form !== "melee" || Math.hypot(save.x - h.ax, save.y - h.ay) < 30);
 			this.rollCoverNow = 1;
 			this.rollFailed = false;
-			this.float(save.x, save.y - 40, failed ? "SLIP" : "DASH", failed ? "#c4473a" : "#e7d9ff");
-			this.playMoveFx(move, x0, y0 - 14, save.x, save.y - 14);
+			this.float(save.x, save.y - 40 * WITCH_SIZE, failed ? "SLIP" : "DASH", failed ? "#c4473a" : "#e7d9ff");
+			this.playMoveFx(move, x0, y0 - 14, save.x, save.y - 14 * WITCH_SIZE);
 			if (!failed && move.power > 0) {
 				const hit = this.nearestMob(save.x, save.y, 60);
 				if (hit) this.resolveHit(move, hit, false, .6);
@@ -4417,8 +4417,8 @@ export class TurbzGame {
 			this.rollT = 0.5;
 			const side = this.facing > 0 ? 1 : -1;
 			if (!failed) this.tryMove(-side * travel * 0.45, side * Math.min(30, travel * 0.32));
-			this.float(save.x, save.y - 36, failed ? "TRIP" : "ROLL", failed ? "#c4473a" : "#e7d9ff");
-			this.playMoveFx(move, save.x, save.y - 10, save.x + side * 20, save.y);
+			this.float(save.x, save.y - 36 * WITCH_SIZE, failed ? "TRIP" : "ROLL", failed ? "#c4473a" : "#e7d9ff");
+			this.playMoveFx(move, save.x, save.y - 10 * WITCH_SIZE, save.x + side * 20, save.y);
 			if (!failed && target && move.power > 0 && Math.hypot(target.x - save.x, target.y - save.y) < 86) this.resolveHit(move, target, false, 0.36);
 			return true;
 		}
@@ -4427,7 +4427,7 @@ export class TurbzGame {
 			const wasRooted = this.status.some((s) => (s.id === "root" || s.id === "soak") && s.t > 0);
 			endStatus(this.status, "root");
 			this.status = this.status.filter((s) => s.id !== "soak");
-			if (wasRooted) this.float(save.x, save.y - 58, "BREAK FREE", "#6ecf6a");
+			if (wasRooted) this.float(save.x, save.y - 58 * WITCH_SIZE, "BREAK FREE", "#6ecf6a");
 			const failPct = target ? defenseFail(move, this.defFatigue ?? 0) : 0;
 			const snag = Math.random() * 100 < failPct;
 			this.defFatigue = Math.max(0, (this.defFatigue ?? 0) + (snag ? 1 : -0.2));
@@ -4438,13 +4438,13 @@ export class TurbzGame {
 			this.dest = null;
 			if (!snag) { this.evadeT = .45; this.incoming = (this.incoming ?? []).filter((h) => h.form !== "melee"); }
 			if (dir.x) this.facing = dir.x > 0 ? 1 : -1;
-			this.float(save.x, save.y - 46, snag ? "SNAG" : "BLINK", snag ? "#c4473a" : "#b4a6ff");
-			this.playMoveFx(move, x0, y0 - 20, save.x, save.y - 20);
+			this.float(save.x, save.y - 46 * WITCH_SIZE, snag ? "SNAG" : "BLINK", snag ? "#c4473a" : "#b4a6ff");
+			this.playMoveFx(move, x0, y0 - 20, save.x, save.y - 20 * WITCH_SIZE);
 			if (move.power > 0) {
 				const hit = this.nearestMob(save.x, save.y, 72);
 				if (hit) {
 					const blinkMiss = Math.random() * 100 > move.accuracy;
-					const d = this.playMoveFx(move, save.x, save.y - 20, hit.x, hit.y - 12, { miss: blinkMiss });
+					const d = this.playMoveFx(move, save.x, save.y - 20 * WITCH_SIZE, hit.x, hit.y - 12, { miss: blinkMiss });
 					this.later(d, () => { if (hit.alive) this.resolveHit(move, hit, false, snag ? 0.24 : 0.55, { missed: blinkMiss }); });
 				}
 			}
@@ -4476,7 +4476,7 @@ export class TurbzGame {
 			};
 			if (!failed) this.evadeT = .42;
 			this.cds[move.id] = Math.max(cd, .9);
-			if (failed) this.float(save.x, save.y - 40, "SNAG", "#c4473a");
+			if (failed) this.float(save.x, save.y - 40 * WITCH_SIZE, "SNAG", "#c4473a");
 			return true;
 		}
 		if (tactic === "heavy" || tactic === "channel") {
@@ -4487,7 +4487,7 @@ export class TurbzGame {
 		if (attackForm(move) === "melee") this.cue("hit", { rate: Math.max(0.7, 1.35 - move.power / 120) }, [140 + move.priority * 40 + move.power, .06, "square"]);
 		else this.cue("cast", { rate: Math.max(0.7, Math.min(1.5, 0.8 + move.priority * 0.15 + (move.type === "electric" ? 0.25 : 0))) }, [140 + move.priority * 40 + move.power, .06, move.type === "electric" ? "sawtooth" : "square"]);
 		if (move.effect === "shell") {
-			this.playMoveFx(move, save.x, save.y - 24, save.x + this.facing * 30, save.y - 20);
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x + this.facing * 30, save.y - 20 * WITCH_SIZE);
 			this.shield = Math.max(this.shield, 20 + move.power);
 			this.wardT = Math.max(this.wardT, 1.2);
 			this.say("Urn shell.");
@@ -4513,8 +4513,8 @@ export class TurbzGame {
 		}
 		if (target) {
 			const volley = form === "ranged" && rangedStyle(move) === "volley";
-			this.strike(move, save.x, save.y - 24, target, { mult, volley, meleePlan, spellPlan });
-		} else this.playMoveFx(move, save.x, save.y - 24, save.x + this.facing * 30, save.y - 20);
+			this.strike(move, save.x, save.y - 24 * WITCH_SIZE, target, { mult, volley, meleePlan, spellPlan });
+		} else this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x + this.facing * 30, save.y - 20 * WITCH_SIZE);
 		if (form === "spell" || tactic === "channel") this.gainSkill("magic", 3);
 		else this.gainSkill("physical", 2);
 		return true;
@@ -4545,7 +4545,7 @@ export class TurbzGame {
 		const first = picked[0];
 		this.facing = first.x < save.x ? -1 : 1;
 		this.rush = { moveId: move.id, ids: picked.map((m) => m.id), i: 0, hop: moveTactic(move) === "blink" };
-		this.float(save.x, save.y - 42, picked.length >= 3 ? "TRIPLE" : "RUSH", "#fff1a8");
+		this.float(save.x, save.y - 42 * WITCH_SIZE, picked.length >= 3 ? "TRIPLE" : "RUSH", "#fff1a8");
 		this.dest = null;
 		return true;
 	}
@@ -4588,7 +4588,7 @@ export class TurbzGame {
 		}
 		const n = rush.i + 1;
 		this.float(mob.x, mob.y - 46, String(n), "#fff1a8");
-		const d = this.playMoveFx(move, save.x, save.y - 16, mob.x, mob.y - 12, { imbue: this.playerImbue() });
+		const d = this.playMoveFx(move, save.x, save.y - 16 * WITCH_SIZE, mob.x, mob.y - 12, { imbue: this.playerImbue() });
 		const id = mob.id;
 		this.later(d, () => {
 			const live = this.mobs.find((m) => m.id === id && m.alive);
@@ -4606,7 +4606,7 @@ export class TurbzGame {
 		else target = this.nearestMob(save.x, save.y, reach);
 		if (!target) return false;
 		if (this.status.some((s) => s.id === "root" && s.t > 0)) {
-			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
+			this.float(save.x, save.y - 40 * WITCH_SIZE, "ROOTED", "#6ecf6a");
 			return false;
 		}
 		this.spendMove(move, 1.4);
@@ -4614,8 +4614,8 @@ export class TurbzGame {
 		this.castLockMax = 0.9;
 		this.castLock = 0.9;
 		this.orbit = { moveId: move.id, mobId: target.id, t: 0, dur: 0.9, ang0: Math.atan2(save.y - target.y, save.x - target.x), broken: false };
-		this.playMoveFx(move, save.x, save.y - 16, target.x, target.y - 12, { imbue: this.playerImbue() });
-		this.float(save.x, save.y - 42, "ORBIT", "#e7d9ff");
+		this.playMoveFx(move, save.x, save.y - 16 * WITCH_SIZE, target.x, target.y - 12, { imbue: this.playerImbue() });
+		this.float(save.x, save.y - 42 * WITCH_SIZE, "ORBIT", "#e7d9ff");
 		this.dest = null;
 		return true;
 	}
@@ -4650,7 +4650,7 @@ export class TurbzGame {
 		else target = this.nearestMob(save.x, save.y, reach);
 		if (!target) return false;
 		if (this.status.some((s) => s.id === "root" && s.t > 0)) {
-			this.float(save.x, save.y - 40, "ROOTED", "#6ecf6a");
+			this.float(save.x, save.y - 40 * WITCH_SIZE, "ROOTED", "#6ecf6a");
 			return false;
 		}
 		this.spendMove(move, 1.2);
@@ -4695,7 +4695,7 @@ export class TurbzGame {
 			if (lung.slam) {
 				const mob = lung.mob?.alive && Math.hypot(lung.mob.x - save.x, lung.mob.y - save.y) < 84 ? lung.mob : this.nearestMob(save.x, save.y, 72);
 				const missed = Math.random() * 100 > move.accuracy;
-				const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: missed, imbue: this.playerImbue() });
+				const d = this.playMoveFx(move, save.x, save.y - 16 * WITCH_SIZE, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: missed, imbue: this.playerImbue() });
 				if (mob) this.later(d, () => {
 					if (!mob.alive) return;
 					this.resolveHit(move, mob, false, 1.45, { missed });
@@ -4708,7 +4708,7 @@ export class TurbzGame {
 			} else {
 				const mob = this.nearestMob(save.x, save.y, 64);
 				const lungeMiss = Math.random() * 100 > move.accuracy;
-				const d = this.playMoveFx(move, save.x, save.y - 16, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
+				const d = this.playMoveFx(move, save.x, save.y - 16 * WITCH_SIZE, mob ? mob.x : lung.tx, mob ? mob.y - 12 : lung.ty, { miss: lungeMiss, imbue: this.playerImbue() });
 				if (mob) this.later(d, () => { if (mob.alive) this.resolveHit(move, mob, false, (lung.failed ? 0.22 : 0.72) * (lung.meleePlan?.mult ?? 1), { missed: lungeMiss, depth: true, meleePlan: lung.meleePlan }); });
 			}
 		}
@@ -5484,7 +5484,7 @@ export class TurbzGame {
 		save.spirits = save.spirits ?? [];
 		save.ghostStore = save.ghostStore ?? [];
 		const shine = spirit.shiny ? " ✦ SHINY ✦" : "";
-		if (spirit.shiny) { this.float(save.x, save.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.cue("sparkle", { rate: 1.9, len: 1.6, vol: 0.4 }, [980, .25, "triangle"]); }
+		if (spirit.shiny) { this.float(save.x, save.y - 70 * WITCH_SIZE, "✦ SHINY GHOST ✦", "#ff7ae0"); this.cue("sparkle", { rate: 1.9, len: 1.6, vol: 0.4 }, [980, .25, "triangle"]); }
 		if (save.spirits.length >= PARTY_MAX) {
 			if (!save.ghostBox) {
 				this.say(`${missed || spirit.name + " would have joined"}, but your party is full (${PARTY_MAX}). ${this.rules === "hardcore" ? "Build a Ghost Box at your camp" : "Place a Ghost Box (Spirits → Ghost Box, or right-click the ground)"} to store more ghosts.`);
@@ -5880,7 +5880,7 @@ export class TurbzGame {
 			else if (dup.enchants.length < MAX_GEAR_ENCHANTS) dup.enchants.push({ ...e });
 		}
 		dup.price = gearPrice(dup);
-		this.float(save.x, save.y - 72, `MERGED → Lv ${dup.level}`, "#e6c15a");
+		this.float(save.x, save.y - 72 * WITCH_SIZE, `MERGED → Lv ${dup.level}`, "#e6c15a");
 		this.say(`${g.name} merged into your ${dup.name}. Now level ${dup.level}.`);
 	}
 	/** The chest this kill's loot goes into (made on first use). */
@@ -6569,7 +6569,7 @@ export class TurbzGame {
 		this.cue("hurt", {});
 		this.lastHit = { by: m.name, level: m.level, move: move?.name ?? "", kind: m.bounty ? `tier ${m.tier ?? 1} bounty` : m.hunter ? "hunter" : m.witch ? "witch" : m.boss ? "world boss" : m.enemyGhost ? "witch's ghost" : m.animal ? "beast" : "", mark: mult > 1, t: this.clock };
 		if (this.playerSafeCamp()) {
-			this.float(save.x, save.y - 36, "SAFE", "#9ad8c8");
+			this.float(save.x, save.y - 36 * WITCH_SIZE, "SAFE", "#9ad8c8");
 			return;
 		}
 		if (this.gim && !this.gim.allowHit(m, this.foeForm(m, move))) return;
@@ -6585,11 +6585,11 @@ export class TurbzGame {
 		if (form !== "melee" && this.status.some((s) => s.id === "shell")) dmg *= .7;
 		dmg *= 1 - bendSigned(defenseVs(form, this.mod("guard") / 100), -0.8, -0.5, 0.6, 0.9);
 		if (Math.random() * 100 < bend(this.chan("echo_guard"), 40, 75)) {
-			this.float(save.x, save.y - 36, "ECHO", "#6a4cff");
+			this.float(save.x, save.y - 36 * WITCH_SIZE, "ECHO", "#6a4cff");
 			return;
 		}
 		if (this.skillN("evasion") && Math.random() < ratingChance(this.skillN("evasion") * 0.1)) {
-			this.float(save.x, save.y - 36, "SLIP", "#9ad8c8");
+			this.float(save.x, save.y - 36 * WITCH_SIZE, "SLIP", "#9ad8c8");
 			this.gainSkill("evasion", 2);
 			return;
 		}
@@ -6639,26 +6639,26 @@ export class TurbzGame {
 	hurtSelf(amount, effect) {
 		const save = this.save;
 		if ((this.evadeT ?? 0) > 0) {
-			this.float(save.x, save.y - 36, "EVADE", "#e7d9ff");
-			this.cfx?.evade(save.x, save.y - 18);
+			this.float(save.x, save.y - 36 * WITCH_SIZE, "EVADE", "#e7d9ff");
+			this.cfx?.evade(save.x, save.y - 18 * WITCH_SIZE);
 			this.gainSkill("evasion", 2);
 			return;
 		}
 		if (this.wardT > 0) {
-			this.float(save.x, save.y - 36, "WARD", "#fff1a8");
+			this.float(save.x, save.y - 36 * WITCH_SIZE, "WARD", "#fff1a8");
 			return;
 		}
 		if (this.rollT > 0) {
 			const cover = this.rollCoverNow ?? 0.4;
 			if (this.rollFailed) {
 				amount *= 1.24;
-				this.float(save.x, save.y - 36, "TRIP", "#c4473a");
+				this.float(save.x, save.y - 36 * WITCH_SIZE, "TRIP", "#c4473a");
 			} else if (cover >= 0.98) {
-				this.float(save.x, save.y - 36, "CLEAR", "#e7d9ff");
+				this.float(save.x, save.y - 36 * WITCH_SIZE, "CLEAR", "#e7d9ff");
 				return;
 			} else {
 				amount *= 1 - cover * 0.85;
-				this.float(save.x, save.y - 36, cover > 0.55 ? "GRAZE" : "CLIP", "#e7d9ff");
+				this.float(save.x, save.y - 36 * WITCH_SIZE, cover > 0.55 ? "GRAZE" : "CLIP", "#e7d9ff");
 				if (amount < 0.75) return;
 			}
 		}
@@ -6681,18 +6681,18 @@ export class TurbzGame {
 		if (this.orbit) this.orbit.broken = true;
 		if (this.castLock > 0 && !this.orbit) {
 			this.weave = shatterWeave(this.weave ?? freshWeave());
-			this.float(save.x, save.y - 56, "FALTER", "#c9a6e8");
+			this.float(save.x, save.y - 56 * WITCH_SIZE, "FALTER", "#c9a6e8");
 		}
 		if ((this.overcastT ?? 0) > 0) dmg *= 1.12;
 		this.sleeping = false;
-		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60, "AWAKE", "#fff1a8");
+		if (hasStatus(this.status, "sleep") && endStatus(this.status, "sleep")) this.float(save.x, save.y - 60 * WITCH_SIZE, "AWAKE", "#fff1a8");
 		save.hp -= dmg;
 		if (save.hp <= 0 && this.gim?.saveFromDeath()) save.hp = 1;
 		// Last Light (ghost aid): one killing blow is turned aside.
 		if (save.hp <= 0 && (this.aidT?.guardian ?? 0) > 0) {
 			this.aidT.guardian = 0;
 			save.hp = Math.max(1, Math.floor(this.maxHp() * 0.25));
-			this.float(save.x, save.y - 64, "LAST LIGHT", "#fff1a8");
+			this.float(save.x, save.y - 64 * WITCH_SIZE, "LAST LIGHT", "#fff1a8");
 			this.cue("swell", { rate: 1.4, len: 1.2 }, [700, .2, "triangle"]);
 		}
 		this.gim?.afterHurt(dmg);
@@ -6700,7 +6700,7 @@ export class TurbzGame {
 		if (this.rules === "hardcore") this.persist();
 		this.hurt = 1;
 		this.shake = Math.max(this.shake, 3);
-		this.float(save.x, save.y - 42, `${Math.floor(dmg)}`, "#c4473a");
+		this.float(save.x, save.y - 42 * WITCH_SIZE, `${Math.floor(dmg)}`, "#c4473a");
 		this.combat = 3;
 		const thorns = this.chan("thorns");
 		if (thorns > 0) {
@@ -6738,7 +6738,7 @@ export class TurbzGame {
 			save.hp -= dmg;
 			this.hurt = Math.max(this.hurt, .6);
 			this.combat = Math.max(this.combat, 2);
-			this.float(save.x, save.y - 42, `${Math.ceil(dmg)}`, "#ffb15e");
+			this.float(save.x, save.y - 42 * WITCH_SIZE, `${Math.ceil(dmg)}`, "#ffb15e");
 			if (save.hp <= 0) {
 				if (this.chan("second_chance") >= 1 && !this.secondUsed) {
 					this.secondUsed = true;
@@ -7186,7 +7186,7 @@ export class TurbzGame {
 		if (step.side === "you") {
 			const manual = !this.autoAttacks();
 			if (!manual && (this.status.some((s) => s.id === "sleep") || !this.autoBattle())) {
-				this.float(save.x, save.y - 44, "WAIT", "#c8c0b0");
+				this.float(save.x, save.y - 44 * WITCH_SIZE, "WAIT", "#c8c0b0");
 				while (this.turnQ[0]?.side === "spirit") this.turnQ.shift();
 			}
 		} else if (step.side === "spirit") {
@@ -7442,9 +7442,9 @@ export class TurbzGame {
 		if (ready("soul_mend") && save.hp < this.maxHp() * 0.98) {
 			const n = Math.max(1, Math.floor(this.maxHp() * timed.soul_mend.value / 100));
 			save.hp = Math.min(this.maxHp(), save.hp + n);
-			this.float(save.x, save.y - 50, `+${n} SOUL MEND`, "#9ad8c8");
+			this.float(save.x, save.y - 50 * WITCH_SIZE, `+${n} SOUL MEND`, "#9ad8c8");
 			this.cfx = this.cfx ?? new CombatFx();
-			this.cfx.guard(save.x, save.y - 18, "water");
+			this.cfx.guard(save.x, save.y - 18 * WITCH_SIZE, "water");
 			spend("soul_mend");
 		}
 		if (ready("well_gift") && this.pools) {
@@ -7454,7 +7454,7 @@ export class TurbzGame {
 			const stam = Math.max(1, Math.floor(p.maxStam * pct));
 			p.mana = Math.min(p.maxMana, p.mana + mana);
 			p.stam = Math.min(p.maxStam, p.stam + stam);
-			this.float(save.x, save.y - 58, `WELL +${mana}`, "#9ecbff");
+			this.float(save.x, save.y - 58 * WITCH_SIZE, `WELL +${mana}`, "#9ecbff");
 			spend("well_gift");
 		}
 		const fighting = this.inFight();
@@ -7478,12 +7478,12 @@ export class TurbzGame {
 		if (ready("radiant_surge") && fighting) {
 			spend("radiant_surge");
 			this.cfx = this.cfx ?? new CombatFx();
-			this.cfx.nova(save.x, save.y - 12, 120, "light");
+			this.cfx.nova(save.x, save.y - 12 * WITCH_SIZE, 120, "light");
 			const dmg = Math.floor(timed.radiant_surge.value);
 			for (const m of this.foesNear(save.x, save.y, 120)) this.applyMobDamage(m, dmg, false);
 			const heal = Math.max(1, Math.floor(this.maxHp() * 0.06));
 			save.hp = Math.min(this.maxHp(), save.hp + heal);
-			this.float(save.x, save.y - 60, "RADIANT SURGE", "#fff1a8");
+			this.float(save.x, save.y - 60 * WITCH_SIZE, "RADIANT SURGE", "#fff1a8");
 			this.cue("sparkle", { rate: 1.6, len: 0.8, vol: 0.3 }, [880, .12, "triangle"]);
 		}
 	}
@@ -7499,9 +7499,9 @@ export class TurbzGame {
 		const t = this.ghostAgg?.timed?.spirit_guard;
 		if (!t || (this.ghostCdT?.spirit_guard ?? 0) > 0 || !this.save) return false;
 		this.ghostCdT.spirit_guard = t.cd;
-		this.float(this.save.x, this.save.y - 40, "SPIRIT GUARD", "#c9a6e8");
+		this.float(this.save.x, this.save.y - 40 * WITCH_SIZE, "SPIRIT GUARD", "#c9a6e8");
 		this.cfx = this.cfx ?? new CombatFx();
-		this.cfx.guard(this.save.x, this.save.y - 18, "spirit");
+		this.cfx.guard(this.save.x, this.save.y - 18 * WITCH_SIZE, "spirit");
 		this.cue("click", { rate: 0.7 }, [300, .05, "triangle"]);
 		return true;
 	}
@@ -7513,9 +7513,9 @@ export class TurbzGame {
 		this.ghostCdT.second_wind = t.cd;
 		const n = Math.floor(this.maxHp() * t.value / 100);
 		save.hp = Math.min(this.maxHp(), save.hp + n);
-		this.float(save.x, save.y - 62, `SECOND WIND +${n}`, "#9ad8c8");
+		this.float(save.x, save.y - 62 * WITCH_SIZE, `SECOND WIND +${n}`, "#9ad8c8");
 		this.cfx = this.cfx ?? new CombatFx();
-		this.cfx.guard(save.x, save.y - 18, "air");
+		this.cfx.guard(save.x, save.y - 18 * WITCH_SIZE, "air");
 	}
 	/** What your working ghosts add right now, for the Spirits window. */
 	ghostBonusView() {
@@ -7556,23 +7556,23 @@ export class TurbzGame {
 		this.tinies = list.map((g, i) => {
 			live.add(g.uid);
 			let at = this.tinyBy[g.uid];
-			if (!at || !Number.isFinite(at.x)) at = this.tinyBy[g.uid] = { x: save.x + (i % 2 === 0 ? -20 : 20), y: save.y - 36, vx: 0, vy: 0 };
+			if (!at || !Number.isFinite(at.x)) at = this.tinyBy[g.uid] = { x: save.x + (i % 2 === 0 ? -20 : 20), y: save.y - 36 * WITCH_SIZE, vx: 0, vy: 0 };
 			return at;
 		});
 		for (const id of Object.keys(this.tinyBy)) if (!live.has(id)) delete this.tinyBy[id];
 		list.forEach((g, i) => {
 			const at = this.tinies[i];
 			const far = Math.hypot(at.x - save.x, at.y - save.y);
-			if (far > 1200) { at.x = save.x; at.y = save.y - 36; at.vx = 0; at.vy = 0; }
+			if (far > 1200) { at.x = save.x; at.y = save.y - 36 * WITCH_SIZE; at.vx = 0; at.vy = 0; }
 			else if (far > 240) {
 				at.x += (save.x - at.x) * Math.min(0.3, h * 2.5);
-				at.y += (save.y - 36 - at.y) * Math.min(0.3, h * 2.5);
+				at.y += (save.y - 36 * WITCH_SIZE - at.y) * Math.min(0.3, h * 2.5);
 			}
 			const perch = i < 2 && !g.shiny;
 			if (perch) {
 				const side = i === 0 ? -1 : 1;
-				this.driftGhost(at, i, h, GHOST_DRIFT.perch, save.x + side * 48, save.y - 8);
-			} else this.driftGhost(at, i, h, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x + ((i % 2 === 0 ? -1 : 1) * 36), save.y - 108);
+				this.driftGhost(at, i, h, GHOST_DRIFT.perch, save.x + side * 48, save.y - 8 * WITCH_SIZE);
+			} else this.driftGhost(at, i, h, g.shiny ? GHOST_DRIFT.tinyShiny : GHOST_DRIFT.tiny, save.x + ((i % 2 === 0 ? -1 : 1) * 36), save.y - 108 * WITCH_SIZE);
 		});
 		this.spreadGhosts(this.tinies, 8);
 	}
@@ -7621,10 +7621,10 @@ export class TurbzGame {
 		const at = this.mates[slot] ?? { x: save.x - 20, y: save.y, swing: 0 };
 		at.swing = 1;
 		if (slot >= 0) this.mates[slot] = at;
-		this.playMoveFx(move, at.x, at.y - 12, save.x, save.y - 16);
+		this.playMoveFx(move, at.x, at.y - 12, save.x, save.y - 16 * WITCH_SIZE);
 		const tactic = moveTactic(move);
 		const aidT = this.aidT = this.aidT ?? {};
-		const word = (t, c = "#fff1a8") => this.float(save.x, save.y - 48, t, c);
+		const word = (t, c = "#fff1a8") => this.float(save.x, save.y - 48 * WITCH_SIZE, t, c);
 		if (move.aid) {
 			const k = move.aid;
 			if (k === "regen") { aidT.regen = 5; word("BLOOM", "#9ad8c8"); }
@@ -7644,22 +7644,22 @@ export class TurbzGame {
 		}
 		if (move.effect === "cleanse") {
 			this.status = cleanseStatuses(this.status, GOOD_STATUS);
-			this.float(save.x, save.y - 48, "CLEAN", "#fff1a8");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "CLEAN", "#fff1a8");
 		} else if (move.effect === "mend" || tactic === "heal") {
 			// Ghost heals scale with your health pool now (they were a flat few points).
 			const n = Math.max(6, Math.floor(this.maxHp() * (0.06 + Math.min(0.06, (move.power || 12) * 0.001 + spirit.level * 0.0002) + (spirit.rarity ?? 0) * 0.008)));
 			save.hp = Math.min(this.maxHp(), save.hp + n);
-			this.float(save.x, save.y - 50, `+${n}`, "#9ad8c8");
+			this.float(save.x, save.y - 50 * WITCH_SIZE, `+${n}`, "#9ad8c8");
 		} else if (move.effect === "shell" || tactic === "ward") {
 			this.wardT = Math.max(this.wardT, 3.2);
-			this.float(save.x, save.y - 48, "WARD", "#fff1a8");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "WARD", "#fff1a8");
 		} else if (move.id === "keenwhisper" || move.effect === "expose") {
 			this.buff = { crit: Math.max(this.buff?.crit || 0, 18), ward: this.buff?.ward || 0, t: Math.max(this.buff?.t || 0, 8), type: this.buff?.type };
-			this.float(save.x, save.y - 48, "KEEN", "#e6c15a");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "KEEN", "#e6c15a");
 		} else if (tactic === "surge") {
 			this.addStatus("swift", 4);
-			this.float(save.x, save.y - 48, "HASTE", "#9ad8c8");
-		} else this.float(save.x, save.y - 48, move.name, TYPES[move.type].color);
+			this.float(save.x, save.y - 48 * WITCH_SIZE, "HASTE", "#9ad8c8");
+		} else this.float(save.x, save.y - 48 * WITCH_SIZE, move.name, TYPES[move.type].color);
 	}
 	foeTurn(m: Mob) {
 		if (m.status.some((s) => s.id === "sleep")) return;
@@ -7765,7 +7765,7 @@ export class TurbzGame {
 		this.incoming = this.incoming ?? [];
 		this.incoming.push({ id: m.id, move: move.id, t: wind, t0: wind, ax: save.x, ay: save.y, form: "spell", heavy: true, mult: DEATH_MARK.mult });
 		this.float(m.x, m.y - 50, "DEATH MARK", "#ff3a2a");
-		this.float(save.x, save.y - 60, "MOVE!", "#ff6a4a");
+		this.float(save.x, save.y - 60 * WITCH_SIZE, "MOVE!", "#ff6a4a");
 		this.cue("boom", { rate: 0.68 }, [70, .3, "sawtooth"]);
 		m.atkCd = Math.max(m.atkCd ?? 0, wind + 0.4);
 		return true;
@@ -7809,7 +7809,7 @@ export class TurbzGame {
 			// The shot flies to the spot it was aimed at. What happens to you is decided when it lands.
 			const aimX = hit.form === "melee" ? save.x : hit.ax;
 			const aimY = hit.form === "melee" ? save.y : hit.ay;
-			const follow = hit.form === "melee" ? () => [save.x, save.y - 18] : undefined;
+			const follow = hit.form === "melee" ? () => [save.x, save.y - 18 * WITCH_SIZE] : undefined;
 			const delay = this.playMoveFx(move, m.x, m.y - 16, aimX, aimY - 18, { follow, imbue: m.enemyGhost ? ghostImbue({ type: m.type, rarity: m.rarity, seed: m.id, shiny: m.shiny }) : null });
 			this.later(delay, () => {
 				if (this.dead) return;
@@ -7817,13 +7817,13 @@ export class TurbzGame {
 				const offSpot = hit.form !== "melee" && Math.hypot(save.x - aimX, save.y - aimY) > (hit.heavy ? DEATH_MARK.radius : 46);
 				const tooFar = hit.heavy ? false : hit.form === "melee" ? dist > reach : firedOutOfReach;
 				if (tooFar || offSpot) {
-					this.float(save.x, save.y - 44, "DODGED", "#9ad8c8");
-					this.cfx?.evade(save.x, save.y - 18);
+					this.float(save.x, save.y - 44 * WITCH_SIZE, "DODGED", "#9ad8c8");
+					this.cfx?.evade(save.x, save.y - 18 * WITCH_SIZE);
 					this.gainSkill("adventuring", 1);
 					this.gainSkill("evasion", hit.heavy ? 12 : 3);
 					return;
 				}
-				if (hit.heavy) { this.shake = Math.max(this.shake, 9); this.float(save.x, save.y - 52, "MARKED", "#ff3a2a"); }
+				if (hit.heavy) { this.shake = Math.max(this.shake, 9); this.float(save.x, save.y - 52 * WITCH_SIZE, "MARKED", "#ff3a2a"); }
 				this.mobHitsPlayer(m, move, dist, hit.mult ?? 1);
 			});
 		}
@@ -7947,7 +7947,7 @@ export class TurbzGame {
 			else if (style === 4) { sp = i % 2 ? 140 : 80; life = i % 2 ? .45 : .6; }
 			this.parts.push({
 				x: save.x,
-				y: save.y - 20,
+				y: save.y - 20 * WITCH_SIZE,
 				vx: Math.cos(a) * sp,
 				vy: Math.sin(a) * sp + vy0,
 				life,
@@ -8528,7 +8528,7 @@ export class TurbzGame {
 			id: `shrine-${this.shrine.round}-${nextUid()}`,
 			species: "muma",
 			x: save.x + 48,
-			y: save.y - 10,
+			y: save.y - 10 * WITCH_SIZE,
 			level,
 			template: 20,
 			type: this.shrine.type,
@@ -8681,10 +8681,10 @@ export class TurbzGame {
 			for (const mate of this.mates ?? []) if (mate && typeof mate.x === "number") { mate.x = save.x + (mate.x - fx) * 0.3; mate.y = save.y + (mate.y - fy) * 0.3; }
 			this.portalCd = 2.5;
 			const line = p.kind === "stairs-up" ? "You climb the stairs." : p.kind === "stairs-down" ? "You go back down the stairs." : p.kind === "return" ? "The sigil carries you back to the entrance." : "The portal pulls you through.";
-			this.float(save.x, save.y - 44, p.kind === "stairs-up" ? "UPSTAIRS" : p.kind === "stairs-down" ? "DOWNSTAIRS" : "WARP", "#b4a6ff");
+			this.float(save.x, save.y - 44 * WITCH_SIZE, p.kind === "stairs-up" ? "UPSTAIRS" : p.kind === "stairs-down" ? "DOWNSTAIRS" : "WARP", "#b4a6ff");
 			this.say(line);
 			this.cue("swell", { rate: p.kind === "portal" || p.kind === "return" ? 1.3 : 0.9 }, [420, .18, "triangle"]);
-			this.cfx?.evade?.(save.x, save.y - 18);
+			this.cfx?.evade?.(save.x, save.y - 18 * WITCH_SIZE);
 			this.persist();
 			return;
 		}
@@ -8801,7 +8801,7 @@ export class TurbzGame {
 			else save.survival.hunger = Math.min(100, save.survival.hunger + FOOD[id]);
 			this.gainSkill("survival", 3);
 			// TURBZ has no hunger or thirst, so a meal or a drink pays out in experience instead.
-			if (this.turbz) { const xp = Math.max(4, Math.round(xpNeed(save.level) * (id === "drinking_water" ? 0.015 : 0.01 + (FOOD[id] ?? 0) / 2500))); this.gainXp(xp); this.float(save.x, save.y - 60, `+${xp} xp`, "#9ad8c8"); }
+			if (this.turbz) { const xp = Math.max(4, Math.round(xpNeed(save.level) * (id === "drinking_water" ? 0.015 : 0.01 + (FOOD[id] ?? 0) / 2500))); this.gainXp(xp); this.float(save.x, save.y - 60 * WITCH_SIZE, `+${xp} xp`, "#9ad8c8"); }
 			if (healing) this.drinkHeal(def, healing);
 			else this.say(`Used ${def.name}.`);
 			this.afterItem(id);
@@ -8837,9 +8837,9 @@ export class TurbzGame {
 		if (h.regen > 0 && h.sec > 0) this.potionRegen = { left: h.sec, perSec: h.regen / h.sec };
 		if (h.ghost > 0) for (const sp of this.activeSpirits()) sp.hp = Math.min(sp.max, sp.hp + sp.max * h.ghost);
 		if (h.potion) this.healCd = POTION_CD;
-		this.float(save.x, save.y - 52, `+${got}${h.regen ? ` (+${h.regen})` : ""}`, "#9ad8c8");
+		this.float(save.x, save.y - 52 * WITCH_SIZE, `+${got}${h.regen ? ` (+${h.regen})` : ""}`, "#9ad8c8");
 		this.cfx = this.cfx ?? new CombatFx();
-		this.cfx.guard(save.x, save.y - 18, "water");
+		this.cfx.guard(save.x, save.y - 18 * WITCH_SIZE, "water");
 		this.cue("sparkle", { rate: 1.5, len: 0.4, vol: 0.2 }, [640, .06, "triangle"]);
 		this.say(`${def.name}: +${got} health${h.regen ? `, +${h.regen} over ${h.sec}s` : ""}${h.ghost ? ", your ghosts mend" : ""}.`);
 	}
@@ -9269,7 +9269,7 @@ export class TurbzGame {
 			const n = 1 + (lucky ? 1 : 0) + (sp.level >= 30 ? 1 : 0);
 			const id = sp.task === "fish" ? "fish" : "timber";
 			this.giveItem(id, n);
-			this.float(save.x, save.y - 62, `+${n} ${ITEM_BY_ID[id]?.name ?? id} · ${sp.name}`, sp.task === "fish" ? "#7ec8ea" : "#8fd06a");
+			this.float(save.x, save.y - 62 * WITCH_SIZE, `+${n} ${ITEM_BY_ID[id]?.name ?? id} · ${sp.name}`, sp.task === "fish" ? "#7ec8ea" : "#8fd06a");
 			this.gainSkill("ghostkeeping", 1);
 			return;
 		}
@@ -9290,11 +9290,11 @@ export class TurbzGame {
 		const win = Math.min(0.95, 0.62 + (sp.rarity ?? 0) * 0.06 + (sp.shiny ? 0.06 : 0) + (foeLevel <= sp.level ? 0.08 : 0));
 		if (Math.random() > win) {
 			sp.taskT = (sp.taskT ?? 0) + 15;
-			this.float(save.x, save.y - 62, `${sp.name} limps back from a hunt`, "#c98a8a");
+			this.float(save.x, save.y - 62 * WITCH_SIZE, `${sp.name} limps back from a hunt`, "#c98a8a");
 			return;
 		}
 		const gain = Math.floor((8 + foeLevel * 3) * GHOST_LEVEL_XP_MULT);
-		this.float(save.x, save.y - 62, `+${gain} XP · ${sp.name}`, "#c9a6e8");
+		this.float(save.x, save.y - 62 * WITCH_SIZE, `+${gain} XP · ${sp.name}`, "#c9a6e8");
 		const ups = this.giveGhostXp(sp, gain, true);
 		if (!ups) return;
 		if (sp.level >= this.ghostLevelCap()) {
@@ -9551,7 +9551,7 @@ export class TurbzGame {
 		if (!h || h.kills < 1 || mob.id?.startsWith?.("shrine")) return;
 		if (Math.random() >= bountyStarChance(this.enemyKind(mob), mob.rarity ?? 0, this.rules === "hardcore")) return;
 		h.stars += 1;
-		this.float(save.x, save.y - 60, "★ BOUNTY STAR", "#ffd166");
+		this.float(save.x, save.y - 60 * WITCH_SIZE, "★ BOUNTY STAR", "#ffd166");
 		if (h.stars < BOUNTY_STARS_NEEDED) {
 			this.say(`Bounty Star ${h.stars}/${BOUNTY_STARS_NEEDED}.`);
 			return;
@@ -10329,7 +10329,7 @@ export class TurbzGame {
 			save.accountXp -= need;
 			save.accountLevel += 1;
 			this.say(`Account level ${save.accountLevel}! +${PERK_POINTS_PER_LEVEL} perk points.`);
-			if (this.save && !this.lms) this.float(save.x, save.y - 84, `ACCOUNT ${save.accountLevel} · +${PERK_POINTS_PER_LEVEL} PERKS`, "#e6c15a");
+			if (this.save && !this.lms) this.float(save.x, save.y - 84 * WITCH_SIZE, `ACCOUNT ${save.accountLevel} · +${PERK_POINTS_PER_LEVEL} PERKS`, "#e6c15a");
 			this.cue("burst", { rate: 0.9, len: 2.6 }, [520, .14, "square"]);
 			ups += 1;
 			need = accountNeed(save.accountLevel);
@@ -10415,14 +10415,14 @@ export class TurbzGame {
 		const on = save.auras.includes(move.id);
 		if (on) {
 			save.auras = save.auras.filter((id) => id !== move.id);
-			this.float(save.x, save.y - 48, `${move.name} fades`, "#c9a6e8");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, `${move.name} fades`, "#c9a6e8");
 			this.say(`${move.name} fades. Your full health returns.`);
 		} else {
 			if (save.auras.length >= MAX_AURAS) { this.say(`Only ${MAX_AURAS} auras can be up at once. Cast one again to drop it.`); return false; }
 			save.auras.push(move.id);
-			this.float(save.x, save.y - 48, move.name.toUpperCase(), TYPES[move.type]?.color ?? "#fff1a8");
+			this.float(save.x, save.y - 48 * WITCH_SIZE, move.name.toUpperCase(), TYPES[move.type]?.color ?? "#fff1a8");
 			this.say(`${move.name} is up: ${move.aura.label}. It holds back ${Math.round(this.auraReserve() * 100)}% of your health while your auras stay up.`);
-			this.playMoveFx(move, save.x, save.y - 24, save.x, save.y - 24);
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x, save.y - 24 * WITCH_SIZE);
 			this.cue("swell", { rate: 1.4, len: 1 });
 		}
 		save.hp = Math.min(save.hp, this.maxHp());
@@ -10490,7 +10490,7 @@ export class TurbzGame {
 	announceSetComplete(name) {
 		if (!name || !this.save) return;
 		publish({ setAlert: getSnap().setAlert + 1, setAlertName: name });
-		this.float(this.save.x, this.save.y - 96, "SET COMPLETE", "#ffe08a");
+		this.float(this.save.x, this.save.y - 96 * WITCH_SIZE, "SET COMPLETE", "#ffe08a");
 		this.cue?.("sparkle", { rate: 1.6, len: 1.2, vol: 0.35 }, [720, .2, "triangle"]);
 		this.say(`SET COMPLETED — ${name}. Its full-set bonus is now active.`);
 	}
@@ -10575,21 +10575,21 @@ export class TurbzGame {
 	addStatus(id, t) {
 		if (id === "none") return;
 		if (this.save && this.profile().immune.includes(id)) {
-			this.float(this.save.x, this.save.y - 52, "IMMUNE", "#9ad8c8");
+			this.float(this.save.x, this.save.y - 52 * WITCH_SIZE, "IMMUNE", "#9ad8c8");
 			return;
 		}
 		if (id === "burn") {
 			// Burning is a fixed 15 seconds. A fresh flame does not stack or restart one already burning.
 			if (this.status.some((s) => s.id === "burn" && s.t > 0)) return;
 			this.status.push({ id: "burn", t: BURN_SECONDS + .05, tick: 1 });
-			if (this.save) this.float(this.save.x, this.save.y - 56, "BURNING", "#ffb15e");
+			if (this.save) this.float(this.save.x, this.save.y - 56 * WITCH_SIZE, "BURNING", "#ffb15e");
 			return;
 		}
 		const r = applyStatus(this.status, id, t);
 		if (!this.save) return;
-		if (r === "resisted") this.float(this.save.x, this.save.y - 52, "RESIST", "#9ad8c8");
+		if (r === "resisted") this.float(this.save.x, this.save.y - 52 * WITCH_SIZE, "RESIST", "#9ad8c8");
 		else if (r === "applied" && HARD_CC[id]) {
-			this.float(this.save.x, this.save.y - 56, id === "sleep" ? "ASLEEP" : id === "root" ? "ROOTED" : "SILENCED", "#c9a6e8");
+			this.float(this.save.x, this.save.y - 56 * WITCH_SIZE, id === "sleep" ? "ASLEEP" : id === "root" ? "ROOTED" : "SILENCED", "#c9a6e8");
 			if (!this.ccTipShown) {
 				this.ccTipShown = true;
 				this.say(id === "sleep" ? "Asleep! Any hit wakes you, and mashing keys shakes it off faster. You are immune to it for a while after." : id === "root" ? "Rooted! Blink to break free, or mash keys. You are immune to it for a while after." : "Silenced! Blinks, dashes and mends still work. Cleanse Salt clears it.");
@@ -11699,7 +11699,7 @@ export class TurbzGame {
 		}
 		if (!this.dead && !this.sleeping) this.drawTinies(ctx);
 		const barOn = this.combat > 0 || this.wardT > 0;
-		const head = save.y - 36;
+		const head = save.y - 36 * WITCH_SIZE;
 		const nameY = barOn ? head - 14 : head + 2;
 		drawShadowName(ctx, save.name, save.x, nameY, "#fff6e8");
 		if (this.unstuckT > 0 && this.mouseWorld) {
@@ -12136,7 +12136,7 @@ export class TurbzGame {
 			ctx.fillStyle = g;
 			ctx.fillRect(x - r, y - r, r * 2, r * 2);
 		};
-		glow(sx(this.save.x), sy(this.save.y - 10), 90 * this.zoom, .2 * d, "255,214,150");
+		glow(sx(this.save.x), sy(this.save.y - 10 * WITCH_SIZE), 90 * this.zoom, .2 * d, "255,214,150");
 		for (const c of this.save.survival?.campfires ?? []) {
 			if (c.map !== this.save.map) continue;
 			const flick = 1 + Math.sin(this.clock * 9 + c.x) * .06;
@@ -12613,7 +12613,7 @@ export class TurbzGame {
 		const dx = pin.tx * 32 + 16 - save.x, dy = pin.ty * 32 + 16 - save.y;
 		const d = Math.hypot(dx, dy) / 32;
 		if (d < 2.5) { save.mapPin = null; this.say("You reached your pin."); return; }
-		const p = toScreen(save.x, save.y - 18);
+		const p = toScreen(save.x, save.y - 18 * WITCH_SIZE);
 		const a = Math.atan2(dy, dx);
 		const rad = 30 * Math.max(1, this.zoom ?? 1);
 		const x = p.x / dpr + Math.cos(a) * rad, y = p.y / dpr + Math.sin(a) * rad;
@@ -13210,7 +13210,7 @@ export class TurbzGame {
 			incoming *= .8;
 			const heal = (14 + Math.max(8, pMove.power) * .4) * abilityMultiplier(save, pMove.id);
 			save.hp = Math.min(this.maxHp(), save.hp + heal);
-			this.float(save.x, save.y - 52, `+${Math.floor(heal)}`, "#9ad8c8");
+			this.float(save.x, save.y - 52 * WITCH_SIZE, `+${Math.floor(heal)}`, "#9ad8c8");
 			note = "MEND";
 		} else if (kind === "roll") {
 			this.defFatigue = fatigue + 1;
@@ -13272,9 +13272,9 @@ export class TurbzGame {
 			this.defFatigue = Math.max(0, fatigue - .5);
 			chip(moveTactic(pMove) === "heavy" || moveTactic(pMove) === "channel" ? 1.05 : .9);
 		}
-		this.playMoveFx(eMove, lead.x, lead.y - 16, save.x, save.y - 18);
-		this.playMoveFx(pMove, save.x, save.y - 20, lead.x, lead.y - 12);
-		this.float(save.x, save.y - 64, note, "#fff1a8");
+		this.playMoveFx(eMove, lead.x, lead.y - 16, save.x, save.y - 18 * WITCH_SIZE);
+		this.playMoveFx(pMove, save.x, save.y - 20 * WITCH_SIZE, lead.x, lead.y - 12);
+		this.float(save.x, save.y - 64 * WITCH_SIZE, note, "#fff1a8");
 		if (incoming > .75) this.hurtSelf(incoming, eMove.effect);
 		if (attackForm(pMove) === "spell" || moveTactic(pMove) === "channel") this.gainSkill("magic", 4);
 		else this.gainSkill("physical", 3);

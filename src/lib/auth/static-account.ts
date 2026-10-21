@@ -50,13 +50,53 @@ function adopt(user: StaticUser | null) {
   set({ user, pending: false });
 }
 
+/**
+ * Where the worker is not deployed (this build), accounts fall back to the browser so the game
+ * still opens. Sign-up/sign-in then keep the player on this device only.
+ */
+const LOCAL_USER_KEY = "turbz-local-user";
+
+function readLocalUser(): StaticUser | null {
+  try {
+    const raw = localStorage.getItem(LOCAL_USER_KEY);
+    if (!raw) return null;
+    const u = JSON.parse(raw) as StaticUser;
+    return u && typeof u.id === "string" && typeof u.displayName === "string" ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalUser(user: StaticUser | null) {
+  try {
+    if (user) localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(LOCAL_USER_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+/** No worker on this host: the request never reached an API (network error or a non-JSON reply). */
+function offline(error: unknown) {
+  return error instanceof TypeError || error instanceof SyntaxError;
+}
+
+function localAccount(username: string): StaticUser {
+  const key = username.trim().toLowerCase();
+  const user = { id: `local:${key}`, displayName: username.trim() };
+  writeLocalUser(user);
+  return user;
+}
+
 async function refresh() {
   try {
     const res = await fetch("/api/account/me", { cache: "no-store" });
     const body = (await res.json()) as { user?: StaticUser | null };
     adopt(body.user ?? null);
   } catch {
-    set({ user: null, pending: false });
+    const local = readLocalUser();
+    if (local) adopt(local);
+    else set({ user: null, pending: false });
   }
 }
 
@@ -72,11 +112,21 @@ async function post(path: string, body: unknown): Promise<StaticUser> {
 }
 
 export async function staticSignUp(username: string, password: string): Promise<void> {
-  adopt(await post("/api/account/signup", { username, password }));
+  try {
+    adopt(await post("/api/account/signup", { username, password }));
+  } catch (error) {
+    if (!offline(error)) throw error;
+    adopt(localAccount(username));
+  }
 }
 
 export async function staticSignIn(username: string, password: string): Promise<void> {
-  adopt(await post("/api/account/signin", { username, password }));
+  try {
+    adopt(await post("/api/account/signin", { username, password }));
+  } catch (error) {
+    if (!offline(error)) throw error;
+    adopt(localAccount(username));
+  }
 }
 
 export async function staticSignOut(): Promise<void> {
@@ -84,6 +134,7 @@ export async function staticSignOut(): Promise<void> {
     await fetch("/api/account/signout", { method: "POST" });
   } finally {
     clearLocalSaves();
+    writeLocalUser(null);
     try {
       localStorage.removeItem(LAST_USER_KEY);
     } catch {

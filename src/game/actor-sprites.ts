@@ -18,6 +18,7 @@ import {
 } from "./actor-sheets.config";
 import { CLASS_BY_ID, type ClassId } from "./classes";
 import { drawGearFx } from "./gear-fx";
+import { WITCH_SIZE } from "./actor-metrics";
 
 /** Gear effects were tuned for an 18-unit body; class sprites are ~27px tall (27 / 19). */
 const GEAR_FIT = 1.4;
@@ -68,16 +69,17 @@ export function tryDrawActorSprite(ctx: CanvasRenderingContext2D, a: ActorDraw):
   const atlas = atlases[sheet];
   if (!atlas) return false;
 
-  // Classes and witches (warrior sheet, 32×44 frames) are sized to one tile (32px tall).
-  // 44 * ACTOR_SPRITE_SCALE * WARRIOR_TILE_FIT === 32 when scale and tall are 1.
-  const WARRIOR_TILE_FIT = (32 / 44) / ACTOR_SPRITE_SCALE;
+  // Class/witch frames (32×44) are fitted to one tile, then drawn WITCH_SIZE bigger.
+  // 44 * ACTOR_SPRITE_SCALE * WARRIOR_TILE_FIT === 32 * WITCH_SIZE when scale and tall are 1.
+  const WARRIOR_TILE_FIT = (32 / 44) / ACTOR_SPRITE_SCALE * WITCH_SIZE;
   const s = (a.scale ?? 1) * (a.tall ?? 1) * ACTOR_SPRITE_SCALE * (sheet === "warrior" ? WARRIOR_TILE_FIT : 1);
   const fxT = a.time ?? a.walk;
 
-  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE, a.setVariant ?? 0);
-
-  // Gear effects are authored for a ~18 unit body; the class sprites are ~27px tall, so scale them to fit.
+  // Gear effects are authored for a ~18 unit body; the class sprites are taller, so scale them to fit.
+  // Both this and the aura hang off `s`, so her size (WITCH_SIZE) moves her body and its effects together.
   const gs = s * (sheet === "warrior" ? GEAR_FIT : 1);
+
+  if (a.setOn && a.setFx) drawSetAura(ctx, a.x, a.y, a.setFx, fxT, s / ACTOR_SPRITE_SCALE, a.setVariant ?? 0);
   const dir = a.direction ?? "down";
   // Rows are real facings now: take left/right from the row, and draw "behind the body" effects
   // (wings, tail, ground ring) over the sprite when we are looking at the wearer's back.

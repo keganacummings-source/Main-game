@@ -6,6 +6,9 @@ import { fxGene } from "./fx-gene";
 import { drawCreatureSprite } from "./creature-sprites";
 import { tryDrawActorSprite } from "./actor-sprites";
 
+/** The witch's on-screen size, shared by her body and every effect anchored to it. */
+export { WITCH_SIZE } from "./actor-metrics";
+
 export type Pal = { d: string; m: string; l: string; h: string; a: string };
 
 const SKIN: Record<number, Pal> = {
