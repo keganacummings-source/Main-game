@@ -40,7 +40,7 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
   bed: { name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here." },
   ghostbox: { name: "Ghost Box", cost: { timber: 4, ore: 4 }, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter." },
   turbzchest: { name: "Storage Chest", cost: { kyo: 10000 }, about: "Stores any items safely. Its contents survive death — rebuild your camp and they are still inside. TURBZ only." },
-  hellgen: { name: "HellStone Power Generator", cost: { hell_ore: 4, timber: 4 }, about: "TURBZ + New Textures. One Hell Ore input. Produces 10 Power every 5 seconds onto a wired Battery. Unstored Power fades." },
+  hellgen: { name: "HellStone Power Generator", cost: { hell_ore: 4, timber: 4 }, about: "TURBZ + New Textures. Press E to stack Hell Ore. Burns one every 5 seconds for 10 Power on a wired Battery. Unstored Power fades." },
   battery: { name: "Battery", cost: { dirt: 2, sand: 2 }, about: "TURBZ + New Textures. Stores up to 100 Power from a Generator on the same wire network." },
   wire: { name: "Wire", cost: { wire: 1 }, about: "TURBZ + New Textures. Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore)." },
   xpgen: { name: "XP Producer", cost: { kyo: 10000 }, about: "TURBZ + New Textures. Press E to spend 200 Power for the XP of about 50 kills at your level." },

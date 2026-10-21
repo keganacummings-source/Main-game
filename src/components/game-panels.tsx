@@ -1309,6 +1309,64 @@ export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp)
   );
 });
 
+/** Power block you are standing at: what it does, and (for the generator) a Hell Ore stack. */
+export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
+  const s = useSnapPick(["power"] as const);
+  const p = s.power;
+  if (!p) return <Empty>Stand beside a Generator, Battery, Wire, or XP Producer and press E.</Empty>;
+  const stack = (n: number) => game?.powerStack(n);
+  return (
+    <div className="ui-stack" data-testid="power-panel">
+      <StatusChips items={[
+        { label: p.name, tone: "kyo" },
+        { label: `Network ${Math.floor(p.network)} Power`, tone: p.ready ? "on" : undefined },
+        { label: `${p.gens} gen · ${p.bats} bat · ${p.wires} wire · ${p.machines} XP` },
+      ]} />
+      <p className="text-dim">{p.about}</p>
+      <Section title="HOW IT WORKS">
+        {p.how.map((line) => <p key={line} className="text-dim">{line}</p>)}
+      </Section>
+      {p.kind === "hellgen" && (
+        <>
+          <Section title={`HELL ORE INSIDE · ${p.ore}`}>
+            <Meter kind="bad" label="NEXT BURN" value={p.next < 0 ? 0 : 5 - p.next} max={5} detail={p.next < 0 ? "Needs Hell Ore" : `${p.next.toFixed(1)}s`} />
+            <p className="text-dim">One Hell Ore burns every 5 seconds and makes 10 Power. The stack keeps going until it is empty.</p>
+            <span className="cost-row">
+              <button type="button" className="px-btn ui-btn-sm" disabled={p.ore < 1} onClick={() => stack(-1)}>Take 1</button>
+              {p.ore >= 10 && <button type="button" className="px-btn ui-btn-sm" onClick={() => stack(-10)}>Take 10</button>}
+              <button type="button" className="px-btn ui-btn-sm" disabled={p.ore < 1} onClick={() => stack(-1e9)}>Take all</button>
+            </span>
+          </Section>
+          <Section title={`YOUR HELL ORE · ${p.bagOre}`}>
+            {p.bagOre <= 0
+              ? <p className="text-dim">None in your bag. Mine stone in a hell biome.</p>
+              : <span className="cost-row">
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => stack(1)}>Load 1</button>
+                  {p.bagOre >= 10 && <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => stack(10)}>Load 10</button>}
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => stack(1e9)}>Load all</button>
+                </span>}
+          </Section>
+        </>
+      )}
+      {p.kind === "battery" && (
+        <Section title="STORED">
+          <Meter kind="good" label="POWER" value={p.stored} max={100} detail={`${Math.floor(p.stored)}/100`} />
+          <p className="text-dim">This Battery fills by itself from Generators on the wire. It does not take items.</p>
+        </Section>
+      )}
+      {p.kind === "xpgen" && (
+        <Section title="RUN">
+          <Meter kind={p.ready ? "good" : "void"} label="POWER" value={Math.min(200, p.network)} max={200} detail={`${Math.floor(p.network)}/200`} />
+          <p className="text-dim">Spending 200 Power grants about {p.xp.toLocaleString()} XP at your current level.</p>
+          <button type="button" className="px-btn px-btn-kyo" disabled={!p.ready} onClick={() => game?.powerRun()}>
+            {p.ready ? "Spend 200 Power" : "Need 200 Power on this network"}
+          </button>
+        </Section>
+      )}
+    </div>
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Pause
 // ---------------------------------------------------------------------------

@@ -243,7 +243,30 @@ export type DeathReport = {
   name: string; className: string; focus: string; level: number; mode: string; cause: string; kills: number; survived: string;
   kyo: number; score: number; accountScore: number; spirits: number; shinies: number; gear: string[]; skills: { name: string; level: number }[];
 };
-export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build";
+export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build" | "turbzchest" | "power";
+export type PowerView = {
+  kind: "hellgen" | "battery" | "wire" | "xpgen";
+  name: string;
+  about: string;
+  how: string[];
+  /** Hell Ore sitting in the generator. */
+  ore: number;
+  /** Hell Ore in your bag. */
+  bagOre: number;
+  /** Seconds until the next 10 Power, or -1 if the generator is empty. */
+  next: number;
+  /** Power in the battery you are looking at. */
+  stored: number;
+  /** Power in every battery on this wire network, and how many of each block is connected. */
+  network: number;
+  bats: number;
+  gens: number;
+  wires: number;
+  machines: number;
+  /** XP the producer would grant right now. */
+  xp: number;
+  ready: boolean;
+};
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
 export type LootView = { title: string; kyo: number; items: { name: string; count: number }[]; gear: Gear[] };
@@ -341,6 +364,8 @@ export type Snap = {
   wildHere: number;
   /** TURBZ storage chest: whether one is built, whether you're beside it, and its persistent contents. */
   turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[] };
+  /** The power block you have open, or null. */
+  power: PowerView | null;
   /** Your camp: a fire lit (anywhere), one in reach of you here, and (TURBZ) a camp packed up waiting to be dropped. */
   camp: { lit: boolean; near: boolean; packed: boolean; pieces: number };
   /** The loot chest you have open (Hardcore). */
@@ -759,6 +784,7 @@ const emptySnap = (): Snap => ({
 	ghostAuto: "off",
 	wildHere: 0,
 	turbzChest: { placed: false, near: false, count: 0, items: [] },
+	power: null,
 	camp: { lit: false, near: false, packed: false, pieces: 0 },
 	chest: null,
 	wildGhost: null,
@@ -2783,7 +2809,7 @@ export class TurbzGame {
 		if (piece === "hellgen") {
 			save.powerGens = save.powerGens ?? [];
 			save.powerGens.push({ ...here, ore: 0, t: 0 });
-			this.say("HellStone Power Generator placed. Stand by it and press E to insert Hell Ore.");
+			this.say("HellStone Power Generator placed. Stand by it and press E to load Hell Ore.");
 		} else if (piece === "battery") {
 			save.powerBats = save.powerBats ?? [];
 			save.powerBats.push({ ...here, power: 0 });
@@ -2795,7 +2821,7 @@ export class TurbzGame {
 		} else {
 			save.powerXps = save.powerXps ?? [];
 			save.powerXps.push(here);
-			this.say("XP Producer placed. Wire it to Batteries, then press E to spend 200 Power.");
+			this.say("XP Producer placed. Wire it to Batteries, then press E and spend 200 Power.");
 		}
 		this.cue("rattle", { rate: 1.1 }, [380, .06, "triangle"]);
 		this.persist();
@@ -2837,7 +2863,14 @@ export class TurbzGame {
 	}
 	tickPower(dt) {
 		const save = this.save;
-		if (!save?.powerGens?.length) return;
+		if (!save) return;
+		if (this.powerOpen && snap.panel !== "power") this.powerOpen = null;
+		if (this.powerOpen) {
+			const open = this.powerNode(this.powerOpen);
+			const far = !open || open.n.map !== save.map || Math.hypot(open.n.tx * 32 + 16 - save.x, open.n.ty * 32 + 16 - save.y) > 80;
+			if (far) { this.powerOpen = null; if (snap.panel === "power") publish({ panel: null }); }
+		}
+		if (!save.powerGens?.length) return;
 		for (const g of save.powerGens) {
 			if (g.map !== save.map || g.ore <= 0) continue;
 			g.t += dt;
@@ -2858,63 +2891,152 @@ export class TurbzGame {
 			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
 		}
 	}
-	/** Hell Ore into a Generator, or 200 Power into an XP Producer. The closer block wins. */
+	/** The power block saved under an open-menu handle, or null. */
+	powerNode(open) {
+		const save = this.save;
+		if (!save || !open) return null;
+		const list = open.kind === "hellgen" ? save.powerGens : open.kind === "battery" ? save.powerBats : open.kind === "wire" ? save.powerWires : save.powerXps;
+		const n = (list ?? []).find((p) => p.map === open.map && p.tx === open.tx && p.ty === open.ty);
+		return n ? { n, kind: open.kind === "hellgen" ? "gen" : open.kind === "battery" ? "bat" : open.kind === "wire" ? "wire" : "xp" } : null;
+	}
+	powerView() {
+		const save = this.save;
+		const open = this.powerOpen;
+		const node = this.powerNode(open);
+		if (!save || !open || !node) return null;
+		const net = this.powerNetwork(node.n);
+		const bats = net.filter((w) => w.kind === "bat").map((w) => w.n);
+		const network = bats.reduce((a, b) => a + (b.power ?? 0), 0);
+		const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
+		const xp = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
+		const gen = open.kind === "hellgen" ? node.n : null;
+		const bat = open.kind === "battery" ? node.n : null;
+		const how = {
+			hellgen: [
+				"Stack Hell Ore in the slot. One ore burns every 5 seconds and makes 10 Power.",
+				"Power flows through adjacent Wires to Batteries on this network. Each Battery holds 100.",
+				"If no Battery has room, that Power fades.",
+			],
+			battery: [
+				"Stores Power from Generators on the same wire network, up to 100.",
+				"It fills on its own. You do not put items in it.",
+				"An XP Producer on this network spends the Power stored here.",
+			],
+			wire: [
+				"Carries Power between anything it touches, including diagonally.",
+				"A Generator, Battery, Wire, or XP Producer on a neighboring tile joins this network.",
+				"Wire does not store Power.",
+			],
+			xpgen: [
+				"Spends 200 Power from Batteries on this network.",
+				"Pays the XP of about 50 kills of a foe at your level, including your XP boost and the night bonus.",
+				"Nothing happens until the network holds at least 200.",
+			],
+		};
+		return {
+			kind: open.kind,
+			name: BUILD_PIECES[open.kind].name,
+			about: BUILD_PIECES[open.kind].about,
+			how: how[open.kind],
+			ore: gen?.ore ?? 0,
+			bagOre: save.bag?.hell_ore ?? 0,
+			next: gen && gen.ore > 0 ? Math.max(0, 5 - (gen.t ?? 0)) : -1,
+			stored: bat?.power ?? 0,
+			network,
+			bats: bats.length,
+			gens: net.filter((w) => w.kind === "gen").length,
+			wires: net.filter((w) => w.kind === "wire").length,
+			machines: net.filter((w) => w.kind === "xp").length,
+			xp,
+			ready: network >= 200,
+		};
+	}
+	/** Open the power block you are standing at. Pressing E again closes it. */
 	interactPower() {
 		const save = this.save;
 		if (!save) return false;
-		const nearest = (list) => {
+		const nearest = (list, kind) => {
 			let best = null;
 			let d = 57;
 			for (const n of list ?? []) {
 				if (n.map !== save.map) continue;
 				const dd = Math.hypot(n.tx * 32 + 16 - save.x, n.ty * 32 + 16 - save.y);
-				if (dd <= 56 && dd < d) { d = dd; best = n; }
+				if (dd <= 56 && dd < d) { d = dd; best = { n, kind, d }; }
 			}
-			return best ? { n: best, d } : null;
+			return best;
 		};
-		const gen = nearest(save.powerGens);
-		const xp = nearest(save.powerXps);
-		if (gen && (!xp || gen.d <= xp.d)) {
-			const near = gen.n;
-			if ((save.bag["hell_ore"] ?? 0) <= 0) { this.say("The Generator needs Hell Ore. You have none."); return true; }
-			if (near.ore >= 1) { this.say("The Generator's input slot is full."); return true; }
-			save.bag["hell_ore"]--;
-			if (save.bag["hell_ore"] <= 0) delete save.bag["hell_ore"];
-			near.ore = 1;
-			near.t = 0;
-			this.say("Hell Ore inserted. The Generator makes 10 Power every 5 seconds.");
-			this.persist();
-			this.syncHud(true);
-			return true;
+		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen")].filter(Boolean).sort((a, b) => a.d - b.d)[0];
+		if (!hit) return false;
+		const same = this.powerOpen && this.powerOpen.kind === hit.kind && this.powerOpen.tx === hit.n.tx && this.powerOpen.ty === hit.n.ty;
+		if (same && snap.panel === "power") { this.closePower(); return true; }
+		this.powerOpen = { kind: hit.kind, map: hit.n.map, tx: hit.n.tx, ty: hit.n.ty };
+		this.dest = null;
+		publish({ panel: "power" });
+		this.syncHud(true);
+		return true;
+	}
+	closePower() {
+		this.powerOpen = null;
+		if (snap.panel === "power") publish({ panel: null });
+	}
+	/** Move Hell Ore between the bag and the open generator. Positive loads it; negative takes it back. */
+	powerStack(n) {
+		const save = this.save;
+		const node = this.powerNode(this.powerOpen);
+		if (!save || !node || node.kind !== "gen") return;
+		const g = node.n;
+		const amt = Math.floor(Math.abs(n));
+		if (amt <= 0) return;
+		if (n > 0) {
+			const have = save.bag.hell_ore ?? 0;
+			const take = Math.min(have, amt);
+			if (take <= 0) { this.say("You have no Hell Ore to load."); return; }
+			save.bag.hell_ore = have - take;
+			if (save.bag.hell_ore <= 0) delete save.bag.hell_ore;
+			if ((g.ore ?? 0) <= 0) g.t = 0;
+			g.ore = (g.ore ?? 0) + take;
+			this.say(`Loaded ${take} Hell Ore. The generator holds ${g.ore}.`);
+		} else {
+			const give = Math.min(g.ore ?? 0, amt);
+			if (give <= 0) { this.say("The generator is empty."); return; }
+			g.ore -= give;
+			this.giveItem("hell_ore", give);
+			this.say(`Took ${give} Hell Ore back. ${g.ore} left inside.`);
 		}
-		if (xp) {
-			const machine = xp.n;
-			const bats = this.powerNetwork(machine).filter((w) => w.kind === "bat").map((w) => w.n);
-			const have = bats.reduce((a, b) => a + (b.power ?? 0), 0);
-			if (have < 200) { this.say(`The XP Producer needs 200 Power. This network has ${Math.floor(have)}.`); return true; }
-			let need = 200;
-			for (const b of bats) {
-				if (need <= 0) break;
-				const take = Math.min(b.power ?? 0, need);
-				b.power -= take;
-				need -= take;
-			}
-			const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
-			const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
-			this.gainXp(gain);
-			this.float(save.x, save.y - 60 * WITCH_SIZE, `+${gain} xp`, "#c8beff");
-			this.say(`XP Producer spent 200 Power. +${gain} XP (about 50 kills at your level).`);
-			this.cue("sparkle", { rate: 1.1 }, [520, .08, "triangle"]);
-			this.persist();
-			this.syncHud(true);
-			return true;
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Spend 200 Power from the open XP Producer's network. */
+	powerRun() {
+		const save = this.save;
+		const node = this.powerNode(this.powerOpen);
+		if (!save || !node || node.kind !== "xp") return;
+		const bats = this.powerNetwork(node.n).filter((w) => w.kind === "bat").map((w) => w.n);
+		const have = bats.reduce((a, b) => a + (b.power ?? 0), 0);
+		if (have < 200) { this.say(`The XP Producer needs 200 Power. This network has ${Math.floor(have)}.`); return; }
+		let need = 200;
+		for (const b of bats) {
+			if (need <= 0) break;
+			const take = Math.min(b.power ?? 0, need);
+			b.power -= take;
+			need -= take;
 		}
-		return false;
+		const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
+		const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
+		this.gainXp(gain);
+		this.float(save.x, save.y - 60 * WITCH_SIZE, `+${gain} xp`, "#c8beff");
+		this.say(`XP Producer spent 200 Power. +${gain} XP (about 50 kills at your level).`);
+		this.cue("sparkle", { rate: 1.1 }, [520, .08, "triangle"]);
+		this.persist();
+		this.syncHud(true);
 	}
 	removePowerPiece(piece, f) {
 		const save = this.save;
 		if (Math.hypot(f.tx * 32 + 16 - save.x, f.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
-		if (piece === "hellgen") save.powerGens = (save.powerGens ?? []).filter(g => g !== f);
+		if (piece === "hellgen") {
+			if ((f.ore ?? 0) > 0) this.giveItem("hell_ore", f.ore);
+			save.powerGens = (save.powerGens ?? []).filter(g => g !== f);
+		}
 		else if (piece === "battery") save.powerBats = (save.powerBats ?? []).filter(b => b !== f);
 		else if (piece === "wire") save.powerWires = (save.powerWires ?? []).filter(w => w !== f);
 		else save.powerXps = (save.powerXps ?? []).filter(x => x !== f);
@@ -2923,6 +3045,7 @@ export class TurbzGame {
 			else this.giveItem(id, n);
 		}
 		this.say(`${BUILD_PIECES[piece].name} packed up.`);
+		if (this.powerOpen && this.powerOpen.tx === f.tx && this.powerOpen.ty === f.ty && this.powerOpen.map === f.map) this.closePower();
 		this.cue("click", { rate: 0.8 }, [160, .05, "triangle"]);
 		this.persist();
 		this.syncHud(true);
@@ -8275,11 +8398,14 @@ export class TurbzGame {
 			const door = this.doorNear(52);
 			if (door) { this.toggleDoor(door); return; }
 			const fire = this.campfireNear();
-			if (fire && !this.nearestChest() && !this.nearestWild() && !this.nearTurbzChest(48)) { this.openBuildMenu(); return; }
+			if (fire && !this.nearestChest() && !this.nearestWild() && !this.nearTurbzChest(48)) {
+				if (!this.interactPower()) this.openBuildMenu();
+				return;
+			}
 		}
 		// The TURBZ storage chest opens when you stand right beside it.
 		if (this.nearTurbzChest(48)) { this.openTurbzChest(); return; }
-		// HellStone Generator: deposit Hell Ore into its input slot.
+		// HellStone Generator, Battery, Wire, XP Producer: open the power menu.
 		if (this.interactPower()) return;
 		{
 			const chest = this.nearestChest();
@@ -10312,6 +10438,7 @@ export class TurbzGame {
 		if (this.dead || snap.panel === "loot") return;
 		if (snap.panel === "chest") this.chestOpen = null;
 		if (snap.panel === "wildghost") this.wildOpen = null;
+		if (snap.panel === "power") this.powerOpen = null;
 		publish({ panel: null });
 	}
 	/**
@@ -11463,6 +11590,7 @@ export class TurbzGame {
 					items: Object.entries(items).map(([id, c]) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, count: c as number })).sort((a, b) => a.name.localeCompare(b.name)),
 				};
 			})(),
+			power: this.powerView(),
 			chest: this.chestView(),
 			wildGhost: this.wildView(),
 			lms: this.lmsView?.() ?? null,
@@ -12299,25 +12427,27 @@ export class TurbzGame {
 			if (g.map !== save.map || Math.abs(g.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(g.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const gx = g.tx * 32, gy = g.ty * 32;
 			paintSlot("hellgen", gx, gy, "#6b2a1a", "#e25a32");
-			drawShadowName(ctx, `GEN · ${g.ore ? "ORE" : "EMPTY"}`, gx + 16, gy - 10, "#ff8a5a");
-			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, "E · INSERT ORE", gx + 16, gy - 22, "#ffd166");
+			drawShadowName(ctx, `GEN · ${g.ore || 0} ORE`, gx + 16, gy - 10, "#ff8a5a");
+			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", gx + 16, gy - 22, "#ffd166");
 		}
 		for (const w of save.powerWires ?? []) {
 			if (w.map !== save.map || Math.abs(w.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(w.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			paintSlot("wire", w.tx * 32, w.ty * 32, "#3a3020", "#c4a35a");
+			if (Math.hypot(w.tx * 32 + 16 - save.x, w.ty * 32 + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", w.tx * 32 + 16, w.ty * 32 - 10, "#ffd166");
 		}
 		for (const b of save.powerBats ?? []) {
 			if (b.map !== save.map || Math.abs(b.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(b.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const bx = b.tx * 32, by = b.ty * 32;
 			paintSlot("battery", bx, by, "#1a3a6b", "#4aa0ff");
 			drawShadowName(ctx, `BAT · ${b.power}/100`, bx + 16, by - 10, "#8fd0ff");
+			if (Math.hypot(bx + 16 - save.x, by + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", bx + 16, by - 22, "#ffd166");
 		}
 		for (const m of save.powerXps ?? []) {
 			if (m.map !== save.map || Math.abs(m.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(m.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const mx = m.tx * 32, my = m.ty * 32;
 			paintSlot("xpgen", mx, my, "#2a1a4a", "#c9a6e8");
 			drawShadowName(ctx, "XP", mx + 16, my - 10, "#c8beff");
-			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · 200 POWER", mx + 16, my - 22, "#ffd166");
+			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", mx + 16, my - 22, "#ffd166");
 		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;

@@ -24,7 +24,7 @@ import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
 import { installTurbz, hasTurbzSave, TURBZ_NEWTEX_PREF } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
-import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
+import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, PowerPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
 
@@ -394,14 +394,14 @@ function Create(props: { name: string; setName: (v: string) => void; pick: Pick;
 // In game
 // ---------------------------------------------------------------------------
 
-const PANEL_IDS = ["sheet", "gear", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost", "turbzchest"] as const;
+const PANEL_IDS = ["sheet", "gear", "bag", "skills", "moves", "quests", "map", "ghost", "craft", "bounty", "survival", "trade", "pause", "chest", "wildghost", "turbzchest", "power"] as const;
 type PanelId = (typeof PANEL_IDS)[number];
 const PANEL_TITLE: Record<PanelId, string> = {
   sheet: "Character Sheet", gear: "Gear Inventory", bag: "Bag", skills: "Skills & Perks", moves: "Verses", quests: "Quests",
-  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest", wildghost: "Lingering Ghost", turbzchest: "Storage Chest",
+  map: "World Map", ghost: "Spirits", craft: "Crafting", bounty: "Bounty Board", survival: "Survival & Camp", trade: "Black Market", pause: "Menu", chest: "Loot Chest", wildghost: "Lingering Ghost", turbzchest: "Storage Chest", power: "Power",
 };
 /** Default window widths. Rebuilt windows use new layout keys so an old, cramped saved size does not carry over. */
-const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, bag: 620, gear: 960, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560 };
+const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, bag: 620, gear: 960, trade: 660, sheet: 560, moves: 720, skills: 640, ghost: 640, craft: 620, survival: 640, quests: 680, map: 1040, bounty: 500, pause: 560, power: 480, turbzchest: 640 };
 const REBUILT = new Set<PanelId>(["gear", "bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause"]);
 
 function winId(panel: PanelId): string {
@@ -472,6 +472,7 @@ function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) 
     case "chest": return <ChestWin game={game} />;
     case "wildghost": return <WildGhostPanel game={game} />;
     case "turbzchest": return <TurbzChestPanel game={game} />;
+    case "power": return <PowerPanel game={game} />;
   }
 }
 
