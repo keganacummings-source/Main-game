@@ -156,7 +156,7 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
         <button type="button" className="px-btn" onClick={onBack}>Back</button>
       </header>
       <p className="designer-status">
-        Paint camp pieces, map tiles, and the Power blocks (HellStone Generator, Battery, Wire, XP Producer).
+        Paint camp pieces, map tiles, and the Power blocks (HellStone Generator, Battery, Wire, XP Producer, Duplicator).
         A power texture marked Live replaces that block's art in game. Saved on this device. Export JSON to ship in an update.
       </p>
 

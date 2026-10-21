@@ -26,7 +26,7 @@ import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import { mineInfo, rollMineDrop, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
-import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
+import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, DUP_SECONDS, DUP_POWER_COST, DUP_STORE_MAX, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, healAmount, shieldAmount, RANK_MAX, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
@@ -245,7 +245,7 @@ export type DeathReport = {
 };
 export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build" | "turbzchest" | "power";
 export type PowerView = {
-  kind: "hellgen" | "battery" | "wire" | "xpgen";
+  kind: "hellgen" | "battery" | "wire" | "xpgen" | "duplicator";
   name: string;
   about: string;
   how: string[];
@@ -263,9 +263,19 @@ export type PowerView = {
   gens: number;
   wires: number;
   machines: number;
+  /** Duplicators on this wire network. */
+  dups: number;
   /** XP the producer would grant right now. */
   xp: number;
   ready: boolean;
+  /** Duplicator: item id loaded as the original, or null. */
+  seed: string | null;
+  seedName: string;
+  /** Copies waiting inside the duplicator (not counting the original). */
+  copies: number;
+  copyMax: number;
+  /** Seconds until the next copy, or -1 if it is not running. */
+  dupNext: number;
 };
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
@@ -563,6 +573,8 @@ type Save = {
   powerWires?: { map: string; tx: number; ty: number }[];
   /** TURBZ + New Textures: XP Producers. Press E to spend 200 Power. */
   powerXps?: { map: string; tx: number; ty: number }[];
+  /** TURBZ + New Textures: Duplicators. One loaded bag item, copies stored inside. */
+  powerDups?: { map: string; tx: number; ty: number; item: string; seed: boolean; stored: number; t: number }[];
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -2410,6 +2422,8 @@ export class TurbzGame {
 			if (wr) return this.removePowerPiece("wire", wr);
 			const xp = (save.powerXps ?? []).find(x => x.map === save.map && x.tx === tx && x.ty === ty);
 			if (xp) return this.removePowerPiece("xpgen", xp);
+			const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
+			if (dup) return this.removePowerPiece("duplicator", dup);
 			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
 			this.say("Nothing to pick up there.");
 			return false;
@@ -2431,6 +2445,8 @@ export class TurbzGame {
 		if (wr) return this.removePowerPiece("wire", wr);
 		const xp = (save.powerXps ?? []).find(x => x.map === save.map && x.tx === tx && x.ty === ty);
 		if (xp) return this.removePowerPiece("xpgen", xp);
+		const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
+		if (dup) return this.removePowerPiece("duplicator", dup);
 		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
 		// that is the Pack up camp / Pick up campfire button in the Camp menu, so a stray click can't move your camp.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
@@ -2441,7 +2457,7 @@ export class TurbzGame {
 			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
-		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen") return this.placePowerPiece(piece, tx, ty);
+		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen" || piece === "duplicator") return this.placePowerPiece(piece, tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
@@ -2455,7 +2471,7 @@ export class TurbzGame {
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : []),
-			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? [])];
+			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? []), ...(save.powerDups ?? [])];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2797,7 +2813,7 @@ export class TurbzGame {
 		this.syncHud(true);
 		return true;
 	}
-	/** TURBZ + New Textures only: place a HellStone Generator, Battery, Wire, or XP Producer. */
+	/** TURBZ + New Textures only: place a HellStone Generator, Battery, Wire, XP Producer, or Duplicator. */
 	placePowerPiece(piece, tx, ty) {
 		const save = this.save;
 		if (!this.turbz || !save.turbzNewTex) { this.say("Power blocks are only available in TURBZ with New Textures on."); return false; }
@@ -2818,10 +2834,14 @@ export class TurbzGame {
 			save.powerWires = save.powerWires ?? [];
 			save.powerWires.push(here);
 			this.say("Wire placed. It carries Power to adjacent Power blocks.");
-		} else {
+		} else if (piece === "xpgen") {
 			save.powerXps = save.powerXps ?? [];
 			save.powerXps.push(here);
 			this.say("XP Producer placed. Wire it to Batteries, then press E and spend 200 Power.");
+		} else {
+			save.powerDups = save.powerDups ?? [];
+			save.powerDups.push({ ...here, item: "", seed: false, stored: 0, t: 0 });
+			this.say("Duplicator placed. Wire it to a Battery, then press E and load any item from your bag.");
 		}
 		this.cue("rattle", { rate: 1.1 }, [380, .06, "triangle"]);
 		this.persist();
@@ -2837,6 +2857,7 @@ export class TurbzGame {
 			...(save.powerBats ?? []).map((n) => ({ n, kind: "bat" })),
 			...(save.powerWires ?? []).map((n) => ({ n, kind: "wire" })),
 			...(save.powerXps ?? []).map((n) => ({ n, kind: "xp" })),
+			...(save.powerDups ?? []).map((n) => ({ n, kind: "dup" })),
 		];
 	}
 	/** Generator, wires, batteries and machines touching this one (including itself). */
@@ -2870,8 +2891,8 @@ export class TurbzGame {
 			const far = !open || open.n.map !== save.map || Math.hypot(open.n.tx * 32 + 16 - save.x, open.n.ty * 32 + 16 - save.y) > 80;
 			if (far) { this.powerOpen = null; if (snap.panel === "power") publish({ panel: null }); }
 		}
-		if (!save.powerGens?.length) return;
-		for (const g of save.powerGens) {
+		if (!save.powerGens?.length && !save.powerDups?.length) return;
+		for (const g of save.powerGens ?? []) {
 			if (g.map !== save.map || g.ore <= 0) continue;
 			g.t += dt;
 			if (g.t < 5) continue;
@@ -2890,14 +2911,56 @@ export class TurbzGame {
 			if (stored > 0) this.float(g.tx * 32 + 16, g.ty * 32 - 8, `+${stored} Power`, "#8fd0ff");
 			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
 		}
+		this.tickDuplicators(dt);
+	}
+	/** Spend Power from batteries on a block's network. Returns false if there is not enough. */
+	spendNetworkPower(node, amount) {
+		const bats = this.powerNetwork(node).filter((w) => w.kind === "bat").map((w) => w.n);
+		const have = bats.reduce((a, b) => a + (b.power ?? 0), 0);
+		if (have < amount) return false;
+		let need = amount;
+		for (const b of bats) {
+			if (need <= 0) break;
+			const take = Math.min(b.power ?? 0, need);
+			b.power -= take;
+			need -= take;
+		}
+		return need <= 0;
+	}
+	/** Every loaded Duplicator on this map copies its item when the wire has Power. */
+	tickDuplicators(dt) {
+		const save = this.save;
+		if (!save?.powerDups?.length) return;
+		for (const d of save.powerDups) {
+			if (d.map !== save.map || !d.seed || !d.item) continue;
+			if ((d.stored ?? 0) >= DUP_STORE_MAX) continue;
+			const bats = this.powerNetwork(d).filter((w) => w.kind === "bat").map((w) => w.n);
+			const have = bats.reduce((a, b) => a + (b.power ?? 0), 0);
+			if (have < DUP_POWER_COST) continue;
+			d.t = (d.t ?? 0) + dt;
+			if (d.t < DUP_SECONDS) continue;
+			d.t -= DUP_SECONDS;
+			if (!this.spendNetworkPower(d, DUP_POWER_COST)) continue;
+			d.stored = (d.stored ?? 0) + 1;
+			const name = ITEM_BY_ID[d.item]?.name ?? d.item;
+			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+1 ${name}`, "#7dffb3");
+		}
 	}
 	/** The power block saved under an open-menu handle, or null. */
 	powerNode(open) {
 		const save = this.save;
 		if (!save || !open) return null;
-		const list = open.kind === "hellgen" ? save.powerGens : open.kind === "battery" ? save.powerBats : open.kind === "wire" ? save.powerWires : save.powerXps;
-		const n = (list ?? []).find((p) => p.map === open.map && p.tx === open.tx && p.ty === open.ty);
-		return n ? { n, kind: open.kind === "hellgen" ? "gen" : open.kind === "battery" ? "bat" : open.kind === "wire" ? "wire" : "xp" } : null;
+		const table = {
+			hellgen: [save.powerGens, "gen"],
+			battery: [save.powerBats, "bat"],
+			wire: [save.powerWires, "wire"],
+			xpgen: [save.powerXps, "xp"],
+			duplicator: [save.powerDups, "dup"],
+		};
+		const row = table[open.kind];
+		if (!row) return null;
+		const n = (row[0] ?? []).find((p) => p.map === open.map && p.tx === open.tx && p.ty === open.ty);
+		return n ? { n, kind: row[1] } : null;
 	}
 	powerView() {
 		const save = this.save;
@@ -2911,6 +2974,10 @@ export class TurbzGame {
 		const xp = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
 		const gen = open.kind === "hellgen" ? node.n : null;
 		const bat = open.kind === "battery" ? node.n : null;
+		const dup = open.kind === "duplicator" ? node.n : null;
+		const seedOn = !!(dup?.seed && dup.item);
+		const copies = dup?.stored ?? 0;
+		const dupRunning = seedOn && network >= DUP_POWER_COST && copies < DUP_STORE_MAX;
 		const how = {
 			hellgen: [
 				"Stack Hell Ore in the slot. One ore burns every 5 seconds and makes 10 Power.",
@@ -2920,17 +2987,22 @@ export class TurbzGame {
 			battery: [
 				"Stores Power from Generators on the same wire network, up to 100.",
 				"It fills on its own. You do not put items in it.",
-				"An XP Producer on this network spends the Power stored here.",
+				"An XP Producer or Duplicator on this network spends the Power stored here.",
 			],
 			wire: [
 				"Carries Power between anything it touches, including diagonally.",
-				"A Generator, Battery, Wire, or XP Producer on a neighboring tile joins this network.",
+				"A Generator, Battery, Wire, XP Producer, or Duplicator on a neighboring tile joins this network.",
 				"Wire does not store Power.",
 			],
 			xpgen: [
 				"Spends 200 Power from Batteries on this network.",
 				"Pays the XP of about 50 kills of a foe at your level, including your XP boost and the night bonus.",
 				"Nothing happens until the network holds at least 200.",
+			],
+			duplicator: [
+				"Load any item from your bag. The original stays in the machine.",
+				`Every ${DUP_SECONDS} seconds it spends ${DUP_POWER_COST} Power and stores one copy (up to ${DUP_STORE_MAX}).`,
+				"Ghost Jars, Drinking Water, ores, logs, Hell Ore — anything in the bag. Take the original back to stop it.",
 			],
 		};
 		return {
@@ -2947,8 +3019,14 @@ export class TurbzGame {
 			gens: net.filter((w) => w.kind === "gen").length,
 			wires: net.filter((w) => w.kind === "wire").length,
 			machines: net.filter((w) => w.kind === "xp").length,
+			dups: net.filter((w) => w.kind === "dup").length,
 			xp,
 			ready: network >= 200,
+			seed: seedOn ? dup.item : null,
+			seedName: dup?.item ? (ITEM_BY_ID[dup.item]?.name ?? dup.item) : "",
+			copies,
+			copyMax: DUP_STORE_MAX,
+			dupNext: dupRunning ? Math.max(0, DUP_SECONDS - (dup.t ?? 0)) : -1,
 		};
 	}
 	/** Open the power block you are standing at. Pressing E again closes it. */
@@ -2965,7 +3043,7 @@ export class TurbzGame {
 			}
 			return best;
 		};
-		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen")].filter(Boolean).sort((a, b) => a.d - b.d)[0];
+		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen"), nearest(save.powerDups, "duplicator")].filter(Boolean).sort((a, b) => a.d - b.d)[0];
 		if (!hit) return false;
 		const same = this.powerOpen && this.powerOpen.kind === hit.kind && this.powerOpen.tx === hit.n.tx && this.powerOpen.ty === hit.n.ty;
 		if (same && snap.panel === "power") { this.closePower(); return true; }
@@ -3006,6 +3084,66 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
+	/** The open Duplicator, or null. */
+	openDup() {
+		const node = this.powerNode(this.powerOpen);
+		return node?.kind === "dup" ? node.n : null;
+	}
+	/** Put one bag item into the Duplicator as the original it will copy. */
+	dupLoad(id) {
+		const save = this.save;
+		const d = this.openDup();
+		if (!save || !d) return;
+		if (!id || id === "kyo") return;
+		const name = ITEM_BY_ID[id]?.name ?? id;
+		const busy = (d.stored ?? 0) > 0 || d.seed;
+		if (d.item && d.item !== id && busy) {
+			this.say(`Empty the Duplicator of ${ITEM_BY_ID[d.item]?.name ?? d.item} before loading ${name}.`);
+			return;
+		}
+		if (d.seed && d.item === id) { this.say(`${name} is already loaded.`); return; }
+		const have = save.bag[id] ?? 0;
+		if (have <= 0) { this.say(`You have no ${name} to load.`); return; }
+		save.bag[id] = have - 1;
+		if (save.bag[id] <= 0) delete save.bag[id];
+		d.item = id;
+		d.seed = true;
+		d.t = 0;
+		this.say(`${name} loaded. Every ${DUP_SECONDS} seconds, ${DUP_POWER_COST} Power stores one copy.`);
+		this.cue("click", { rate: 1.15 }, [420, .06, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Take the original back. Copies already made stay until you take them. */
+	dupUnload() {
+		const d = this.openDup();
+		if (!d) return;
+		if (!d.seed || !d.item) { this.say("Nothing is loaded."); return; }
+		const id = d.item;
+		const name = ITEM_BY_ID[id]?.name ?? id;
+		d.seed = false;
+		d.t = 0;
+		if ((d.stored ?? 0) <= 0) d.item = "";
+		this.giveItem(id, 1);
+		this.say(`Took ${name} back.${(d.stored ?? 0) > 0 ? ` ${d.stored} ${d.stored === 1 ? "copy stays" : "copies stay"} inside.` : ""}`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Move stored copies into the bag. */
+	dupTake(n = 1) {
+		const d = this.openDup();
+		if (!d) return;
+		const have = d.stored ?? 0;
+		const take = Math.max(0, Math.min(have, Math.floor(n)));
+		if (take <= 0 || !d.item) { this.say("No copies stored yet."); return; }
+		const name = ITEM_BY_ID[d.item]?.name ?? d.item;
+		d.stored = have - take;
+		this.giveItem(d.item, take);
+		if (d.stored <= 0 && !d.seed) d.item = "";
+		this.say(`Took ${name} ×${take}.`);
+		this.persist();
+		this.syncHud(true);
+	}
 	/** Spend 200 Power from the open XP Producer's network. */
 	powerRun() {
 		const save = this.save;
@@ -3039,6 +3177,11 @@ export class TurbzGame {
 		}
 		else if (piece === "battery") save.powerBats = (save.powerBats ?? []).filter(b => b !== f);
 		else if (piece === "wire") save.powerWires = (save.powerWires ?? []).filter(w => w !== f);
+		else if (piece === "duplicator") {
+			if (f.seed && f.item) this.giveItem(f.item, 1);
+			if ((f.stored ?? 0) > 0 && f.item) this.giveItem(f.item, f.stored);
+			save.powerDups = (save.powerDups ?? []).filter(d => d !== f);
+		}
 		else save.powerXps = (save.powerXps ?? []).filter(x => x !== f);
 		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) {
 			if (id === "kyo") save.kyo = (save.kyo ?? 0) + n;
@@ -8405,7 +8548,7 @@ export class TurbzGame {
 		}
 		// The TURBZ storage chest opens when you stand right beside it.
 		if (this.nearTurbzChest(48)) { this.openTurbzChest(); return; }
-		// HellStone Generator, Battery, Wire, XP Producer: open the power menu.
+		// HellStone Generator, Battery, Wire, XP Producer, Duplicator: open the power menu.
 		if (this.interactPower()) return;
 		{
 			const chest = this.nearestChest();
@@ -12407,7 +12550,7 @@ export class TurbzGame {
 			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
 			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
 		}
-		// HellStone Generators, Wires, Batteries and the XP Producer (TURBZ + New Textures)
+		// HellStone Generators, Wires, Batteries, the XP Producer and the Duplicator (TURBZ + New Textures)
 		const paintSlot = (slot, x, y, c1, c2) => {
 			const url = powerTexture(slot);
 			if (url) {
@@ -12448,6 +12591,14 @@ export class TurbzGame {
 			paintSlot("xpgen", mx, my, "#2a1a4a", "#c9a6e8");
 			drawShadowName(ctx, "XP", mx + 16, my - 10, "#c8beff");
 			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", mx + 16, my - 22, "#ffd166");
+		}
+		for (const d of save.powerDups ?? []) {
+			if (d.map !== save.map || Math.abs(d.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(d.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const dx = d.tx * 32, dy = d.ty * 32;
+			paintSlot("duplicator", dx, dy, "#143028", "#3dff9a");
+			const tag = d.seed && d.item ? `DUP · ${d.stored || 0}` : "DUP";
+			drawShadowName(ctx, tag, dx + 16, dy - 10, "#7dffb3");
+			if (Math.hypot(dx + 16 - save.x, dy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", dx + 16, dy - 22, "#ffd166");
 		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;

@@ -41,6 +41,7 @@ export const POWER_TEXTURES = [
   { id: "battery", label: "Battery" },
   { id: "wire", label: "Wire" },
   { id: "xpgen", label: "XP Producer" },
+  { id: "duplicator", label: "Duplicator" },
 ] as const;
 
 /** Suggested places a custom tile may spawn / appear. */
@@ -125,7 +126,7 @@ let powerTexRev = 0;
 let powerTexCacheRev = -1;
 let powerTexCache: Record<string, string> = {};
 
-/** Latest live pixel art for a power block (hellgen, battery, wire, xpgen), or null. */
+/** Latest live pixel art for a power block (hellgen, battery, wire, xpgen, duplicator), or null. */
 export function powerTexture(slot: string): string | null {
   if (powerTexCacheRev !== powerTexRev) {
     powerTexCache = {};

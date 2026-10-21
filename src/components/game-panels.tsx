@@ -3,7 +3,7 @@ import { ALCHEMY_RECIPES, attackForm, ITEM_BY_ID, moveTactic, TYPES, type TypeId
 import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
-import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, MAX_BEDS, TURBZ_ONLY_PIECES } from "@/game/building";
+import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, DUP_POWER_COST, DUP_SECONDS, DUP_STORE_MAX, MAX_BEDS, TURBZ_ONLY_PIECES } from "@/game/building";
 import { GhostCard, GhostDetailCard, GhostName } from "./ghost-ui";
 import { resetLayout } from "@/game/ui-layout";
 import type { BoardView } from "@/game/quest-board";
@@ -1309,18 +1309,28 @@ export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp)
   );
 });
 
-/** Power block you are standing at: what it does, and (for the generator) a Hell Ore stack. */
+/** Power block you are standing at: generator, battery, wire, XP producer, or duplicator. */
 export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
-  const s = useSnapPick(["power"] as const);
+  const s = useSnapPick(["power", "bag"] as const);
   const p = s.power;
-  if (!p) return <Empty>Stand beside a Generator, Battery, Wire, or XP Producer and press E.</Empty>;
+  const [q, setQ] = useState("");
+  if (!p) return <Empty>Stand beside a Generator, Battery, Wire, XP Producer, or Duplicator and press E.</Empty>;
   const stack = (n: number) => game?.powerStack(n);
+  const term = q.trim().toLowerCase();
+  const bag = s.bag.filter((it) => it.count > 0 && (!term || it.name.toLowerCase().includes(term) || it.id.toLowerCase().includes(term)));
+  const dupStatus = p.kind !== "duplicator" ? ""
+    : p.seed && p.dupNext >= 0 ? `Next copy in ${p.dupNext.toFixed(1)}s`
+    : p.seed && p.copies >= p.copyMax ? `Full · ${p.copies}/${p.copyMax}`
+    : p.seed && p.network < DUP_POWER_COST ? `Needs ${DUP_POWER_COST} Power`
+    : p.seed ? "Waiting"
+    : p.copies > 0 ? "Original taken · copies remain"
+    : "Load an item";
   return (
     <div className="ui-stack" data-testid="power-panel">
       <StatusChips items={[
         { label: p.name, tone: "kyo" },
-        { label: `Network ${Math.floor(p.network)} Power`, tone: p.ready ? "on" : undefined },
-        { label: `${p.gens} gen · ${p.bats} bat · ${p.wires} wire · ${p.machines} XP` },
+        { label: `Network ${Math.floor(p.network)} Power`, tone: p.ready || (p.kind === "duplicator" && p.network >= DUP_POWER_COST) ? "on" : undefined },
+        { label: `${p.gens} gen · ${p.bats} bat · ${p.wires} wire · ${p.machines} XP · ${p.dups} dup` },
       ]} />
       <p className="text-dim">{p.about}</p>
       <Section title="HOW IT WORKS">
@@ -1362,6 +1372,45 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
             {p.ready ? "Spend 200 Power" : "Need 200 Power on this network"}
           </button>
         </Section>
+      )}
+      {p.kind === "duplicator" && (
+        <>
+          <Section title={p.seed ? `LOADED · ${p.seedName}` : "LOADED · EMPTY"} right={<span className="text-dim">{dupStatus}</span>}>
+            <Meter kind={p.dupNext >= 0 ? "good" : "void"} label="NEXT COPY" value={p.dupNext < 0 ? 0 : DUP_SECONDS - p.dupNext} max={DUP_SECONDS} detail={p.dupNext < 0 ? dupStatus : `${p.dupNext.toFixed(1)}s · ${DUP_POWER_COST} Power`} />
+            <p className="text-dim">The original stays here. Every {DUP_SECONDS} seconds, {DUP_POWER_COST} Power from this wire stores one copy. It pauses with no Power, no item, or a full stack.</p>
+            {p.seed
+              ? <button type="button" className="px-btn ui-btn-sm" data-testid="dup-unload" onClick={() => game?.dupUnload()}>Take {p.seedName} back</button>
+              : <p className="text-dim">Nothing loaded. Pick an item from your bag below.</p>}
+          </Section>
+          <Section title={`COPIES · ${p.copies}/${p.copyMax}`} right={p.seedName && p.copies > 0 ? <span className="text-dim">{p.seedName}</span> : null}>
+            {p.copies <= 0
+              ? <p className="text-dim">No copies yet.</p>
+              : <span className="cost-row">
+                  <button type="button" className="px-btn ui-btn-sm" data-testid="dup-take-1" onClick={() => game?.dupTake(1)}>Take 1</button>
+                  {p.copies >= 10 && <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.dupTake(10)}>Take 10</button>}
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.dupTake(p.copies)}>Take all</button>
+                </span>}
+          </Section>
+          <Section title="YOUR BAG">
+            <div className="menu-toolbar">
+              <input className="px-input" aria-label="Search bag" placeholder="Search bag — jars, water, ores, logs…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="dup-search" />
+            </div>
+            {s.bag.every((it) => it.count <= 0)
+              ? <p className="text-dim">Your bag is empty.</p>
+              : !bag.length ? <Empty>Nothing in your bag matches.</Empty>
+              : <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties} data-testid="dup-bag">
+                  {bag.map((it) => (
+                    <div key={it.id} className="ui-card">
+                      <span className="ui-row"><span className="text-kyo">{it.name}</span><span className="text-dim">×{it.count}</span></span>
+                      <button type="button" className="px-btn px-btn-kyo ui-btn-sm" disabled={!!p.seed && p.seed === it.id} onClick={() => game?.dupLoad(it.id)}>
+                        {p.seed === it.id ? "Loaded" : "Load 1"}
+                      </button>
+                    </div>
+                  ))}
+                </div>}
+            <p className="text-dim">Holds up to {DUP_STORE_MAX} copies. Pick the block up in build mode to get the original and the copies back.</p>
+          </Section>
+        </>
       )}
     </div>
   );

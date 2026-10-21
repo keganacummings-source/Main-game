@@ -1,5 +1,12 @@
 # Patch Notes
 
+## Duplicator (TURBZ, New Texture Mode)
+
+- **Duplicator** is a Power block. Build it from the Power group (6 Hell Ore, 6 Vein Ore, 6 Logs), wire it to a Battery, and press **E**.
+- Load **any bag item** — Ghost Jars, Drinking Water, ores, logs, Hell Ore, and the rest. The original stays in the machine.
+- Every **5 seconds** it spends **2 Power** and stores one copy (up to 999). Take the copies out, or take the original back to stop it.
+- Paint its art in Designer Mode → Camp & Tile Asset Builder → Power → Duplicator. A Live texture shows on the placed block.
+
 ## Mining update (TURBZ, New Texture Mode)
 
 - **Break blocks.** Click a solid block twice to break it. It turns into its matching floor tile, or dirt when it has none.

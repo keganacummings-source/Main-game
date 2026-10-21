@@ -24,7 +24,7 @@ export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; op
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen";
+export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen" | "duplicator";
 /** Kinds that block movement (floors never do; a door blocks only while closed). */
 export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
 export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
@@ -44,11 +44,12 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
   battery: { name: "Battery", cost: { dirt: 2, sand: 2 }, about: "TURBZ + New Textures. Stores up to 100 Power from a Generator on the same wire network." },
   wire: { name: "Wire", cost: { wire: 1 }, about: "TURBZ + New Textures. Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore)." },
   xpgen: { name: "XP Producer", cost: { kyo: 10000 }, about: "TURBZ + New Textures. Press E to spend 200 Power for the XP of about 50 kills at your level." },
+  duplicator: { name: "Duplicator", cost: { hell_ore: 6, ore: 6, timber: 6 }, about: "TURBZ + New Textures. Press E and load any bag item. Every 5 seconds it spends 2 Power and stores one copy. Wire it to a Battery." },
 };
 /** TURBZ-only camp pieces (hidden from the build menu in other modes). Power pieces also require New Texture Mode. */
-export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen"]);
+export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator"]);
 /** Hidden unless New Texture Mode is on (still also TURBZ-only). */
-export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen"]);
+export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen", "duplicator"]);
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
 /** How the build menu and the build bar group the pieces. */
 export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "power"; label: string; pieces: BuildPiece[] }[] = [
@@ -56,10 +57,10 @@ export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "p
   { id: "floors", label: "Floors", pieces: ["woodfloor", "stonefloor"] },
   { id: "doors", label: "Doors", pieces: ["door"] },
   { id: "furniture", label: "Furniture", pieces: ["bed", "ghostbox", "turbzchest"] },
-  { id: "power", label: "Power", pieces: ["hellgen", "battery", "wire", "xpgen"] },
+  { id: "power", label: "Power", pieces: ["hellgen", "battery", "wire", "xpgen", "duplicator"] },
 ];
 /** Build-mode hotkeys: 1-8 pick these pieces in order (TURBZ-only pieces are skipped outside TURBZ). X is the Remove tool. */
-export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen"];
+export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator"];
 /** The piece a digit key picks in build mode (1-based), or null. */
 export function buildHotkeyPiece(digit: number, turbz: boolean): BuildPiece | null {
   const list = BUILD_HOTKEY_ORDER.filter((id) => turbz || !TURBZ_ONLY_PIECES.has(id));
@@ -74,6 +75,10 @@ export function pieceNameForKind(kind: TileKind | undefined): string {
 /** The placeable blocks (not furniture), for the campfire build menu. */
 export const BLOCK_PIECE_IDS: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door"];
 export const MAX_BEDS = 12;
+/** Duplicator: seconds between copies, Power spent on each copy, and how many copies it will hold. */
+export const DUP_SECONDS = 5;
+export const DUP_POWER_COST = 2;
+export const DUP_STORE_MAX = 999;
 export type Camp = { map: string; x: number; y: number };
 export type HoldPoint = { map: string; x: number; y: number };
 
