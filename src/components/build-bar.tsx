@@ -28,12 +28,12 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
   if (!s.build.on) return null;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   const count = (id: string) => (id === "kyo" ? (s.kyo ?? 0) : (bag[id] ?? 0));
+  const newTex = !!(game && (game as any).save?.turbzNewTex);
   const hotkeys = BUILD_HOTKEY_ORDER.filter((id) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && ((id !== "hellgen" && id !== "battery") || newTex));
   const c = s.build.counts;
   const placedAlready = (id: BuildPiece) => (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && c.chest);
   const hover = s.build.hover;
   const erase = s.build.piece === "erase";
-  const newTex = !!(game && (game as any).save?.turbzNewTex);
   return (
     <div className="build-bar px-panel" data-testid="build-bar" role="toolbar" aria-label="Build mode">
       <div className="build-bar-head">
