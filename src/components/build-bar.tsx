@@ -28,7 +28,7 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
   if (!s.build.on) return null;
   const bag = Object.fromEntries(s.bag.map((it) => [it.id, it.count]));
   const count = (id: string) => (id === "kyo" ? (s.kyo ?? 0) : (bag[id] ?? 0));
-  const hotkeys = BUILD_HOTKEY_ORDER.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
+  const hotkeys = BUILD_HOTKEY_ORDER.filter((id) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && ((id !== "hellgen" && id !== "battery") || newTex));
   const c = s.build.counts;
   const placedAlready = (id: BuildPiece) => (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && c.chest);
   const hover = s.build.hover;
@@ -45,7 +45,7 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
       </div>
       <div className="build-bar-groups">
         {BUILD_GROUPS.map((g) => {
-          const pieces = g.pieces.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
+          const pieces = g.pieces.filter((id) => (s.turbz || !TURBZ_ONLY_PIECES.has(id)) && ((id !== "hellgen" && id !== "battery") || newTex));
           if (!pieces.length) return null;
           return (
             <div key={g.id} className="build-bar-group">

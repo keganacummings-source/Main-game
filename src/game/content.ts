@@ -1521,7 +1521,7 @@ export const ITEMS: ItemDef[] = [
   { id: "fish_meal", name: "Fish Meal", about: "Cooked fish (at a campfire, or ask Fisher Bram). Restores 40 hunger in Hardcore and heals 18% of your health.", price: 0, heal: 55 },
   { id: "ore", name: "Vein Ore", about: "Mined from ore veins. Four ore and four logs build a Ghost Box. Sell spare ore from the Bag or at the Black Market (T).", price: 10 },
   { id: "timber", name: "Logs", about: "Chopped timber. Three build a campfire; one fuels a meal or water purification.", price: 8 },
-  { id: "hell_ore", name: "Hell Ore", about: "Mined from stone blocks in hell biomes (25% chance). For now it can only be collected and sold.", price: 18 },
+  { id: "hell_ore", name: "Hell Ore", about: "Mined from stone blocks in hell biomes (25% chance). Feed it to a HellStone Power Generator (TURBZ + New Textures) to produce Power.", price: 18 },
   { id: "rock_ore", name: "Rock Ore", about: "Mined from stone blocks outside hell biomes (25% chance). For now it can only be collected and sold.", price: 10 },
   { id: "dirt_ore", name: "Dirt Ore", about: "Mined from dirt and sandstone blocks. For now it can only be collected and sold.", price: 4 },
   { id: "meat", name: "Raw Meat", about: "From hunted animals. Cook on a campfire before eating in Hardcore.", price: 9, heal: 22 },

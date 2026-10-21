@@ -529,6 +529,10 @@ type Save = {
   campGround?: Record<string, number[][]>;
   /** TURBZ mining: tile indices (y * width + x) of the blocks broken per map, so the holes survive a reload. */
   mined?: Record<string, number[]>;
+  /** TURBZ + New Textures: HellStone Power Generators. Each holds one Hell Ore input. */
+  powerGens?: { map: string; tx: number; ty: number; ore: number; t: number }[];
+  /** TURBZ + New Textures: Batteries that store Power (max 100). */
+  powerBats?: { map: string; tx: number; ty: number; power: number }[];
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -2164,7 +2168,7 @@ export class TurbzGame {
 		this.tickGhostTasks(dt);
 		this.tickTurns(dt);
 		if (this.rules === "hardcore" && !this.dead && !this.turbz) this.tickSurvival(dt);
-		if (this.turbz) { this.tickPools?.(dt); this.tickTurbz?.(dt); this.tickTurbzSleep(dt); }
+		if (this.turbz) { this.tickPools?.(dt); this.tickTurbz?.(dt); this.tickTurbzSleep(dt); this.tickPower(dt); }
 		this.tickParty(dt);
 		this.tickChests(dt);
 		this.tickWildGhosts(dt);
@@ -2367,6 +2371,10 @@ export class TurbzGame {
 			if (gb && gb.map === save.map && gb.tx === tx && gb.ty === ty) return this.removeFurniture("ghostbox", gb);
 			const ch = save.turbzChest;
 			if (ch && ch.map === save.map && ch.tx === tx && ch.ty === ty) return this.removeTurbzChest();
+			const gen = (save.powerGens ?? []).find(g => g.map === save.map && g.tx === tx && g.ty === ty);
+			if (gen) return this.removePowerPiece("hellgen", gen);
+			const bat = (save.powerBats ?? []).find(b => b.map === save.map && b.tx === tx && b.ty === ty);
+			if (bat) return this.removePowerPiece("battery", bat);
 			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
 			this.say("Nothing to pick up there.");
 			return false;
@@ -2380,6 +2388,10 @@ export class TurbzGame {
 		if (box && box.map === save.map && box.tx === tx && box.ty === ty) return this.removeFurniture("ghostbox", box);
 		const chest = save.turbzChest;
 		if (chest && chest.map === save.map && chest.tx === tx && chest.ty === ty) return this.removeTurbzChest();
+		const gen = (save.powerGens ?? []).find(g => g.map === save.map && g.tx === tx && g.ty === ty);
+		if (gen) return this.removePowerPiece("hellgen", gen);
+		const bat = (save.powerBats ?? []).find(b => b.map === save.map && b.tx === tx && b.ty === ty);
+		if (bat) return this.removePowerPiece("battery", bat);
 		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
 		// that is the Pack up camp / Pick up campfire button in the Camp menu, so a stray click can't move your camp.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
@@ -2390,6 +2402,7 @@ export class TurbzGame {
 			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
+		if (piece === "hellgen" || piece === "battery") return this.placePowerPiece(piece, tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
@@ -2402,7 +2415,8 @@ export class TurbzGame {
 		// Blocks cost kyo now, not materials; kyo isn't in the bag, so check it here and hide it from checkPlaceLog.
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
-		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : [])];
+		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : []),
+			...(save.powerGens ?? []), ...(save.powerBats ?? [])];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2740,6 +2754,80 @@ export class TurbzGame {
 		if (this.turbzChestOpen) { this.turbzChestOpen = false; if (snap.panel === "turbzchest") publish({ panel: null }); }
 		this.say("Storage Chest packed up (kyo refunded). Your stored items are safe; place it again to reach them.");
 		this.cue("click", { rate: 0.75 }, [150, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** TURBZ + New Textures only: place a HellStone Generator or Battery. */
+	placePowerPiece(piece: "hellgen" | "battery", tx: number, ty: number) {
+		const save = this.save;
+		if (!this.turbz || !save.turbzNewTex) { this.say("Power blocks are only available in TURBZ with New Textures on."); return false; }
+		if (!this.isOverworld(save.map)) { this.say("Place Power blocks in the overworld."); return false; }
+		const check = this.checkPiece(piece, tx, ty);
+		if (!check.ok) { this.say(check.reason); return false; }
+		this.payForPiece(piece, 15);
+		if (piece === "hellgen") {
+			save.powerGens = save.powerGens ?? [];
+			save.powerGens.push({ map: save.map, tx, ty, ore: 0, t: 0 });
+			this.say("HellStone Power Generator placed. Stand by it and press E to insert Hell Ore.");
+		} else {
+			save.powerBats = save.powerBats ?? [];
+			save.powerBats.push({ map: save.map, tx, ty, power: 0 });
+			this.say("Battery placed. Put it beside a Generator to store Power.");
+		}
+		this.cue("rattle", { rate: 1.1 }, [380, .06, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** Adjacent (Chebyshev ≤ 1) battery for a generator, or null. */
+	adjacentBattery(gen: { map: string; tx: number; ty: number }) {
+		return (this.save.powerBats ?? []).find(b => b.map === gen.map && Math.max(Math.abs(b.tx - gen.tx), Math.abs(b.ty - gen.ty)) <= 1) ?? null;
+	}
+	tickPower(dt: number) {
+		const save = this.save;
+		if (!save?.powerGens?.length) return;
+		for (const g of save.powerGens) {
+			if (g.map !== save.map) continue;
+			g.t += dt;
+			if (g.t >= 5 && g.ore > 0) {
+				g.t -= 5;
+				g.ore = Math.max(0, g.ore - 1);
+				const bat = this.adjacentBattery(g);
+				if (bat) {
+					const add = Math.min(10, 100 - bat.power);
+					bat.power += add;
+					if (add > 0) this.say(`Generator fed ${add} Power to the Battery (${bat.power}/100).`);
+				} else {
+					this.say("Generator produced Power, but nothing is hooked up — it dissipates.");
+				}
+			}
+		}
+	}
+	/** Interact with a nearby HellStone Generator: deposit one Hell Ore into its single input slot. */
+	interactPowerGen() {
+		const save = this.save;
+		if (!save) return false;
+		const near = (save.powerGens ?? []).find(g => g.map === save.map && Math.hypot(g.tx * 32 + 16 - save.x, g.ty * 32 + 16 - save.y) <= 56);
+		if (!near) return false;
+		if ((save.bag["hell_ore"] ?? 0) <= 0) { this.say("The Generator needs Hell Ore. You have none."); return true; }
+		if (near.ore >= 1) { this.say("The Generator's input slot is full."); return true; }
+		save.bag["hell_ore"]--;
+		if (save.bag["hell_ore"] <= 0) delete save.bag["hell_ore"];
+		near.ore = 1;
+		this.say("Hell Ore inserted. The Generator will produce 10 Power every 5 seconds.");
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	removePowerPiece(piece: "hellgen" | "battery", f: { map: string; tx: number; ty: number }) {
+		const save = this.save;
+		if (Math.hypot(f.tx * 32 + 16 - save.x, f.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		if (piece === "hellgen") save.powerGens = (save.powerGens ?? []).filter(g => g !== f);
+		else save.powerBats = (save.powerBats ?? []).filter(b => b !== f);
+		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) this.giveItem(id, n);
+		this.say(`${BUILD_PIECES[piece].name} packed up.`);
+		this.cue("click", { rate: 0.8 }, [160, .05, "triangle"]);
 		this.persist();
 		this.syncHud(true);
 		return true;
@@ -8095,6 +8183,8 @@ export class TurbzGame {
 		}
 		// The TURBZ storage chest opens when you stand right beside it.
 		if (this.nearTurbzChest(48)) { this.openTurbzChest(); return; }
+		// HellStone Generator: deposit Hell Ore into its input slot.
+		if (this.interactPowerGen()) return;
 		{
 			const chest = this.nearestChest();
 			const wild = this.nearestWild();
@@ -12092,6 +12182,26 @@ export class TurbzGame {
 			const near = !!this.nearTurbzChest();
 			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
 			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
+		}
+		// HellStone Generators and Batteries (TURBZ + New Textures)
+		for (const g of save.powerGens ?? []) {
+			if (g.map !== save.map || Math.abs(g.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(g.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const gx = g.tx * 32, gy = g.ty * 32;
+			ctx.fillStyle = "#6b2a1a";
+			ctx.fillRect(gx + 4, gy + 4, 24, 24);
+			ctx.fillStyle = "#e25a32";
+			ctx.fillRect(gx + 8, gy + 8, 16, 16);
+			drawShadowName(ctx, `GEN · ${g.ore ? "ORE" : "EMPTY"}`, gx + 16, gy - 10, "#ff8a5a");
+			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, "E · INSERT ORE", gx + 16, gy - 22, "#ffd166");
+		}
+		for (const b of save.powerBats ?? []) {
+			if (b.map !== save.map || Math.abs(b.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(b.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const bx = b.tx * 32, by = b.ty * 32;
+			ctx.fillStyle = "#1a3a6b";
+			ctx.fillRect(bx + 4, by + 4, 24, 24);
+			ctx.fillStyle = "#4aa0ff";
+			ctx.fillRect(bx + 8, by + 8, 16, 16);
+			drawShadowName(ctx, `BAT · ${b.power}/100`, bx + 16, by - 10, "#8fd0ff");
 		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
