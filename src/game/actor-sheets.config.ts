@@ -32,7 +32,7 @@ const BAND_BOTTOM = 306;
 
 export const ACTOR_BG: [number, number, number] = [239, 208, 116];
 export const ACTOR_TOLERANCE = 0;
-/** Class sheets are already ~32px wide. 1.5x keeps a body about one tile wide and tall enough to read. */
+/** Non-warrior race sheets. Class/witch warrior frames are fitted to one tile in actor-sprites.ts. */
 export const ACTOR_SPRITE_SCALE = 1.5;
 
 export const ROW_UP = 0;

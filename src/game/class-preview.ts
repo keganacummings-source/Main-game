@@ -6,8 +6,8 @@ import { RACES, type RaceId } from "./content";
 import type { ClassId } from "./classes";
 import { drawActor } from "./sprites";
 
-/** Class sprites are 44px frames drawn at 1.5 x 1.3; this is their on-screen height at scale 1. */
-const BODY_PX = 44 * 1.5 * 1.3;
+/** Class sprites are 44px frames fitted to one 32px tile; this is their on-screen height at scale 1. */
+const BODY_PX = 32;
 
 /**
  * Draws `classId` standing (or gently walking when `walking`) on `canvas`, scaled so the body fills

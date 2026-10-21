@@ -6131,7 +6131,7 @@ export class TurbzGame {
 		(this.plates = this.plates ?? []).push({
 			id: m.id,
 			x: m.x,
-			y: m.y - (m.boss || m.dungeonBoss ? 86 : m.witch || m.bounty || m.hunter ? 50 : m.animal ? 26 : 36),
+			y: m.y - (m.boss || m.dungeonBoss ? 86 : m.witch || m.bounty || m.hunter ? 36 : m.animal ? 26 : 36),
 			name: m.name,
 			level: m.level,
 			rank,
@@ -11699,7 +11699,7 @@ export class TurbzGame {
 		}
 		if (!this.dead && !this.sleeping) this.drawTinies(ctx);
 		const barOn = this.combat > 0 || this.wardT > 0;
-		const head = save.y - 98;
+		const head = save.y - 36;
 		const nameY = barOn ? head - 14 : head + 2;
 		drawShadowName(ctx, save.name, save.x, nameY, "#fff6e8");
 		if (this.unstuckT > 0 && this.mouseWorld) {
