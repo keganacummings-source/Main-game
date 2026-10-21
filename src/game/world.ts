@@ -1,4 +1,4 @@
-import { drawAtlasTile, tileImageRevision } from "./tile-atlas";
+import { drawAtlasTile, drawTallArt, isTallArt, NEWTEX_DIR, texModeOn, tileImageRevision } from "./tile-atlas";
 import {
   ANIMAL_BIOME,
   ANIMAL_BY_ID,
@@ -32,6 +32,8 @@ export type Spawn = {
   kind: "mob" | "node";
   species?: string;
   node?: "ore" | "tree" | "shroom" | "fish";
+  /** New Texture Mode: the tree art this node wears (full-size, per biome). */
+  art?: string;
   /** Legacy. Gathering requires E; walking into a node no longer collects it. */
   auto?: boolean;
   x: number;
@@ -571,11 +573,13 @@ export function paintWorld(world: WorldData): HTMLCanvasElement {
   c.width = world.w * TILE;
   c.height = world.h * TILE;
   const g = c.getContext("2d")!;
+  // 64px trees and portals are drawn after the ground, at full size, so a neighbour never paints over them.
+  const tall: [string, number, number][] = [];
   for (let y = 0; y < world.h; y++) {
     for (let x = 0; x < world.w; x++) {
       const t = world.tiles[idx(x, y, world.w)]!;
       if (t.sprite && drawAtlasTile(g, t.sprite, x * TILE, y * TILE, TILE)) {
-        if (t.layers) for (const l of t.layers) drawAtlasTile(g, l, x * TILE, y * TILE, TILE);
+        if (t.layers) for (const l of t.layers) { if (isTallArt(l)) tall.push([l, x, y]); else drawAtlasTile(g, l, x * TILE, y * TILE, TILE); }
         continue;
       }
       g.fillStyle = FLOOR_COLOR[t.floor] ?? "#333";
@@ -620,6 +624,7 @@ export function paintWorld(world: WorldData): HTMLCanvasElement {
       }
     }
   }
+  for (const [l, x, y] of tall) drawTallArt(g, l, x * TILE, y * TILE, TILE);
   for (let y = 0; y < world.h; y++) {
     for (let x = 0; x < world.w; x++) {
       const t = world.tiles[idx(x, y, world.w)]!;
@@ -729,11 +734,12 @@ function paintWorldSlice(
   const y0 = Math.max(0, Math.floor(top / TILE));
   const x1 = Math.min(world.w - 1, Math.ceil(right / TILE));
   const y1 = Math.min(world.h - 1, Math.ceil(bottom / TILE));
+  const tall: [string, number, number][] = [];
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const t = world.tiles[idx(x, y, world.w)]!;
       if (t.sprite && drawAtlasTile(ctx, t.sprite, x * TILE, y * TILE, TILE)) {
-        if (t.layers) for (const l of t.layers) drawAtlasTile(ctx, l, x * TILE, y * TILE, TILE);
+        if (t.layers) for (const l of t.layers) { if (isTallArt(l)) tall.push([l, x, y]); else drawAtlasTile(ctx, l, x * TILE, y * TILE, TILE); }
         continue;
       }
       if (t.sprite && t.block === 1 && t.decor === 0) {
@@ -785,6 +791,7 @@ function paintWorldSlice(
       }
     }
   }
+  for (const [l, x, y] of tall) drawTallArt(ctx, l, x * TILE, y * TILE, TILE);
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const t = world.tiles[idx(x, y, world.w)]!;
@@ -876,8 +883,8 @@ export function pickNodeSpot(
 }
 
 /** Live-drawn resource nodes (ore, mushrooms; trees reuse the world's tree art). */
-export function paintNode(g: CanvasRenderingContext2D, node: "ore" | "tree" | "shroom" | "fish", x: number, y: number): void {
-  if (node === "tree") return paintTree(g, x, y + 10);
+export function paintNode(g: CanvasRenderingContext2D, node: "ore" | "tree" | "shroom" | "fish", x: number, y: number, art?: string): void {
+  if (node === "tree") return paintTree(g, x, y + 10, art);
   g.save();
   if (node === "ore") {
     g.fillStyle = "rgba(0,0,0,0.3)";
@@ -906,7 +913,10 @@ export function paintNode(g: CanvasRenderingContext2D, node: "ore" | "tree" | "s
   g.restore();
 }
 
-function paintTree(g: CanvasRenderingContext2D, x: number, y: number): void {
+function paintTree(g: CanvasRenderingContext2D, x: number, y: number, art?: string): void {
+  // New Texture Mode: the biome's own tree at its full 64px size, standing on its tile.
+  if (art && art.startsWith(NEWTEX_DIR) && drawAtlasTile(g, art, x - 32, y - 64, 64)) return;
+  if (!art && texModeOn() && drawAtlasTile(g, NEWTEX_DIR + "tree_plains.png", x - 32, y - 64, 64)) return;
   if (drawAtlasTile(g, "/MapAssets/04_Trees_and_Vegetation/tree_1_yellow.png", x - 32, y - 64, 64)) return;
   g.fillStyle = "rgba(0,0,0,0.28)";
   g.beginPath();
@@ -934,6 +944,8 @@ function paintTree(g: CanvasRenderingContext2D, x: number, y: number): void {
 }
 
 export function drawRift(g: CanvasRenderingContext2D, x: number, y: number): void {
+  // New Texture Mode: the pack's own 64×64 portal, full size.
+  if (texModeOn() && drawAtlasTile(g, NEWTEX_DIR + "portal.png", x - 32, y - 56, 64)) return;
   if (drawAtlasTile(g, "/MapAssets/06_Gates_and_Portals/enter_abyss.png", x - 32, y - 56, 64)) return;
   g.fillStyle = "rgba(10, 4, 18, 0.45)";
   g.beginPath();

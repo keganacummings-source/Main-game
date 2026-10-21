@@ -29,6 +29,8 @@ import type { ClassId } from "./classes";
 import { cryingElements } from "./classes";
 import { enemyTargets, expectedHunterPower } from "./balance";
 import { generateWorld } from "./map-gen";
+import { generateTexWorld, retextureDungeon } from "./tex-world";
+import { setTexMode } from "./tile-atlas";
 import { lmsSpawns } from "./lms";
 import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
@@ -37,6 +39,19 @@ import { combatRate } from "./pools";
 import { ALL_ORDERS, thinkLikePlayer, typeEdge } from "./player-brain";
 
 export const TURBZ_MAP = "custom-turbz";
+/** Remembers the New Texture Mode choice made on the TURBZ screen (the run itself keeps its own on `save.turbzNewTex`). */
+export const TURBZ_NEWTEX_PREF = "turbz-newtex-pref-v1";
+
+/** The TURBZ wild for a seed: the classic generator, or the New Texture Mode one (new biomes, new textures only). */
+export function buildTurbzWorld(seed: number, newTex: boolean) {
+  const file = newTex
+    ? generateTexWorld({ id: "turbz", name: "TURBZ", seed, w: 450, h: 450 })
+    : generateWorld({ id: "turbz", name: "TURBZ", seed, w: 450, h: 450, continentCount: 5, citiesPerContinent: 1, islands: 4, story: false, intro: "" });
+  file.npcs = [];
+  file.quests = [];
+  file.id = "turbz";
+  return file;
+}
 /** Where a TURBZ run is saved so leaving and returning resumes the same grind. */
 export const TURBZ_SAVE_KEY = "turbz-run-v1";
 /** The armor you keep forever: every piece from your bag, reset to level 1, enchants intact. */
@@ -106,7 +121,9 @@ export function installTurbz(game: any): void {
   game.pools = null;
   game.orders = null;
 
-  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false) {
+  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean) {
+    // Rebirth passes no choice: the next life keeps the texture mode the last one used.
+    const useNewTex = newTex ?? !!this.save?.turbzNewTex;
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
     // swapRules clears the turbz flag; set it true again afterwards, before begin, so the run is TURBZ.
@@ -140,16 +157,11 @@ export function installTurbz(game: any): void {
     if (save.hunt) { save.hunt.wanted = 0; save.hunt.stars = 0; save.hunt.board = []; save.hunt.waveIn = 0; }
     save.dayNight = { t: DAY_SECONDS * 0.35, nights: 0 };
     const seed = (Math.random() * 1e9) >>> 0 || 7;
-    // Remember the seed so the exact same wild can be rebuilt when you continue the run later.
+    // Remember the seed (and the texture mode) so the exact same wild can be rebuilt when you continue the run later.
     save.turbzSeed = seed;
-    const file = generateWorld({
-      id: "turbz", name: "TURBZ", seed, w: 450, h: 450,
-      continentCount: 5, citiesPerContinent: 1, islands: 4, story: false,
-      intro: "",
-    });
-    file.npcs = [];
-    file.quests = [];
-    file.id = "turbz";
+    save.turbzNewTex = useNewTex;
+    setTexMode(useNewTex);
+    const file = buildTurbzWorld(seed, useNewTex);
     this.turbzFile = file;
     save.map = TURBZ_MAP;
     this.contract = [];
@@ -241,14 +253,10 @@ export function installTurbz(game: any): void {
     this.turbz = true;
     const seed = (raw.turbzSeed as number) || ((Math.random() * 1e9) >>> 0 || 7);
     raw.turbzSeed = seed;
-    // Rebuild the exact same wild from the saved seed before booting into it.
-    const file = generateWorld({
-      id: "turbz", name: "TURBZ", seed, w: 450, h: 450,
-      continentCount: 5, citiesPerContinent: 1, islands: 4, story: false, intro: "",
-    });
-    file.npcs = [];
-    file.quests = [];
-    file.id = "turbz";
+    // Rebuild the exact same wild from the saved seed before booting into it (same generator it was made with).
+    raw.turbzNewTex = !!raw.turbzNewTex;
+    setTexMode(raw.turbzNewTex);
+    const file = buildTurbzWorld(seed, raw.turbzNewTex);
     this.turbzFile = file;
     // Always resume on the overworld (never stuck inside a torn-down rift instance).
     raw.map = TURBZ_MAP;
@@ -346,6 +354,10 @@ export function installTurbz(game: any): void {
       }
     }
     origLoad(map, fresh);
+    // New Texture Mode: the wild is generated with the new art, and every dungeon is re-skinned to match.
+    const newTex = !!(this.turbz && this.save?.turbzNewTex);
+    setTexMode(newTex);
+    if (newTex && map !== TURBZ_MAP && this.world && this.isDungeonMap?.(map)) retextureDungeon(this.world);
     if (this.turbz && map === TURBZ_MAP && this.world) this.turbzWorld = this.world;
     if (this.turbz && map === TURBZ_MAP) {
       const have = new Set((this.mobs ?? []).map((m: any) => m.id));

@@ -92,6 +92,33 @@ export function findAtlasTile(idOrPath: string): AtlasTile | null {
   return null;
 }
 
+/** New Texture Mode art lives here; see tex-world.ts. */
+export const NEWTEX_DIR = "/MapAssets/NewTex/";
+
+/** Trees and portals are 64px art. They are drawn at their full size, not squashed into one 32px tile. */
+export function isTallArt(path: string): boolean {
+  return path.startsWith(NEWTEX_DIR) && (path.startsWith(NEWTEX_DIR + "tree_") || path === NEWTEX_DIR + "portal.png");
+}
+
+/**
+ * Draws art at its natural size, centred on the tile and standing on its bottom edge, so a 64×64 tree or
+ * portal rises above the tile it is planted on. (px, py) is the tile's top-left corner in pixels.
+ */
+export function drawTallArt(ctx: CanvasRenderingContext2D, path: string, px: number, py: number, tile = 32): boolean {
+  const img = tileImage(path);
+  if (!img.complete || img.naturalWidth <= 0) return false;
+  const prev = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, px + tile / 2 - img.naturalWidth / 2, py + tile - img.naturalHeight, img.naturalWidth, img.naturalHeight);
+  ctx.imageSmoothingEnabled = prev;
+  return true;
+}
+
+/** New Texture Mode switch for art the engine draws itself (dungeon portals, tree nodes). Set per run by TURBZ. */
+let texMode = false;
+export function setTexMode(on: boolean): void { texMode = on; }
+export function texModeOn(): boolean { return texMode; }
+
 export function drawAtlasTile(
   ctx: CanvasRenderingContext2D,
   path: string,

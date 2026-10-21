@@ -22,7 +22,7 @@ import { postShinySeen, writeShinies } from "@/game/cloud-client";
 import { TurbzGame } from "@/game/engine";
 import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
-import { installTurbz, hasTurbzSave } from "@/game/turbz-mode";
+import { installTurbz, hasTurbzSave, TURBZ_NEWTEX_PREF } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
 import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
@@ -123,6 +123,9 @@ function Hunt() {
   const [create, setCreate] = useState(false);
   const [name, setName] = useState("Mira");
   const [pick, setPick] = useState<Pick>({ classId: "warden", traitId: null, female: true });
+  // TURBZ: New Texture Mode (the new biome world generator and its textures, dungeons included). Remembered on this device.
+  const [newTex, setNewTexState] = useState<boolean>(() => { try { return localStorage.getItem(TURBZ_NEWTEX_PREF) === "1"; } catch { return false; } });
+  const setNewTex = (on: boolean) => { setNewTexState(on); try { localStorage.setItem(TURBZ_NEWTEX_PREF, on ? "1" : "0"); } catch { /* private mode */ } };
   const race = CLASS_RACE[pick.classId];
   const [screen, setScreen] = useState<ScreenId>("hub");
   const [arenaSeed, setArenaSeed] = useState<unknown>(null);
@@ -288,6 +291,13 @@ function Hunt() {
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
               </Field>
               <ClassPicker pick={pick} setPick={setPick} game={g()} />
+              <label className="flex items-start gap-2 cursor-pointer" data-testid="turbz-newtex">
+                <input type="checkbox" checked={newTex} onChange={(e) => setNewTex(e.target.checked)} className="mt-1" />
+                <span>
+                  <span className="text-kyo font-display text-[9px]">New Texture Mode</span>
+                  <span className="text-dim block">A new world generator: plains, desert, jungle/swamp, snow and hell lands in an ocean, built only from the new textures with full-size trees and portals. Dungeons get the new textures too. Off plays the classic wild.</span>
+                </span>
+              </label>
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
                 {hasTurbzSave() && (
@@ -295,7 +305,7 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true)}>
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, newTex)}>
                   Wake as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
                 </button>
               </div>

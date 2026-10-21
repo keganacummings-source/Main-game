@@ -11453,7 +11453,7 @@ export class TurbzGame {
 		// Gathering nodes first, so a tree or rock never covers the chest or Ghost Box.
 		for (const node of this.world.spawns) if (node.kind === "node") {
 			if (Math.abs(node.x - this.cam.x) > w / this.zoom * 0.62 + 96 || Math.abs(node.y - this.cam.y) > h / this.zoom * 0.62 + 128) continue;
-			paintNode(ctx, node.node, node.x, node.y + 2);
+			paintNode(ctx, node.node, node.x, node.y + 2, node.art);
 		}
 		// Campfires are drawn inside drawBuild (after walls/floors) so a block on the tile above never covers them.
 		if (this.rules === "hardcore") this.drawBuild(ctx, w, h);

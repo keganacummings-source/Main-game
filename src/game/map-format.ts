@@ -304,9 +304,12 @@ export function emptyMap(id: string, name: string, w: number, h: number, floor =
   };
 }
 
+const NEWTEX_TREE = "/MapAssets/NewTex/tree_";
+
 /** Tree and mangrove art. These are never scenery: a tile that wears one is a tree you can chop. */
 export function isChopTreeArt(sprite: string | undefined): boolean {
   if (!sprite) return false;
+  if (sprite.startsWith(NEWTEX_TREE)) return true; // New Texture Mode trees (see tex-world.ts)
   return sprite.includes("/04_Trees_and_Vegetation/tree_") || sprite.includes("/04_Trees_and_Vegetation/mangrove_");
 }
 
@@ -329,7 +332,7 @@ export function mapToWorld(map: MapFile): WorldData {
       x: (it.tx + 0.5) * TILE,
       y: (it.ty + 0.5) * TILE,
       level: 1,
-    }));
+    })) as Spawn[];
   const taken = new Set<string>();
   for (const s of [...(map.spawns ?? []), ...nodeSpawns]) {
     if (s.kind !== "node") continue;
@@ -351,7 +354,7 @@ export function mapToWorld(map: MapFile): WorldData {
     const key = `${x},${y}`;
     if (taken.has(key)) continue;
     taken.add(key);
-    nodeSpawns.push({ id: `tiletree-${x}-${y}`, kind: "node", node: "tree", x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, level: 1 });
+    nodeSpawns.push({ id: `tiletree-${x}-${y}`, kind: "node", node: "tree", x: (x + 0.5) * TILE, y: (y + 0.5) * TILE, level: 1, ...(trees[0]?.startsWith(NEWTEX_TREE) ? { art: trees[0] } : {}) });
   }
   return {
     w: map.w,
