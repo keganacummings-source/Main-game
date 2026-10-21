@@ -3,8 +3,20 @@ import { ITEM_BY_ID } from "@/game/content";
 import { BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, TURBZ_ONLY_PIECES, type BuildPiece } from "@/game/building";
 import type { TurbzGame } from "@/game/engine";
 import { useSnapPick } from "./use-snap";
+import { NEWTEX_DIR } from "@/game/tile-atlas";
 
 type GameProp = { game: TurbzGame | null };
+
+const NEWTEX_PREVIEW: Partial<Record<BuildPiece, string>> = {
+  wood: NEWTEX_DIR + "wood_wall.png",
+  stone: NEWTEX_DIR + "stone_wall.png",
+  woodfloor: NEWTEX_DIR + "wood_floor.png",
+  stonefloor: NEWTEX_DIR + "stone_floor.png",
+  door: NEWTEX_DIR + "wood_wall.png",
+  bed: NEWTEX_DIR + "bed.png",
+  ghostbox: NEWTEX_DIR + "ghostbox.png",
+  turbzchest: NEWTEX_DIR + "chest.png",
+};
 
 /**
  * The build-mode toolbar (F). Docked along the bottom while you build: every camp piece grouped into
@@ -21,6 +33,7 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
   const placedAlready = (id: BuildPiece) => (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && c.chest);
   const hover = s.build.hover;
   const erase = s.build.piece === "erase";
+  const newTex = !!(game && (game as any).save?.turbzNewTex);
   return (
     <div className="build-bar px-panel" data-testid="build-bar" role="toolbar" aria-label="Build mode">
       <div className="build-bar-head">
@@ -44,12 +57,14 @@ export const BuildBar = memo(function BuildBar({ game }: GameProp) {
                   const key = hotkeys.indexOf(id) + 1;
                   const on = s.build.piece === id;
                   const done = placedAlready(id);
+                  const preview = newTex ? NEWTEX_PREVIEW[id] : undefined;
                   return (
                     <button key={id} type="button" data-testid={`build-piece-${id}`}
                       className={`build-piece ${on ? "build-piece-on" : ""} ${afford ? "" : "build-piece-poor"}`}
                       disabled={!!done} title={def.about} aria-pressed={on}
                       onClick={() => game?.setBuildPiece(id)}>
                       {key > 0 && <kbd className="build-piece-key">{key}</kbd>}
+                      {preview && <img src={preview} alt="" className="build-piece-preview" style={{ width: 24, height: 24, imageRendering: "pixelated", marginRight: 4, verticalAlign: "middle" }} />}
                       <span className="build-piece-name">{def.name}{done ? " ✓" : ""}</span>
                       <span className={`build-piece-cost ${afford ? "cost-ok" : "cost-miss"}`}>
                         {Object.entries(def.cost).map(([k, n]) => `${n.toLocaleString()} ${k === "kyo" ? "kyo" : ITEM_BY_ID[k]?.name ?? k}`).join(" + ")}

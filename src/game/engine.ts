@@ -192,7 +192,7 @@ import { FLOOR_COLOR, expandZones, mapToWorld, regionAt, savedMaps } from "./map
 import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./builtin-maps";
 import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
 import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
-import { tileImage, tileImageRevision } from "./tile-atlas";
+import { tileImage, tileImageRevision, texModeOn, NEWTEX_DIR } from "./tile-atlas";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
@@ -3133,7 +3133,8 @@ export class TurbzGame {
 			const mag = Math.hypot(ix, iy) || 1;
 			const soak = this.status.some((s) => s.id === "soak");
 			const exhausted = this.rules === "hardcore" && save.survival.rest < 15;
-			const speed = (rooted || this.sleeping ? 0 : 118) * (soak ? .62 : 1) * (exhausted ? .7 : 1) * this.speedMult();
+			const waterSlow = this.waterSlow();
+			const speed = (rooted || this.sleeping ? 0 : 118) * (soak ? .62 : 1) * (exhausted ? .7 : 1) * waterSlow * this.speedMult();
 			this.vx = ix / mag * speed;
 			this.vy = iy / mag * speed;
 			if (Math.abs(ix) > .2 || Math.abs(iy) > .2) {
@@ -3314,7 +3315,8 @@ export class TurbzGame {
 		const rooted = this.typing() || this.status.some((s) => (s.id === "root" || s.id === "sleep") && s.t > 0);
 		const soak = this.status.some((s) => s.id === "soak");
 		const exhausted = this.rules === "hardcore" && save.survival.rest < 15;
-			const speed = (rooted || this.sleeping ? 0 : 118) * (soak ? .62 : 1) * (exhausted ? .7 : 1) * this.speedMult();
+		const waterSlow = this.waterSlow();
+			const speed = (rooted || this.sleeping ? 0 : 118) * (soak ? .62 : 1) * (exhausted ? .7 : 1) * waterSlow * this.speedMult();
 		this.tryMove(dx / l * speed * dt, dy / l * speed * dt);
 		this.walk += dt * 6;
 		if (dx < -2) this.facing = -1;
@@ -10546,6 +10548,24 @@ export class TurbzGame {
 		n += this.setBonusMod(id);
 		return n;
 	}
+	/** 0.55 when standing on water and the class is not water-element (or crying girl with water); 1 otherwise. */
+	waterSlow() {
+		const save = this.save;
+		if (!save || !this.world) return 1;
+		const tx = Math.floor(save.x / 32), ty = Math.floor(save.y / 32);
+		if (tx < 0 || ty < 0 || tx >= this.world.w || ty >= this.world.h) return 1;
+		const t = this.world.tiles[ty * this.world.w + tx];
+		if (!t || t.floor !== 2) return 1;
+		const cls = CLASS_BY_ID[save.classId];
+		if (!cls) return 0.55;
+		if (cls.type === "water") return 1;
+		// Crying Girl can choose water as primary or secondary.
+		if (save.classId === "cryinggirl") {
+			const cfg = getCryingConfig(save);
+			if (cfg.type === "water" || cfg.type2 === "water") return 1;
+		}
+		return 0.55;
+	}
 	speedMult() {
 		const swift = this.status.some((s) => s.id === "swift") ? 1.45 : 1;
 		const agility = bendDown(1 + this.mod("speed") / 100, 0.5, 0.05);
@@ -11787,6 +11807,19 @@ export class TurbzGame {
 			}
 		}
 	}
+	/** New Texture Mode camp piece path, or null to fall back to procedural paint. */
+	campNewTexPath(kind: string | undefined, open = false): string | null {
+		if (!kind) return NEWTEX_DIR + "log.png";
+		switch (kind) {
+			case "wood": return NEWTEX_DIR + "wood_wall.png";
+			case "stone": return NEWTEX_DIR + "stone_wall.png";
+			case "woodfloor": return NEWTEX_DIR + "wood_floor.png";
+			case "stonefloor": return NEWTEX_DIR + "stone_floor.png";
+			case "door": return NEWTEX_DIR + (open ? "wood_floor.png" : "wood_wall.png");
+			case "brick": return NEWTEX_DIR + "stone_wall.png";
+			default: return NEWTEX_DIR + "log.png";
+		}
+	}
 	/** Pixel-sprite wooden wall: vertical planks with grain and a plated seam. */
 	paintWoodWall(ctx, x, y) {
 		ctx.fillStyle = "#3a2414"; ctx.fillRect(x, y, 32, 32);
@@ -11995,6 +12028,17 @@ export class TurbzGame {
 		for (const l of [...floors, ...solids]) {
 			const x = l.tx * 32, y = l.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
+			if (texModeOn()) {
+				const path = this.campNewTexPath(l.kind, !!l.open);
+				if (path) {
+					const img = tileImage(path);
+					if (img.complete && img.naturalWidth > 0) {
+						ctx.imageSmoothingEnabled = false;
+						ctx.drawImage(img, x, y, 32, 32);
+						continue;
+					}
+				}
+			}
 			if (l.kind === "stone") this.paintStoneWall(ctx, x, y);
 			else if (l.kind === "woodfloor") this.paintWoodFloor(ctx, x, y);
 			else if (l.kind === "stonefloor") this.paintStoneFloor(ctx, x, y);
@@ -12007,6 +12051,14 @@ export class TurbzGame {
 			if (b.map !== save.map) continue;
 			const x = b.tx * 32, y = b.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
+			if (texModeOn()) {
+				const img = tileImage(NEWTEX_DIR + "bed.png");
+				if (img.complete && img.naturalWidth > 0) {
+					ctx.imageSmoothingEnabled = false;
+					ctx.drawImage(img, x, y, 32, 32);
+					continue;
+				}
+			}
 			this.paintBed(ctx, x, y);
 		}
 		// Campfires last among camp art: a wall/floor on the tile above is drawn above (earlier), so the flame

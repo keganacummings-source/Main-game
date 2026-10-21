@@ -1147,8 +1147,10 @@ export function blocked(world: WorldData, x: number, y: number): boolean {
   if (tx <= 1 || ty <= 1 || tx >= world.w - 2 || ty >= world.h - 2) return true;
   if (world.solids && world.solids.has(ty * world.w + tx)) return true;
   const t = world.tiles[ty * world.w + tx]!;
-  // Last Man Standing: everyone can swim, so every continent can be reached.
-  if (t.floor === 1 || t.floor === 2) return !world.swim;
+  // Water (floor 2) is always walkable. Non-water-element classes are slowed on it
+  // (see engine movement). Walls (floor 1) stay blocked unless the mode allows swimming.
+  if (t.floor === 2) return false;
+  if (t.floor === 1) return !world.swim;
   if (t.decor > 0) return false;
   return t.block === 1;
 }
