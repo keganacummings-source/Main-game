@@ -10,6 +10,8 @@
  *   • Sand            from sandstone / sand walls
  *   • Logs            from wooden blocks
  *
+ * Every block that breaks also pays Mining skill XP (MINE_XP; harder rock pays more, and an ore drop pays a bonus).
+ *
  * Hell / Rock Ore, Dirt and Sand only ever come from mining.
  * This file is pure (no engine, no canvas) so scripts/mining.test.mjs can check it directly.
  */
@@ -31,8 +33,19 @@ export const MINE_REACH = 3.2 * 32;
 export const ORE_CHANCE = 0.25;
 
 export type MineKind = "hell" | "stone" | "dirt" | "sand" | "wood";
+
+/**
+ * Mining skill XP for breaking one block, by kind. For scale, harvesting an ore node pays 14.
+ * Class aptitude (e.g. the Bulwark's Mining ×2.5) and hardcore's XP boost are applied by the engine's gainSkill.
+ */
+export const MINE_XP: Record<MineKind, number> = { hell: 16, stone: 10, sand: 6, wood: 5, dirt: 3 };
+/** Extra Mining XP when the break also drops an ore. */
+export const ORE_BONUS_XP = 6;
+
 export type MineInfo = {
   kind: MineKind;
+  /** Mining skill XP this block pays when it breaks (before aptitude). */
+  xp: number;
   /** Item id dropped, and the chance (0..1) of getting it. */
   drop: string;
   chance: number;
@@ -81,22 +94,30 @@ export function mineInfo(t: MineTile | undefined, tx: number, ty: number, w: num
   if (NOT_ROCK.test(name) || t.layers?.some((l) => /portal/.test(l))) return null;
   // Dirt ground is not a wall, but it can be dug once for Dirt. It becomes grass.
   if (t.block !== 1) {
-    if (DIRT.test(name)) return { kind: "dirt", drop: MINE_DROPS.dirt, chance: 1, floor: { floor: 0, sprite: NT("grass") } };
+    if (DIRT.test(name)) return { kind: "dirt", xp: MINE_XP.dirt, drop: MINE_DROPS.dirt, chance: 1, floor: { floor: 0, sprite: NT("grass") } };
     return null;
   }
 
   const tex = TEX_FLOOR[name];
   const floor = tex ?? dirtFloor(sprite, tx, ty);
-  if (WOOD.test(name)) return { kind: "wood", drop: MINE_DROPS.wood, chance: 1, floor };
-  if (SAND.test(name)) return { kind: "sand", drop: MINE_DROPS.sand, chance: 1, floor };
-  if (DIRT.test(name)) return { kind: "dirt", drop: MINE_DROPS.dirt, chance: 1, floor };
-  if (t.biome === HELL_BIOME) return { kind: "hell", drop: MINE_DROPS.hell, chance: ORE_CHANCE, floor };
-  return { kind: "stone", drop: MINE_DROPS.stone, chance: ORE_CHANCE, floor };
+  if (WOOD.test(name)) return { kind: "wood", xp: MINE_XP.wood, drop: MINE_DROPS.wood, chance: 1, floor };
+  if (SAND.test(name)) return { kind: "sand", xp: MINE_XP.sand, drop: MINE_DROPS.sand, chance: 1, floor };
+  if (DIRT.test(name)) return { kind: "dirt", xp: MINE_XP.dirt, drop: MINE_DROPS.dirt, chance: 1, floor };
+  if (t.biome === HELL_BIOME) return { kind: "hell", xp: MINE_XP.hell, drop: MINE_DROPS.hell, chance: ORE_CHANCE, floor };
+  return { kind: "stone", xp: MINE_XP.stone, drop: MINE_DROPS.stone, chance: ORE_CHANCE, floor };
 }
 
 /** The item a break yields (or null). `roll` is a 0..1 random number. */
 export function rollMineDrop(info: MineInfo, roll: number): string | null {
   return roll < info.chance ? info.drop : null;
+}
+
+/**
+ * Mining skill XP for one break: the block's own XP, plus ORE_BONUS_XP when the drop is an ore
+ * (`dropped` is what rollMineDrop returned).
+ */
+export function mineXp(info: MineInfo, dropped: string | null): number {
+  return info.xp + (dropped && (info.kind === "hell" || info.kind === "stone") ? ORE_BONUS_XP : 0);
 }
 
 /** Turns a block into its floor, in place. */

@@ -23,7 +23,7 @@
  * — the file it came from almost certainly also exports the function you need.
  */
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
-import { mineInfo, rollMineDrop, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
+import { mineInfo, rollMineDrop, mineXp, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
 import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, DUP_SECONDS, DUP_POWER_COST, DUP_STORE_MAX, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
@@ -194,7 +194,7 @@ import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./buil
 import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
 import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
 import { tileImage, tileImageRevision, texModeOn, NEWTEX_DIR } from "./tile-atlas";
-import { powerTexture } from "./camp-assets";
+import { powerArt } from "./camp-assets";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
@@ -2715,6 +2715,9 @@ export class TurbzGame {
 			this.giveItem(drop, 1);
 			this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[drop]?.name ?? drop}`, drop === "hell_ore" ? "#ff7a4a" : "#e6c15a");
 		} else this.float(tx * 32 + 16, ty * 32 + 4, "Broken", "#9aa0a6");
+		// Every broken block trains the Mining skill (gainSkill applies class aptitude and hardcore's boost).
+		const gained = this.gainSkill("mining", mineXp(info, drop));
+		if (gained > 0) this.float(tx * 32 + 16, ty * 32 - 10, `+${gained} Mining xp`, "#8fd0ff");
 		this.cue("click", { rate: 0.6 }, [120, .08, "square"]);
 		this.refreshTerrain();
 		this.persist();
@@ -6777,9 +6780,10 @@ export class TurbzGame {
 		this.say(`${name} is coming to hunt you. She brings ${n} ghosts.`);
 		this.cue("boom", { rate: 0.72 }, [90, .22, "sawtooth"]);
 	}
+	/** Adds skill XP (class aptitude and hardcore's boost applied). Returns the XP actually gained, 0 if the skill does not exist. */
 	gainSkill(id, amount) {
 		const st = this.save.skills[id];
-		if (!st) return;
+		if (!st) return 0;
 		amount = Math.max(1, Math.round(amount * aptitudeOf(this.save.classId, id)));
 		const gain = this.rules === "hardcore" ? Math.max(1, Math.floor(amount * 2.4)) : amount;
 		st.xp += gain;
@@ -6796,6 +6800,7 @@ export class TurbzGame {
 			this.say(`${name} ${st.level}. ${skillLine(id, st.level)}`);
 			this.tone(700, .08, "triangle");
 		}
+		return gain;
 	}
 	skillN(id) {
 		const lv = this.save?.skills?.[id]?.level;
@@ -12552,14 +12557,12 @@ export class TurbzGame {
 		}
 		// HellStone Generators, Wires, Batteries, the XP Producer and the Duplicator (TURBZ + New Textures)
 		const paintSlot = (slot, x, y, c1, c2) => {
-			const url = powerTexture(slot);
-			if (url) {
-				const img = tileImage(url);
-				if (img.complete && img.naturalWidth > 0) {
-					ctx.imageSmoothingEnabled = false;
-					ctx.drawImage(img, x, y, 32, 32);
-					return;
-				}
+			// Your live texture from the Tile Builder, else the art the game ships in NewTex/.
+			const img = tileImage(powerArt(slot));
+			if (img.complete && img.naturalWidth > 0) {
+				ctx.imageSmoothingEnabled = false;
+				ctx.drawImage(img, x, y, 32, 32);
+				return;
 			}
 			ctx.fillStyle = c1;
 			ctx.fillRect(x + 4, y + 4, 24, 24);

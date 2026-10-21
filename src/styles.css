@@ -1490,3 +1490,53 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .designer-screen .cr-actions .cr-wide { flex-basis: 100%; }
 .cr-status { font-family: var(--font-display); font-size: 9px; color: var(--color-dim); line-height: 1.6; }
 .cr-dirty { color: var(--color-blood); }
+
+/* ─── Tile Builder (camp-asset-builder.tsx, pixel-studio.tsx) ─────────────────────────────────────────────── */
+.ca-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ca-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 16px; }
+.ca-notice { margin: 0 0 12px; padding: 8px 12px; border: 2px solid var(--color-dim); background: var(--color-panel); }
+.ca-notice-good { border-color: #7ee0a0; color: #7ee0a0; }
+.ca-notice-bad { border-color: #e0605a; color: #e0605a; }
+.ca-notice-info { border-color: var(--color-kyo); color: var(--color-kyo); }
+.ca-slots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.ca-slot { display: grid; justify-items: center; gap: 6px; padding: 10px; cursor: pointer; text-align: center; font: inherit; }
+.ca-slot:hover { transform: translate(-2px, -2px); }
+.ca-slot-name { font-size: 18px; line-height: 1.1; }
+.ca-thumb { display: inline-block; flex: none; background: repeating-conic-gradient(#2a2220 0% 25%, #3a3029 0% 50%) 0 0 / 12px 12px; border: 2px solid #5a483a; }
+.ca-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0 12px; }
+.ca-search { max-width: 280px; }
+.ca-storage { margin-left: auto; font-size: 18px; }
+.ca-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.ca-card { display: flex; gap: 10px; padding: 10px; }
+.ca-card-art { flex: none; padding: 0; border: 0; background: none; cursor: pointer; align-self: flex-start; }
+.ca-card-body { min-width: 0; display: grid; gap: 2px; align-content: start; }
+.ca-card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ca-card-sub { font-size: 16px; }
+.ca-editor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 380px); gap: 16px; align-items: start; }
+.ca-meta { padding: 12px; display: grid; gap: 14px; }
+.ca-meta .ui-section { gap: 10px; }
+@media (max-width: 900px) { .ca-editor { grid-template-columns: minmax(0, 1fr); } .ca-storage { margin-left: 0; } }
+
+.ps-root { display: grid; gap: 10px; }
+.ps-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ps-key { margin-left: 6px; font-size: 13px; opacity: 0.65; border: 1px solid currentColor; padding: 0 3px; }
+.ps-sep { flex: none; width: 2px; height: 24px; background: #5a483a; margin: 0 4px; }
+.ps-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 300px); gap: 14px; align-items: start; }
+.ps-stage { min-width: 0; display: grid; gap: 6px; }
+.ps-canvas-wrap { overflow: auto; max-width: 100%; max-height: 74vh; border: 2px solid #5a483a; background: #1c1412; padding: 0; line-height: 0; }
+.ps-canvas { display: block; image-rendering: pixelated; cursor: crosshair; touch-action: none; }
+.ps-status { font-size: 16px; }
+.ps-side { display: grid; gap: 12px; min-width: 0; }
+.ps-block { display: grid; gap: 6px; padding: 8px; border: 2px solid #3a2e26; background: #1c1412; }
+.ps-label { font-family: var(--font-display); font-size: 8px; color: var(--color-dim); text-transform: uppercase; margin-top: 2px; }
+.ps-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ps-zoom input[type=range] { flex: 1; min-width: 80px; accent-color: var(--color-kyo); }
+.ps-colorrow { display: flex; gap: 8px; align-items: center; }
+.ps-colorinput { width: 48px; height: 40px; padding: 0; border: 2px solid var(--color-bone); background: none; cursor: pointer; }
+.ps-hex { max-width: 120px; font-family: monospace; }
+.ps-swatches { display: flex; flex-wrap: wrap; gap: 3px; }
+.ps-swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #000; cursor: pointer; }
+.ps-swatch:hover { border-color: var(--color-bone); }
+.ps-swatch-on { border-color: var(--color-kyo); outline: 2px solid var(--color-kyo); outline-offset: 1px; }
+.ps-preview { display: block; border: 2px solid #3a2e26; background: #1c1412; }
+@media (max-width: 760px) { .ps-main { grid-template-columns: minmax(0, 1fr); } .ps-swatch { width: 28px; height: 28px; } }

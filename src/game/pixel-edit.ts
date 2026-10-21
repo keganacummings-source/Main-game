@@ -100,3 +100,117 @@ export function stripBakedChecker(p: Pix): boolean {
   for (let i = 0; i < p.length; i += 4) if (isC(i, A) || isC(i, B)) { p[i] = p[i + 1] = p[i + 2] = p[i + 3] = 0; }
   return true;
 }
+
+// ─── Shape, transform and palette helpers used by the Tile Builder (Camp & Tile Asset Builder) ───
+
+export function clonePix(p: Pix): Pix {
+  return new Uint8ClampedArray(p);
+}
+
+export function pixEqual(a: Pix, b: Pix): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Corners of a box in any order → normalised so x0 <= x1 and y0 <= y1. */
+function norm(x0: number, y0: number, x1: number, y1: number): [number, number, number, number] {
+  return [Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1)];
+}
+
+/** Cells of a rectangle between two corners: the whole box when `filled`, otherwise just its border. */
+export function rectCells(x0: number, y0: number, x1: number, y1: number, filled: boolean): Array<[number, number]> {
+  const [ax, ay, bx, by] = norm(x0, y0, x1, y1);
+  const out: Array<[number, number]> = [];
+  for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) {
+    if (filled || x === ax || x === bx || y === ay || y === by) out.push([x, y]);
+  }
+  return out;
+}
+
+/** Cells of the ellipse that fits in the box between two corners (filled, or just the ring). */
+export function ellipseCells(x0: number, y0: number, x1: number, y1: number, filled: boolean): Array<[number, number]> {
+  const [ax, ay, bx, by] = norm(x0, y0, x1, y1);
+  const cx = (ax + bx) / 2, cy = (ay + by) / 2;
+  const rx = (bx - ax) / 2 + 0.5, ry = (by - ay) / 2 + 0.5;
+  const inside = (x: number, y: number) => ((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1;
+  const out: Array<[number, number]> = [];
+  for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) {
+    if (!inside(x, y)) continue;
+    if (filled || !inside(x - 1, y) || !inside(x + 1, y) || !inside(x, y - 1) || !inside(x, y + 1)) out.push([x, y]);
+  }
+  return out;
+}
+
+export function flipV(p: Pix, w: number, h: number): Pix {
+  const out = newPix(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const a = (y * w + x) * 4, b = ((h - 1 - y) * w + x) * 4;
+    out[b] = p[a]!; out[b + 1] = p[a + 1]!; out[b + 2] = p[a + 2]!; out[b + 3] = p[a + 3]!;
+  }
+  return out;
+}
+
+/** Rotates a square buffer a quarter turn clockwise (or counter-clockwise). */
+export function rotate90(p: Pix, s: number, ccw = false): Pix {
+  const out = newPix(s, s);
+  for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+    const nx = ccw ? y : s - 1 - y;
+    const ny = ccw ? s - 1 - x : x;
+    const a = (y * s + x) * 4, b = (ny * s + nx) * 4;
+    out[b] = p[a]!; out[b + 1] = p[a + 1]!; out[b + 2] = p[a + 2]!; out[b + 3] = p[a + 3]!;
+  }
+  return out;
+}
+
+/** Slides the art by (dx, dy) pixels; whatever leaves one edge comes back on the other (handy for seamless tiles). */
+export function shiftWrap(p: Pix, w: number, h: number, dx: number, dy: number): Pix {
+  const out = newPix(w, h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const nx = (((x + dx) % w) + w) % w, ny = (((y + dy) % h) + h) % h;
+    const a = (y * w + x) * 4, b = (ny * w + nx) * 4;
+    out[b] = p[a]!; out[b + 1] = p[a + 1]!; out[b + 2] = p[a + 2]!; out[b + 3] = p[a + 3]!;
+  }
+  return out;
+}
+
+/** Nearest-neighbour resample, so pixel art stays crisp when the canvas size changes (16 ⇄ 32 ⇄ 64). */
+export function resizeNearest(p: Pix, w: number, h: number, nw: number, nh: number): Pix {
+  if (w === nw && h === nh) return clonePix(p);
+  const out = newPix(nw, nh);
+  for (let y = 0; y < nh; y++) for (let x = 0; x < nw; x++) {
+    const sx = Math.min(w - 1, Math.floor((x * w) / nw)), sy = Math.min(h - 1, Math.floor((y * h) / nh));
+    const a = (sy * w + sx) * 4, b = (y * nw + x) * 4;
+    out[b] = p[a]!; out[b + 1] = p[a + 1]!; out[b + 2] = p[a + 2]!; out[b + 3] = p[a + 3]!;
+  }
+  return out;
+}
+
+/** The most-used opaque colours in the art (hex), most common first. */
+export function paletteOf(p: Pix, max = 16): string[] {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < p.length; i += 4) {
+    if (p[i + 3]! < 128) continue;
+    const k = rgbaToHex(p[i]!, p[i + 1]!, p[i + 2]!);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, max).map(([k]) => k);
+}
+
+/**
+ * How well the left edge matches the right edge and the top matches the bottom, 0..1 (1 = seamless).
+ * Only opaque pixels count; used to hint whether a floor tile will show seams when it repeats.
+ */
+export function seamScore(p: Pix, w: number, h: number): number {
+  let total = 0, diff = 0;
+  const cmp = (a: number, b: number) => {
+    const aa = p[a + 3]!, ba = p[b + 3]!;
+    total++;
+    if ((aa === 0) !== (ba === 0)) { diff += 255; return; }
+    if (aa === 0) return;
+    diff += (Math.abs(p[a]! - p[b]!) + Math.abs(p[a + 1]! - p[b + 1]!) + Math.abs(p[a + 2]! - p[b + 2]!)) / 3;
+  };
+  for (let y = 0; y < h; y++) cmp((y * w) * 4, (y * w + (w - 1)) * 4);
+  for (let x = 0; x < w; x++) cmp(x * 4, ((h - 1) * w + x) * 4);
+  return total ? Math.max(0, 1 - diff / (total * 255)) : 1;
+}

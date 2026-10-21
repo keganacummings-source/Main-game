@@ -35,7 +35,7 @@ export function DesignerMode({ onBack }: { onBack: () => void }) {
       <div className="tile-grid designer-tiles">
         <Tile primary title="Map Builder" about="Bossrooms, dungeons and whole worlds: terrain, collision, spawn zones, NPCs, quests, import / export." onClick={() => setTool("map")} badge={`${savedMaps().length} saved`} />
         <Tile title="Enemy Designer" about="Make new enemies or replace built-in ones: sprite, element, stats, enchantments, moves, where they spawn and what they drop." onClick={() => setTool("enemy")} badge={`${localEnemyDesigns().length} saved`} />
-        <Tile title="Camp & Tile Asset Builder" about="Pixel-paint camp pieces, map tiles, and Power blocks (HellStone Generator, Battery, Wire, XP Producer, Duplicator). Live power textures show up on those blocks in game. Export packs as JSON." onClick={() => setTool("camp")} badge={`${loadPack().length} saved`} />
+        <Tile title="Tile Builder (Camp, Tile & Power Art)" about="Pixel-paint camp pieces, map tiles and Power block art (HellStone Generator, Battery, Wire, XP Producer, Duplicator) with undo, fill, shapes, mirroring and a live in-game preview. Export packs as JSON." onClick={() => setTool("camp")} badge={`${loadPack().length} saved`} />
         <Tile title="Character Redesigner" about="Draw over any class's 16 frames (4 directions × 4 steps). The original art is already loaded, so just paint over it. Saves automatically; export JSON for a future update." onClick={() => setTool("redesign")} badge={`${loadRedraws().length} saved`} />
       </div>
       <p className="designer-status">Designs are saved on this device and are live in your games. Export JSON to ship them in a game update.</p>

@@ -36,6 +36,16 @@ A broken block becomes its matching floor (stone wall → stone floor, hell wall
 
 Hell Ore, Rock Ore and Dirt Ore only drop from mining. For now they can only be collected and sold.
 
+**Every block you break also trains your Mining skill.** Harder rock pays more, and a block that drops an ore pays a bonus. Your class aptitude (the Bulwark grinds Mining) and Hardcore's XP boost apply as usual, and a floating "+N Mining xp" shows what you got.
+
+| Block | Mining XP per break |
+| --- | --- |
+| **Stone** in a hell biome | 16 (+6 when it drops Hell Ore) |
+| **Stone** anywhere else | 10 (+6 when it drops Rock Ore) |
+| **Sandstone** | 6 |
+| **Wooden** | 5 |
+| **Dirt** | 3 |
+
 ## Fishing
 
 Any water tile is a fishing spot. Stand beside water and press **E**.

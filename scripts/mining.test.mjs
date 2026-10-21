@@ -64,3 +64,22 @@ test("breaking a block leaves walkable floor", () => {
   assert.equal(t.sprite, `${NT}stone_floor.png`);
   assert.equal(t.layers, undefined);
 });
+
+test("every block kind pays Mining XP, ore drops pay a bonus", () => {
+  assert.equal(info(wall("hell_wall", 6)).xp, m.MINE_XP.hell);
+  assert.equal(info(wall("stone_wall")).xp, m.MINE_XP.stone);
+  assert.equal(info(wall("sand_wall")).xp, m.MINE_XP.sand);
+  assert.equal(info(wall("wood_wall")).xp, m.MINE_XP.wood);
+  assert.equal(info(wall("dirt_wall")).xp, m.MINE_XP.dirt);
+  assert.equal(info({ floor: 4, biome: 2, block: 0, decor: 0, sprite: `${NT}dirt_floor.png` }).xp, m.MINE_XP.dirt, "digging dirt ground");
+  for (const k of Object.keys(m.MINE_XP)) assert.ok(m.MINE_XP[k] > 0, `${k} xp`);
+  assert.ok(m.MINE_XP.hell > m.MINE_XP.stone && m.MINE_XP.stone > m.MINE_XP.dirt, "harder rock pays more");
+  const stone = info(wall("stone_wall"));
+  assert.equal(m.mineXp(stone, null), m.MINE_XP.stone);
+  assert.equal(m.mineXp(stone, "rock_ore"), m.MINE_XP.stone + m.ORE_BONUS_XP);
+  const hell = info(wall("hell_wall", 6));
+  assert.equal(m.mineXp(hell, "hell_ore"), m.MINE_XP.hell + m.ORE_BONUS_XP);
+  const sand = info(wall("sand_wall"));
+  assert.equal(m.mineXp(sand, "sand"), m.MINE_XP.sand, "sand is not an ore, so no bonus");
+  assert.equal(m.mineXp(info(wall("wood_wall")), "timber"), m.MINE_XP.wood, "timber is not an ore, so no bonus");
+});

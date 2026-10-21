@@ -23,3 +23,9 @@ The pack has one tree each for plains, swamp and desert, and no log. `tree_snow.
 
 `scripts/tex-world.test.mjs`: files exist, worlds are deterministic and use only new art, every open tile is reachable,
 dungeons keep their layout and use only new art.
+
+## Power block art and Mining XP
+
+- `hellgen.png`, `battery.png`, `wire.png`, `xpgen.png` and `duplicator.png` in `public/MapAssets/NewTex/` are the default art for the Power blocks.
+  They are drawn by `scripts/sprites/power-textures.py` (re-run it after editing). A Live texture painted in the Tile Builder replaces them (`powerArt` in `camp-assets.ts`).
+- Breaking a block pays Mining skill XP (`MINE_XP` in `mining.ts`, bonus `ORE_BONUS_XP` when an ore drops). The engine calls `gainSkill("mining", mineXp(...))` in `tryMine`.

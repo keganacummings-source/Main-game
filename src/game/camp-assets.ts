@@ -6,7 +6,7 @@
  * Tile assets can also carry gameplay properties so unique tiles can be built and placed
  * to populate the world (hold items, spawn rules, deco flag, walk-on effects).
  */
-import { setTileOverrides } from "./tile-atlas";
+import { setTileOverrides, NEWTEX_DIR } from "./tile-atlas";
 
 export const CAMP_CATEGORIES = [
   "walls", "floors", "chest", "ghostbox", "campfire", "doors", "beds",
@@ -118,7 +118,12 @@ export function loadPack(): Asset[] {
 
 export function savePack(assets: Asset[]): boolean {
   powerTexRev++;
-  try { localStorage.setItem(ASSET_KEY, JSON.stringify(assets)); return true; } catch { return false; }
+  try {
+    localStorage.setItem(ASSET_KEY, JSON.stringify(assets));
+  } catch { return false; }
+  // Live tile replacements start drawing right away, no reload needed.
+  try { syncTileOverrides(assets); } catch { /* art must never break a save */ }
+  return true;
 }
 
 /** Bumped when the pack is saved so the game picks up new power-block art. */
@@ -144,4 +149,65 @@ export function syncTileOverrides(assets: Asset[] = loadPack()): void {
   const map: Record<string, string> = {};
   for (const a of assets) if (groupOf(a) === "tile" && a.live && a.replaces) map[a.replaces] = a.pixels;
   setTileOverrides(map);
+}
+
+/** The art shipped with the game for each Power block (made by scripts/sprites/power-textures.py). */
+export function powerDefaultArt(slot: string): string {
+  return `${NEWTEX_DIR}${slot}.png`;
+}
+
+/** What the game draws for a Power block: your live texture from the Tile Builder, else the shipped art. */
+export function powerArt(slot: string): string {
+  return powerTexture(slot) ?? powerDefaultArt(slot);
+}
+
+/** Where the importable copy of the shipped power art lives (Tile Builder → "Import built-in power art"). */
+export const POWER_PACK_URL = `${NEWTEX_DIR}power-pack.json`;
+
+export type PackParse = { assets: Asset[]; skipped: number };
+
+/** Reads a pack file: a bare array of assets, or `{ assets: [...] }`. Entries that fail validation are counted and dropped. */
+export function parsePack(text: string): PackParse | null {
+  let raw: unknown;
+  try { raw = JSON.parse(text); } catch { return null; }
+  const list = Array.isArray(raw) ? raw : (raw && typeof raw === "object" && Array.isArray((raw as any).assets) ? (raw as any).assets : null);
+  if (!list) return null;
+  const assets: Asset[] = [];
+  let skipped = 0;
+  for (const a of list) {
+    if (!validAsset(a)) { skipped++; continue; }
+    assets.push({
+      ...a,
+      name: typeof a.name === "string" && a.name.trim() ? a.name.slice(0, 60) : "Imported",
+      size: a.size === 16 || a.size === 64 ? a.size : 32,
+      created: typeof a.created === "number" && Number.isFinite(a.created) ? a.created : Date.now(),
+    });
+  }
+  return { assets, skipped };
+}
+
+/**
+ * Adds `incoming` to `current`. A piece with the same id replaces the old one; everything else is added.
+ * Returns the new list and how many were added or replaced.
+ */
+export function mergePack(current: Asset[], incoming: Asset[]): { assets: Asset[]; added: number; replaced: number } {
+  const byId = new Map(current.map((a) => [a.id, a] as const));
+  let added = 0, replaced = 0;
+  for (const a of incoming) {
+    if (byId.has(a.id)) replaced++; else added++;
+    byId.set(a.id, a);
+  }
+  return { assets: [...byId.values()], added, replaced };
+}
+
+/** Rough size of the pack in localStorage (browsers allow about 5 MB for the whole site). */
+export function packBytes(assets: Asset[]): number {
+  try { return JSON.stringify(assets).length; } catch { return 0; }
+}
+
+/** Which Power block slots have a live custom texture. */
+export function customPowerSlots(assets: Asset[] = loadPack()): Set<string> {
+  const out = new Set<string>();
+  for (const a of assets) if (groupOf(a) === "power" && a.live !== false) out.add(a.category);
+  return out;
 }

@@ -1,11 +1,18 @@
 # Patch Notes
 
+## Tile Builder rebuild, power block art, Mining XP (TURBZ, New Texture Mode)
+
+- **Mining XP.** Every block you break now trains your **Mining** skill: 16 for hell stone, 10 for other stone, 6 for sandstone, 5 for wood, 3 for dirt, plus 6 more when the block drops an ore. A "+N Mining xp" pops up with the drop.
+- **Power blocks have art.** The HellStone Generator, Battery, Wire, XP Producer and Duplicator now ship with their own New Texture art, shown on the placed block and in the build bar. Anything you paint in the Tile Builder still wins.
+- **Tile Builder rebuilt** (Designer Mode → Camp & Tile Asset Builder): pencil, eraser, fill, line, box, oval and colour picker; undo and redo; mirror drawing; brush sizes; flip, rotate and wrapping shift; zoom and a pixel grid; a game palette plus recent and in-art colours; PNG import and export; a preview on in-game floors and a repeating 3×3 preview with a seam check. The library has search, filters, copy, per-piece Live toggles, pack import that merges, and a storage meter. See `docs/tile-builder.md`.
+- **Fixed:** checkboxes in the old builder could not be toggled, painting lost strokes while dragging, Live tile replacements only applied after a reload, and changing the canvas size stretched your art.
+
 ## Duplicator (TURBZ, New Texture Mode)
 
 - **Duplicator** is a Power block. Build it from the Power group (6 Hell Ore, 6 Vein Ore, 6 Logs), wire it to a Battery, and press **E**.
 - Load **any bag item** — Ghost Jars, Drinking Water, ores, logs, Hell Ore, and the rest. The original stays in the machine.
 - Every **5 seconds** it spends **2 Power** and stores one copy (up to 999). Take the copies out, or take the original back to stop it.
-- Paint its art in Designer Mode → Camp & Tile Asset Builder → Power → Duplicator. A Live texture shows on the placed block.
+- Paint its art in Designer Mode → Camp & Tile Asset Builder → Power → Duplicator (it ships with default art). A Live texture shows on the placed block.
 
 ## Mining update (TURBZ, New Texture Mode)
 

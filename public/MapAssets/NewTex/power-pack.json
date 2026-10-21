@@ -1,0 +1,52 @@
+[
+  {
+    "id": "builtin-hellgen",
+    "name": "HellStone Power Generator",
+    "group": "power",
+    "category": "hellgen",
+    "pixels": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACG0lEQVR4nO2XvWvbQBjGfw1GGdIhOoUMxc7kJSRThkAhc4fSrsVTodBJydqlpB6SrB3zDwQytB1bOnQxhpJCh9LBWUKwSTABC9c1xB2sBNzBH5WsO91dYkOHPCCkO7163+ferzvBFOEXXvQAeq8f91Qy9yZtdEEsKI01W82EvcykCQA8e/Q0Mff+y0ep7FQIXDQb/PrdMpKdmQYBG9wRuCMQq8u0Gp4kov0gUYYba+tTNf71x/fYWNoHTqqnHBfylEtn+I0rPFdo61olo/tWmQPl0hkAx4U8u85lqvHbQOoBzxW8CfvPuwMiniu0ylQy0fmgHfeGlMDQZf0wXOI3rgCz1moL5V7guWIUhiHG2auwOC+M8iaVADBYORSdDltByOx1aEQgaLcoOh12uK+VNWpENsYBZq9DtgIzeWUSRu+mrlfpicIqCXWonx+QXXqufL/555ydMD0M2hAUnY76ZeUD9c/J088QUeOqEtUS2J9b0oncCjfeDevbq3BUg6Na/xn49iQ/GQKeK0bXONKMPPx0GhsXnU5Mj0xfYjveWFvnpPpPkawHqEhECXQzDovz8iqIbsepIfBckZrFOX85MTcMx7geFaxyoL69yuFKjmqtS7XWpfzqJzl/eTQ+XMmR3avYqLT7L8juVXj7IO6Rdy9LVgaNCERd5rmCoN2im3EA9C12ICfTAzfshLJkMoFJR/3/DqW6D2xgsqC/tkzJKf2Ww6AAAAAASUVORK5CYII=",
+    "size": 32,
+    "created": 1792624080719,
+    "live": true
+  },
+  {
+    "id": "builtin-battery",
+    "name": "Battery",
+    "group": "power",
+    "category": "battery",
+    "pixels": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABRklEQVR4nGNgIAF4Lfj/32vB///kymMDjMQqFBESQTH4zbs3jKTI4wJMxDqAgYGB4cqt2wxtfZPIlqfYAZu2bKdInmIH0AIMuAOwJhT0BEUtgC1hsuBSLB27gYH79iKqWX7rxDqs4gMeBThDgIEBt6vp5gA2jXCqWfTrxkrSHdCQZs3QMOsoTs2EAJtGONwMXAC/A5A0fmeTIclyzl9PMMwg2QHo4OyN80SpM9YwJNpMkhyw/QEpqmnggBoPTJ99uV3BwKPaQR8H2HegRsHW4JUM3mvDGew7UHPLwQrio4Dsgmhr8EoUmlxAUggg+4ynAkJ/uV1Bko8pcsCgiwLvtZSXlBRGAfmpnywHqIRPIUrdnZU5RJs5uKtjdECKz4gFQycEYLUbXR0Aq8spaZhQ1B4oa1tCtsUIM+7jtWjA08CA9wsGHAAAdeR4vXUlBw4AAAAASUVORK5CYII=",
+    "size": 32,
+    "created": 1792624080720,
+    "live": true
+  },
+  {
+    "id": "builtin-wire",
+    "name": "Wire",
+    "group": "power",
+    "category": "wire",
+    "pixels": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABSElEQVR4nO1WoW4CQRB9R8bWkHMkBNG6ChQJECyiH9BU80c1qAaBIlWkX0BCgAvqPIgLSd21BoNiK5prliW9e9uFbMU9tZPdeft2dnZ2AlgirIaq1ahgNBxgu9kBAJarGLMoxTo5Iv1MAxu+iq2AS8O7AHFxXq5iZwFOEei0m+i0m/4EXALeBZQ5QAlQ+4ly2iUHdNUKq6GVCLYiWuXA9LmP27t64br7hxeaU2xPNh6/5c4nyQEAHzFpNbg8XCfHn/Fviae/CpZXRsMBtdAMa7d3KmIxj09slleyLxX4PoF+OtM+Q+0ROETAx+5sSv+q8zidChHeX53cAUDMalZks9D98jhlFqV/2sC8cxMsr+jZzYKJCssrbMXK3nX2zovA8novxVYdbCaE6YrVfqKCm6dC/qs1JMzmQNmQ/IOe0LuAMge8X4F3AV/7UZP2akZP5AAAAABJRU5ErkJggg==",
+    "size": 32,
+    "created": 1792624080721,
+    "live": true
+  },
+  {
+    "id": "builtin-xpgen",
+    "name": "XP Producer",
+    "group": "power",
+    "category": "xpgen",
+    "pixels": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAACIElEQVR4nM2WvUvDQBjGH8WhOOhm/cAY0KFIqVKQLoJQ3Nu5H+hWdCsUxL+gi6CT4KKW0s79A6QgdClCqCFDhxZiwc9JO0gn41AuvSZ3zUUj9VlyySV5fnnfh7sA/11PDcMYN8NIxcMniVHzTh8w8VvDgBSWmh2lQ1+rKLmy6Pu4APXyy3kkMX/IMg9IYYn3HIERhZjkmS+v+w/q5Zdz2jwghSWrebGazdPn5B6n1hAJVYCYs0z3ti9QqGXM59LR02MybnaUjlMlHDNgLXuxms3vbV8AAGIpGW0V0FTdvL9Qy5gQdDueGoaxuDlh82O2wCqreSwl4+gyAgBYDfVBgiEZQL8ipEJ01VjmwgA2oKh/6EhEINzINUAsJaNZfQUA8wj0K/ETjcwAHT5S/mBIZpq11cFYU3VbFnhhtFWAXrkqSq5MgpSOnh4XapmhwLHkxpwJwAsLrbY6+GIydgITBhARMSMQmqojGJKFIKx7gxCAtQ3ElDYkY9Y6QMtaYaHNaKwrIQ+ChqFN3Zi7AiAQgLe7oRDA0syGGZyttXSSnmP9D9y1iiUAeOzeO75fGGAnmGTOffYmk9O+r5L1+q1WEgKYEgEAAP2txZsqoSv6Frt+tA54KWaJ6J57KVZLuC1YmYt4av7wVmde5wK8d22L2J9o7BlwBLg6u/ZkzBM3hLO+BfM8vruPys31r8YfvWdmCIUAvBAPgBvCj96zpwD/Vt9CLjv0P5QpSQAAAABJRU5ErkJggg==",
+    "size": 32,
+    "created": 1792624080722,
+    "live": true
+  },
+  {
+    "id": "builtin-duplicator",
+    "name": "Duplicator",
+    "group": "power",
+    "category": "duplicator",
+    "pixels": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABgklEQVR4nO2XIU/DQBiG35GZpW6rI2smMMVtvwCB2G9Agkc0wTRIUkNSgUIwg0AS5ARiv6ALCJogW4G5NZhSBxPklnZ397W0o53YmzT5etc375P2u/YK7LRTw2rxQu/qP3UGs4i1AKCdHtTGo1rC46m3qtvC5FtQC4QSgMucWwAAf+hmau3QAKAGTVgEK5wAANz+WWauo3eF6/dKQG9UmSbUxqN6HkHAVk3Y+B2Q90DA8p2GLgyZcwt+z1ZazIUDf+gWAMDvktwfDKRz77eP0nG/Z5M+v2cL4EoAAHi5f5KOdyjTH32le0A72cxLqxAAX9dpGRdHub6Du9PqAFY4wQwfGIVXwhx/QanCP18D6OfH5QF4OFdRCB7ORUGQAOlwldaXFYBMeJ5IAK9/SZ7LwgGA3TyT54UB0qHr4cH1jPTxUCq8EIAsHADiB09ypRyiMsB/ansB4qmHzte39FDJXDikz1w4gme79wMJi5CwqHJNqfEeID/H6U1klZpS4z8mjWsJQxi+Dguve1MAAAAASUVORK5CYII=",
+    "size": 32,
+    "created": 1792624080723,
+    "live": true
+  }
+]

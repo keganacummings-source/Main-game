@@ -1,285 +1,511 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CAMP_CATEGORIES, TILE_CATEGORIES, POWER_TEXTURES, SPAWN_LOCATIONS, WALK_EFFECTS,
-  loadPack, savePack, groupOf, type Asset, type AssetGroup, type AssetSize,
+  loadPack, savePack, groupOf, parsePack, mergePack, packBytes, customPowerSlots, powerDefaultArt, powerTexture, POWER_PACK_URL,
+  type Asset, type AssetGroup, type AssetSize,
 } from "@/game/camp-assets";
-import { Field, Section, Tabs, Empty } from "./ui-kit";
+import { NEWTEX_DIR, loadTileCatalog } from "@/game/tile-atlas";
+import { isBlank } from "@/game/pixel-edit";
+import { Section, Tabs, Empty, ConfirmButton } from "./ui-kit";
+import { PixelStudio, decodeToPix, pixToDataUrl } from "./pixel-studio";
 
-function download(name: string, data: unknown) {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+// ─── small helpers ────────────────────────────────────────────────────────────────────────────────────────────────
+
+function downloadBlob(name: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+
+function downloadJson(name: string, data: unknown) {
+  downloadBlob(name, new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+}
+
+async function downloadPng(name: string, dataUrl: string) {
+  const blob = await (await fetch(dataUrl)).blob();
+  downloadBlob(name, blob);
+}
+
+const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "asset";
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 }
 
-/** Simple pixel editor that stores the result as a transparent PNG data URL. */
-function PixelCanvas({ size, dataUrl, onChange }: { size: AssetSize; dataUrl: string; onChange: (url: string) => void }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const [color, setColor] = useState("#8a6a3a");
-  const [erase, setErase] = useState(false);
-  const drawing = useRef(false);
+/** Pack tiles of the New Texture set, offered in the "Replaces" box. */
+const NEWTEX_NAMES = [
+  "bed", "chest", "deep_water", "dirt_floor", "ghostbox", "grass", "grass_flowers", "hell_floor", "hell_wall", "ice", "lava", "log",
+  "portal", "sand", "sand_wall", "snow", "snow_wall", "stone_floor", "stone_wall", "swamp", "swamp_floor", "temple_floor", "temple_wall",
+  "tree_desert", "tree_hell", "tree_plains", "tree_snow", "tree_swamp", "water", "wood_floor", "wood_wall",
+  "hellgen", "battery", "wire", "xpgen", "duplicator",
+];
 
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, size, size);
-    if (dataUrl && dataUrl.startsWith("data:image/")) {
-      const img = new Image();
-      img.onload = () => ctx.drawImage(img, 0, 0, size, size);
-      img.src = dataUrl;
-    } else {
-      // checkerboard background so empty pixels are obvious
-      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
-        ctx.fillStyle = (x + y) % 2 ? "#2a2220" : "#3a3029";
-        ctx.fillRect(x, y, 1, 1);
-      }
-    }
-  }, [dataUrl, size]);
+const GROUP_LABEL: Record<AssetGroup, string> = { camp: "Camp piece", tile: "Map tile", power: "Power block" };
 
-  const paint = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const r = canvas.getBoundingClientRect();
-    const x = Math.floor(((e.clientX - r.left) / r.width) * size);
-    const y = Math.floor(((e.clientY - r.top) / r.height) * size);
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    if (erase) {
-      ctx.clearRect(x, y, 1, 1);
-    } else {
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y, 1, 1);
-    }
-    onChange(canvas.toDataURL("image/png"));
+const defaultName = (group: AssetGroup, category: string): string => {
+  if (group === "power") return POWER_TEXTURES.find((p) => p.id === category)?.label ?? "Power texture";
+  if (group === "camp") return "New camp piece";
+  return TILE_CATEGORIES.find((c) => c.id === category)?.label.replace(/ \/.*$/, "") ?? "New tile";
+};
+
+function blankAsset(group: AssetGroup, category?: string): Asset {
+  const cat = category ?? (group === "camp" ? "walls" : group === "power" ? "hellgen" : "floor");
+  return {
+    id: uid(),
+    name: defaultName(group, cat),
+    group,
+    category: cat,
+    pixels: "",
+    size: 32,
+    created: Date.now(),
+    live: group === "power" ? true : undefined,
+    holdMax: 0,
+    holdItems: [],
+    spawnIn: [],
+    isDeco: false,
+    walkEffects: [],
   };
+}
 
+/** A labelled control that is NOT a <label>, so checkboxes and buttons inside it behave (nested labels swallow clicks). */
+function FieldRow({ label, hint, children }: { label: ReactNode; hint?: ReactNode; children: ReactNode }) {
   return (
-    <div>
-      <canvas
-        ref={ref}
-        width={size}
-        height={size}
-        style={{ width: Math.min(320, size * 8), height: Math.min(320, size * 8), imageRendering: "pixelated", border: "1px solid #444", cursor: "crosshair", background: "#1c1412" }}
-        onPointerDown={(e) => { drawing.current = true; paint(e); }}
-        onPointerMove={(e) => { if (drawing.current) paint(e); }}
-        onPointerUp={() => { drawing.current = false; }}
-        onPointerLeave={() => { drawing.current = false; }}
-      />
-      <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
-        <button type="button" className={`px-btn ${erase ? "px-btn-kyo" : ""}`} onClick={() => setErase(!erase)}>{erase ? "Erase on" : "Erase"}</button>
-        <button type="button" className="px-btn" onClick={() => {
-          const canvas = ref.current;
-          if (!canvas) return;
-          const ctx = canvas.getContext("2d");
-          if (!ctx) return;
-          ctx.clearRect(0, 0, size, size);
-          onChange(canvas.toDataURL("image/png"));
-        }}>Clear</button>
-      </div>
+    <div className="ui-field">
+      <span className="ui-field-label">{label}</span>
+      {children}
+      {hint && <span className="ui-field-hint">{hint}</span>}
     </div>
   );
 }
 
-const EMPTY_ASSET = (group: AssetGroup): Asset => ({
-  id: uid(),
-  name: group === "camp" ? "New piece" : group === "power" ? "New power texture" : "New tile",
-  group,
-  category: group === "camp" ? "walls" : group === "power" ? "hellgen" : "floor",
-  pixels: "",
-  size: 32,
-  created: Date.now(),
-  live: group === "power" ? true : undefined,
-  holdMax: 0,
-  holdItems: [],
-  spawnIn: [],
-  isDeco: false,
-  walkEffects: [],
-});
+function Check({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
+  return (
+    <label className="chip chip-check">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {children}
+    </label>
+  );
+}
+
+function Thumb({ src, size = 64 }: { src?: string; size?: number }) {
+  return (
+    <span className="ca-thumb" style={{ width: size, height: size }}>
+      {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", imageRendering: "pixelated" }} /> : null}
+    </span>
+  );
+}
+
+// ─── the screen ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+type Notice = { tone: "good" | "bad" | "info"; text: string } | null;
+type Filter = "all" | AssetGroup;
 
 export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
   const [assets, setAssets] = useState<Asset[]>(() => loadPack());
   const [editing, setEditing] = useState<Asset | null>(null);
-  const [group, setGroup] = useState<AssetGroup>("camp");
+  const [dirty, setDirty] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const [notice, setNotice] = useState<Notice>(null);
+  const [catPaths, setCatPaths] = useState<string[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const importRef = useRef<HTMLInputElement>(null);
+  const noticeTimer = useRef<number | undefined>(undefined);
 
-  const persist = (next: Asset[]) => {
+  const say = (tone: "good" | "bad" | "info", text: string) => {
+    setNotice({ tone, text });
+    window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 6000);
+  };
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
+
+  // Pack tile paths for the "Replaces" suggestions.
+  useEffect(() => {
+    let live = true;
+    loadTileCatalog().then((cat) => {
+      if (!live || !cat) return;
+      setCatPaths(cat.categories.flatMap((c) => c.tiles.map((t) => t.path)));
+    });
+    return () => { live = false; };
+  }, []);
+
+  const persist = (next: Asset[]): boolean => {
     setAssets(next);
-    savePack(next);
+    const ok = savePack(next);
+    if (!ok) say("bad", "Could not save: this browser's storage is full or blocked. Export your pack as JSON so nothing is lost, then delete pieces you do not need.");
+    return ok;
   };
 
-  const startNew = (g: AssetGroup) => {
-    const a = EMPTY_ASSET(g);
+  const patch = (change: Partial<Asset>) => {
+    setEditing((e) => (e ? { ...e, ...change } : e));
+    setDirty(true);
+  };
+
+  const startNew = (group: AssetGroup, category?: string, pixels = "") => {
+    const a = blankAsset(group, category);
+    a.pixels = pixels;
     setEditing(a);
-    setGroup(g);
+    setDirty(false);
   };
 
-  const saveEditing = () => {
-    if (!editing) return;
-    if (!editing.pixels.startsWith("data:image/")) {
-      alert("Paint something first (the canvas must produce a data URL).");
-      return;
-    }
-    const next = assets.some((a) => a.id === editing.id)
-      ? assets.map((a) => (a.id === editing.id ? editing : a))
-      : [...assets, editing];
-    persist(next);
+  const openEdit = (a: Asset) => {
+    setEditing({ ...a, group: groupOf(a) });
+    setDirty(false);
+  };
+
+  /** Power slot shortcut: edit your texture for it, or start one from the art the game ships with. */
+  const paintSlot = async (slot: string) => {
+    const mine = [...assets].filter((a) => groupOf(a) === "power" && a.category === slot).sort((a, b) => b.created - a.created)[0];
+    if (mine) return openEdit(mine);
+    const p = await decodeToPix(powerDefaultArt(slot), 32);
+    startNew("power", slot, p ? pixToDataUrl(p, 32) : "");
+    if (!p) say("info", "Could not load the built-in art, so you are starting from a blank canvas.");
+  };
+
+  const leaveEditor = () => {
+    if (dirty && !window.confirm("You have unsaved changes. Leave without saving?")) return;
     setEditing(null);
+    setDirty(false);
+  };
+
+  const save = async (close: boolean) => {
+    if (!editing) return;
+    if (!editing.pixels.startsWith("data:image/")) return say("bad", "Paint something first.");
+    const pix = await decodeToPix(editing.pixels, editing.size);
+    if (!pix || isBlank(pix)) {
+      if (!window.confirm("This canvas is empty. Save it anyway?")) return;
+    }
+    const name = editing.name.trim() || defaultName(groupOf(editing), editing.category);
+    // A saved power texture is the newest for its block, so it is the one the game draws.
+    const toSave: Asset = { ...editing, name, created: groupOf(editing) === "power" ? Date.now() : editing.created };
+    const next = assets.some((a) => a.id === toSave.id) ? assets.map((a) => (a.id === toSave.id ? toSave : a)) : [...assets, toSave];
+    if (!persist(next)) return;
+    setEditing(close ? null : toSave);
+    setDirty(false);
+    const live = groupOf(toSave) === "power" ? toSave.live !== false : !!(toSave.live && toSave.replaces);
+    say("good", live ? `Saved "${name}". It is live in game now.` : `Saved "${name}".`);
   };
 
   const remove = (id: string) => {
     persist(assets.filter((a) => a.id !== id));
-    if (editing?.id === id) setEditing(null);
+    if (editing?.id === id) { setEditing(null); setDirty(false); }
   };
 
-  const categories = group === "camp"
-    ? CAMP_CATEGORIES.map((id) => ({ id, label: id }))
-    : group === "power"
-      ? POWER_TEXTURES.map((c) => ({ id: c.id, label: c.label }))
-      : TILE_CATEGORIES.map((c) => ({ id: c.id, label: c.label }));
+  const duplicate = (a: Asset) => {
+    const copy: Asset = { ...a, id: uid(), name: `${a.name} copy`, created: Date.now(), live: groupOf(a) === "power" ? false : a.live };
+    persist([...assets, copy]);
+    say("info", groupOf(a) === "power" ? "Duplicated. The copy is not live until you turn Live on." : "Duplicated.");
+  };
 
+  const toggleLive = (a: Asset) => {
+    const live = groupOf(a) === "power" ? a.live === false : !a.live;
+    persist(assets.map((x) => (x.id === a.id ? { ...x, live } : x)));
+  };
+
+  // ─── import / export ──────────────────────────────────────────────────────────────────────────────────────
+  const importPackText = (text: string, label: string) => {
+    const parsed = parsePack(text);
+    if (!parsed) return say("bad", `${label} is not a pack file.`);
+    if (!parsed.assets.length) return say("bad", `${label} has no usable pieces${parsed.skipped ? ` (${parsed.skipped} were invalid)` : ""}.`);
+    const m = mergePack(assets, parsed.assets);
+    if (persist(m.assets)) say("good", `Imported ${m.added} new and ${m.replaced} updated${parsed.skipped ? `, ${parsed.skipped} skipped` : ""}.`);
+  };
+
+  const onImportFile = async (f: File | undefined) => {
+    if (!f) return;
+    importPackText(await f.text(), f.name);
+    if (importRef.current) importRef.current.value = "";
+  };
+
+  const importBuiltinPower = async () => {
+    try {
+      const r = await fetch(POWER_PACK_URL, { cache: "no-store" });
+      if (!r.ok) throw new Error(String(r.status));
+      importPackText(await r.text(), "The built-in power pack");
+    } catch {
+      say("bad", "Could not load the built-in power pack.");
+    }
+  };
+
+  const exportAll = () => {
+    if (!assets.length) return say("info", "Nothing to export yet.");
+    downloadJson("camp-tile-pack.json", assets);
+  };
+
+  const onImagePicked = async (f: File | undefined) => {
+    if (!f || !editing) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const url = String(reader.result ?? "");
+      const p = await decodeToPix(url, editing.size);
+      if (!p) return say("bad", "That image could not be read.");
+      patch({ pixels: pixToDataUrl(p, editing.size) });
+      say("info", `Imported ${f.name}, scaled to ${editing.size}×${editing.size}. Undo (Ctrl+Z) brings your old art back.`);
+    };
+    reader.readAsDataURL(f);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const startFromGame = async () => {
+    if (!editing) return;
+    const g = groupOf(editing);
+    const src = g === "power" ? powerDefaultArt(editing.category) : editing.replaces;
+    if (!src) return say("info", "Fill in the Replaces path first, and the tile it points at loads here as a starting point.");
+    const p = await decodeToPix(src, editing.size);
+    if (!p) return say("bad", `Could not load ${src}.`);
+    patch({ pixels: pixToDataUrl(p, editing.size) });
+  };
+
+  // ─── derived ──────────────────────────────────────────────────────────────────────────────────────────────
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return assets
+      .filter((a) => filter === "all" || groupOf(a) === filter)
+      .filter((a) => !q || a.name.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
+      .sort((a, b) => b.created - a.created);
+  }, [assets, filter, query]);
+
+  const counts = useMemo(() => {
+    const c = { all: assets.length, camp: 0, tile: 0, power: 0 };
+    for (const a of assets) c[groupOf(a)]++;
+    return c;
+  }, [assets]);
+
+  const customSlots = useMemo(() => customPowerSlots(assets), [assets]);
+  const bytes = useMemo(() => packBytes(assets), [assets]);
+  const usedPct = Math.min(100, Math.round((bytes / (4.5 * 1024 * 1024)) * 100));
+
+  const editingGroup: AssetGroup | null = editing ? groupOf(editing) : null;
+  const categories = editingGroup === "camp"
+    ? CAMP_CATEGORIES.map((id) => ({ id: id as string, label: id as string }))
+    : editingGroup === "power"
+      ? POWER_TEXTURES.map((c) => ({ id: c.id as string, label: c.label as string }))
+      : TILE_CATEGORIES.map((c) => ({ id: c.id as string, label: c.label as string }));
+
+  const replaceSuggestions = useMemo(() => {
+    if (!editing || editingGroup !== "tile") return [] as string[];
+    const folder = TILE_CATEGORIES.find((c) => c.id === editing.category)?.folder ?? "";
+    const pack = folder ? catPaths.filter((p) => p.includes(`/${folder}/`)) : [];
+    return [...NEWTEX_NAMES.map((n) => `${NEWTEX_DIR}${n}.png`), ...pack].slice(0, 600);
+  }, [editing, editingGroup, catPaths]);
+
+  // ─── editor ───────────────────────────────────────────────────────────────────────────────────────────────
+  if (editing && editingGroup) {
+    const g = editingGroup;
+    const isNew = !assets.some((a) => a.id === editing.id);
+    return (
+      <div className="designer-screen">
+        <header className="designer-header">
+          <div>
+            <p className="screen-kicker">TILE BUILDER · {GROUP_LABEL[g].toUpperCase()}</p>
+            <h1 className="screen-title">{editing.name || "Untitled"}{dirty ? " *" : ""}</h1>
+          </div>
+          <div className="ca-actions">
+            <button type="button" className="px-btn px-btn-kyo" onClick={() => save(false)} title="Save and keep painting">Save</button>
+            <button type="button" className="px-btn" onClick={() => save(true)} title="Save and go back to the list">Save &amp; close</button>
+            <button type="button" className="px-btn" onClick={leaveEditor}>{dirty ? "Discard" : "Back"}</button>
+          </div>
+        </header>
+
+        {notice && <p className={`ca-notice ca-notice-${notice.tone}`} role="status">{notice.text}</p>}
+
+        <div className="ca-editor">
+          <div className="ca-canvas-col">
+            <PixelStudio
+              size={editing.size}
+              pixels={editing.pixels}
+              tileMode={g === "tile"}
+              onChange={(pixels) => { setEditing((e) => (e ? { ...e, pixels } : e)); setDirty(true); }}
+            />
+          </div>
+
+          <div className="ca-meta px-panel">
+            <Section title="Details">
+              <FieldRow label="Name">
+                <input className="px-input" value={editing.name} maxLength={60} onChange={(e) => patch({ name: e.target.value })} />
+              </FieldRow>
+              <FieldRow label="Type">
+                <Tabs
+                  value={g}
+                  onChange={(next) => {
+                    const category = next === "camp" ? "walls" : next === "power" ? "hellgen" : "floor";
+                    patch({ group: next, category, live: next === "power" ? (editing.live ?? true) : editing.live, name: dirty || !isNew ? editing.name : defaultName(next, category) });
+                  }}
+                  tabs={[{ id: "camp", label: "Camp" }, { id: "tile", label: "Map tile" }, { id: "power", label: "Power" }]}
+                />
+              </FieldRow>
+              <FieldRow label="Category">
+                <select className="px-input" value={editing.category} onChange={(e) => patch({ category: e.target.value })}>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              </FieldRow>
+              <FieldRow label="Canvas size" hint="Changing it re-samples your art so nothing is lost. The game draws pieces at 32×32.">
+                <div className="ps-row">
+                  {([16, 32, 64] as AssetSize[]).map((s) => (
+                    <button key={s} type="button" className={`px-btn ui-btn-sm ${editing.size === s ? "px-btn-kyo" : ""}`} onClick={() => patch({ size: s })}>{s}×{s}</button>
+                  ))}
+                </div>
+              </FieldRow>
+              <FieldRow label="Starting point">
+                <div className="ps-row">
+                  <button type="button" className="px-btn ui-btn-sm" onClick={startFromGame} title={g === "power" ? "Load the art the game ships for this block" : "Load the tile named in Replaces"}>
+                    {g === "power" ? "Load game art" : "Load tile to edit"}
+                  </button>
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => fileRef.current?.click()}>Import PNG</button>
+                  <button type="button" className="px-btn ui-btn-sm" disabled={!editing.pixels} onClick={() => downloadPng(`${slug(editing.name)}.png`, editing.pixels)}>Export PNG</button>
+                </div>
+                <input ref={fileRef} type="file" accept="image/png,image/gif,image/webp,image/jpeg" hidden onChange={(e) => onImagePicked(e.target.files?.[0])} />
+              </FieldRow>
+            </Section>
+
+            {g === "power" && (
+              <Section title="In game">
+                <Check checked={editing.live !== false} onChange={(v) => patch({ live: v })}>Live: draw this on the placed block</Check>
+                <p className="ui-field-hint">The newest live texture saved for a block is the one the game draws. Turn Live off to keep a draft without using it.</p>
+              </Section>
+            )}
+
+            {g === "tile" && (
+              <>
+                <Section title="In game">
+                  <FieldRow label="Replaces" hint="A pack tile this one draws over everywhere in game. Pick from the list or type a path.">
+                    <input className="px-input" list="ca-replaces" value={editing.replaces ?? ""} placeholder="/MapAssets/NewTex/stone_wall.png" onChange={(e) => patch({ replaces: e.target.value.trim() || undefined })} />
+                    <datalist id="ca-replaces">{replaceSuggestions.map((p) => <option key={p} value={p} />)}</datalist>
+                  </FieldRow>
+                  <div className="ps-row">
+                    <Check checked={!!editing.live} onChange={(v) => patch({ live: v })}>Live: draw in game now</Check>
+                    <Check checked={!!editing.solid} onChange={(v) => patch({ solid: v })}>Solid: blocks movement</Check>
+                    <Check checked={!!editing.isDeco} onChange={(v) => patch({ isDeco: v })}>Decoration only</Check>
+                  </div>
+                  {editing.live && !editing.replaces && <p className="text-bad" style={{ fontSize: 16 }}>Live needs a Replaces path to know which tile to draw over.</p>}
+                </Section>
+                <Section title="Gameplay properties">
+                  <FieldRow label="Holds up to" hint="How many items this tile can store (0 = none).">
+                    <input className="px-input" type="number" min={0} max={999} value={editing.holdMax ?? 0} onChange={(e) => patch({ holdMax: Math.max(0, Math.floor(Number(e.target.value) || 0)) })} />
+                  </FieldRow>
+                  <FieldRow label="Item kinds it holds" hint="Comma-separated: kyo, ghost gear, an item id…">
+                    <input className="px-input" defaultValue={(editing.holdItems ?? []).join(", ")} key={editing.id} onBlur={(e) => patch({ holdItems: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} />
+                  </FieldRow>
+                  <FieldRow label="Spawns in">
+                    <div className="chip-row">
+                      {SPAWN_LOCATIONS.map((loc) => {
+                        const on = (editing.spawnIn ?? []).includes(loc);
+                        return <button key={loc} type="button" className={`chip ${on ? "chip-on" : ""}`} aria-pressed={on} onClick={() => { const cur = editing.spawnIn ?? []; patch({ spawnIn: on ? cur.filter((x) => x !== loc) : [...cur, loc] }); }}>{loc}</button>;
+                      })}
+                    </div>
+                  </FieldRow>
+                  <FieldRow label="Walk-on effects">
+                    <div className="chip-row">
+                      {WALK_EFFECTS.map((eff) => {
+                        const on = (editing.walkEffects ?? []).includes(eff);
+                        return <button key={eff} type="button" className={`chip ${on ? "chip-on" : ""}`} aria-pressed={on} onClick={() => { const cur = editing.walkEffects ?? []; patch({ walkEffects: on ? cur.filter((x) => x !== eff) : [...cur, eff] }); }}>{eff}</button>;
+                      })}
+                    </div>
+                  </FieldRow>
+                </Section>
+              </>
+            )}
+
+            {!isNew && (
+              <div className="ps-row" style={{ marginTop: 8 }}>
+                <ConfirmButton plain label="Delete this piece" confirm="Really delete?" onConfirm={() => remove(editing.id)} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── library ──────────────────────────────────────────────────────────────────────────────────────────────
   return (
     <div className="designer-screen">
       <header className="designer-header">
         <div>
-          <p className="screen-kicker">CAMP & TILE ASSET BUILDER</p>
-          <h1 className="screen-title">Pixel packs</h1>
+          <p className="screen-kicker">TILE BUILDER</p>
+          <h1 className="screen-title">Camp, tile &amp; power art</h1>
         </div>
         <button type="button" className="px-btn" onClick={onBack}>Back</button>
       </header>
+
       <p className="designer-status">
-        Paint camp pieces, map tiles, and the Power blocks (HellStone Generator, Battery, Wire, XP Producer, Duplicator).
-        A power texture marked Live replaces that block's art in game. Saved on this device. Export JSON to ship in an update.
+        Paint camp pieces, map tiles and the Power blocks. Pieces save on this device and go live in your games right away. Export a pack to ship them in an update.
       </p>
 
-      {!editing && (
-        <>
-          <div style={{ margin: "12px 0", display: "flex", gap: 8 }}>
-            <button type="button" className="px-btn px-btn-kyo" onClick={() => startNew("camp")}>New camp piece</button>
-            <button type="button" className="px-btn" onClick={() => startNew("tile")}>New map tile</button>
-            <button type="button" className="px-btn" onClick={() => startNew("power")}>New power texture</button>
-            <button type="button" className="px-btn" onClick={() => download("camp-tile-pack.json", assets)}>Export pack</button>
-          </div>
-          {assets.length === 0 && <Empty>No assets yet. Create a camp piece or map tile.</Empty>}
-          <div className="tile-grid" style={{ marginTop: 12 }}>
-            {assets.map((a) => (
-              <div key={a.id} className="px-panel" style={{ padding: 8, minWidth: 140 }}>
-                {a.pixels ? <img src={a.pixels} alt="" style={{ width: 64, height: 64, imageRendering: "pixelated", background: "#1c1412" }} /> : <div style={{ width: 64, height: 64, background: "#2a2220" }} />}
-                <div style={{ fontWeight: 600 }}>{a.name}</div>
-                <div className="text-dim" style={{ fontSize: 12 }}>{groupOf(a)} · {a.category}</div>
-                <div style={{ marginTop: 4 }}>
-                  <button type="button" className="px-btn ui-btn-sm" onClick={() => { setEditing(a); setGroup(groupOf(a)); }}>Edit</button>
-                  <button type="button" className="px-btn ui-btn-sm" style={{ marginLeft: 4 }} onClick={() => remove(a.id)}>Delete</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      {notice && <p className={`ca-notice ca-notice-${notice.tone}`} role="status">{notice.text}</p>}
 
-      {editing && (
-        <div style={{ marginTop: 12 }}>
-          <Section title={editing.name || "Editing"}>
-            <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-              <div>
-                <Field label="Size">
-                  <select value={editing.size} onChange={(e) => setEditing({ ...editing, size: Number(e.target.value) as AssetSize })}>
-                    <option value={16}>16</option>
-                    <option value={32}>32</option>
-                    <option value={64}>64</option>
-                  </select>
-                </Field>
-                <PixelCanvas size={editing.size} dataUrl={editing.pixels} onChange={(pixels) => setEditing({ ...editing, pixels })} />
-              </div>
-              <div style={{ flex: 1, minWidth: 280 }}>
-                <Field label="Name">
-                  <input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-                </Field>
-                <Field label="Group">
-                  <Tabs value={group} onChange={(g) => {
-                    const category = g === "camp" ? "walls" : g === "power" ? "hellgen" : "floor";
-                    setGroup(g);
-                    setEditing({ ...editing, group: g, category, live: g === "power" ? (editing.live ?? true) : editing.live });
-                  }} tabs={[{ id: "camp", label: "Camp" }, { id: "tile", label: "Map tile" }, { id: "power", label: "Power" }]} />
-                </Field>
-                <Field label="Category">
-                  <select value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })}>
-                    {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
-                </Field>
+      <div className="ca-toolbar">
+        <button type="button" className="px-btn px-btn-kyo" onClick={() => startNew("camp")}>New camp piece</button>
+        <button type="button" className="px-btn" onClick={() => startNew("tile")}>New map tile</button>
+        <button type="button" className="px-btn" onClick={() => startNew("power")}>New power texture</button>
+        <span className="ps-sep" />
+        <button type="button" className="px-btn" onClick={() => importRef.current?.click()}>Import pack</button>
+        <button type="button" className="px-btn" onClick={exportAll} disabled={!assets.length}>Export pack</button>
+        <input ref={importRef} type="file" accept="application/json,.json" hidden onChange={(e) => onImportFile(e.target.files?.[0])} />
+      </div>
 
-                {group === "power" && (
-                  <Field label="Live in game">
-                    <label><input type="checkbox" checked={editing.live !== false} onChange={(e) => setEditing({ ...editing, live: e.target.checked })} /> Draw this on the placed block</label>
-                  </Field>
+      <Section title="Power blocks" right={<button type="button" className="px-btn ui-btn-sm" onClick={importBuiltinPower} title="Add the art the game ships with to your pack, so you can edit and re-export it">Import built-in art</button>}>
+        <div className="ca-slots">
+          {POWER_TEXTURES.map((p) => {
+            const custom = customSlots.has(p.id);
+            const art = powerTexture(p.id) ?? powerDefaultArt(p.id);
+            return (
+              <button key={p.id} type="button" className="ca-slot px-panel" onClick={() => paintSlot(p.id)} title={custom ? "Edit your texture" : "Start from the built-in art"}>
+                <Thumb src={art} size={48} />
+                <span className="ca-slot-name">{p.label}</span>
+                <span className={`chip ${custom ? "chip-on" : ""}`} style={{ margin: 0 }}>{custom ? "Custom" : "Built-in"}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
+      <div className="ca-filterbar">
+        <div className="chip-row" role="group" aria-label="Filter">
+          {([["all", "All"], ["camp", "Camp"], ["tile", "Map tiles"], ["power", "Power"]] as [Filter, string][]).map(([id, label]) => (
+            <button key={id} type="button" className={`chip ${filter === id ? "chip-on" : ""}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} · {counts[id]}</button>
+          ))}
+        </div>
+        <input className="px-input ca-search" placeholder="Search by name or category" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search" />
+        <span className="text-dim ca-storage" title="Browsers keep about 5 MB per site. Export packs you want to keep.">Storage {usedPct}%</span>
+      </div>
+
+      {assets.length === 0 && <Empty>Nothing here yet. Start with a Power block above, or make a camp piece or map tile.</Empty>}
+      {assets.length > 0 && shown.length === 0 && <Empty>No pieces match.</Empty>}
+
+      <div className="ca-grid">
+        {shown.map((a) => {
+          const g = groupOf(a);
+          const live = g === "power" ? a.live !== false : !!(a.live && a.replaces);
+          return (
+            <div key={a.id} className="px-panel ca-card">
+              <button type="button" className="ca-card-art" onClick={() => openEdit(a)} title="Edit">
+                <Thumb src={a.pixels} size={64} />
+              </button>
+              <div className="ca-card-body">
+                <div className="ca-card-name" title={a.name}>{a.name}</div>
+                <div className="text-dim ca-card-sub">{GROUP_LABEL[g]} · {a.category} · {a.size}px</div>
+                {g !== "camp" && (
+                  <button type="button" className={`chip ${live ? "chip-on" : ""}`} style={{ margin: "2px 0" }} aria-pressed={live} onClick={() => toggleLive(a)} title="Toggle whether the game draws this">
+                    {live ? "Live" : "Not live"}
+                  </button>
                 )}
-
-                {group === "tile" && (
-                  <>
-                    <Field label="Replaces path (optional)" hint="e.g. /MapAssets/03_Water_and_Liquid_Tiles/deep_water.png">
-                      <input value={editing.replaces ?? ""} onChange={(e) => setEditing({ ...editing, replaces: e.target.value || undefined })} />
-                    </Field>
-                    <Field label="Live override">
-                      <label><input type="checkbox" checked={!!editing.live} onChange={(e) => setEditing({ ...editing, live: e.target.checked })} /> Draw in game now</label>
-                    </Field>
-                    <Field label="Solid">
-                      <label><input type="checkbox" checked={!!editing.solid} onChange={(e) => setEditing({ ...editing, solid: e.target.checked })} /> Blocks movement</label>
-                    </Field>
-                    <Field label="Hold max">
-                      <input type="number" min={0} value={editing.holdMax ?? 0} onChange={(e) => setEditing({ ...editing, holdMax: Number(e.target.value) })} />
-                    </Field>
-                    <Field label="Hold items (comma-separated)">
-                      <input value={(editing.holdItems ?? []).join(", ")} onChange={(e) => setEditing({ ...editing, holdItems: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} />
-                    </Field>
-                    <Field label="Spawn in">
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {SPAWN_LOCATIONS.map((loc) => {
-                          const on = (editing.spawnIn ?? []).includes(loc);
-                          return (
-                            <button key={loc} type="button" className={`px-btn ui-btn-sm ${on ? "px-btn-kyo" : ""}`} onClick={() => {
-                              const cur = editing.spawnIn ?? [];
-                              setEditing({ ...editing, spawnIn: on ? cur.filter((x) => x !== loc) : [...cur, loc] });
-                            }}>{loc}</button>
-                          );
-                        })}
-                      </div>
-                    </Field>
-                    <Field label="Deco">
-                      <label><input type="checkbox" checked={!!editing.isDeco} onChange={(e) => setEditing({ ...editing, isDeco: e.target.checked })} /> Pure decoration</label>
-                    </Field>
-                    <Field label="Walk effects">
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {WALK_EFFECTS.map((eff) => {
-                          const on = (editing.walkEffects ?? []).includes(eff);
-                          return (
-                            <button key={eff} type="button" className={`px-btn ui-btn-sm ${on ? "px-btn-kyo" : ""}`} onClick={() => {
-                              const cur = editing.walkEffects ?? [];
-                              setEditing({ ...editing, walkEffects: on ? cur.filter((x) => x !== eff) : [...cur, eff] });
-                            }}>{eff}</button>
-                          );
-                        })}
-                      </div>
-                    </Field>
-                  </>
-                )}
-
-                <div style={{ marginTop: 16 }}>
-                  <button type="button" className="px-btn px-btn-kyo" onClick={saveEditing}>Save asset</button>
-                  <button type="button" className="px-btn" style={{ marginLeft: 8 }} onClick={() => setEditing(null)}>Cancel</button>
+                <div className="ps-row">
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => openEdit(a)}>Edit</button>
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => duplicate(a)}>Copy</button>
+                  <button type="button" className="px-btn ui-btn-sm" onClick={() => downloadPng(`${slug(a.name)}.png`, a.pixels)} title="Download as a PNG">PNG</button>
+                  <ConfirmButton plain className="ui-btn-sm" label="Delete" confirm="Sure?" onConfirm={() => remove(a.id)} />
                 </div>
               </div>
             </div>
-          </Section>
-        </div>
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }

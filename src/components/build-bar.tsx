@@ -17,6 +17,11 @@ const NEWTEX_PREVIEW: Partial<Record<BuildPiece, string>> = {
   bed: NEWTEX_DIR + "bed.png",
   ghostbox: NEWTEX_DIR + "ghostbox.png",
   turbzchest: NEWTEX_DIR + "chest.png",
+  hellgen: NEWTEX_DIR + "hellgen.png",
+  battery: NEWTEX_DIR + "battery.png",
+  wire: NEWTEX_DIR + "wire.png",
+  xpgen: NEWTEX_DIR + "xpgen.png",
+  duplicator: NEWTEX_DIR + "duplicator.png",
 };
 
 /**
