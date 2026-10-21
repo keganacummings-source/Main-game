@@ -11995,12 +11995,26 @@ export class TurbzGame {
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
 		const box = save.ghostBox;
 		if (box && box.map === save.map && Math.abs(box.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(box.ty * 32 + 16 - this.cam.y) < halfH) {
-			this.paintGhostBox(ctx, box.tx * 32, box.ty * 32, this.clock);
-			drawShadowName(ctx, `GHOST BOX · ${save.ghostStore?.length ?? 0}`, box.tx * 32 + 16, box.ty * 32 - 10, "#c9a6e8");
+			const gx = box.tx * 32, gy = box.ty * 32;
+			if (texModeOn()) {
+				const img = tileImage(NEWTEX_DIR + "ghostbox.png");
+				if (img.complete && img.naturalWidth > 0) {
+					ctx.imageSmoothingEnabled = false;
+					ctx.drawImage(img, gx, gy, 32, 32);
+				} else this.paintGhostBox(ctx, gx, gy, this.clock);
+			} else this.paintGhostBox(ctx, gx, gy, this.clock);
+			drawShadowName(ctx, `GHOST BOX · ${save.ghostStore?.length ?? 0}`, gx + 16, gy - 10, "#c9a6e8");
 		}
 		const tc = save.turbzChest;
 		if (tc && tc.map === save.map && Math.abs(tc.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(tc.ty * 32 + 16 - this.cam.y) < halfH) {
-			this.paintTurbzChest(ctx, tc.tx * 32, tc.ty * 32);
+			const cx = tc.tx * 32, cy = tc.ty * 32;
+			if (texModeOn()) {
+				const img = tileImage(NEWTEX_DIR + "chest.png");
+				if (img.complete && img.naturalWidth > 0) {
+					ctx.imageSmoothingEnabled = false;
+					ctx.drawImage(img, cx, cy, 32, 32);
+				} else this.paintTurbzChest(ctx, cx, cy);
+			} else this.paintTurbzChest(ctx, cx, cy);
 			const near = !!this.nearTurbzChest();
 			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
 			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
