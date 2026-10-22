@@ -46,7 +46,7 @@ export const POWER_TEXTURES = [
   { id: "solar", label: "Solar Panel" },
   { id: "capacitor", label: "Capacitor" },
   { id: "blockgen", label: "BlockGenerator" },
-  { id: "blockbreaker", label: "BlockBreaker" },
+  { id: "rockminer", label: "Rock Miner" },
   { id: "tesla", label: "Tesla Coil" },
 ] as const;
 

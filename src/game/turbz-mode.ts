@@ -402,7 +402,14 @@ export function installTurbz(game: any): void {
       known: [...(s.known ?? [])],
       slots: [...(s.slots ?? [])],
     }));
-    this.turbzHeirloom = { gear, equipped, spirits };
+    // The Super Ghost (if one is extracted) comes back with you at level 1, like party ghosts do.
+    const superGhost = save.superGhost ? {
+      ...save.superGhost,
+      hp: 1,
+      maxHp: Math.max(100, Math.floor((save.superGhost.maxHp ?? 100) * 0.25)),
+      level: 1,
+    } : null;
+    this.turbzHeirloom = { gear, equipped, spirits, superGhost };
     // Persist it so your armour survives even if you close the game on the You Died screen.
     try { localStorage.setItem(TURBZ_HEIR_KEY, JSON.stringify(this.turbzHeirloom)); } catch { /* private mode */ }
   };
@@ -422,6 +429,7 @@ export function installTurbz(game: any): void {
       }
       save.gear = gear;
     }
+    if (kit.superGhost) save.superGhost = { ...kit.superGhost, hp: kit.superGhost.maxHp };
     if (kit.spirits?.length) {
       const cap = typeof this.spiritCap === "function" ? this.spiritCap() : 3;
       let out = 0;
@@ -466,7 +474,19 @@ export function installTurbz(game: any): void {
     const ghostBox = save.ghostBox && save.ghostBox.map === fire.map
       ? { dx: save.ghostBox.tx - bx, dy: save.ghostBox.ty - by } : null;
     const ghostStore = (save.ghostStore ?? []).map((s: any) => ({ ...s }));
-    return { fire, camp: { logs, beds, chest, ghostBox, ghostStore } };
+    // Power machines: keep every piece's full state (ore in generators, items in duplicators,
+    // the merger's queue + super-in-progress, the forge's pile tally, wire network — everything).
+    const rel = (list: any[] | undefined) => (list ?? []).filter((n: any) => n.map === fire.map)
+      .map((n: any) => ({ ...n, dx: n.tx - bx, dy: n.ty - by }));
+    const powerGens = rel(save.powerGens);
+    const powerBats = rel(save.powerBats);
+    const powerWires = rel(save.powerWires);
+    const powerXps = rel(save.powerXps);
+    const powerDups = rel(save.powerDups);
+    const powerMergers = rel(save.powerMergers);
+    const powerForges = rel(save.powerForges);
+    const powerExtra = rel(save.powerExtra);
+    return { fire, camp: { logs, beds, chest, ghostBox, ghostStore, powerGens, powerBats, powerWires, powerXps, powerDups, powerMergers, powerForges, powerExtra } };
   };
 
   /** Anything worth dropping back? A camp with just a chest or a Ghost Box still counts. */
@@ -511,6 +531,15 @@ export function installTurbz(game: any): void {
     save.survival.beds = (save.survival.beds ?? []).filter((b: any) => b.map !== fire.map);
     save.turbzChest = null;
     save.ghostBox = null;
+    // Lift every power machine off the world too — they come back when the camp drops.
+    save.powerGens = (save.powerGens ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerBats = (save.powerBats ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerWires = (save.powerWires ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerXps = (save.powerXps ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerDups = (save.powerDups ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerMergers = (save.powerMergers ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerForges = (save.powerForges ?? []).filter((n: any) => n.map !== fire.map);
+    save.powerExtra = (save.powerExtra ?? []).filter((n: any) => n.map !== fire.map);
     if (this.turbzChestOpen) this.turbzChestOpen = false;
     this.syncSolids?.(save.map);
     try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(camp)); } catch { /* private mode */ }
@@ -577,6 +606,26 @@ export function installTurbz(game: any): void {
       const at = freeNear(b.tx, b.ty);
       if (at) { b.tx = at.tx; b.ty = at.ty; }
     }
+    // Power machines: shift each saved piece back onto the world relative to the new fire.
+    const putPower = (listName: string, src: any[]) => {
+      if (!src?.length) return;
+      save[listName] = save[listName] ?? [];
+      for (const n of src) {
+        const tx = bx + (n.dx ?? 0), ty = by + (n.dy ?? 0);
+        if (tx < 2 || ty < 2 || tx >= w - 2 || ty >= h - 2) continue;
+        if (save[listName].some((e: any) => e.map === save.map && e.tx === tx && e.ty === ty)) continue;
+        const { dx: _dx, dy: _dy, ...rest } = n;
+        save[listName].push({ ...rest, map: save.map, tx, ty });
+      }
+    };
+    putPower("powerGens", camp.powerGens);
+    putPower("powerBats", camp.powerBats);
+    putPower("powerWires", camp.powerWires);
+    putPower("powerXps", camp.powerXps);
+    putPower("powerDups", camp.powerDups);
+    putPower("powerMergers", camp.powerMergers);
+    putPower("powerForges", camp.powerForges);
+    putPower("powerExtra", camp.powerExtra);
     save.turbzCamp = null;
     this.fixTurbzGhostBox?.();
     this.syncSolids?.(save.map);

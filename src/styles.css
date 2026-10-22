@@ -1355,13 +1355,13 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .perk-pick { text-align: left; }
 
 /* ---- Build mode toolbar (F) ---- */
-.build-bar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 14; width: min(980px, calc(100vw - 16px)); padding: 8px 10px; display: grid; gap: 6px; border-width: 3px; box-shadow: 4px 4px 0 var(--color-blood); }
+.build-bar { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 14; width: min(1360px, calc(100vw - 180px)); max-width: calc(100vw - 180px); padding: 8px 10px; display: grid; gap: 6px; border-width: 3px; box-shadow: 4px 4px 0 var(--color-blood); }
 .build-bar-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; justify-content: space-between; }
 .build-bar-stats { font-size: 16px; flex: 1 1 auto; }
 .build-bar-groups { display: flex; flex-wrap: wrap; gap: 8px 14px; }
 .build-bar-group { display: grid; gap: 3px; }
 .build-bar-group-label { font-family: var(--font-display); font-size: 7px; color: var(--color-dim); letter-spacing: 0.06em; text-transform: uppercase; }
-.build-bar-pieces { display: flex; gap: 4px; }
+.build-bar-pieces { display: flex; gap: 4px; flex-wrap: wrap; max-width: 100%; }
 .build-piece { position: relative; display: grid; gap: 1px; text-align: left; min-width: 104px; padding: 5px 8px 5px 22px; background: var(--color-ink); color: var(--color-bone); border: 2px solid var(--ui-line, #5a4038); font: inherit; cursor: pointer; }
 .build-piece:not(:disabled):hover { border-color: var(--color-bone); }
 .build-piece:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -1378,10 +1378,12 @@ textarea.px-input { resize: vertical; min-height: 64px; }
    A column clusters related sub-groups (e.g. the four Power sub-groups) so
    they read as one zone in the toolbar. The campfire panel reuses the piece
    button as `.build-card` with preview art and a bigger name. */
-.build-bar-column { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; padding: 0 6px; position: relative; }
+.build-bar-column { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; align-items: flex-start; padding: 0 6px; position: relative; min-width: 0; max-width: 100%; }
 .build-bar-column + .build-bar-column { border-left: 1px dashed var(--ui-line, #5a4038); margin-left: 4px; padding-left: 10px; }
+.build-bar-column-power { flex: 1 1 100%; }           /* Power sub-cluster gets its own full-width row — never shares with Walls/Floors/Doors/Furniture when the viewport is narrow. */
 .build-bar-column-power .build-bar-group-label { color: var(--color-kyo); }
 .build-bar-column-tools .build-bar-group-label { color: var(--color-blood); }
+.build-bar-column-power .build-bar-group { max-width: 100%; }
 
 .build-card { padding: 8px 10px; }
 .build-card-head { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }

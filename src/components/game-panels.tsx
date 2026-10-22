@@ -1415,10 +1415,10 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
           </Section>
         </>
       )}
-      {(p.kind === "blockgen" || p.kind === "blockbreaker") && (
+      {(p.kind === "blockgen" || p.kind === "rockminer") && (
         <>
           <Section title={`${p.on ? "RUNNING" : "OFF"} · FACING ${p.dirName.toUpperCase()}`} right={<span className="text-dim">Network {Math.floor(p.network)} Power</span>}>
-            <p className="text-dim">{p.kind === "blockgen" ? "Builds on the tile it faces, once a second." : "Breaks the block on the tile it faces, once a second."} The tile is outlined in the world.</p>
+            <p className="text-dim">{p.kind === "blockgen" ? "Builds on the tile it faces, once a second." : "Pulls one ore from the natural tile it faces every 3 seconds. The tile isn't destroyed."} The tile is outlined in the world.</p>
             <span className="cost-row">
               <button type="button" className="px-btn ui-btn-sm" data-testid="extra-rotate" onClick={() => game?.extraRotate()}>Rotate</button>
               <button type="button" className="px-btn ui-btn-sm" data-testid="extra-toggle" onClick={() => game?.extraToggle()}>{p.on ? "Switch off" : "Switch on"}</button>
@@ -1442,7 +1442,7 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
           )}
           <Section title={p.kind === "blockgen" ? "LOADED" : "COLLECTED"} right={<span className="text-dim">up to {p.bufMax}</span>}>
             {p.buf.length === 0
-              ? <p className="text-dim">{p.kind === "blockgen" ? "Empty. Load material above, or run a Pipe in from a Chest." : "Nothing yet. Run a Pipe to a Chest to empty it automatically."}</p>
+              ? <p className="text-dim">{p.kind === "blockgen" ? "Empty. Load material above, or run a Pipe in from a Chest." : "Nothing yet. Point it at natural rock, sand, dirt or hell rock, then wire it to Power. Run a Pipe to a Chest to empty it automatically."}</p>
               : p.buf.map((it) => (
                   <div key={it.id} className="ui-row">
                     <span className="text-kyo">{it.name} ×{it.count}</span>
@@ -1500,6 +1500,91 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
                   ))}
                 </div>}
             <p className="text-dim">Holds up to {DUP_STORE_MAX} copies. Pick the block up in build mode to get the original and the copies back.</p>
+          </Section>
+        </>
+      )}
+      {p.kind === "ghostmerger" && p.merger && (
+        <>
+          <Section title={`SUPER SLOT · ${p.merger.super?.fed ?? 0} FED`} right={<span className="text-dim">{p.merger.next >= 0 ? `Next merge ${p.merger.next.toFixed(1)}s` : "Idle"}</span>}>
+            {p.merger.super ? (
+              <>
+                <p className="text-dim">Types: <span className="text-kyo">{p.merger.super.types.join(", ") || "none"}</span> ({p.merger.super.types.length}/11) · Abilities: {p.merger.super.abilities}/10 · Known moves: {p.merger.super.movesKnown}/50 · Level {p.merger.super.level}</p>
+                <button type="button" className="px-btn px-btn-kyo" data-testid="merger-extract" disabled={!p.merger.super.ready} onClick={() => game?.mergerExtract()}>
+                  {p.merger.super.ready ? (p.merger.currentSuper ? "Extract (overwrites current Super Ghost)" : "Extract Super Ghost") : `Feed ${p.merger.extractMin - p.merger.super.fed} more to extract`}
+                </button>
+              </>
+            ) : (
+              <p className="text-dim">Load a ghost from your party or Ghost Box below. The merger folds in its type, one of its abilities, and all its known moves every {p.merger.next < 0 ? "8" : "8"} seconds.</p>
+            )}
+            {p.merger.currentSuper && (
+              <p className="text-dim">Current Super Ghost: <span className="text-kyo">{p.merger.currentSuper.name}</span> · HP {Math.floor(p.merger.currentSuper.hp)}/{p.merger.currentSuper.maxHp}</p>
+            )}
+          </Section>
+          <Section title={`QUEUED · ${p.merger.stored.length}/${p.merger.storedMax}`}>
+            {p.merger.stored.length === 0
+              ? <p className="text-dim">Empty. Load ghosts below.</p>
+              : <div className="ui-grid" style={{ "--min": "180px" } as React.CSSProperties}>
+                  {p.merger.stored.map((g, i) => (
+                    <div key={g.uid} className="ui-card">
+                      <span className="ui-row"><span className="text-kyo">{g.name}</span><span className="text-dim">#{i + 1}</span></span>
+                      <span className="text-dim">{g.type} · Lv {g.level}</span>
+                    </div>
+                  ))}
+                </div>}
+          </Section>
+          <Section title={`YOUR PARTY · ${p.merger.party.length}`}>
+            {p.merger.party.length === 0
+              ? <p className="text-dim">Nothing in your party.</p>
+              : <div className="ui-grid" style={{ "--min": "180px" } as React.CSSProperties}>
+                  {p.merger.party.map((g) => (
+                    <div key={g.uid} className="ui-card">
+                      <span className="ui-row"><span className="text-kyo">{g.name}</span><span className="text-dim">{g.type} · Lv {g.level}</span></span>
+                      <button type="button" className="px-btn ui-btn-sm" disabled={p.merger.stored.length >= p.merger.storedMax} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
+                    </div>
+                  ))}
+                </div>}
+          </Section>
+          <Section title={`GHOST BOX · ${p.merger.box.length}`}>
+            {p.merger.box.length === 0
+              ? <p className="text-dim">Nothing in storage.</p>
+              : <div className="ui-grid" style={{ "--min": "180px" } as React.CSSProperties}>
+                  {p.merger.box.map((g) => (
+                    <div key={g.uid} className="ui-card">
+                      <span className="ui-row"><span className="text-kyo">{g.name}</span><span className="text-dim">{g.type} · Lv {g.level}</span></span>
+                      <button type="button" className="px-btn ui-btn-sm" disabled={p.merger.stored.length >= p.merger.storedMax} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
+                    </div>
+                  ))}
+                </div>}
+          </Section>
+        </>
+      )}
+      {p.kind === "gearforge" && p.forge && (
+        <>
+          <Section title={`PILE · ${p.forge.pieces} PIECES`} right={<span className="text-dim">{p.forge.pieces >= p.forge.megaAt ? "MEGASET READY" : p.forge.pieces >= p.forge.minCast ? "Ready to cast" : `Need ${p.forge.minCast - p.forge.pieces} more`}</span>}>
+            <p className="text-dim">
+              Average level: <span className="text-kyo">{p.forge.avgLevel || "—"}</span> · Types seen: {p.forge.types.length} · Unique enchants fed: {p.forge.enchantKinds}
+            </p>
+            <p className="text-dim">
+              Each cast melts the pile and makes 6 fresh gear pieces, one per slot, with <span className="text-kyo">+{p.forge.bonus} enchants over the normal cap</span> on every piece.
+              At {p.forge.megaAt}+ pieces it becomes a MegaSet (legendary floor, shared set id).
+              Casting costs {p.forge.castPower} Power right now.
+            </p>
+            <span className="cost-row">
+              <button type="button" className="px-btn px-btn-kyo" data-testid="forge-cast" disabled={p.forge.pieces < p.forge.minCast} onClick={() => game?.forgeCast()}>
+                {p.forge.pieces < p.forge.minCast ? `Cast (need ${p.forge.minCast})` : p.forge.pieces >= p.forge.megaAt ? "Cast MegaSet" : "Cast GearSet"}
+              </button>
+            </span>
+          </Section>
+          <Section title={`YOUR GEAR · ${p.forge.bagGear}`}>
+            {p.forge.bagGear <= 0
+              ? <p className="text-dim">No gear in your bag.</p>
+              : <>
+                  <p className="text-dim">Pick gear in your Gear menu (I) and dump it piece by piece, or dump everything at once below. Equipped pieces are kept unless you force-include them.</p>
+                  <span className="cost-row">
+                    <button type="button" className="px-btn ui-btn-sm" data-testid="forge-dump-all" onClick={() => game?.forgeDumpAll(false)}>Dump all unequipped</button>
+                    <button type="button" className="px-btn ui-btn-sm" onClick={() => { if (confirm("Dump EVERY gear piece, including what you are wearing? This cannot be undone.")) game?.forgeDumpAll(true); }}>Dump EVERYTHING (incl. worn)</button>
+                  </span>
+                </>}
           </Section>
         </>
       )}

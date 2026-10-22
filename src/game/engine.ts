@@ -26,7 +26,13 @@ import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
 import {
   sanitizePowerExtra, isPowerExtra, batteryCap, bufTotal, pipeRuns, pipeStep, DIR_VEC, DIR_NAME, BLOCKGEN_ITEM, POWER_EXTRA_HOW, POWER_EXTRA_MENU,
   LOGBURN_SECONDS, LOGBURN_POWER, LOGBURN_FUEL_MAX, SOLAR_SECONDS, SOLAR_POWER, BLOCK_MACHINE_SECONDS, BLOCK_MACHINE_POWER, MACHINE_BUF_MAX,
-  PIPE_SECONDS, TESLA_RANGE, TESLA_SECONDS, TESLA_POWER, CAP_MAX, BAT_MAX, type PowerExtra, type PowerExtraKind,
+  ROCKMINER_SECONDS, ROCKMINER_POWER,
+  PIPE_SECONDS, TESLA_RANGE, TESLA_SECONDS, TESLA_POWER, CAP_MAX, BAT_MAX,
+  sanitizeGhostMergers, sanitizeGearForges, emptyTally, mergeGhostInto, pickWeighted, bumpedQuality,
+  GHOSTMERGER_SECONDS, GHOSTMERGER_POWER, GHOSTMERGER_STORED_MAX, GHOSTMERGER_EXTRACT_MIN,
+  GHOSTMERGER_ABILITIES_MAX, GHOSTMERGER_MOVES_KNOWN_MAX,
+  GEARFORGE_POWER_PER_PIECE, GEARFORGE_POWER_MIN, GEARFORGE_BONUS_ENCHANTS, GEARFORGE_MIN_CAST, GEARFORGE_MEGASET_THRESHOLD, GEARFORGE_PILE_MAX,
+  type PowerExtra, type PowerExtraKind, type StoredGhost, type PartialSuperGhost, type GhostMergerNode, type GearForgeNode, type ForgeTally,
 } from "./power-extra";
 import { paintPipe } from "./pipe-art";
 import { mineInfo, rollMineDrop, mineXp, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
@@ -45,6 +51,7 @@ import {
   ENCHANTS,
   rollEnchantPower,
   ENCHANT_BY_ID,
+  QUALITIES,
   MAX_GEAR_ENCHANTS,
   perkText,
   xpNeed,
@@ -581,7 +588,7 @@ type Save = {
   powerXps?: { map: string; tx: number; ty: number }[];
   /** TURBZ + New Textures: Duplicators. One loaded bag item, copies stored inside. */
   powerDups?: { map: string; tx: number; ty: number; item: string; seed: boolean; stored: number; t: number }[];
-  /** TURBZ + New Textures: LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil and Pipes. */
+  /** TURBZ + New Textures: LogBurner, Solar Panel, Capacitor, BlockGenerator, Rock Miner, Tesla Coil and Pipes. */
   powerExtra?: PowerExtra[];
 };
 export type HoverCard = {
@@ -2439,6 +2446,10 @@ export class TurbzGame {
 			if (xp) return this.removePowerPiece("xpgen", xp);
 			const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
 			if (dup) return this.removePowerPiece("duplicator", dup);
+			const gm = (save.powerMergers ?? []).find(m => m.map === save.map && m.tx === tx && m.ty === ty);
+			if (gm) return this.removePowerPiece("ghostmerger", gm);
+			const gf = (save.powerForges ?? []).find(fo => fo.map === save.map && fo.tx === tx && fo.ty === ty);
+			if (gf) return this.removePowerPiece("gearforge", gf);
 			const ext = this.extraAt(tx, ty);
 			if (ext) return this.removePowerExtra(ext);
 			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
@@ -2464,6 +2475,10 @@ export class TurbzGame {
 		if (xp) return this.removePowerPiece("xpgen", xp);
 		const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
 		if (dup) return this.removePowerPiece("duplicator", dup);
+		const gm = (save.powerMergers ?? []).find(m => m.map === save.map && m.tx === tx && m.ty === ty);
+		if (gm) return this.removePowerPiece("ghostmerger", gm);
+		const gf = (save.powerForges ?? []).find(fo => fo.map === save.map && fo.tx === tx && fo.ty === ty);
+		if (gf) return this.removePowerPiece("gearforge", gf);
 		const ext = this.extraAt(tx, ty);
 		if (ext) return this.removePowerExtra(ext);
 		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
@@ -2476,7 +2491,7 @@ export class TurbzGame {
 			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
-		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen" || piece === "duplicator" || isPowerExtra(piece)) return this.placePowerPiece(piece, tx, ty);
+		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen" || piece === "duplicator" || piece === "ghostmerger" || piece === "gearforge" || isPowerExtra(piece)) return this.placePowerPiece(piece, tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
@@ -2490,7 +2505,7 @@ export class TurbzGame {
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : []),
-			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? []), ...(save.powerDups ?? []), ...this.pex()];
+			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? []), ...(save.powerDups ?? []), ...(save.powerMergers ?? []), ...(save.powerForges ?? []), ...this.pex()];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2861,10 +2876,20 @@ export class TurbzGame {
 			save.powerXps = save.powerXps ?? [];
 			save.powerXps.push(here);
 			this.say("XP Producer placed. Wire it to Batteries, then press E and spend 200 Power.");
-		} else {
+		} else if (piece === "duplicator") {
 			save.powerDups = save.powerDups ?? [];
 			save.powerDups.push({ ...here, item: "", seed: false, stored: 0, t: 0 });
 			this.say("Duplicator placed. Wire it to a Battery, then press E and load any item from your bag.");
+		} else if (piece === "ghostmerger") {
+			save.powerMergers = save.powerMergers ?? [];
+			save.powerMergers.push({ ...here, t: 0, stored: [], super: null });
+			this.say("Ghost Merger placed. Wire it to a Battery. Press E to shove a ghost in from your party or Ghost Box.");
+		} else if (piece === "gearforge") {
+			save.powerForges = save.powerForges ?? [];
+			save.powerForges.push({ ...here, tally: { pieces: 0, levelSum: 0, qualitySum: 0, enchantPool: {}, enchantPowerSum: 0, types: [] } });
+			this.say("GearSet Forge placed. Wire it to Batteries. Press E to dump gear and cast a 6-piece set with +5 enchants per piece.");
+		} else {
+			return false;
 		}
 		this.cue("rattle", { rate: 1.1 }, [380, .06, "triangle"]);
 		this.persist();
@@ -2872,7 +2897,7 @@ export class TurbzGame {
 		return true;
 	}
 
-	// ---------- Power extras: LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil, Pipes ----------
+	// ---------- Power extras: LogBurner, Solar Panel, Capacitor, BlockGenerator, Rock Miner, Tesla Coil, Pipes ----------
 	/** The saved extras, cleaned once per save so a hand-edited or old file can never crash a tick. */
 	pex() {
 		const save = this.save;
@@ -2882,6 +2907,26 @@ export class TurbzGame {
 			this._pexChecked = save.powerExtra;
 		}
 		return save.powerExtra ?? [];
+	}
+	/** Lazy-sanitize the Ghost Merger list on first touch, same pattern as pex(). */
+	pmg() {
+		const save = this.save;
+		if (!save) return [];
+		if (save.powerMergers && this._pmgChecked !== save.powerMergers) {
+			save.powerMergers = sanitizeGhostMergers(save.powerMergers);
+			this._pmgChecked = save.powerMergers;
+		}
+		return save.powerMergers ?? [];
+	}
+	/** Lazy-sanitize the GearSet Forge list on first touch, same pattern as pex(). */
+	pfg() {
+		const save = this.save;
+		if (!save) return [];
+		if (save.powerForges && this._pfgChecked !== save.powerForges) {
+			save.powerForges = sanitizeGearForges(save.powerForges);
+			this._pfgChecked = save.powerForges;
+		}
+		return save.powerForges ?? [];
 	}
 	extraAt(tx, ty, map = this.save?.map) {
 		return this.pex().find((e) => e.map === map && e.tx === tx && e.ty === ty) ?? null;
@@ -2945,36 +2990,29 @@ export class TurbzGame {
 		this.powerDirty = true;
 		return true;
 	}
-	/** One block broken in front of a BlockBreaker. Returns true if it broke something. */
-	runBlockBreaker(e) {
-		const save = this.save, world = this.world, sv = save.survival;
+	/**
+	 * One pull from the natural tile in front of a Rock Miner. Returns true if it mined something.
+	 * Unlike the old BlockBreaker, this does NOT remove the tile — the resource comes back forever,
+	 * so the rate is slower (ROCKMINER_SECONDS, enforced by the caller).
+	 */
+	runRockMiner(e) {
+		const save = this.save, world = this.world;
 		if (!world) return false;
 		const [dx, dy] = DIR_VEC[e.dir ?? 2];
 		const tx = e.tx + dx, ty = e.ty + dy;
 		e.buf = e.buf ?? {};
 		if (bufTotal(e.buf) >= MACHINE_BUF_MAX) return false;
-		const wall = sv.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty && (!l.kind || SOLID_KINDS.has(l.kind)));
-		let id = null;
-		if (wall) {
-			if (!this.spendNetworkPower(e, BLOCK_MACHINE_POWER)) return false;
-			sv.logs = sv.logs.filter((l) => l !== wall);
-			world.solids?.delete(ty * world.w + tx);
-			id = wall.kind === "stone" ? "rock_ore" : "timber";
-		} else if (save.map === "custom-turbz" && save.turbzNewTex && !this.tileTaken(tx, ty)) {
-			const i = ty * world.w + tx;
-			const t = world.tiles[i];
-			const info = t && t.block === 1 ? mineInfo(t, tx, ty, world.w, world.h) : null;
-			if (!info) return false;
-			if (!this.spendNetworkPower(e, BLOCK_MACHINE_POWER)) return false;
-			breakBlock(t, info);
-			(save.mined = save.mined ?? {});
-			(save.mined[save.map] = save.mined[save.map] ?? []).push(i);
-			id = rollMineDrop(info, Math.random());
-			this.refreshTerrain();
-		} else return false;
-		if (id) e.buf[id] = (e.buf[id] ?? 0) + 1;
-		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: 0.6 }, [120, .05, "square"]);
-		if (id) this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a");
+		if (!(save.map === "custom-turbz" && save.turbzNewTex && !this.tileTaken(tx, ty))) return false;
+		const i = ty * world.w + tx;
+		const t = world.tiles[i];
+		const info = t && t.block === 1 ? mineInfo(t, tx, ty, world.w, world.h) : null;
+		if (!info) return false;
+		if (!this.spendNetworkPower(e, ROCKMINER_POWER)) return false;
+		const id = rollMineDrop(info, Math.random());
+		if (!id) return false;
+		e.buf[id] = (e.buf[id] ?? 0) + 1;
+		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: 0.5 }, [100, .04, "square"]);
+		this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a");
 		this.powerDirty = true;
 		return true;
 	}
@@ -3001,12 +3039,18 @@ export class TurbzGame {
 				e.t -= SOLAR_SECONDS;
 				const stored = this.addNetworkPower(e, SOLAR_POWER);
 				if (stored > 0) this.float(cx, e.ty * 32 - 8, `+${stored} Power`, "#ffe27a");
-			} else if (e.kind === "blockgen" || e.kind === "blockbreaker") {
+			} else if (e.kind === "blockgen") {
 				if (e.on === false) continue;
 				e.t = Math.min(BLOCK_MACHINE_SECONDS, (e.t ?? 0) + dt);
 				if (e.t < BLOCK_MACHINE_SECONDS) continue;
-				const did = e.kind === "blockgen" ? this.runBlockGen(e) : this.runBlockBreaker(e);
+				const did = this.runBlockGen(e);
 				e.t = did ? 0 : BLOCK_MACHINE_SECONDS - 0.25;
+			} else if (e.kind === "rockminer") {
+				if (e.on === false) continue;
+				e.t = Math.min(ROCKMINER_SECONDS, (e.t ?? 0) + dt);
+				if (e.t < ROCKMINER_SECONDS) continue;
+				const did = this.runRockMiner(e);
+				e.t = did ? 0 : ROCKMINER_SECONDS - 0.4;
 			} else if (e.kind === "tesla") {
 				if (e.on === false) continue;
 				e.t = Math.min(TESLA_SECONDS, (e.t ?? 0) + dt);
@@ -3044,7 +3088,7 @@ export class TurbzGame {
 			for (const e of this.pex()) {
 				if (e.map !== save.map) continue;
 				if (e.kind === "pipe") pipes.set(`${e.tx},${e.ty}`, e);
-				else if (e.kind === "logburner" || e.kind === "blockgen" || e.kind === "blockbreaker") add(e.kind, e);
+				else if (e.kind === "logburner" || e.kind === "blockgen" || e.kind === "rockminer") add(e.kind, e);
 			}
 			this._pipeC = { pipes, ports };
 			this._pipeSig = sig;
@@ -3083,11 +3127,11 @@ export class TurbzGame {
 		}
 		if (chestDirty && chest) this.writeTurbzChestItems(chest);
 	}
-	/** Put a LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil or Pipe down. */
+	/** Put a LogBurner, Solar Panel, Capacitor, BlockGenerator, Rock Miner, Tesla Coil or Pipe down. */
 	placePowerExtra(piece, tx, ty) {
 		const save = this.save;
 		const here = { kind: piece, map: save.map, tx, ty, t: 0 };
-		if (piece === "blockgen" || piece === "blockbreaker") {
+		if (piece === "blockgen" || piece === "rockminer") {
 			const ddx = tx * 32 + 16 - save.x, ddy = ty * 32 + 16 - save.y;
 			here.dir = Math.abs(ddx) > Math.abs(ddy) ? (ddx > 0 ? 1 : 3) : (ddy > 0 ? 2 : 0);
 			here.on = true;
@@ -3106,7 +3150,7 @@ export class TurbzGame {
 			solar: "Solar Panel placed. Wire it to a Battery. It works in daylight.",
 			capacitor: "Capacitor placed. Wire it to a Generator to store up to 500 Power.",
 			blockgen: `BlockGenerator placed, facing ${DIR_NAME[here.dir].toLowerCase()}. Press E to load material or rotate it.`,
-			blockbreaker: `BlockBreaker placed, facing ${DIR_NAME[here.dir].toLowerCase()}. Wire it to Power. Press E to rotate it.`,
+			rockminer: `Rock Miner placed, facing ${DIR_NAME[here.dir].toLowerCase()}. Point it at natural rock, sand or dirt. Wire it to Power.`,
 			tesla: "Tesla Coil placed. Wire it to a Battery. It zaps foes that come close.",
 		}[piece];
 		if (say) this.say(say);
@@ -3131,13 +3175,13 @@ export class TurbzGame {
 		this.syncHud(true);
 		return true;
 	}
-	/** The open BlockGenerator / BlockBreaker / LogBurner, or null. */
+	/** The open BlockGenerator / Rock Miner / LogBurner, or null. */
 	openExtra(...kinds) {
 		const node = this.powerNode(this.powerOpen);
 		return node && kinds.includes(node.kind) ? node.n : null;
 	}
 	extraRotate() {
-		const e = this.openExtra("blockgen", "blockbreaker");
+		const e = this.openExtra("blockgen", "rockminer");
 		if (!e) return;
 		e.dir = ((e.dir ?? 2) + 1) % 4;
 		e.t = 0;
@@ -3147,7 +3191,7 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	extraToggle() {
-		const e = this.openExtra("blockgen", "blockbreaker", "tesla");
+		const e = this.openExtra("blockgen", "rockminer", "tesla");
 		if (!e) return;
 		e.on = e.on === false;
 		this.say(`${BUILD_PIECES[e.kind].name} ${e.on ? "on" : "off"}.`);
@@ -3193,9 +3237,9 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
-	/** Take everything the open BlockBreaker (or BlockGenerator) is holding, of one item id. */
+	/** Take everything the open Rock Miner (or BlockGenerator) is holding, of one item id. */
 	extraTake(id, n) {
-		const e = this.openExtra("blockgen", "blockbreaker");
+		const e = this.openExtra("blockgen", "rockminer");
 		if (!e || !e.buf) return;
 		const take = Math.min(e.buf[id] ?? 0, Math.max(1, Math.floor(n)));
 		if (take <= 0) return;
@@ -3250,7 +3294,7 @@ export class TurbzGame {
 			const far = !open || open.n.map !== save.map || Math.hypot(open.n.tx * 32 + 16 - save.x, open.n.ty * 32 + 16 - save.y) > 80;
 			if (far) { this.powerOpen = null; if (snap.panel === "power") publish({ panel: null }); }
 		}
-		if (!save.powerGens?.length && !save.powerDups?.length && !save.powerExtra?.length) return;
+		if (!save.powerGens?.length && !save.powerDups?.length && !save.powerExtra?.length && !save.powerMergers?.length && !save.powerForges?.length) return;
 		for (const g of save.powerGens ?? []) {
 			if (g.map !== save.map || g.ore <= 0) continue;
 			g.t += dt;
@@ -3263,6 +3307,8 @@ export class TurbzGame {
 		}
 		this.tickExtras(dt);
 		this.tickDuplicators(dt);
+		this.tickGhostMergers(dt);
+		this.tickGearForges(dt);
 		this.tickPipes(dt);
 	}
 	/** Spend Power from batteries on a block's network. Returns false if there is not enough. */
@@ -3298,6 +3344,209 @@ export class TurbzGame {
 			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+1 ${name}`, "#7dffb3");
 		}
 	}
+	// ---------- Ghost Merger ----------
+	/** Per-frame work for Ghost Mergers on this map. Each one burns one stored ghost into its super slot every N seconds. */
+	tickGhostMergers(dt) {
+		const save = this.save;
+		const list = this.pmg();
+		if (!list.length) return;
+		for (const m of list) {
+			if (m.map !== save.map) continue;
+			if (!m.stored?.length) { m.t = 0; continue; }
+			if (!this.powerNetwork(m).some((w) => w.kind === "bat" && (w.n.power ?? 0) >= GHOSTMERGER_POWER)) continue;
+			m.t = (m.t ?? 0) + dt;
+			if (m.t < GHOSTMERGER_SECONDS) continue;
+			m.t -= GHOSTMERGER_SECONDS;
+			if (!this.spendNetworkPower(m, GHOSTMERGER_POWER)) continue;
+			const consumed = m.stored.shift();
+			if (!consumed) continue;
+			m.super = mergeGhostInto(m.super, consumed);
+			this.float(m.tx * 32 + 16, m.ty * 32 - 8, `${consumed.name} merged (${m.super.fed})`, "#c89aff");
+			if (m.super.fed === GHOSTMERGER_EXTRACT_MIN) this.say(`A Super Ghost is ready to extract. Press E on the Ghost Merger.`);
+			this.powerDirty = true;
+		}
+	}
+	/** Returns the open merger node (interact UI calls this). */
+	openMerger() {
+		const node = this.powerNode(this.powerOpen);
+		return node?.kind === "merger" ? node.n : null;
+	}
+	/** Shove one stored ghost (by uid, from party or Ghost Box) into the open merger. */
+	mergerFeedGhost(uid) {
+		const save = this.save;
+		const m = this.openMerger();
+		if (!save || !m) return;
+		if (m.stored.length >= GHOSTMERGER_STORED_MAX) { this.say(`The Ghost Merger is full (${GHOSTMERGER_STORED_MAX}).`); return; }
+		const fromParty = (save.spirits ?? []).find((s) => s.uid === uid);
+		const fromBox = (save.ghostStore ?? []).find((s) => s.uid === uid);
+		const src = fromParty ?? fromBox;
+		if (!src) { this.say("That ghost isn't here anymore."); return; }
+		const stored = {
+			uid: src.uid, name: src.name, type: src.type, level: src.level ?? 1,
+			rarity: src.rarity ?? 0,
+			abilities: (src.abilities ?? []).map((a) => ({ id: a.id, rank: a.rank ?? 0 })),
+			moves: (src.moves ?? []).slice(),
+		};
+		m.stored.push(stored);
+		if (fromParty) save.spirits = (save.spirits ?? []).filter((s) => s !== fromParty);
+		if (fromBox) save.ghostStore = (save.ghostStore ?? []).filter((s) => s !== fromBox);
+		this.say(`${src.name} loaded into the Ghost Merger (${m.stored.length}/${GHOSTMERGER_STORED_MAX}).`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Extract the finished Super Ghost from the open merger, overwriting any previous one. */
+	mergerExtract() {
+		const save = this.save;
+		const m = this.openMerger();
+		if (!save || !m) return;
+		if (!m.super || m.super.fed < GHOSTMERGER_EXTRACT_MIN) { this.say(`Feed at least ${GHOSTMERGER_EXTRACT_MIN} ghosts before you can extract one.`); return; }
+		if (save.superGhost && save.superGhost.hp > 0) {
+			// Overwriting is a one-way choice — the old super is gone.
+			this.say(`${save.superGhost.name ?? "The old Super Ghost"} is overwritten by a stronger one.`);
+		}
+		const partial = m.super;
+		const hp = Math.floor(600 + partial.level * 40 + partial.fed * 30);
+		const activeMoves = partial.movesKnown.slice(0, 10);
+		save.superGhost = {
+			uid: `super-${Date.now().toString(36)}`,
+			name: `Super Ghost (${partial.fed} fused)`,
+			type: partial.types[0] ?? "normal",
+			level: partial.level,
+			rarity: 5,
+			shiny: true,
+			tagged: true,
+			palette: null,
+			hp, maxHp: hp,
+			abilities: partial.abilities.slice(0, GHOSTMERGER_ABILITIES_MAX),
+			active: true,
+			super: true,
+			types: partial.types.slice(),
+			movesKnown: partial.movesKnown.slice(0, GHOSTMERGER_MOVES_KNOWN_MAX),
+			moves: activeMoves,
+		};
+		m.super = null;
+		m.t = 0;
+		this.say(`Super Ghost extracted. ${partial.types.length} types, ${partial.abilities.length} abilities, ${activeMoves.length} active moves (knows ${partial.movesKnown.length}). It walks with you until it falls.`);
+		this.persist();
+		this.syncHud(true);
+	}
+
+	// ---------- GearSet Forge ----------
+	/** Per-frame work for GearSet Forges. They don't tick on their own — casting is player-driven via `forgeCast`. */
+	tickGearForges(_dt) {
+		// Just run the lazy sanitize so a loaded save gets its forges validated.
+		this.pfg();
+	}
+	openForge() {
+		const node = this.powerNode(this.powerOpen);
+		return node?.kind === "forge" ? node.n : null;
+	}
+	/** Dump one gear piece (by uid) into the open forge; the piece leaves the player's gear bag. */
+	forgeDump(uid) {
+		const save = this.save;
+		const forge = this.openForge();
+		if (!save || !forge) return;
+		if (forge.tally.pieces >= GEARFORGE_PILE_MAX) { this.say(`The forge pile is full (${GEARFORGE_PILE_MAX}).`); return; }
+		const idx = (save.gear ?? []).findIndex((g) => g.uid === uid);
+		if (idx < 0) { this.say("That gear isn't in your bag."); return; }
+		const g = save.gear[idx];
+		if (save.equipped) {
+			for (const slot of Object.keys(save.equipped)) {
+				if (save.equipped[slot] === g.uid) delete save.equipped[slot];
+			}
+		}
+		save.gear.splice(idx, 1);
+		this._applyGearToForge(forge, g);
+		this.say(`${g.name} melted into the forge pile (${forge.tally.pieces} total).`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Dump every gear piece in the bag (keeping the ones currently equipped). */
+	forgeDumpAll(includeEquipped = false) {
+		const save = this.save;
+		const forge = this.openForge();
+		if (!save || !forge) return;
+		const equipped = new Set(Object.values(save.equipped ?? {}).filter(Boolean));
+		const toMelt = (save.gear ?? []).filter((g) => includeEquipped || !equipped.has(g.uid));
+		if (!toMelt.length) { this.say("No gear to dump."); return; }
+		let n = 0;
+		for (const g of toMelt) {
+			if (forge.tally.pieces >= GEARFORGE_PILE_MAX) break;
+			this._applyGearToForge(forge, g);
+			n++;
+		}
+		save.gear = (save.gear ?? []).filter((g) => !toMelt.slice(0, n).includes(g));
+		this.say(`Dumped ${n} pieces into the forge (${forge.tally.pieces} total). Cast when you're ready.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Private: fold one gear piece's stats into the forge's running tally. */
+	_applyGearToForge(forge, g) {
+		const t = forge.tally;
+		t.pieces += 1;
+		t.levelSum += Math.max(1, g.level ?? 1);
+		const qi = Math.max(0, QUALITIES.findIndex((q) => q.id === g.quality));
+		t.qualitySum += qi;
+		if (g.type && !t.types.includes(g.type)) t.types.push(g.type);
+		for (const e of (g.enchants ?? [])) {
+			t.enchantPool[e.id] = (t.enchantPool[e.id] ?? 0) + 1;
+			t.enchantPowerSum += Math.max(1, e.power ?? 1);
+		}
+	}
+	/** Burn the pile and produce a fresh 6-piece set. */
+	forgeCast() {
+		const save = this.save;
+		const forge = this.openForge();
+		if (!save || !forge) return;
+		const t = forge.tally;
+		if (t.pieces < GEARFORGE_MIN_CAST) { this.say(`The forge needs at least ${GEARFORGE_MIN_CAST} pieces (one per gear slot) to cast.`); return; }
+		const powerCost = Math.max(GEARFORGE_POWER_MIN, t.pieces * GEARFORGE_POWER_PER_PIECE);
+		if (!this.spendNetworkPower(forge, powerCost)) { this.say(`The forge needs ${powerCost} Power on its network to cast.`); return; }
+
+		const avgLevel = Math.max(1, Math.round(t.levelSum / t.pieces));
+		const volumeBonus = Math.min(10, Math.floor((t.pieces - GEARFORGE_MIN_CAST) / 6));
+		const outLevel = Math.min(400, avgLevel + volumeBonus);
+		const avgQ = Math.round(t.qualitySum / t.pieces);
+		const qUp = t.pieces >= GEARFORGE_MEGASET_THRESHOLD ? 2 : t.pieces >= 18 ? 1 : 0;
+		const megaFloor = t.pieces >= GEARFORGE_MEGASET_THRESHOLD ? QUALITIES[5].id : null;
+		const isMega = t.pieces >= GEARFORGE_MEGASET_THRESHOLD;
+		const quality = QUALITIES[bumpedQuality(avgQ, qUp)].id;
+		const setId = (isMega ? "mega-" : "forge-") + Date.now().toString(36);
+
+		const slots = ["weapon", "head", "chest", "legs", "feet", "relic"];
+		const rng = this._mulberry ? this._mulberry(Math.random() * 1e9 | 0) : mulberry32(Math.random() * 1e9 | 0);
+		const typeBias = t.types[Math.floor(Math.random() * Math.max(1, t.types.length))] ?? null;
+		const madeGear = [];
+		for (const slot of slots) {
+			const piece = rollGear(rng, {
+				level: outLevel, slot, luck: 0,
+				floor: megaFloor ?? quality,
+				typeBias,
+				setId,
+			});
+			// ─── +5 bonus enchants that bypass MAX_GEAR_ENCHANTS ─────────────────
+			const owned = new Set((piece.enchants ?? []).map((e) => e.id));
+			const bonusIds = pickWeighted(t.enchantPool, Math.random, GEARFORGE_BONUS_ENCHANTS, owned);
+			const qIdx = Math.max(0, QUALITIES.findIndex((q) => q.id === piece.quality));
+			for (const id of bonusIds) {
+				const def = ENCHANT_BY_ID[id];
+				if (!def) continue;
+				piece.enchants.push({ id, power: rollEnchantPower(rng, def, piece.level, qIdx) });
+			}
+			piece.forgeMega = isMega;
+			piece.forgeBonus = bonusIds.length;
+			save.gear = save.gear ?? [];
+			save.gear.push(piece);
+			madeGear.push(piece);
+		}
+		// Reset the pile.
+		forge.tally = { pieces: 0, levelSum: 0, qualitySum: 0, enchantPool: {}, enchantPowerSum: 0, types: [] };
+		const label = isMega ? "MegaSet" : "GearSet";
+		this.say(`${label} cast! 6 pieces at level ${outLevel}, +${GEARFORGE_BONUS_ENCHANTS} enchants each (bypass normal cap). Check your gear bag.`);
+		this.persist();
+		this.syncHud(true);
+	}
+
 	/** The power block saved under an open-menu handle, or null. */
 	powerNode(open) {
 		const save = this.save;
@@ -3308,6 +3557,8 @@ export class TurbzGame {
 			wire: [save.powerWires, "wire"],
 			xpgen: [save.powerXps, "xp"],
 			duplicator: [save.powerDups, "dup"],
+			ghostmerger: [save.powerMergers, "merger"],
+			gearforge: [save.powerForges, "forge"],
 		};
 		if (isPowerExtra(open.kind)) {
 			const e = this.extraAt(open.tx, open.ty, open.map);
@@ -3397,6 +3648,37 @@ export class TurbzGame {
 			bagTimber: save.bag?.timber ?? 0,
 			bagRock: save.bag?.rock_ore ?? 0,
 			day: !this.isNightNow(),
+			// Ghost Merger view
+			merger: open.kind === "ghostmerger" && node.n ? {
+				stored: (node.n.stored ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level })),
+				storedMax: GHOSTMERGER_STORED_MAX,
+				super: node.n.super ? {
+					fed: node.n.super.fed,
+					types: node.n.super.types.slice(),
+					abilities: node.n.super.abilities.length,
+					movesKnown: node.n.super.movesKnown.length,
+					level: node.n.super.level,
+					ready: node.n.super.fed >= GHOSTMERGER_EXTRACT_MIN,
+				} : null,
+				extractMin: GHOSTMERGER_EXTRACT_MIN,
+				next: (node.n.stored?.length && network >= GHOSTMERGER_POWER) ? Math.max(0, GHOSTMERGER_SECONDS - (node.n.t ?? 0)) : -1,
+				party: (save.spirits ?? []).map((s) => ({ uid: s.uid, name: s.name, type: s.type, level: s.level ?? 1 })),
+				box: (save.ghostStore ?? []).map((s) => ({ uid: s.uid, name: s.name, type: s.type, level: s.level ?? 1 })),
+				currentSuper: save.superGhost ? { name: save.superGhost.name, fed: save.superGhost.types?.length ?? 1, hp: save.superGhost.hp, maxHp: save.superGhost.maxHp } : null,
+			} : null,
+			// GearSet Forge view
+			forge: open.kind === "gearforge" && node.n ? {
+				pieces: node.n.tally.pieces,
+				pileMax: GEARFORGE_PILE_MAX,
+				minCast: GEARFORGE_MIN_CAST,
+				megaAt: GEARFORGE_MEGASET_THRESHOLD,
+				bonus: GEARFORGE_BONUS_ENCHANTS,
+				avgLevel: node.n.tally.pieces > 0 ? Math.round(node.n.tally.levelSum / node.n.tally.pieces) : 0,
+				types: node.n.tally.types.slice(),
+				enchantKinds: Object.keys(node.n.tally.enchantPool).length,
+				castPower: Math.max(GEARFORGE_POWER_MIN, (node.n.tally.pieces || GEARFORGE_MIN_CAST) * GEARFORGE_POWER_PER_PIECE),
+				bagGear: (save.gear ?? []).length,
+			} : null,
 		};
 	}
 	/** Open the power block you are standing at. Pressing E again closes it. */
@@ -3413,7 +3695,7 @@ export class TurbzGame {
 			}
 			return best;
 		};
-		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen"), nearest(save.powerDups, "duplicator"), ...POWER_EXTRA_MENU.map((k) => nearest(this.pex().filter((e) => e.kind === k), k))].filter(Boolean).sort((a, b) => a.d - b.d)[0];
+		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen"), nearest(save.powerDups, "duplicator"), nearest(save.powerMergers, "ghostmerger"), nearest(save.powerForges, "gearforge"), ...POWER_EXTRA_MENU.map((k) => nearest(this.pex().filter((e) => e.kind === k), k))].filter(Boolean).sort((a, b) => a.d - b.d)[0];
 		if (!hit) return false;
 		const same = this.powerOpen && this.powerOpen.kind === hit.kind && this.powerOpen.tx === hit.n.tx && this.powerOpen.ty === hit.n.ty;
 		if (same && snap.panel === "power") { this.closePower(); return true; }
@@ -3552,7 +3834,18 @@ export class TurbzGame {
 			if ((f.stored ?? 0) > 0 && f.item) this.giveItem(f.item, f.stored);
 			save.powerDups = (save.powerDups ?? []).filter(d => d !== f);
 		}
-		else save.powerXps = (save.powerXps ?? []).filter(x => x !== f);
+		else if (piece === "ghostmerger") {
+			// Stored ghosts go back to the Ghost Box so none are lost on pickup.
+			save.ghostStore = save.ghostStore ?? [];
+			for (const g of (f.stored ?? [])) save.ghostStore.push({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity, shiny: false, tagged: false, palette: null, abilities: g.abilities ?? [], active: false, hp: 0, maxHp: 0 });
+			if (f.super && f.super.fed > 0) this.say(`Ghost Merger packed up. Its in-progress super (${f.super.fed} fed) was lost.`);
+			save.powerMergers = (save.powerMergers ?? []).filter(x => x !== f);
+		}
+		else if (piece === "gearforge") {
+			if (f.tally?.pieces > 0) this.say(`GearSet Forge packed up. The ${f.tally.pieces} pieces in the pile were lost.`);
+			save.powerForges = (save.powerForges ?? []).filter(x => x !== f);
+		}
+		else if (piece === "xpgen") save.powerXps = (save.powerXps ?? []).filter(x => x !== f);
 		for (const [id, n] of Object.entries(BUILD_PIECES[piece].cost)) {
 			if (id === "kyo") save.kyo = (save.kyo ?? 0) + n;
 			else this.giveItem(id, n);
@@ -6558,7 +6851,10 @@ export class TurbzGame {
 	activeSpirits() {
 		const save = this.save;
 		if (!save) return [];
-		return (save.spirits ?? []).filter((s) => s.active).slice(0, this.spiritCap());
+		const party = (save.spirits ?? []).filter((s) => s.active).slice(0, this.spiritCap());
+		// The Super Ghost (if one is extracted) walks with you on top of the party, not against the cap.
+		if (save.superGhost && save.superGhost.hp > 0) party.push(save.superGhost);
+		return party;
 	}
 	/**
 	 * A ghost from a fallen foe. Its rarity starts at the foe's and may ascend (bosses and shinies climb
@@ -12995,7 +13291,7 @@ export class TurbzGame {
 			};
 			const look = {
 				logburner: ["#5a2c12", "#ff9a4a", "LOG", "#ffb870"], solar: ["#17305a", "#6fb6ff", "SOLAR", "#ffe27a"], capacitor: ["#1a3a6b", "#7fd0ff", "CAP", "#8fd0ff"],
-				blockgen: ["#3a3a48", "#9bd18a", "PLACER", "#b8e8a8"], blockbreaker: ["#4a2a2a", "#e07a6a", "BREAKER", "#ffa898"], tesla: ["#20304a", "#9fe8ff", "TESLA", "#9fe8ff"],
+				blockgen: ["#3a3a48", "#9bd18a", "PLACER", "#b8e8a8"], rockminer: ["#4a2a2a", "#e0a06a", "MINER", "#ffd0a8"], tesla: ["#20304a", "#9fe8ff", "TESLA", "#9fe8ff"],
 			};
 			for (const e of this.pex()) {
 				if (e.kind === "pipe" || e.map !== save.map || Math.abs(e.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(e.ty * 32 + 16 - this.cam.y) > halfH) continue;
@@ -13004,7 +13300,7 @@ export class TurbzGame {
 				paintSlot(e.kind, ex, ey, c1, c2);
 				const tag = e.kind === "logburner" ? `LOG · ${e.fuel || 0}` : e.kind === "capacitor" ? `CAP · ${e.power || 0}/${CAP_MAX}` : e.on === false ? `${label} · OFF` : label;
 				drawShadowName(ctx, tag, ex + 16, ey - 10, tint);
-				if (e.kind === "blockgen" || e.kind === "blockbreaker") {
+				if (e.kind === "blockgen" || e.kind === "rockminer") {
 					const [dx, dy] = DIR_VEC[e.dir ?? 2];
 					ctx.strokeStyle = e.kind === "blockgen" ? "rgba(155,209,138,.55)" : "rgba(224,122,106,.55)";
 					ctx.lineWidth = 1;

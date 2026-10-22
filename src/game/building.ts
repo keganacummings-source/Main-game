@@ -45,7 +45,8 @@ export type BuildPiece =
   | "hellgen" | "logburner" | "solar"
   | "battery" | "capacitor"
   | "wire" | "pipe"
-  | "blockgen" | "blockbreaker" | "tesla" | "xpgen" | "duplicator";
+  | "blockgen" | "rockminer" | "tesla" | "xpgen" | "duplicator"
+  | "ghostmerger" | "gearforge";
 
 /** Which column/section a piece sits in. Power is split so it can keep growing. */
 export type BuildGroup =
@@ -112,14 +113,16 @@ export const BUILD_PIECE_DEFS: BuildPieceDef[] = [
 
   // Power · Wiring
   { id: "wire", group: "power.wiring", name: "Wire", cost: { wire: 1 }, requires: "turbz+newtex", about: "Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore).", preview: tex("wire.png") },
-  { id: "pipe", group: "power.wiring", name: "Pipe", cost: { rock_ore: 1 }, requires: "turbz+newtex", about: "Moves items between machines on its own: a Duplicator or BlockBreaker into a Chest, a Chest into a Generator or BlockGenerator. It bends, forks and caps itself to match its neighbours. Drag to lay a line.", preview: tex("pipe.png") },
+  { id: "pipe", group: "power.wiring", name: "Pipe", cost: { rock_ore: 1 }, requires: "turbz+newtex", about: "Moves items between machines on its own: a Duplicator or Rock Miner into a Chest, a Chest into a Generator or BlockGenerator. It bends, forks and caps itself to match its neighbours. Drag to lay a line.", preview: tex("pipe.png") },
 
   // Power · Machines
   { id: "blockgen", group: "power.machines", name: "BlockGenerator", cost: { rock_ore: 6, timber: 6, wire: 2 }, requires: "turbz+newtex", about: "Places a Wood or Stone block on the tile in front of it every second while it has Power and material. Feed it by hand or with a Pipe. Press E to rotate or switch it off.", preview: tex("blockgen.png") },
-  { id: "blockbreaker", group: "power.machines", name: "BlockBreaker", cost: { rock_ore: 6, timber: 4, wire: 2 }, requires: "turbz+newtex", about: "Breaks the block in front of it every second for 1 Power. Walls give back their material; natural rock mines like normal. Pipe the haul into a chest.", preview: tex("blockbreaker.png") },
+  { id: "rockminer", group: "power.machines", name: "Rock Miner", cost: { rock_ore: 6, timber: 4, wire: 2 }, requires: "turbz+newtex", about: "Pulls one ore from the natural rock, sand or dirt tile in front of it every 3 seconds for 1 Power. Does NOT destroy the tile — infinite slow trickle. Pipe the haul into a chest.", preview: tex("blockbreaker.png") },
   { id: "tesla", group: "power.machines", name: "Tesla Coil", cost: { hell_ore: 3, rock_ore: 6, wire: 3 }, requires: "turbz+newtex", about: "Zaps the nearest foe within 5 tiles every 1.5 seconds for 4 Power. Wire it to a Battery.", preview: tex("tesla.png") },
   { id: "xpgen", group: "power.machines", name: "XP Producer", cost: { kyo: 10000 }, requires: "turbz+newtex", about: "Press E to spend 200 Power for the XP of about 50 kills at your level.", preview: tex("xpgen.png") },
   { id: "duplicator", group: "power.machines", name: "Duplicator", cost: { hell_ore: 6, ore: 6, timber: 6 }, requires: "turbz+newtex", about: "Press E and load any bag item. Every 5 seconds it spends 2 Power and stores one copy. Wire it to a Battery.", preview: tex("duplicator.png") },
+  { id: "ghostmerger", group: "power.machines", name: "Ghost Merger", cost: { hell_ore: 6, ore: 6, timber: 4, wire: 4 }, requires: "turbz+newtex", about: "Compresses stored ghosts into a Super Ghost. Press E to shove a ghost in from your party or Ghost Box. Every 8s it burns one for 3 Power and folds its type, an ability and its known moves into the super slot. Extract the finished Super Ghost (max one worn at a time).", preview: tex("duplicator.png") },
+  { id: "gearforge", group: "power.machines", name: "GearSet Forge", cost: { hell_ore: 8, ore: 10, wire: 4 }, requires: "turbz+newtex", about: "Melts a pile of gear into a brand-new 6-piece set with +5 enchants per piece (bypassing the normal cap). Dump ONE piece, ALL of a slot, or ALL your gear. Cast at 12 Power per piece fed (min 50). Dump 36+ pieces to roll a MegaSet.", preview: tex("duplicator.png") },
 ];
 
 // ─── Derived (do not edit) ───────────────────────────────────────────────────
