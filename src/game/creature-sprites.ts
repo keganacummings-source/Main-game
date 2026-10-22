@@ -56,6 +56,25 @@ export function customSpriteFor(species: string): CustomSprite | undefined {
 }
 
 /**
+ * Hook injected by enemy-design.ts: given a species and the mob's current type, returns a
+ * retinted canvas (per-type palette shift) or null if the base canvas is fine. Living here as
+ * a hook rather than a direct import keeps the two modules cycle-free.
+ */
+type TypedResolver = (species: string, type: string) => HTMLCanvasElement | null;
+let typedResolver: TypedResolver | null = null;
+export function setTypedSpriteResolver(fn: TypedResolver | null): void { typedResolver = fn; }
+
+/** Like customSpriteFor() but asks the resolver for a palette-shifted variant first. */
+export function customSpriteForTyped(species: string, type: string): CustomSprite | undefined {
+  const base = customSprites.get(species);
+  if (!base) return undefined;
+  if (!base.canvas || !typedResolver) return base;
+  const typedCanvas = typedResolver(species, type);
+  if (!typedCanvas) return base;
+  return { cell: base.cell, canvas: typedCanvas, scale: base.scale, noTint: base.noTint };
+}
+
+/**
  * Enemy skins: greyscale pixel sprites (enemy-skins.ts) that any foe can wear. Kept apart from
  * custom designer sprites so the two systems never clash. A skin is tinted at draw time by the
  * foe's element list, so one grey sprite reads as many different creatures.
@@ -264,7 +283,7 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
     image.src = "/sprites/creatures_roguelike.png";
   }
   const skin = m.skin ? skinSprites.get(m.skin) : undefined;
-  const custom = skin ?? (m.species ? customSprites.get(m.species) : undefined);
+  const custom = skin ?? (m.species ? customSpriteForTyped(m.species, String(m.type ?? "normal")) : undefined);
   const cell = skin ? undefined : custom?.cell ?? (m.species ? CREATURE_CELLS[m.species] : undefined);
   const scale = (m.boss ? BOSS_SPRITE_SCALE : CREATURE_SPRITE_SCALE) * (custom?.scale ?? 1),
     bob = Math.round(Math.sin(m.walk * 5) * 1);

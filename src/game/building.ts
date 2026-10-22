@@ -168,12 +168,14 @@ export const NEWTEX_ONLY_PIECES: Set<BuildPiece> = new Set(
   BUILD_PIECE_DEFS.filter((d) => d.requires === "turbz+newtex").map((d) => d.id),
 );
 
-/** True when this piece should appear in the menu for the current mode. */
+/** True when this piece should appear in the menu for the current mode.
+ * NOTE: NewTex is now always on in TURBZ, so "turbz+newtex" is equivalent to "turbz" here. */
 export function isPieceAvailable(id: BuildPiece, mode: { turbz: boolean; newTex: boolean }): boolean {
   const req = BUILD_PIECES[id]?.requires;
   if (!req) return true;
-  if (req === "turbz") return mode.turbz;
-  if (req === "turbz+newtex") return mode.turbz && mode.newTex;
+  // Both gates now collapse to "turbz is on". `mode.newTex` is still passed for backwards compat
+  // with older callers but is effectively redundant.
+  if (req === "turbz" || req === "turbz+newtex") return mode.turbz;
   return true;
 }
 

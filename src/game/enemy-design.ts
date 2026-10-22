@@ -8,7 +8,8 @@
  */
 import { ANIMAL_BY_ID, BIOME_MONSTERS, MONSTERS, MONSTER_BY_ID, MOVE_BY_ID, TYPES, type BiomeId, type MonsterDef, type TypeId, MOVES, attackForm, moveTactic } from "./content";
 import { MOB_ENCHANT_IDS, type EnemyStats, type MobEnchantId } from "./balance";
-import { CREATURE_CELLS, setCustomSprite, clearCustomSprites } from "./creature-sprites";
+import { CREATURE_CELLS, setCustomSprite, clearCustomSprites, setTypedSpriteResolver } from "./creature-sprites";
+import { retintPixels } from "./type-palettes";
 import shipped from "./enemies/custom-enemies.json";
 
 export const ENEMY_DESIGN_KEY = "turbz-enemy-designs-v1";
@@ -245,13 +246,57 @@ function spriteCanvas(pixels: (string | null)[]): HTMLCanvasElement | null {
   return c;
 }
 
-/** Register a design's look with the sprite renderer under a species id. */
-export function registerSprite(species: string, d: Pick<EnemyDesign, "sprite" | "scale">): void {
-  if (d.sprite.kind === "sheet") setCustomSprite(species, { cell: d.sprite.cell, scale: d.scale });
-  else setCustomSprite(species, { canvas: spriteCanvas(d.sprite.pixels), scale: d.scale });
+/**
+ * Side-table: species → { pixels, baseType, scale }. Used by typedSpriteCanvas() to
+ * build a retinted canvas on demand when the mob's current type differs from the
+ * design's native type. Populated by registerSprite() alongside the default canvas
+ * so the one-type look still renders if no retint is requested.
+ */
+type PixelsBase = { pixels: (string | null)[]; baseType: TypeId; scale?: number };
+const basePixels = new Map<string, PixelsBase>();
+
+/** Per-(species, type) retinted canvas cache. First access builds + caches. */
+const typedCanvasCache = new Map<string, HTMLCanvasElement | null>();
+
+/**
+ * Return a canvas for `species` rendered as `type`. If no custom pixel sprite was registered
+ * (or the type matches the base), returns null — caller falls back to the default canvas.
+ */
+export function typedSpriteCanvas(species: string, type: TypeId): HTMLCanvasElement | null {
+  const base = basePixels.get(species);
+  if (!base || base.baseType === type) return null;
+  const key = `${species}:${type}`;
+  if (typedCanvasCache.has(key)) return typedCanvasCache.get(key) ?? null;
+  const retinted = retintPixels(base.pixels, base.baseType, type);
+  const canvas = spriteCanvas(retinted);
+  typedCanvasCache.set(key, canvas);
+  return canvas;
 }
 
-/** Puts every design into the monster tables. Safe to call again after designs change. */
+/** Register a design's look with the sprite renderer under a species id. */
+export function registerSprite(species: string, d: Pick<EnemyDesign, "sprite" | "scale" | "type">): void {
+  if (d.sprite.kind === "sheet") setCustomSprite(species, { cell: d.sprite.cell, scale: d.scale });
+  else {
+    setCustomSprite(species, { canvas: spriteCanvas(d.sprite.pixels), scale: d.scale });
+    basePixels.set(species, { pixels: d.sprite.pixels, baseType: d.type, scale: d.scale });
+  }
+}
+
+/** Clear the per-type canvas cache (called when designs are reinstalled). */
+export function clearTypedSprites(): void {
+  typedCanvasCache.clear();
+  basePixels.clear();
+}
+
+/**
+ * Puts every design into the monster tables. Safe to call again after designs change.
+ *
+ * When any shipped (non-replace) designs are present, the custom roster FULLY replaces vanilla
+ * biome spawns: BIOME_MONSTERS is wiped and only the shipped designs populate it. This is what
+ * makes "replace all vanilla enemies with my 20" work by just dropping the JSON in. The `overworld`
+ * flag is no longer gating biome placement — any non-empty `biomes` list on a design puts it in
+ * those biome tables (bosses and animals included).
+ */
 export function installEnemyDesigns(list: EnemyDesign[] = allEnemyDesigns()): number {
   // Undo the previous install.
   for (const [id, def] of originals) {
@@ -266,9 +311,18 @@ export function installEnemyDesigns(list: EnemyDesign[] = allEnemyDesigns()): nu
     if (i >= 0) MONSTERS.splice(i, 1);
   }
   added.clear();
+  // Restore originals first — then we may wipe them again below if a custom roster is active.
   for (const [k, v] of Object.entries(originalBiomes)) BIOME_MONSTERS[k as BiomeId] = [...v];
   clearCustomSprites();
+  clearTypedSprites();
   active = new Map();
+
+  const addedDesigns = list.filter((d) => !d.replaces);
+  const customRosterActive = addedDesigns.length > 0;
+  if (customRosterActive) {
+    // Full replacement mode: start every biome empty and let the shipped designs populate it.
+    for (const b of Object.keys(BIOME_MONSTERS) as BiomeId[]) BIOME_MONSTERS[b] = [];
+  }
 
   for (const d of list) {
     const species = d.replaces ?? d.id;
@@ -286,10 +340,21 @@ export function installEnemyDesigns(list: EnemyDesign[] = allEnemyDesigns()): nu
       MONSTER_BY_ID[d.id] = def;
       MONSTERS.push(def);
       added.add(d.id);
-      if (d.flags.overworld) for (const b of d.biomes) for (let n = 0; n < d.weight; n++) BIOME_MONSTERS[b].push(d.id);
+      // In custom-roster mode, every design with biomes populates them (overworld flag no longer
+      // gates). Bosses are added too — the engine's spawn code already respects boss flags separately.
+      const putInBiomes = customRosterActive ? d.biomes.length > 0 : d.flags.overworld;
+      if (putInBiomes) for (const b of d.biomes) for (let n = 0; n < d.weight; n++) BIOME_MONSTERS[b].push(d.id);
     }
     registerSprite(species, d);
     active.set(species, d);
+  }
+  // Safety: if a biome ended up empty because no design listed it, drop in a reasonable default so
+  // the engine doesn't crash picking from an empty list. Use the first custom enemy as the fallback.
+  if (customRosterActive) {
+    const fallback = addedDesigns[0]?.id;
+    if (fallback) for (const b of Object.keys(BIOME_MONSTERS) as BiomeId[]) {
+      if (BIOME_MONSTERS[b].length === 0) BIOME_MONSTERS[b].push(fallback);
+    }
   }
   return list.length;
 }
@@ -473,3 +538,7 @@ export function autoPickStats(d: EnemyDesign, options: StatOption[]): EnemyStats
 
   return s;
 }
+
+// Wire the palette-shift resolver so creature-sprites can ask for typed variants without
+// importing from this module (keeps the two cycle-free).
+setTypedSpriteResolver(typedSpriteCanvas);

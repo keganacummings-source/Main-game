@@ -1527,6 +1527,7 @@ export const ITEMS: ItemDef[] = [
   { id: "dirt", name: "Dirt", about: "Dug from dirt ground (the tile becomes grass). Two Dirt and two Sand build a Battery.", price: 3 },
   { id: "sand", name: "Sand", about: "Broken from sandstone and sand blocks. Two Sand and two Dirt build a Battery.", price: 3 },
   { id: "wire", name: "Wire", about: "Carries Power. Craft one from a Rock Ore at a campfire, then place it in build mode to link a Generator, Batteries, and machines.", price: 12 },
+  { id: "voidore", name: "Void Ore", about: "Mined from void stone and void trees in the deepest, highest-level biome. For now it sells for a lot of kyo at the Black Market — future gear and machines will use it as a crafting material.", price: 150 },
   { id: "meat", name: "Raw Meat", about: "From hunted animals. Cook on a campfire before eating in Hardcore.", price: 9, heal: 22 },
   { id: "leather", name: "Hide Leather", about: "From hunted animals. Ten hides and ten mushrooms stitch a random gear piece at your level (Bag → Stitch gear). Three hides and two logs build a bed.", price: 14 },
   { id: "mushroom", name: "Shroom", about: "From mushroom patches. Used in potions, stews and gear stitching; in Hardcore you can eat one raw for 8 hunger.", price: 11 },

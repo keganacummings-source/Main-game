@@ -123,7 +123,9 @@ export function installTurbz(game: any): void {
 
   game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean) {
     // Rebirth passes no choice: the next life keeps the texture mode the last one used.
-    const useNewTex = newTex ?? !!this.save?.turbzNewTex;
+    const useNewTex = true; // NewTex is permanent in TURBZ.
+    // Parameter kept in the signature for back-compat but ignored.
+    void newTex;
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
     // swapRules clears the turbz flag; set it true again afterwards, before begin, so the run is TURBZ.
@@ -255,7 +257,7 @@ export function installTurbz(game: any): void {
     const seed = (raw.turbzSeed as number) || ((Math.random() * 1e9) >>> 0 || 7);
     raw.turbzSeed = seed;
     // Rebuild the exact same wild from the saved seed before booting into it (same generator it was made with).
-    raw.turbzNewTex = !!raw.turbzNewTex;
+    raw.turbzNewTex = true; // NewTex is permanent in TURBZ (migrates old saves on load).
     setTexMode(raw.turbzNewTex);
     const file = buildTurbzWorld(seed, raw.turbzNewTex);
     this.turbzFile = file;

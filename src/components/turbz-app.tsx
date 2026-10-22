@@ -291,13 +291,7 @@ function Hunt() {
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
               </Field>
               <ClassPicker pick={pick} setPick={setPick} game={g()} />
-              <label className="flex items-start gap-2 cursor-pointer" data-testid="turbz-newtex">
-                <input type="checkbox" checked={newTex} onChange={(e) => setNewTex(e.target.checked)} className="mt-1" />
-                <span>
-                  <span className="text-kyo font-display text-[9px]">New Texture Mode</span>
-                  <span className="text-dim block">A new world generator: plains, desert, jungle/swamp, snow and hell lands in an ocean, built only from the new textures with full-size trees and portals. Dungeons get the new textures too. Off plays the classic wild.</span>
-                </span>
-              </label>
+              {/* NewTex is now always on. The TURBZ world is always the New-Textures generator — plains, desert, jungle/swamp, snow and hell lands in an ocean, with the full-size trees, portals and Power machines. */}
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
                 {hasTurbzSave() && (
@@ -305,7 +299,7 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, newTex)}>
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true)}>
                   Wake as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
                 </button>
               </div>

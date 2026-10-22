@@ -19,9 +19,11 @@
 const NEWTEX_DIR = "/MapAssets/NewTex/";
 
 /** Floor codes the engine understands (same table as tex-world.ts / world.ts). */
-const FLOOR = { stone: 3, dirt: 4, snow: 5, ash: 9, sand: 10 } as const;
+const FLOOR = { stone: 3, dirt: 4, snow: 5, void: 7, ash: 9, sand: 10 } as const;
 /** Biome index of the hell biome (world.ts BIOMES order: void, frost, verdant, crown, bone, tide, ashen). */
 export const HELL_BIOME = 6;
+/** Biome index of the void biome (first entry in BIOMES). */
+export const VOID_BIOME = 0;
 
 /** Clicks needed to break a block. */
 export const MINE_HITS = 2;
@@ -32,13 +34,13 @@ export const MINE_REACH = 3.2 * 32;
 /** Drop chance for the ores. */
 export const ORE_CHANCE = 0.25;
 
-export type MineKind = "hell" | "stone" | "dirt" | "sand" | "wood";
+export type MineKind = "hell" | "void" | "stone" | "dirt" | "sand" | "wood";
 
 /**
  * Mining skill XP for breaking one block, by kind. For scale, harvesting an ore node pays 14.
  * Class aptitude (e.g. the Bulwark's Mining ×2.5) and hardcore's XP boost are applied by the engine's gainSkill.
  */
-export const MINE_XP: Record<MineKind, number> = { hell: 16, stone: 10, sand: 6, wood: 5, dirt: 3 };
+export const MINE_XP: Record<MineKind, number> = { hell: 16, void: 18, stone: 10, sand: 6, wood: 5, dirt: 3 };
 /** Extra Mining XP when the break also drops an ore. */
 export const ORE_BONUS_XP = 6;
 
@@ -54,7 +56,7 @@ export type MineInfo = {
 };
 export type MineTile = { floor: number; biome: number; block: number; decor?: number; sprite?: string; layers?: string[]; portal?: unknown };
 
-export const MINE_DROPS = { hell: "hell_ore", stone: "rock_ore", dirt: "dirt", sand: "sand", wood: "timber" } as const;
+export const MINE_DROPS = { hell: "hell_ore", void: "voidore", stone: "rock_ore", dirt: "dirt", sand: "sand", wood: "timber" } as const;
 
 const NT = (n: string) => `${NEWTEX_DIR}${n}.png`;
 /** New Texture Mode: each wall and the floor it leaves behind. Anything not listed falls back to dirt. */
@@ -63,6 +65,8 @@ const TEX_FLOOR: Record<string, { floor: number; sprite: string }> = {
   sand_wall: { floor: FLOOR.sand, sprite: NT("sand") },
   snow_wall: { floor: FLOOR.snow, sprite: NT("snow") },
   hell_wall: { floor: FLOOR.ash, sprite: NT("hell_floor") },
+  void_wall: { floor: 7, sprite: NT("void_floor") },
+  void_tree: { floor: 7, sprite: NT("void_floor") },
   temple_wall: { floor: FLOOR.stone, sprite: NT("temple_floor") },
   wood_wall: { floor: FLOOR.stone, sprite: NT("wood_floor") },
 };
@@ -103,6 +107,7 @@ export function mineInfo(t: MineTile | undefined, tx: number, ty: number, w: num
   if (WOOD.test(name)) return { kind: "wood", xp: MINE_XP.wood, drop: MINE_DROPS.wood, chance: 1, floor };
   if (SAND.test(name)) return { kind: "sand", xp: MINE_XP.sand, drop: MINE_DROPS.sand, chance: 1, floor };
   if (DIRT.test(name)) return { kind: "dirt", xp: MINE_XP.dirt, drop: MINE_DROPS.dirt, chance: 1, floor };
+  if (t.biome === VOID_BIOME) return { kind: "void", xp: MINE_XP.void, drop: MINE_DROPS.void, chance: 1, floor };
   if (t.biome === HELL_BIOME) return { kind: "hell", xp: MINE_XP.hell, drop: MINE_DROPS.hell, chance: ORE_CHANCE, floor };
   return { kind: "stone", xp: MINE_XP.stone, drop: MINE_DROPS.stone, chance: ORE_CHANCE, floor };
 }
@@ -117,7 +122,7 @@ export function rollMineDrop(info: MineInfo, roll: number): string | null {
  * (`dropped` is what rollMineDrop returned).
  */
 export function mineXp(info: MineInfo, dropped: string | null): number {
-  return info.xp + (dropped && (info.kind === "hell" || info.kind === "stone") ? ORE_BONUS_XP : 0);
+  return info.xp + (dropped && (info.kind === "hell" || info.kind === "void" || info.kind === "stone") ? ORE_BONUS_XP : 0);
 }
 
 /** Turns a block into its floor, in place. */

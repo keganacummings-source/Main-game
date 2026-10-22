@@ -24,7 +24,8 @@ export const TEX = {
   snow: T("snow"), ice: T("ice"), swampFloor: T("swamp_floor"), hellFloor: T("hell_floor"), templeFloor: T("temple_floor"), woodFloor: T("wood_floor"),
   stoneWall: T("stone_wall"), sandWall: T("sand_wall"), snowWall: T("snow_wall"), hellWall: T("hell_wall"), templeWall: T("temple_wall"), woodWall: T("wood_wall"),
   water: T("water"), deep: T("deep_water"), swamp: T("swamp"), lava: T("lava"),
-  treePlains: T("tree_plains"), treeSwamp: T("tree_swamp"), treeDesert: T("tree_desert"), treeSnow: T("tree_snow"), treeHell: T("tree_hell"),
+  treePlains: T("tree_plains"), treeSwamp: T("tree_swamp"), treeDesert: T("tree_desert"), treeSnow: T("tree_snow"), treeHell: T("tree_hell"), treeVoid: T("tree_void"),
+  voidWall: T("void_wall"), voidFloor: T("void_floor"),
   portal: T("portal"), log: T("log"), chest: T("chest"), bed: T("bed"), ghostbox: T("ghostbox"),
 } as const;
 export const TEX_FILES: string[] = Object.values(TEX);
@@ -34,7 +35,7 @@ const FL = { grass: 0, wall: 1, water: 2, stone: 3, dirt: 4, snow: 5, bog: 6, vo
 /** Biome indices (world.ts BIOMES order). */
 const BI = { void: 0, frost: 1, verdant: 2, crown: 3, bone: 4, tide: 5, ashen: 6 } as const;
 
-export type TexBiome = "plains" | "desert" | "jungle" | "snow" | "hell";
+export type TexBiome = "plains" | "desert" | "jungle" | "snow" | "hell" | "void";
 
 type BiomeDef = {
   label: string;
@@ -83,8 +84,13 @@ const DEF: Record<TexBiome, BiomeDef> = {
     monsters: ["onibi", "nobi", "hinotama", "kagaribi", "raiju"], animals: ["boar", "crow"],
     names: ["Cinderfall", "Emberdeep", "Ashgrave", "Infernum"], word: "Wastes", about: "Hellbrick, lava rivers and charred trees. The deadliest land.",
   },
+  void: {
+    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidFloor, patch: TEX.stone, patchFloor: FL.stone, patchAt: 0.78, wall: TEX.voidWall, tree: TEX.treeVoid, forest: [0.68, 0.4],
+    monsters: ["kage", "yomi", "naraku", "muma"], animals: ["crow"],
+    names: ["Starblight", "Nullgrave", "Hollowmire", "Voidbreach"], word: "Rift", about: "Starless rock and black trees. The deepest, deadliest land — drops Void Ore.",
+  },
 };
-const ORDER: TexBiome[] = ["plains", "desert", "jungle", "snow", "hell"];
+const ORDER: TexBiome[] = ["plains", "desert", "jungle", "snow", "hell", "void"];
 
 // ---------------------------------------------------------------------------
 // Noise
@@ -149,7 +155,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
   const sites: Site[] = [];
   const rot = rng() * Math.PI * 2;
   ORDER.forEach((biome, i) => {
-    const a = rot + (i * 2 * Math.PI) / 5 + (rng() - 0.5) * 0.25;
+    const a = rot + (i * 2 * Math.PI) / ORDER.length + (rng() - 0.5) * 0.25;
     const ring = mn * 0.31 * (0.95 + rng() * 0.1);
     sites.push({
       biome, x: w / 2 + Math.cos(a) * ring, y: h / 2 + Math.sin(a) * ring, r: mn * (0.145 + rng() * 0.015),

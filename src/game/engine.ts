@@ -219,7 +219,7 @@ import {
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { initActorSprites } from "./actor-sprites";
 import { isPinned } from "./ui-layout-store";
-import { enemyDesignFor, installEnemyDesigns, localEnemyDesigns } from "./enemy-design";
+import { enemyDesignFor, installEnemyDesigns, allEnemyDesigns } from "./enemy-design";
 import { installEnemySkins, rollEnemySkin, rollEnemyName, rollEnemyTypes, typeChartMulti } from "./enemy-skins";
 import {
 	BOUNTY_BOARD_SIZE, BOUNTY_HUNT_SECONDS, BOUNTY_ENRAGE, DEATH_MARK, BOUNTY_STARS_NEEDED, HUNTER_SQUAD, HUNTER_WAVE_GAP, MOB_ENCHANTS, SOURCE_BONUS,
@@ -1689,7 +1689,7 @@ export class TurbzGame {
 		try { initBossSprites(); } catch { /* boss art must not stop the game */ }
 		// Only this device's own Enemy Designer creations still fold into the monster tables as species;
 		// the shipped designs are the skin pool now, not individual biome monsters.
-		try { installEnemyDesigns(localEnemyDesigns()); } catch { /* a broken design must not stop the game */ }
+		try { installEnemyDesigns(allEnemyDesigns()); } catch { /* a broken design must not stop the game */ }
 		// The overworld is always the embedded Veilreach. It is rebuilt fresh for every boot (rejoining from
 		// the main menu used to keep the old generated world here).
 		this.overworld = null;
@@ -2029,7 +2029,18 @@ export class TurbzGame {
 			thornT: 0
 		};
 		if (design) {
-			mob.type = design.type;
+			// Any custom enemy can appear as any TypeId — the sprite is palette-shifted at render
+			// time (type-palettes.ts). The design's native type is just the artist's starting colour.
+			// If the spawner already rolled a type (OVERWORLD_RANDOM_ELEMENT), respect it; otherwise
+			// pick a random one so the roster shows up across the full type system.
+			if (s.type) {
+				mob.type = s.type;
+			} else if (s.typeRolled) {
+				mob.type = mob.type ?? design.type;
+			} else {
+				const allTypes = Object.keys(TYPES) as TypeId[];
+				mob.type = allTypes[Math.floor(Math.random() * allTypes.length)] ?? design.type;
+			}
 			mob.name = s.name ?? design.name;
 			mob.move = kit.moves[0] ?? mob.move;
 			mob.designId = design.id;
@@ -2853,7 +2864,7 @@ export class TurbzGame {
 	/** TURBZ + New Textures only: place a HellStone Generator, Battery, Wire, XP Producer, or Duplicator. */
 	placePowerPiece(piece, tx, ty) {
 		const save = this.save;
-		if (!this.turbz || !save.turbzNewTex) { this.say("Power blocks are only available in TURBZ with New Textures on."); return false; }
+		if (!this.turbz) { this.say("Power blocks are TURBZ only."); return false; }
 		if (!this.isOverworld(save.map)) { this.say("Place Power blocks in the overworld."); return false; }
 		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
