@@ -1374,6 +1374,37 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .build-bar-hint { font-size: 17px; margin: 0; }
 @media (width <= 760px) { .build-piece { min-width: 86px; } .build-bar-stats { font-size: 14px; } }
 
+/* ---- Build-bar columns + card variant ------------------------------------
+   A column clusters related sub-groups (e.g. the four Power sub-groups) so
+   they read as one zone in the toolbar. The campfire panel reuses the piece
+   button as `.build-card` with preview art and a bigger name. */
+.build-bar-column { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; padding: 0 6px; position: relative; }
+.build-bar-column + .build-bar-column { border-left: 1px dashed var(--ui-line, #5a4038); margin-left: 4px; padding-left: 10px; }
+.build-bar-column-power .build-bar-group-label { color: var(--color-kyo); }
+.build-bar-column-tools .build-bar-group-label { color: var(--color-blood); }
+
+.build-card { padding: 8px 10px; }
+.build-card-head { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.build-card-preview { flex-shrink: 0; border: 1px solid var(--ui-line); background: #0b0706; }
+.build-card-name { font-size: 20px; line-height: 1.1; }
+.build-card-foot { font-size: 16px; line-height: 1.2; }
+.build-card .cost-row { margin-top: 2px; }
+
+/* ---- Compact material cost chip -----------------------------------------
+   Each chip is a short code (LOG, HELL, …) coloured by material + a count.
+   Lets a piece with three materials still fit on one toolbar button. */
+.cost-chip { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 1px solid var(--mat, currentColor); color: var(--color-bone); font-size: 14px; line-height: 1; letter-spacing: 0.02em; }
+.cost-chip-code { font-family: var(--font-display); font-size: 8px; letter-spacing: 0.04em; color: var(--mat, var(--color-bone)); }
+.cost-chip-num { font-size: 14px; color: var(--color-bone); }
+.cost-chip.cost-ok { border-color: var(--mat, var(--ui-good)); }
+.cost-chip.cost-miss { border-color: var(--ui-bad); opacity: 0.75; }
+.cost-chip.cost-miss .cost-chip-code { color: var(--ui-bad); }
+.cost-chip.cost-miss .cost-chip-num { color: var(--ui-bad); }
+.build-piece .cost-row { margin-top: 1px; }
+.build-piece .cost-chip { padding: 1px 4px; font-size: 13px; }
+.build-piece .cost-chip-code { font-size: 7px; }
+.build-piece .cost-chip-num { font-size: 13px; }
+
 /* ---- Camp menu (H) ---- */
 .chip-bad { color: var(--color-bone); background: #5a1d17; border-color: var(--color-blood); }
 .camp-status { display: flex; flex-wrap: wrap; gap: 6px; }

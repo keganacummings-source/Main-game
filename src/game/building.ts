@@ -9,7 +9,22 @@
  * or attack, the player takes no damage from foes, and followers told to wait there are protected.
  *
  * Everything here is pure data + maths so it can be unit tested without the engine.
+ *
+ * ─── ADDING A NEW BUILD PIECE ────────────────────────────────────────────────
+ * This whole file reads from ONE list: `BUILD_PIECE_DEFS`. To add a piece:
+ *
+ *   1. Add its id to the `BuildPiece` union below.
+ *   2. Append one object to `BUILD_PIECE_DEFS` with its `group`, `name`, `cost`
+ *      and `about`. Add `kind` for a structural tile, `requires` for a mode
+ *      lock, `singleton: true` for one-per-world pieces, and `preview` for
+ *      a New-Textures preview URL.
+ *
+ * Both menus (the floating build bar and the campfire panel) pick it up with
+ * no further edits — groups, hotkey order, mode filtering, cost chips and the
+ * "already placed" state are all derived from the def.
  */
+import { NEWTEX_DIR } from "./tile-atlas";
+
 export const TILE_PX = 32;
 export const SAFE_ZONE_TILES = 15;
 const HALF = Math.floor(SAFE_ZONE_TILES / 2);
@@ -24,63 +39,175 @@ export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; op
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen" | "duplicator" | "logburner" | "solar" | "capacitor" | "blockgen" | "blockbreaker" | "tesla" | "pipe";
+export type BuildPiece =
+  | "wood" | "stone" | "woodfloor" | "stonefloor" | "door"
+  | "bed" | "ghostbox" | "turbzchest"
+  | "hellgen" | "logburner" | "solar"
+  | "battery" | "capacitor"
+  | "wire" | "pipe"
+  | "blockgen" | "blockbreaker" | "tesla" | "xpgen" | "duplicator";
+
+/** Which column/section a piece sits in. Power is split so it can keep growing. */
+export type BuildGroup =
+  | "walls" | "floors" | "doors" | "furniture"
+  | "power.gen" | "power.store" | "power.wiring" | "power.machines";
+
+/** Mode a piece needs to appear in the menu. Missing = always available. */
+export type BuildRequires = "turbz" | "turbz+newtex";
+
+export type BuildPieceDef = {
+  id: BuildPiece;
+  name: string;
+  about: string;
+  cost: Record<string, number>;
+  group: BuildGroup;
+  /** Tile kind for structural pieces (walls, floors, doors). */
+  kind?: TileKind;
+  /** Mode gate — leave blank for base-game pieces. */
+  requires?: BuildRequires;
+  /** One-per-world: the Ghost Box and the Storage Chest. */
+  singleton?: boolean;
+  /** Preview art shown on the button when New Textures is on. */
+  preview?: string;
+};
+
 /** Kinds that block movement (floors never do; a door blocks only while closed). */
 export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
 export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
 /** Every block now costs a flat 100 kyo. Beds and the Ghost Box keep their own material cost. */
 export const BLOCK_KYO = 100;
-/** What each camp piece costs. Walls/doors are solid; beds and the Ghost Box must stand inside a safe zone. */
-export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<string, number>; about: string; kind?: TileKind }> = {
-  wood: { name: "Wooden Wall", cost: { kyo: BLOCK_KYO }, kind: "wood", about: "A solid wooden wall. Blocks everyone." },
-  stone: { name: "Stone Wall", cost: { kyo: BLOCK_KYO }, kind: "stone", about: "A solid stone wall. Blocks everyone." },
-  woodfloor: { name: "Wooden Floor", cost: { kyo: BLOCK_KYO }, kind: "woodfloor", about: "Wooden flooring. Decorative — you can walk on it." },
-  stonefloor: { name: "Stone Floor", cost: { kyo: BLOCK_KYO }, kind: "stonefloor", about: "Stone flooring. Decorative — you can walk on it." },
-  door: { name: "Door", cost: { kyo: BLOCK_KYO }, kind: "door", about: "A door. Press E beside it to open or close it." },
-  bed: { name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here." },
-  ghostbox: { name: "Ghost Box", cost: { timber: 4, ore: 4 }, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter." },
-  turbzchest: { name: "Storage Chest", cost: { kyo: 10000 }, about: "Stores any items safely. Its contents survive death — rebuild your camp and they are still inside. TURBZ only." },
-  hellgen: { name: "HellStone Power Generator", cost: { hell_ore: 4, timber: 4 }, about: "TURBZ + New Textures. Press E to stack Hell Ore. Burns one every 5 seconds for 10 Power on a wired Battery. Unstored Power fades." },
-  battery: { name: "Battery", cost: { dirt: 2, sand: 2 }, about: "TURBZ + New Textures. Stores up to 100 Power from a Generator on the same wire network." },
-  wire: { name: "Wire", cost: { wire: 1 }, about: "TURBZ + New Textures. Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore)." },
-  xpgen: { name: "XP Producer", cost: { kyo: 10000 }, about: "TURBZ + New Textures. Press E to spend 200 Power for the XP of about 50 kills at your level." },
-  duplicator: { name: "Duplicator", cost: { hell_ore: 6, ore: 6, timber: 6 }, about: "TURBZ + New Textures. Press E and load any bag item. Every 5 seconds it spends 2 Power and stores one copy. Wire it to a Battery." },
-  logburner: { name: "LogBurning Generator", cost: { timber: 6, rock_ore: 2 }, about: "TURBZ + New Textures. Burns Logs for Power. Slower and weaker than the HellStone Generator (6 Power every 8s). Press E to load Logs." },
-  solar: { name: "Solar Panel", cost: { sand: 8, rock_ore: 4, wire: 2 }, about: "TURBZ + New Textures. Makes 1 Power every 4 seconds in daylight, no fuel. Nothing at night. Wire it to a Battery." },
-  capacitor: { name: "Capacitor", cost: { dirt: 8, sand: 8, rock_ore: 4 }, about: "TURBZ + New Textures. A big Battery: stores up to 500 Power from Generators on the same wire network." },
-  blockgen: { name: "BlockGenerator", cost: { rock_ore: 6, timber: 6, wire: 2 }, about: "TURBZ + New Textures. Places a Wood or Stone block on the tile in front of it every second while it has Power and material. Feed it by hand or with a Pipe. Press E to rotate or switch it off." },
-  blockbreaker: { name: "BlockBreaker", cost: { rock_ore: 6, timber: 4, wire: 2 }, about: "TURBZ + New Textures. Breaks the block in front of it every second for 1 Power. Walls give back their material; natural rock mines like normal. Pipe the haul into a chest." },
-  tesla: { name: "Tesla Coil", cost: { hell_ore: 3, rock_ore: 6, wire: 3 }, about: "TURBZ + New Textures. Zaps the nearest foe within 5 tiles every 1.5 seconds for 4 Power. Wire it to a Battery." },
-  pipe: { name: "Pipe", cost: { rock_ore: 1 }, about: "TURBZ + New Textures. Moves items between machines on its own: a Duplicator or BlockBreaker into a Chest, a Chest into a Generator or BlockGenerator. It bends, forks and caps itself to match its neighbours. Drag to lay a line." },
-};
-/** TURBZ-only camp pieces (hidden from the build menu in other modes). Power pieces also require New Texture Mode. */
-export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla", "pipe"]);
-/** Hidden unless New Texture Mode is on (still also TURBZ-only). */
-export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla", "pipe"]);
-export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
-/** How the build menu and the build bar group the pieces. */
-export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "power"; label: string; pieces: BuildPiece[] }[] = [
-  { id: "walls", label: "Walls", pieces: ["wood", "stone"] },
-  { id: "floors", label: "Floors", pieces: ["woodfloor", "stonefloor"] },
-  { id: "doors", label: "Doors", pieces: ["door"] },
-  { id: "furniture", label: "Furniture", pieces: ["bed", "ghostbox", "turbzchest"] },
-  { id: "power", label: "Power", pieces: ["hellgen", "logburner", "solar", "battery", "capacitor", "wire", "pipe", "blockgen", "blockbreaker", "tesla", "xpgen", "duplicator"] },
+
+const tex = (name: string) => NEWTEX_DIR + name;
+
+// ─── THE ONE LIST TO EDIT ────────────────────────────────────────────────────
+/**
+ * Every build piece in the game. Order here is the hotkey order (1-9) and the
+ * order pieces appear within their group in the menus.
+ */
+export const BUILD_PIECE_DEFS: BuildPieceDef[] = [
+  // Walls
+  { id: "wood", group: "walls", name: "Wooden Wall", kind: "wood", cost: { kyo: BLOCK_KYO }, about: "A solid wooden wall. Blocks everyone.", preview: tex("wood_wall.png") },
+  { id: "stone", group: "walls", name: "Stone Wall", kind: "stone", cost: { kyo: BLOCK_KYO }, about: "A solid stone wall. Blocks everyone.", preview: tex("stone_wall.png") },
+
+  // Floors
+  { id: "woodfloor", group: "floors", name: "Wooden Floor", kind: "woodfloor", cost: { kyo: BLOCK_KYO }, about: "Wooden flooring. Decorative — you can walk on it.", preview: tex("wood_floor.png") },
+  { id: "stonefloor", group: "floors", name: "Stone Floor", kind: "stonefloor", cost: { kyo: BLOCK_KYO }, about: "Stone flooring. Decorative — you can walk on it.", preview: tex("stone_floor.png") },
+
+  // Doors
+  { id: "door", group: "doors", name: "Door", kind: "door", cost: { kyo: BLOCK_KYO }, about: "A door. Press E beside it to open or close it.", preview: tex("wood_wall.png") },
+
+  // Furniture
+  { id: "bed", group: "furniture", name: "Bed", cost: { leather: 3, timber: 2 }, about: "Hide over a log frame. Followers you send home rest here.", preview: tex("bed.png") },
+  { id: "ghostbox", group: "furniture", name: "Ghost Box", cost: { timber: 4, ore: 4 }, singleton: true, about: "Stores, manages and releases the ghosts you are not carrying. One per hunter.", preview: tex("ghostbox.png") },
+  { id: "turbzchest", group: "furniture", name: "Storage Chest", cost: { kyo: 10000 }, singleton: true, requires: "turbz", about: "Stores any items safely. Its contents survive death — rebuild your camp and they are still inside. TURBZ only.", preview: tex("chest.png") },
+
+  // Power · Generators
+  { id: "hellgen", group: "power.gen", name: "HellStone Power Generator", cost: { hell_ore: 4, timber: 4 }, requires: "turbz+newtex", about: "Press E to stack Hell Ore. Burns one every 5 seconds for 10 Power on a wired Battery. Unstored Power fades.", preview: tex("hellgen.png") },
+  { id: "logburner", group: "power.gen", name: "LogBurning Generator", cost: { timber: 6, rock_ore: 2 }, requires: "turbz+newtex", about: "Burns Logs for Power. Slower and weaker than the HellStone Generator (6 Power every 8s). Press E to load Logs.", preview: tex("logburner.png") },
+  { id: "solar", group: "power.gen", name: "Solar Panel", cost: { sand: 8, rock_ore: 4, wire: 2 }, requires: "turbz+newtex", about: "Makes 1 Power every 4 seconds in daylight, no fuel. Nothing at night. Wire it to a Battery.", preview: tex("solar.png") },
+
+  // Power · Storage
+  { id: "battery", group: "power.store", name: "Battery", cost: { dirt: 2, sand: 2 }, requires: "turbz+newtex", about: "Stores up to 100 Power from a Generator on the same wire network.", preview: tex("battery.png") },
+  { id: "capacitor", group: "power.store", name: "Capacitor", cost: { dirt: 8, sand: 8, rock_ore: 4 }, requires: "turbz+newtex", about: "A big Battery: stores up to 500 Power from Generators on the same wire network.", preview: tex("capacitor.png") },
+
+  // Power · Wiring
+  { id: "wire", group: "power.wiring", name: "Wire", cost: { wire: 1 }, requires: "turbz+newtex", about: "Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore).", preview: tex("wire.png") },
+  { id: "pipe", group: "power.wiring", name: "Pipe", cost: { rock_ore: 1 }, requires: "turbz+newtex", about: "Moves items between machines on its own: a Duplicator or BlockBreaker into a Chest, a Chest into a Generator or BlockGenerator. It bends, forks and caps itself to match its neighbours. Drag to lay a line.", preview: tex("pipe.png") },
+
+  // Power · Machines
+  { id: "blockgen", group: "power.machines", name: "BlockGenerator", cost: { rock_ore: 6, timber: 6, wire: 2 }, requires: "turbz+newtex", about: "Places a Wood or Stone block on the tile in front of it every second while it has Power and material. Feed it by hand or with a Pipe. Press E to rotate or switch it off.", preview: tex("blockgen.png") },
+  { id: "blockbreaker", group: "power.machines", name: "BlockBreaker", cost: { rock_ore: 6, timber: 4, wire: 2 }, requires: "turbz+newtex", about: "Breaks the block in front of it every second for 1 Power. Walls give back their material; natural rock mines like normal. Pipe the haul into a chest.", preview: tex("blockbreaker.png") },
+  { id: "tesla", group: "power.machines", name: "Tesla Coil", cost: { hell_ore: 3, rock_ore: 6, wire: 3 }, requires: "turbz+newtex", about: "Zaps the nearest foe within 5 tiles every 1.5 seconds for 4 Power. Wire it to a Battery.", preview: tex("tesla.png") },
+  { id: "xpgen", group: "power.machines", name: "XP Producer", cost: { kyo: 10000 }, requires: "turbz+newtex", about: "Press E to spend 200 Power for the XP of about 50 kills at your level.", preview: tex("xpgen.png") },
+  { id: "duplicator", group: "power.machines", name: "Duplicator", cost: { hell_ore: 6, ore: 6, timber: 6 }, requires: "turbz+newtex", about: "Press E and load any bag item. Every 5 seconds it spends 2 Power and stores one copy. Wire it to a Battery.", preview: tex("duplicator.png") },
 ];
-/** Build-mode hotkeys: 1-8 pick these pieces in order (TURBZ-only pieces are skipped outside TURBZ). X is the Remove tool. */
-export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "pipe", "blockgen", "blockbreaker", "tesla"];
+
+// ─── Derived (do not edit) ───────────────────────────────────────────────────
+
+/** Keyed lookup. Kept as a Record for backwards compat with callers like BUILD_PIECES[piece].cost. */
+export const BUILD_PIECES: Record<BuildPiece, BuildPieceDef> =
+  Object.fromEntries(BUILD_PIECE_DEFS.map((d) => [d.id, d])) as Record<BuildPiece, BuildPieceDef>;
+
+export const BUILD_PIECE_IDS: BuildPiece[] = BUILD_PIECE_DEFS.map((d) => d.id);
+
+const GROUP_LABELS: Record<BuildGroup, string> = {
+  "walls": "Walls",
+  "floors": "Floors",
+  "doors": "Doors",
+  "furniture": "Furniture",
+  "power.gen": "Power · Generators",
+  "power.store": "Power · Storage",
+  "power.wiring": "Power · Wiring",
+  "power.machines": "Power · Machines",
+};
+
+/** Order groups appear in the menu, left-to-right / top-to-bottom. */
+export const BUILD_GROUP_ORDER: BuildGroup[] = [
+  "walls", "floors", "doors", "furniture",
+  "power.gen", "power.store", "power.wiring", "power.machines",
+];
+
+/** How the build menu groups the pieces. Derived from BUILD_PIECE_DEFS. */
+export const BUILD_GROUPS: { id: BuildGroup; label: string; pieces: BuildPiece[] }[] =
+  BUILD_GROUP_ORDER.map((g) => ({
+    id: g,
+    label: GROUP_LABELS[g],
+    pieces: BUILD_PIECE_DEFS.filter((d) => d.group === g).map((d) => d.id),
+  })).filter((g) => g.pieces.length > 0);
+
+/** TURBZ-only camp pieces (hidden from the build menu in other modes). */
+export const TURBZ_ONLY_PIECES: Set<BuildPiece> = new Set(
+  BUILD_PIECE_DEFS.filter((d) => d.requires === "turbz" || d.requires === "turbz+newtex").map((d) => d.id),
+);
+
+/** Hidden unless New Texture Mode is on (still also TURBZ-only). */
+export const NEWTEX_ONLY_PIECES: Set<BuildPiece> = new Set(
+  BUILD_PIECE_DEFS.filter((d) => d.requires === "turbz+newtex").map((d) => d.id),
+);
+
+/** True when this piece should appear in the menu for the current mode. */
+export function isPieceAvailable(id: BuildPiece, mode: { turbz: boolean; newTex: boolean }): boolean {
+  const req = BUILD_PIECES[id]?.requires;
+  if (!req) return true;
+  if (req === "turbz") return mode.turbz;
+  if (req === "turbz+newtex") return mode.turbz && mode.newTex;
+  return true;
+}
+
+/** Default preview art (used when New Textures is on). Custom textures are resolved by the caller. */
+export function piecePreview(id: BuildPiece): string | undefined {
+  return BUILD_PIECES[id]?.preview;
+}
+
+/** True when a piece can only exist once per world. */
+export function isSingleton(id: BuildPiece): boolean {
+  return !!BUILD_PIECES[id]?.singleton;
+}
+
+/**
+ * Build-mode hotkeys: digits 1–9 pick the first nine pieces visible in the current mode.
+ * TURBZ-only / NewTex-only pieces are skipped outside their mode. X is the Remove tool.
+ */
+export const BUILD_HOTKEY_ORDER: BuildPiece[] = BUILD_PIECE_IDS.slice();
+
 /** The piece a digit key picks in build mode (1-based), or null. */
-export function buildHotkeyPiece(digit: number, turbz: boolean): BuildPiece | null {
-  const list = BUILD_HOTKEY_ORDER.filter((id) => turbz || !TURBZ_ONLY_PIECES.has(id));
+export function buildHotkeyPiece(digit: number, turbz: boolean, newTex: boolean = true): BuildPiece | null {
+  const list = BUILD_HOTKEY_ORDER.filter((id) => isPieceAvailable(id, { turbz, newTex }));
   return list[digit - 1] ?? null;
 }
+
 /** The name of whatever a placed camp tile is, for the build bar ("Click to pick up a Door"). */
 export function pieceNameForKind(kind: TileKind | undefined): string {
   if (!kind) return "Log";
   if (kind === "brick") return "Brick Wall";
-  return BUILD_PIECE_IDS.map((id) => BUILD_PIECES[id]).find((d) => d.kind === kind)?.name ?? "Block";
+  return BUILD_PIECE_DEFS.find((d) => d.kind === kind)?.name ?? "Block";
 }
+
 /** The placeable blocks (not furniture), for the campfire build menu. */
-export const BLOCK_PIECE_IDS: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door"];
+export const BLOCK_PIECE_IDS: BuildPiece[] = BUILD_PIECE_DEFS
+  .filter((d) => d.group === "walls" || d.group === "floors" || d.group === "doors")
+  .map((d) => d.id);
+
 export const MAX_BEDS = 12;
 /** Duplicator: seconds between copies, Power spent on each copy, and how many copies it will hold. */
 export const DUP_SECONDS = 5;

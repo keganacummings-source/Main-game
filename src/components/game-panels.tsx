@@ -3,7 +3,8 @@ import { ALCHEMY_RECIPES, attackForm, ITEM_BY_ID, moveTactic, TYPES, type TypeId
 import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@/game/classes";
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
-import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, DUP_POWER_COST, DUP_SECONDS, DUP_STORE_MAX, MAX_BEDS, TURBZ_ONLY_PIECES } from "@/game/building";
+import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, DUP_POWER_COST, DUP_SECONDS, DUP_STORE_MAX, MAX_BEDS, isPieceAvailable, isSingleton, type BuildPiece } from "@/game/building";
+import { BuildPieceButton } from "./build-piece-button";
 import { BLOCKGEN_ITEM, LOGBURN_POWER, LOGBURN_SECONDS, SOLAR_POWER, SOLAR_SECONDS } from "@/game/power-extra";
 import { GhostCard, GhostDetailCard, GhostName } from "./ghost-ui";
 import { resetLayout } from "@/game/ui-layout";
@@ -1159,44 +1160,60 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
         </>
       )}
 
-      {tab === "build" && (
-        <div className="ui-stack" data-testid="build-pieces">
-          <p className="text-dim">Pick a piece to start building (the world pauses). In build mode, 1–8 switch pieces and X is the Remove tool. Walls, floors and doors cost {BLOCK_KYO} kyo each; beds, the Ghost Box and the chest go inside a camp's safe zone.</p>
-          {BUILD_GROUPS.map((g) => {
-            const pieces = g.pieces.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
-            if (!pieces.length) return null;
-            const hot = BUILD_HOTKEY_ORDER.filter((id) => s.turbz || !TURBZ_ONLY_PIECES.has(id));
-            return (
-              <Section key={g.id} title={g.label.toUpperCase()}>
-                <div className="ui-grid" style={{ "--min": "200px" } as React.CSSProperties}>
-                  {pieces.map((id) => {
-                    const def = BUILD_PIECES[id];
-                    const have = Object.entries(def.cost).every(([k, n]) => count(k) >= n);
-                    const on = s.build.on && s.build.piece === id;
-                    const placedAlready = (id === "ghostbox" && s.build.ghostBox) || (id === "turbzchest" && s.turbzChest.placed);
-                    const placed = id === "wood" || id === "stone" ? null : id === "woodfloor" || id === "stonefloor" ? null : id === "door" ? c.doors : id === "bed" ? c.beds : null;
-                    return (
-                      <button key={id} type="button" className={`ui-card ${on ? "ui-card-hl" : ""}`} title={def.about} disabled={!!placedAlready} onClick={() => game?.setBuildPiece(id)} data-testid={`camp-piece-${id}`}>
-                        <span className="ui-row"><span className="text-kyo">{def.name}{placedAlready ? " · placed" : ""}</span><kbd className="key-badge">{hot.indexOf(id) + 1}</kbd></span>
-                        <span className="cost-row">
-                          {Object.entries(def.cost).map(([k, n]) => (
-                            <span key={k} className={`cost-chip ${count(k) >= n ? "cost-ok" : "cost-miss"}`}>{k === "kyo" ? "Kyo" : ITEM_BY_ID[k]?.name ?? k} {count(k).toLocaleString()}/{n.toLocaleString()}</span>
-                          ))}
-                        </span>
-                        <span className="text-dim">{have ? def.about : "Missing materials"}{placed !== null ? ` · ${placed} here` : ""}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </Section>
-            );
-          })}
-          <div className="gear-actions">
-            <button type="button" className="px-btn" data-testid="camp-piece-erase" onClick={() => game?.setBuildPiece("erase")}>Remove tool (X)</button>
-            <span className="text-dim">Walls {c.walls} · Floors {c.floors} · Doors {c.doors} · Beds {c.beds}/{MAX_BEDS}</span>
+      {tab === "build" && (() => {
+        const newTex = !!(game && (game as any).save?.turbzNewTex);
+        const mode = { turbz: !!s.turbz, newTex };
+        const shown = (id: BuildPiece) => isPieceAvailable(id, mode);
+        const visibleHotkeys = BUILD_HOTKEY_ORDER.filter(shown);
+        const hotkeyFor = (id: BuildPiece) => visibleHotkeys.indexOf(id) + 1;
+        const isPlaced = (id: BuildPiece): boolean => {
+          if (!isSingleton(id)) return false;
+          if (id === "ghostbox") return !!s.build.ghostBox;
+          if (id === "turbzchest") return !!s.turbzChest.placed;
+          return false;
+        };
+        const footnoteFor = (id: BuildPiece): string | undefined => {
+          if (id === "door") return `${c.doors} here`;
+          if (id === "bed") return `${c.beds} here`;
+          return undefined;
+        };
+        return (
+          <div className="ui-stack" data-testid="build-pieces">
+            <p className="text-dim">
+              Pick a piece to start building (the world pauses). In build mode, 1–9 switch pieces and X is the Remove tool.
+              Walls, floors and doors cost {BLOCK_KYO} kyo each; beds, the Ghost Box and the chest go inside a camp's safe zone.
+            </p>
+            {BUILD_GROUPS.map((g) => {
+              const pieces = g.pieces.filter(shown);
+              if (!pieces.length) return null;
+              return (
+                <Section key={g.id} title={g.label.toUpperCase()}>
+                  <div className="ui-grid" style={{ "--min": "220px" } as React.CSSProperties}>
+                    {pieces.map((id) => (
+                      <BuildPieceButton
+                        key={id}
+                        id={id}
+                        have={count}
+                        selected={s.build.on && s.build.piece === id}
+                        placed={isPlaced(id)}
+                        hotkey={hotkeyFor(id)}
+                        newTex={newTex}
+                        variant="card"
+                        footnote={footnoteFor(id)}
+                        onClick={() => game?.setBuildPiece(id)}
+                      />
+                    ))}
+                  </div>
+                </Section>
+              );
+            })}
+            <div className="gear-actions">
+              <button type="button" className="px-btn" data-testid="camp-piece-erase" onClick={() => game?.setBuildPiece("erase")}>Remove tool (X)</button>
+              <span className="text-dim">Walls {c.walls} · Floors {c.floors} · Doors {c.doors} · Beds {c.beds}/{MAX_BEDS}</span>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {tab === "cook" && (
         <>
