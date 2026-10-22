@@ -86,7 +86,7 @@ const DEF: Record<TexBiome, BiomeDef> = {
     names: ["Cinderfall", "Emberdeep", "Ashgrave", "Infernum"], word: "Wastes", about: "Hellbrick, lava rivers and charred trees. The deadliest land.",
   },
   void: {
-    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidFloor, patchFloor: FL.void, patchAt: 0.6, wall: TEX.voidRock, tree: TEX.treeVoid, forest: [0.55, 0.5],
+    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidGrass, patchFloor: FL.void, patchAt: 2, wall: TEX.voidRock, tree: TEX.treeVoid, forest: [0.68, 0.4],
     monsters: ["kage", "yomi", "naraku", "muma"], animals: ["crow"],
     names: ["Starblight", "Nullgrave", "Hollowmire", "Voidbreach"], word: "Rift", about: "Violet grass, starry rock and black trees. Void Hearts glow in the stone. The deepest, deadliest land — drops Void Ore.",
   },
@@ -413,9 +413,9 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
     return true;
   };
   const wantNodes: { node: "ore" | "fish" | "shroom"; per: number; test: (x: number, y: number, i: number) => boolean }[] = [
-    { node: "ore", per: 16, test: (x, y) => adjacent(x, y, (j) => !!rock[j]) },
+    { node: "ore", per: 40, test: (x, y) => adjacent(x, y, (j) => !!rock[j]) },
     { node: "fish", per: 14, test: (x, y) => adjacent(x, y, (j) => !!land[j] ? tiles[j]!.floor === FL.water : true) },
-    { node: "shroom", per: 14, test: (x, y, i) => seaDist[i]! >= 4 && fbm(x / 9, y / 9, seed + 11) > 0.5 },
+    { node: "shroom", per: 40, test: (x, y, i) => seaDist[i]! >= 4 && fbm(x / 9, y / 9, seed + 11) > 0.5 },
   ];
   sites.forEach((s, si) => {
     const scale = s.island ? 0.25 : 1;
@@ -429,7 +429,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
         const i = at(x, y);
         if (!nodeOk(x, y) || !want.test(x, y, i)) continue;
         nodeAt[i] = 1; placed++;
-        interactables.push({ id: nid(want.node), node: want.node, tx: x, ty: y, level: s.levelMin });
+        interactables.push({ id: nid(want.node), kind: "node", node: want.node, tx: x, ty: y, level: s.levelMin } as MapInteractable);
       }
     }
   });

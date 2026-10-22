@@ -566,7 +566,7 @@ function spawnMobs(rng: Rng, tiles: Tile[], w: number, h: number, reached?: Uint
   return out;
 }
 
-const FLOOR_COLOR = ["#4f9a45", "#6e6258", "#2a78b0", "#cbb89a", "#e4d2a4", "#e7f3fb", "#c56a3c", "#241a3c", "#a08478", "#c6b18e"];
+const FLOOR_COLOR = ["#4f9a45", "#6e6258", "#2a78b0", "#cbb89a", "#e4d2a4", "#e7f3fb", "#c56a3c", "#301a52", "#a08478", "#c6b18e"];
 
 export function paintWorld(world: WorldData): HTMLCanvasElement {
   const c = document.createElement("canvas");

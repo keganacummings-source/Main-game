@@ -34,7 +34,7 @@ dungeons keep their layout and use only new art.
 
 The sixth continent (level 61+) uses these files in `public/MapAssets/NewTex/`:
 
-- `voidgrass.png` — the ground. `void_floor.png` (starry) lies in patches on top and is what a mined block leaves behind.
+- `voidgrass.png` — the ground. `voidgrass.png` also covers the ground a mined block leaves behind.
 - `voidwall.png` — the rock ridges. Mineable; every block drops Void Ore.
 - `voidheart.png` — 64×64 Void Hearts, grown into about 7% of the void rock. They are mineable like the stone under them and vanish when it breaks.
 - `voidbrick.png` — the walls of temple ruins built in the void.
