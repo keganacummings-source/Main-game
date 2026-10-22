@@ -227,7 +227,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
 
       if (inland) {
         // ridges of rock
-        const rockThr = { plains: 0.77, desert: 0.76, jungle: 0.8, snow: 0.75, hell: 0.73 }[st.biome];
+        const rockThr = { plains: 0.77, desert: 0.76, jungle: 0.8, snow: 0.75, hell: 0.73, void: 0.74 }[st.biome];
         const m = noise(13, 21);
         if (m > rockThr && sea >= 5) {
           t = { floor: def.floor, biome: def.biome, block: 1, decor: 0, sprite: def.wall };
@@ -240,7 +240,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
           if (noise(14, 37) > 0.62) t = { floor: FL.water, biome: def.biome, block: 0, decor: 0, sprite: TEX.swamp };
         } else if (st.biome === "desert") {
           if (noise(9, 39) > 0.86) t = { floor: FL.water, biome: def.biome, block: 0, decor: 0, sprite: TEX.water };
-        } else {
+        } else if (st.biome !== "void") {
           const lake = noise(18, 7);
           if (lake > 0.77) t = { floor: FL.water, biome: def.biome, block: 0, decor: 0, sprite: lake > 0.84 ? TEX.deep : TEX.water };
         }
@@ -353,18 +353,18 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
     while (stack.length) {
       const i = stack.pop()!;
       const x = i % w, y = (i / w) | 0;
-      for (const j of [i - 1, i + 1, i - w, i + w]) {
-        if (j < 0 || j >= N || seen[j]) continue;
-        if ((j === i - 1 && x === 0) || (j === i + 1 && x === w - 1)) continue;
-        if (tiles[j]!.block) continue;
-        seen[j] = 1; stack.push(j);
+      for (const n of [i + 1, i - 1, i + w, i - w]) {
+        if (n < 0 || n >= N || seen[n]) continue;
+        const nx = n % w, ny = (n / w) | 0;
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        if (!open(n) && tiles[n]!.floor !== FL.water) continue;
+        seen[n] = 1;
+        stack.push(n);
       }
     }
-    for (let i = 0; i < N; i++) {
-      if (seen[i] || tiles[i]!.block) continue;
-      const def = DEF[sites[Math.max(0, owner[i]!)]!.biome];
-      tiles[i] = { floor: def.floor, biome: def.biome, block: 1, decor: 0, sprite: def.wall };
-      rock[i] = 1;
+    // Any unreachable open land is turned into a lake so the world stays one piece.
+    for (let i = 0; i < N; i++) if (land[i] && !seen[i] && open(i)) {
+      tiles[i] = { floor: FL.water, biome: tiles[i]!.biome, block: 0, decor: 0, sprite: TEX.water };
     }
   }
 
@@ -419,150 +419,86 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
     for (const want of wantNodes) {
       const target = Math.max(2, Math.round(want.per * scale));
       let placed = 0;
-      for (let k = 0; k < 6000 && placed < target; k++) {
-        const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * s.r * 0.95;
+      for (let k = 0; k < target * 40 && placed < target; k++) {
+        const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * s.r * 0.8;
         const x = Math.round(s.x + Math.cos(a) * d), y = Math.round(s.y + Math.sin(a) * d);
-        if (x < 5 || y < 5 || x >= w - 5 || y >= h - 5) continue;
+        if (x < 4 || y < 4 || x >= w - 4 || y >= h - 4) continue;
         const i = at(x, y);
-        if (owner[i] !== si || !nodeOk(x, y) || !want.test(x, y, i)) continue;
+        if (!nodeOk(x, y) || !want.test(x, y, i)) continue;
         nodeAt[i] = 1; placed++;
-        interactables.push({ id: nid("node"), kind: "node", node: want.node, tx: x, ty: y });
+        interactables.push({ id: nid(want.node), node: want.node, tx: x, ty: y, level: s.levelMin });
       }
     }
   });
 
-  // ---- camps: monsters on a level ladder, tougher the further from the coast ----
-  const zones: SpawnZone[] = [];
-  const keepMonsters = (list: string[]) => list.filter((s) => MONSTER_BY_ID[s] || ANIMAL_BY_ID[s]);
-  const campFits = (zx: number, zy: number, tw: number, th: number) => {
-    let ok = 0;
-    for (let y = zy; y < zy + th; y++) for (let x = zx; x < zx + tw; x++) {
-      if (x < 4 || y < 4 || x >= w - 4 || y >= h - 4) return false;
-      const i = at(x, y);
-      if (occupied[i]) return false;
-      if (open(i)) ok++;
+  // ---- portals, beds, ghostboxes in the structures ----
+  const portals: MapInteractable[] = [];
+  templeAt.forEach((t, i) => {
+    const x = t.x + 6, y = t.y + 5, i2 = at(x, y);
+    if (open(i2)) {
+      tiles[i2] = { ...tiles[i2]!, layers: [TEX.portal] };
+      portals.push({ id: nid("portal"), node: "portal", tx: x, ty: y, level: sites[t.si]!.levelMin });
     }
-    return ok >= tw * th * 0.85;
-  };
-  const CELL = 20;
-  for (let cy = 6; cy < h - 16; cy += CELL) {
-    for (let cx = 6; cx < w - 16; cx += CELL) {
-      for (let a = 0; a < 4; a++) {
-        const zx = cx + Math.floor(rng() * (CELL - 10)), zy = cy + Math.floor(rng() * (CELL - 10));
-        const i = at(zx + 5, zy + 5);
-        if (!land[i] || owner[i]! < 0 || !campFits(zx, zy, 10, 10)) continue;
-        const st = sites[owner[i]!]!, def = DEF[st.biome];
-        const far = Math.min(1, dcOf(i));
-        const lo = Math.round(st.levelMin + (st.levelMax - st.levelMin) * far * 0.6);
-        const hi = Math.max(lo, Math.round(st.levelMin + (st.levelMax - st.levelMin) * Math.min(1, far * 0.6 + 0.4)));
-        const animal = rng() < 0.22 && def.animals.length > 0;
-        const pool = keepMonsters(animal ? def.animals : def.monsters);
-        const chosen = pool.length > 2 ? pool.filter(() => rng() < 0.6) : pool;
-        zones.push({ id: nid("camp"), tx: zx, ty: zy, tw: 10, th: 10, levelMin: Math.max(1, lo), levelMax: Math.max(1, hi), species: (chosen.length ? chosen : pool).slice(0, 4), count: animal ? 3 : 2 + Math.floor(rng() * 2), respawn: 45 + Math.floor(rng() * 60) });
-        for (let y = zy - 1; y < zy + 11; y++) for (let x = zx - 1; x < zx + 11; x++) occupied[at(x, y)] = occupied[at(x, y)] || 1;
-        break;
-      }
-    }
-  }
-  // Temple ruins are infested: a tougher camp inside.
-  for (const tp of templeAt) {
-    const st = sites[tp.si]!, def = DEF[st.biome];
-    const lv = Math.min(st.levelMax + 4, st.levelMax);
-    const pool = keepMonsters(def.monsters);
-    zones.push({ id: nid("ruin"), tx: tp.x + 2, ty: tp.y + 2, tw: 9, th: 7, levelMin: Math.max(1, lv - 2), levelMax: lv + 2, species: pool.slice(0, 3), count: 4, respawn: 70 });
-  }
+  });
+  cabinAt.forEach((c) => {
+    const x = c.x + 3, y = c.y + 2, i = at(x, y);
+    if (open(i)) tiles[i] = { ...tiles[i]!, layers: [TEX.bed] };
+    const gx = c.x + 1, gy = c.y + 1, gi = at(gx, gy);
+    if (open(gi)) tiles[gi] = { ...tiles[gi]!, layers: [TEX.ghostbox] };
+  });
 
-  // ---- named lands ----
+  // ---- spawn zones and regions ----
+  const zones: SpawnZone[] = [];
   const regions: MapRegion[] = [];
   sites.forEach((s, si) => {
-    let x0 = w, y0 = h, x1 = 0, y1 = 0;
-    for (let i = 0; i < N; i++) if (owner[i] === si && land[i]) { const x = i % w, y = (i / w) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (x1 <= x0) return;
-    regions.push({ id: nid("land"), name: s.name, kind: "region", tx: x0, ty: y0, tw: x1 - x0 + 1, th: y1 - y0 + 1, about: s.island ? "A small isle across the water." : DEF[s.biome].about, levelMin: s.levelMin, levelMax: s.levelMax });
+    const def = DEF[s.biome];
+    regions.push({
+      id: nid("region"), name: s.name, kind: "region", tx: Math.max(0, Math.floor(s.x - s.r)), ty: Math.max(0, Math.floor(s.y - s.r)),
+      tw: Math.min(w, Math.ceil(s.r * 2)), th: Math.min(h, Math.ceil(s.r * 2)), levelMin: s.levelMin, levelMax: s.levelMax, about: def.about,
+    });
+    const count = s.island ? 3 : 8;
+    for (let k = 0; k < count; k++) {
+      const a = rng() * Math.PI * 2, d = Math.sqrt(rng()) * s.r * 0.6;
+      const x = Math.round(s.x + Math.cos(a) * d), y = Math.round(s.y + Math.sin(a) * d);
+      if (x < 8 || y < 8 || x >= w - 8 || y >= h - 8) continue;
+      zones.push({
+        id: nid("zone"), tx: x - 4, ty: y - 4, tw: 8, th: 8, levelMin: s.levelMin, levelMax: s.levelMax,
+        species: def.monsters, count: 2 + Math.floor(rng() * 3), respawn: 40,
+      });
+    }
   });
 
   return {
     version: MAP_VERSION,
-    id: opts.id ?? "turbz",
-    name: opts.name ?? "New Texture World",
-    w, h, tileSize: TILE, tiles,
-    spawns: [], zones, interactables, npcs: [], quests: [], regions,
-    spawn: { tx: spawnTile.x, ty: spawnTile.y },
-    kind: "world",
-    notes: `New Texture Mode world, seed ${seed}.`,
+    id: opts.id ?? "custom-turbz",
+    name: opts.name ?? "TURBZ Wild",
+    w, h, tileSize: TILE,
+    spawn: spawnTile,
+    tiles,
+    interactables: [...interactables, ...portals],
+    zones,
+    regions,
+    seed,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Dungeons
-// ---------------------------------------------------------------------------
-
-const treeForFloor = (floor: number): string =>
-  floor === FL.sand ? TEX.treeDesert : floor === FL.bog ? TEX.treeSwamp : floor === FL.snow ? TEX.treeSnow : floor === FL.ash ? TEX.treeHell : TEX.treePlains;
-
-function wallForFloor(floor: number, n: number): string {
-  switch (floor) {
-    case FL.ash: return TEX.hellWall;
-    case FL.snow: return TEX.snowWall;
-    case FL.sand: return TEX.sandWall;
-    case FL.bog: return n % 3 === 0 ? TEX.woodWall : TEX.stoneWall;
-    case FL.bone: return TEX.templeWall;
-    case FL.stone: return n % 2 === 0 ? TEX.stoneWall : TEX.templeWall;
-    default: return TEX.stoneWall;
-  }
-}
-
-function floorForCode(floor: number, n: number, old: string | undefined): string {
-  switch (floor) {
-    case FL.grass: return n % 9 === 0 ? TEX.flowers : TEX.grass;
-    case FL.dirt: return TEX.dirt;
-    case FL.snow: return old && /ice/.test(old) ? TEX.ice : TEX.snow;
-    case FL.bog: return TEX.swampFloor;
-    case FL.bone: return TEX.templeFloor;
-    case FL.ash: return TEX.hellFloor;
-    case FL.sand: return TEX.sand;
-    case FL.stone: return n % 3 === 0 ? TEX.templeFloor : TEX.stone;
-    case FL.void: return TEX.stone;
-    default: return TEX.stone;
-  }
-}
-
-/** Re-skins a generated dungeon with the New Texture Mode art. Floors, walls, liquids, trees, portals and chests change; the layout, foes and pads do not. */
+/** Re-skin a generated dungeon with New Texture Mode art, keeping the layout. */
 export function retextureDungeon(world: WorldData): void {
-  const flagged = world as WorldData & { texMode?: boolean };
-  if (flagged.texMode) return;
-  flagged.texMode = true;
-  const w = world.w;
+  const art = {
+    floor: [TEX.stone, TEX.dirt, TEX.templeFloor],
+    wall: [TEX.stoneWall, TEX.templeWall],
+    rock: [TEX.stoneWall],
+  };
   for (let i = 0; i < world.tiles.length; i++) {
     const t = world.tiles[i]!;
-    const x = i % w, y = (i / w) | 0;
-    const n = (Math.imul(x + 11, 73856093) ^ Math.imul(y + 7, 19349663)) >>> 0;
-    if (t.decor > 0 && !t.sprite) continue; // hand-painted scenery with no art: leave it be
-    // 1) liquids
-    if (t.floor === FL.lava) { t.sprite = TEX.lava; t.layers = undefined; continue; }
-    if (t.floor === FL.water) {
-      t.sprite = t.sprite && /shallow|shoal|shore/.test(t.sprite) ? TEX.water : TEX.deep;
-      t.layers = undefined;
-      continue;
-    }
-    // 2) layers: trees, portals and chests stand over the tile; doors and scenery do not
-    let turnsToWall = false;
-    let layers: string[] | undefined;
-    for (const l of t.layers ?? []) {
-      if (/tree_|mangrove/.test(l)) (layers ??= []).push(treeForFloor(t.floor));
-      else if (/06_Gates_and_Portals\//.test(l)) (layers ??= []).push(TEX.portal);
-      else if (/chest|large_box/.test(l)) (layers ??= []).push(TEX.chest);
-      else if (t.block) turnsToWall = true;
-    }
-    // 3) the ground itself
-    if (t.block || turnsToWall) {
-      t.sprite = wallForFloor(t.floor, n);
-      t.block = 1;
-      layers = undefined;
+    const n = (i * 7 + 13) % 100;
+    if (t.block && t.floor !== 2) {
+      t.sprite = t.floor === 1 ? art.wall[n % art.wall.length] : art.rock[n % art.rock.length];
+    } else if (t.floor === 2) {
+      t.sprite = n > 40 ? TEX.deep : TEX.water;
     } else {
-      t.sprite = floorForCode(t.floor, n, t.sprite);
+      t.sprite = art.floor[n % art.floor.length];
     }
-    t.layers = layers;
-    if (!t.layers) delete t.layers;
+    if (t.portal) t.layers = [TEX.portal];
   }
 }
