@@ -1,4 +1,4 @@
-import { drawAtlasTile, drawTallArt, isTallArt, NEWTEX_DIR, texModeOn, tileImageRevision } from "./tile-atlas";
+import { drawAtlasTile, drawTallArt, isTallArt, NEWTEX_DIR, texModeOn, tileImage, tileImageRevision } from "./tile-atlas";
 import {
   ANIMAL_BIOME,
   ANIMAL_BY_ID,
@@ -917,7 +917,15 @@ function paintTree(g: CanvasRenderingContext2D, x: number, y: number, art?: stri
   // New Texture Mode: the biome's own tree at its full 64px size, standing on its tile.
   if (art && art.startsWith(NEWTEX_DIR)) {
     // Its own art, or nothing yet while it loads: never the old yellow tree, which does not belong in a New Texture world.
-    drawAtlasTile(g, art, x - 32, y - 64, 64);
+    if (drawAtlasTile(g, art, x - 32, y - 64, 64)) return;
+    const im = tileImage(art);
+    if (im.complete && im.naturalWidth === 0) {
+      // The file is missing or broken: a plain stand-in so the tree is never invisible.
+      const void_ = art.includes("tree_void");
+      g.fillStyle = "rgba(0,0,0,0.28)"; g.beginPath(); g.ellipse(x, y + 4, 22, 7, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = void_ ? "#1a1030" : "#2a180e"; g.fillRect(x - 5, y - 30, 10, 34);
+      g.fillStyle = void_ ? "#5a3d9a" : "#245c2c"; g.beginPath(); g.arc(x, y - 44, 22, 0, Math.PI * 2); g.arc(x - 12, y - 36, 14, 0, Math.PI * 2); g.arc(x + 12, y - 36, 14, 0, Math.PI * 2); g.fill();
+    }
     return;
   }
   if (!art && texModeOn() && drawAtlasTile(g, NEWTEX_DIR + "tree_plains.png", x - 32, y - 64, 64)) return;

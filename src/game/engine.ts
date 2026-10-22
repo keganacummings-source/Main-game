@@ -9610,7 +9610,7 @@ export class TurbzGame {
 			if (d <= 64 && d < bd) { bd = d; best = { npc: n }; }
 		}
 		for (const it of file.interactables ?? []) {
-			if (it.kind === "node") continue;
+			if (it.kind === "node" || !it.kind || (this.turbz && it.kind === "hearth")) continue; // no Hearths in TURBZ; kind-less generator records are not places
 			const d = Math.hypot(it.tx * 32 + 16 - save.x, it.ty * 32 + 16 - save.y);
 			if (d <= 64 && d < bd) { bd = d; best = { it }; }
 		}
@@ -9639,7 +9639,7 @@ export class TurbzGame {
 		const viewX = vw / this.zoom * .62 + 120, viewY = vh / this.zoom * .62 + 140;
 		const offscreen = (x, y) => Math.abs(x - this.cam.x) > viewX || Math.abs(y - this.cam.y) > viewY;
 		for (const it of file.interactables ?? []) {
-			if (it.kind === "node") continue;
+			if (it.kind === "node" || !it.kind || (this.turbz && it.kind === "hearth")) continue; // no Hearths in TURBZ; kind-less generator records are not places
 			const x = it.tx * 32 + 16, y = it.ty * 32 + 16;
 			if (offscreen(x, y)) continue;
 			const col = it.kind === "bounty" ? "#e8c46a" : it.kind === "arena" ? "#c4473a" : it.kind === "shrine" ? "#8fd0ff" : it.kind === "hearth" ? "#ff9a4a" : "#c9a6e8";
@@ -13620,7 +13620,7 @@ export class TurbzGame {
 		ctx.textAlign = "left";
 		for (const m of this.mobs) if (m.alive && m.boss) dot(Math.floor(m.x / TILE), Math.floor(m.y / TILE), "#c4473a", 5, m.name);
 		for (const it of big ? [] : file.interactables ?? []) {
-			if (it.kind === "node") continue;
+			if (it.kind === "node" || !it.kind || (this.turbz && it.kind === "hearth")) continue; // no Hearths in TURBZ; kind-less generator records are not places
 			const color = it.kind === "dungeon" ? "#b4a6ff" : it.kind === "hearth" ? "#ff9a4a" : it.kind === "shrine" ? "#8fd0ff" : "#e6c15a";
 			const label = it.kind === "dungeon" ? it.name || "Door" : it.kind === "shrine" ? it.name || "Shrine" : it.kind === "hearth" ? "Hearth" : it.label || (it.kind === "bounty" ? "Bounty Board" : "Arena");
 			dot(it.tx, it.ty, color, 5, label);
@@ -13842,7 +13842,7 @@ export class TurbzGame {
 		// Places: designer interactables, classic sites, taverns, rifts, campfires.
 		if (L.places) {
 			for (const it of file?.interactables ?? []) {
-				if (it.kind === "node") continue;
+				if (it.kind === "node" || !it.kind || (this.turbz && it.kind === "hearth")) continue; // no Hearths in TURBZ; kind-less generator records are not places
 				if (k < 2.5 && it.kind !== "dungeon") continue;
 				const col = it.kind === "dungeon" ? "#b4a6ff" : it.kind === "hearth" ? "#ff9a4a" : it.kind === "shrine" ? "#8fd0ff" : it.kind === "arena" ? "#c4473a" : "#e6c15a";
 				const label = k >= 5 ? (it.kind === "dungeon" ? it.name || "Door" : it.kind === "shrine" ? it.name || "Shrine" : it.kind === "hearth" ? "Hearth" : it.label || (it.kind === "bounty" ? "Bounty Board" : "Arena")) : "";

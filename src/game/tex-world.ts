@@ -86,7 +86,7 @@ const DEF: Record<TexBiome, BiomeDef> = {
     names: ["Cinderfall", "Emberdeep", "Ashgrave", "Infernum"], word: "Wastes", about: "Hellbrick, lava rivers and charred trees. The deadliest land.",
   },
   void: {
-    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidFloor, patchFloor: FL.void, patchAt: 0.6, wall: TEX.voidRock, tree: TEX.treeVoid, forest: [0.68, 0.4],
+    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidFloor, patchFloor: FL.void, patchAt: 0.6, wall: TEX.voidRock, tree: TEX.treeVoid, forest: [0.55, 0.5],
     monsters: ["kage", "yomi", "naraku", "muma"], animals: ["crow"],
     names: ["Starblight", "Nullgrave", "Hollowmire", "Voidbreach"], word: "Rift", about: "Violet grass, starry rock and black trees. Void Hearts glow in the stone. The deepest, deadliest land — drops Void Ore.",
   },
