@@ -97,7 +97,7 @@ export const NEWTEX_DIR = "/MapAssets/NewTex/";
 
 /** Trees and portals are 64px art. They are drawn at their full size, not squashed into one 32px tile. */
 export function isTallArt(path: string): boolean {
-  return path.startsWith(NEWTEX_DIR) && (path.startsWith(NEWTEX_DIR + "tree_") || path === NEWTEX_DIR + "portal.png");
+  return path.startsWith(NEWTEX_DIR) && (path.startsWith(NEWTEX_DIR + "tree_") || path === NEWTEX_DIR + "portal.png" || path === NEWTEX_DIR + "voidheart.png");
 }
 
 /**

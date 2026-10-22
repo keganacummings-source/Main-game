@@ -4,7 +4,7 @@
  * A second world generator that paints a TURBZ wild using ONLY the textures in /MapAssets/NewTex
  * (the turbz-asset-pack art). It never touches the old DCSS pack under the other /MapAssets folders.
  *
- *   • five biomes: Plains, Desert, Jungle/Swamp, Snow, Hell — one per continent, climbing the level ladder
+ *   • six biomes: Plains, Desert, Jungle/Swamp, Snow, Hell, Void — one per continent, climbing the level ladder
  *   • ocean (shallow Water + DeepWater), lava, wooden cabins with logs, temple ruins, a tree for every biome
  *   • trees and portals are 64×64 and are drawn at their full size (see drawTallArt in tile-atlas.ts)
  *
@@ -26,6 +26,7 @@ export const TEX = {
   water: T("water"), deep: T("deep_water"), swamp: T("swamp"), lava: T("lava"),
   treePlains: T("tree_plains"), treeSwamp: T("tree_swamp"), treeDesert: T("tree_desert"), treeSnow: T("tree_snow"), treeHell: T("tree_hell"), treeVoid: T("tree_void"),
   voidWall: T("void_wall"), voidFloor: T("void_floor"),
+  voidGrass: T("voidgrass"), voidRock: T("voidwall"), voidBrick: T("voidbrick"), voidHeart: T("voidheart"),
   portal: T("portal"), log: T("log"), chest: T("chest"), bed: T("bed"), ghostbox: T("ghostbox"),
 } as const;
 export const TEX_FILES: string[] = Object.values(TEX);
@@ -85,9 +86,9 @@ const DEF: Record<TexBiome, BiomeDef> = {
     names: ["Cinderfall", "Emberdeep", "Ashgrave", "Infernum"], word: "Wastes", about: "Hellbrick, lava rivers and charred trees. The deadliest land.",
   },
   void: {
-    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidFloor, patch: TEX.stone, patchFloor: FL.stone, patchAt: 0.78, wall: TEX.voidWall, tree: TEX.treeVoid, forest: [0.68, 0.4],
+    label: "Void", floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidFloor, patchFloor: FL.void, patchAt: 0.6, wall: TEX.voidRock, tree: TEX.treeVoid, forest: [0.68, 0.4],
     monsters: ["kage", "yomi", "naraku", "muma"], animals: ["crow"],
-    names: ["Starblight", "Nullgrave", "Hollowmire", "Voidbreach"], word: "Rift", about: "Starless rock and black trees. The deepest, deadliest land — drops Void Ore.",
+    names: ["Starblight", "Nullgrave", "Hollowmire", "Voidbreach"], word: "Rift", about: "Violet grass, starry rock and black trees. Void Hearts glow in the stone. The deepest, deadliest land — drops Void Ore.",
   },
 };
 const ORDER: TexBiome[] = ["plains", "desert", "jungle", "snow", "hell", "void"];
@@ -231,6 +232,8 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
         const m = noise(13, 21);
         if (m > rockThr && sea >= 5) {
           t = { floor: def.floor, biome: def.biome, block: 1, decor: 0, sprite: def.wall };
+          // Void Hearts: crystal clusters grown into the rock (mineable like the stone they sit on).
+          if (st.biome === "void" && h2(x, y, seed + 61) < 0.07) t.layers = [TEX.voidHeart];
           rock[i] = 1;
         } else if (st.biome === "hell") {
           const pool = noise(16, 33) > 0.745;
@@ -318,7 +321,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
       const broken = edge && !gate && h2(x0 + x, y0 + y, seed + 51) < 0.28;
       const pillar = !edge && (x === 3 || x === tw - 4) && (y === 3 || y === th - 4);
       tiles[i] = (edge && !gate && !broken) || pillar
-        ? { floor: FL.stone, biome: tiles[i]!.biome, block: 1, decor: 0, sprite: TEX.templeWall }
+        ? { floor: FL.stone, biome: tiles[i]!.biome, block: 1, decor: 0, sprite: tiles[i]!.biome === BI.void ? TEX.voidBrick : TEX.templeWall }
         : { floor: FL.stone, biome: tiles[i]!.biome, block: 0, decor: 0, sprite: TEX.templeFloor };
     }
     mark(x0, y0, tw, th);

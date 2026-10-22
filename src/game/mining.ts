@@ -66,6 +66,8 @@ const TEX_FLOOR: Record<string, { floor: number; sprite: string }> = {
   snow_wall: { floor: FLOOR.snow, sprite: NT("snow") },
   hell_wall: { floor: FLOOR.ash, sprite: NT("hell_floor") },
   void_wall: { floor: 7, sprite: NT("void_floor") },
+  voidwall: { floor: 7, sprite: NT("void_floor") },
+  voidbrick: { floor: 7, sprite: NT("void_floor") },
   void_tree: { floor: 7, sprite: NT("void_floor") },
   temple_wall: { floor: FLOOR.stone, sprite: NT("temple_floor") },
   wood_wall: { floor: FLOOR.stone, sprite: NT("wood_floor") },

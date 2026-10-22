@@ -29,3 +29,15 @@ dungeons keep their layout and use only new art.
 - `hellgen.png`, `battery.png`, `wire.png`, `xpgen.png` and `duplicator.png` in `public/MapAssets/NewTex/` are the default art for the Power blocks.
   They are drawn by `scripts/sprites/power-textures.py` (re-run it after editing). A Live texture painted in the Tile Builder replaces them (`powerArt` in `camp-assets.ts`).
 - Breaking a block pays Mining skill XP (`MINE_XP` in `mining.ts`, bonus `ORE_BONUS_XP` when an ore drops). The engine calls `gainSkill("mining", mineXp(...))` in `tryMine`.
+
+## The Void biome art
+
+The sixth continent (level 61+) uses these files in `public/MapAssets/NewTex/`:
+
+- `voidgrass.png` — the ground. `void_floor.png` (starry) lies in patches on top and is what a mined block leaves behind.
+- `voidwall.png` — the rock ridges. Mineable; every block drops Void Ore.
+- `voidheart.png` — 64×64 Void Hearts, grown into about 7% of the void rock. They are mineable like the stone under them and vanish when it breaks.
+- `voidbrick.png` — the walls of temple ruins built in the void.
+- `tree_void.png` — the black trees.
+
+If a New Texture tree or ground image is missing or still loading, the engine draws nothing (trees) or a dark void colour (ground) instead of the old yellow tree and bright purple checker.

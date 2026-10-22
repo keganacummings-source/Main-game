@@ -566,7 +566,7 @@ function spawnMobs(rng: Rng, tiles: Tile[], w: number, h: number, reached?: Uint
   return out;
 }
 
-const FLOOR_COLOR = ["#4f9a45", "#6e6258", "#2a78b0", "#cbb89a", "#e4d2a4", "#e7f3fb", "#c56a3c", "#7d62c8", "#a08478", "#c6b18e"];
+const FLOOR_COLOR = ["#4f9a45", "#6e6258", "#2a78b0", "#cbb89a", "#e4d2a4", "#e7f3fb", "#c56a3c", "#241a3c", "#a08478", "#c6b18e"];
 
 export function paintWorld(world: WorldData): HTMLCanvasElement {
   const c = document.createElement("canvas");
@@ -915,7 +915,11 @@ export function paintNode(g: CanvasRenderingContext2D, node: "ore" | "tree" | "s
 
 function paintTree(g: CanvasRenderingContext2D, x: number, y: number, art?: string): void {
   // New Texture Mode: the biome's own tree at its full 64px size, standing on its tile.
-  if (art && art.startsWith(NEWTEX_DIR) && drawAtlasTile(g, art, x - 32, y - 64, 64)) return;
+  if (art && art.startsWith(NEWTEX_DIR)) {
+    // Its own art, or nothing yet while it loads: never the old yellow tree, which does not belong in a New Texture world.
+    drawAtlasTile(g, art, x - 32, y - 64, 64);
+    return;
+  }
   if (!art && texModeOn() && drawAtlasTile(g, NEWTEX_DIR + "tree_plains.png", x - 32, y - 64, 64)) return;
   if (drawAtlasTile(g, "/MapAssets/04_Trees_and_Vegetation/tree_1_yellow.png", x - 32, y - 64, 64)) return;
   g.fillStyle = "rgba(0,0,0,0.28)";
