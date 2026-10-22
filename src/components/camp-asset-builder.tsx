@@ -42,7 +42,7 @@ const NEWTEX_NAMES = [
   "bed", "chest", "deep_water", "dirt_floor", "ghostbox", "grass", "grass_flowers", "hell_floor", "hell_wall", "ice", "lava", "log",
   "portal", "sand", "sand_wall", "snow", "snow_wall", "stone_floor", "stone_wall", "swamp", "swamp_floor", "temple_floor", "temple_wall",
   "tree_desert", "tree_hell", "tree_plains", "tree_snow", "tree_swamp", "water", "wood_floor", "wood_wall",
-  "hellgen", "battery", "wire", "xpgen", "duplicator",
+  "hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla",
 ];
 
 const GROUP_LABEL: Record<AssetGroup, string> = { camp: "Camp piece", tile: "Map tile", power: "Power block" };

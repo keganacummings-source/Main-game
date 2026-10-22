@@ -8,7 +8,7 @@ const rgba = (r, g, b, a = 255) => [r, g, b, a];
 const get = (p, w, x, y) => Array.from(p.slice((y * w + x) * 4, (y * w + x) * 4 + 4));
 
 test("shipped power textures exist, are 32x32 RGBA and actually painted", () => {
-  for (const slot of ["hellgen", "battery", "wire", "xpgen", "duplicator"]) {
+  for (const slot of ["hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla", "pipe"]) {
     const f = new URL(`../public/MapAssets/NewTex/${slot}.png`, import.meta.url);
     assert.ok(existsSync(f), `${slot}.png is missing`);
     const b = readFileSync(f);
@@ -25,7 +25,7 @@ test("the importable power pack is valid and covers every power block", () => {
   const parsed = ca.parsePack(text);
   assert.ok(parsed);
   assert.equal(parsed.skipped, 0);
-  assert.deepEqual(parsed.assets.map((a) => a.category).sort(), ["battery", "duplicator", "hellgen", "wire", "xpgen"]);
+  assert.deepEqual(parsed.assets.map((a) => a.category).sort(), ["battery", "blockbreaker", "blockgen", "capacitor", "duplicator", "hellgen", "logburner", "solar", "tesla", "wire", "xpgen"]);
   for (const a of parsed.assets) { assert.equal(ca.groupOf(a), "power"); assert.equal(a.live, true); }
 });
 

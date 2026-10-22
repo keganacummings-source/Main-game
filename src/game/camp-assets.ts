@@ -42,6 +42,12 @@ export const POWER_TEXTURES = [
   { id: "wire", label: "Wire" },
   { id: "xpgen", label: "XP Producer" },
   { id: "duplicator", label: "Duplicator" },
+  { id: "logburner", label: "LogBurning Generator" },
+  { id: "solar", label: "Solar Panel" },
+  { id: "capacitor", label: "Capacitor" },
+  { id: "blockgen", label: "BlockGenerator" },
+  { id: "blockbreaker", label: "BlockBreaker" },
+  { id: "tesla", label: "Tesla Coil" },
 ] as const;
 
 /** Suggested places a custom tile may spawn / appear. */

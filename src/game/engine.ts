@@ -23,10 +23,16 @@
  * — the file it came from almost certainly also exports the function you need.
  */
 import { renderSfx, BLIP_HZ, SFX_NAMES, type SfxName } from "./sfx-bank";
+import {
+  sanitizePowerExtra, isPowerExtra, batteryCap, bufTotal, pipeRuns, pipeStep, DIR_VEC, DIR_NAME, BLOCKGEN_ITEM, POWER_EXTRA_HOW, POWER_EXTRA_MENU,
+  LOGBURN_SECONDS, LOGBURN_POWER, LOGBURN_FUEL_MAX, SOLAR_SECONDS, SOLAR_POWER, BLOCK_MACHINE_SECONDS, BLOCK_MACHINE_POWER, MACHINE_BUF_MAX,
+  PIPE_SECONDS, TESLA_RANGE, TESLA_SECONDS, TESLA_POWER, CAP_MAX, BAT_MAX, type PowerExtra, type PowerExtraKind,
+} from "./power-extra";
+import { paintPipe } from "./pipe-art";
 import { mineInfo, rollMineDrop, mineXp, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
-import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, DUP_SECONDS, DUP_POWER_COST, DUP_STORE_MAX, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
+import { BUILD_PIECES, BUILD_REACH, buildHotkeyPiece, pieceNameForKind, LOG_COST, MAX_BEDS, MAX_LOG_TILES, SAFE_ZONE_TILES, BLOCK_KYO, BLOCK_PIECE_IDS, FLOOR_KINDS, SOLID_KINDS, DUP_SECONDS, DUP_POWER_COST, DUP_STORE_MAX, checkPlaceLog, costText, pushOut, safeZoneAt, solidsFor, tileSolid, tileAt, tileOf, zoneRect, type LogTile } from "./building";
 import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, waterWithinReach, nearestWaterTile, nearestShore, CAMP_RECIPES, FOOD, type SurvivalState } from "./survival";
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, healAmount, shieldAmount, RANK_MAX, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
@@ -575,6 +581,8 @@ type Save = {
   powerXps?: { map: string; tx: number; ty: number }[];
   /** TURBZ + New Textures: Duplicators. One loaded bag item, copies stored inside. */
   powerDups?: { map: string; tx: number; ty: number; item: string; seed: boolean; stored: number; t: number }[];
+  /** TURBZ + New Textures: LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil and Pipes. */
+  powerExtra?: PowerExtra[];
 };
 export type HoverCard = {
   x: number; y: number; kind: "mob" | "info"; name: string; lines: string[];
@@ -1200,7 +1208,7 @@ export class TurbzGame {
 			this.menu = null;
 			this.canvas.setPointerCapture(e.pointerId);
 			const w = this.screenToWorld(e.clientX, e.clientY);
-			if (this.buildMode && this.buildOn()) { this.buildAt(w.x, w.y); return; }
+			if (this.buildMode && this.buildOn()) { this.buildDragKey = `${tileOf(w.x)},${tileOf(w.y)}`; this.buildAt(w.x, w.y); return; }
 			if (this.tryMine(w.x, w.y)) return;
 			this.pointer = {
 				x: w.x,
@@ -1215,6 +1223,12 @@ export class TurbzGame {
 			const r = this.canvas.getBoundingClientRect();
 			this.hoverClient = e.pointerType === "mouse" ? { x: e.clientX - r.left, y: e.clientY - r.top } : null;
 			this.hoverAt(w.x, w.y);
+			// Hold the button and drag to lay a whole line of pipe.
+			if (this.buildDragKey && this.buildMode && this.buildOn() && this.buildPiece === "pipe") {
+				const k = `${tileOf(w.x)},${tileOf(w.y)}`;
+				if (k !== this.buildDragKey) { this.buildDragKey = k; this.buildAt(w.x, w.y); }
+				return;
+			}
 			if (!this.pointer?.down) return;
 			this.pointer = {
 				x: w.x,
@@ -1227,13 +1241,14 @@ export class TurbzGame {
 			this.mouseWorld = this.screenToWorld(e.clientX, e.clientY);
 		}, options);
 		this.canvas.addEventListener("pointerup", () => {
+			this.buildDragKey = null;
 			if (this.pointer) this.pointer.down = false;
 		}, options);
 		this.canvas.addEventListener("dblclick", (e) => {
 			if (snap.mode !== "play" || this.dead) return;
 			this.gim?.dblclick(this.screenToWorld(e.clientX, e.clientY));
 		}, options);
-		this.canvas.addEventListener("pointercancel", () => { if (this.pointer) this.pointer.down = false; }, options);
+		this.canvas.addEventListener("pointercancel", () => { this.buildDragKey = null; if (this.pointer) this.pointer.down = false; }, options);
 		this.canvas.addEventListener("wheel", (e) => {
 			e.preventDefault();
 			this.zoom = Math.max(1.15, Math.min(3, this.zoom * (e.deltaY > 0 ? .92 : 1.08)));
@@ -2424,6 +2439,8 @@ export class TurbzGame {
 			if (xp) return this.removePowerPiece("xpgen", xp);
 			const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
 			if (dup) return this.removePowerPiece("duplicator", dup);
+			const ext = this.extraAt(tx, ty);
+			if (ext) return this.removePowerExtra(ext);
 			if (save.survival.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty)) { this.say(this.turbz ? "That's your campfire. Use Pack up camp in the Camp menu (H) to move your camp." : "That's a campfire. Use Pick up campfire in the Camp menu (H)."); return false; }
 			this.say("Nothing to pick up there.");
 			return false;
@@ -2447,6 +2464,8 @@ export class TurbzGame {
 		if (xp) return this.removePowerPiece("xpgen", xp);
 		const dup = (save.powerDups ?? []).find(d => d.map === save.map && d.tx === tx && d.ty === ty);
 		if (dup) return this.removePowerPiece("duplicator", dup);
+		const ext = this.extraAt(tx, ty);
+		if (ext) return this.removePowerExtra(ext);
 		// Clicking the campfire tile lays a floor under it if a floor is selected. It never picks the fire up:
 		// that is the Pack up camp / Pick up campfire button in the Camp menu, so a stray click can't move your camp.
 		const fire = save.survival.campfires.find((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
@@ -2457,7 +2476,7 @@ export class TurbzGame {
 			return false;
 		}
 		if (piece === "turbzchest") return this.placeTurbzChest(tx, ty);
-		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen" || piece === "duplicator") return this.placePowerPiece(piece, tx, ty);
+		if (piece === "hellgen" || piece === "battery" || piece === "wire" || piece === "xpgen" || piece === "duplicator" || isPowerExtra(piece)) return this.placePowerPiece(piece, tx, ty);
 		if (piece === "bed" || piece === "ghostbox") return this.placeFurniture(piece, tx, ty);
 		// Walls/doors on floors: leave the floor in place (drawn underneath) and add the solid on top.
 		return this.placeLog(tx, ty, piece);
@@ -2471,7 +2490,7 @@ export class TurbzGame {
 		if (cost.kyo && (save.kyo ?? 0) < cost.kyo) return { ok: false, reason: `Blocks cost ${cost.kyo} kyo. You have ${save.kyo ?? 0}.` };
 		const { kyo, ...matCost } = cost;
 		const furniture = [...sv.beds, ...(save.ghostBox ? [save.ghostBox] : []), ...(save.turbzChest ? [save.turbzChest] : []),
-			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? []), ...(save.powerDups ?? [])];
+			...(save.powerGens ?? []), ...(save.powerBats ?? []), ...(save.powerWires ?? []), ...(save.powerXps ?? []), ...(save.powerDups ?? []), ...this.pex()];
 		const isFloor = !!BUILD_PIECES[piece].kind && FLOOR_KINDS.has(BUILD_PIECES[piece].kind!);
 		return checkPlaceLog({
 			world: this.world, map: save.map, logs: sv.logs, camps: sv.campfires, tx, ty, player: save, bag: save.bag,
@@ -2823,7 +2842,8 @@ export class TurbzGame {
 		if (!this.isOverworld(save.map)) { this.say("Place Power blocks in the overworld."); return false; }
 		const check = this.checkPiece(piece, tx, ty);
 		if (!check.ok) { this.say(check.reason); return false; }
-		this.payForPiece(piece, 15);
+		this.payForPiece(piece, piece === "pipe" ? 3 : 15);
+		if (isPowerExtra(piece)) return this.placePowerExtra(piece, tx, ty);
 		const here = { map: save.map, tx, ty };
 		if (piece === "hellgen") {
 			save.powerGens = save.powerGens ?? [];
@@ -2851,6 +2871,341 @@ export class TurbzGame {
 		this.syncHud(true);
 		return true;
 	}
+
+	// ---------- Power extras: LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil, Pipes ----------
+	/** The saved extras, cleaned once per save so a hand-edited or old file can never crash a tick. */
+	pex() {
+		const save = this.save;
+		if (!save) return [];
+		if (save.powerExtra && this._pexChecked !== save.powerExtra) {
+			save.powerExtra = sanitizePowerExtra(save.powerExtra);
+			this._pexChecked = save.powerExtra;
+		}
+		return save.powerExtra ?? [];
+	}
+	extraAt(tx, ty, map = this.save?.map) {
+		return this.pex().find((e) => e.map === map && e.tx === tx && e.ty === ty) ?? null;
+	}
+	/** Anything the camp has built on this tile: placed blocks, furniture, power blocks, pipes, the campfire. */
+	tileTaken(tx, ty) {
+		const save = this.save, sv = save.survival, map = save.map;
+		const is = (n) => n.map === map && n.tx === tx && n.ty === ty;
+		if (sv.logs.some(is) || sv.beds.some(is)) return true;
+		if (save.ghostBox && is(save.ghostBox)) return true;
+		if (save.turbzChest && is(save.turbzChest)) return true;
+		for (const l of [save.powerGens, save.powerBats, save.powerWires, save.powerXps, save.powerDups, save.powerExtra]) if ((l ?? []).some(is)) return true;
+		return sv.campfires.some((c) => c.map === map && tileOf(c.x) === tx && tileOf(c.y) === ty);
+	}
+	/** Can a machine build a block on this tile right now? Never on water, a foe, you, a resource, or anything already built. */
+	frontFree(tx, ty) {
+		const save = this.save, world = this.world;
+		if (!world || tx < 3 || ty < 3 || tx >= world.w - 3 || ty >= world.h - 3) return false;
+		const cx = tx * 32 + 16, cy = ty * 32 + 16;
+		const tile = world.tiles[ty * world.w + tx];
+		if (!tile || tile.floor === 1 || tile.floor === 2 || tile.floor === 11 || tile.portal) return false;
+		if (blocked(world, cx, cy)) return false;
+		if (this.tileTaken(tx, ty)) return false;
+		if (tileOf(save.x) === tx && tileOf(save.y) === ty) return false;
+		for (const m of this.mobs) if (m.alive && tileOf(m.x) === tx && tileOf(m.y) === ty) return false;
+		for (const n of world.spawns) if (n.kind === "node" && Math.hypot(n.x - cx, n.y - cy) < 26) return false;
+		return true;
+	}
+	/** Add Power to the Batteries and Capacitors on a block's wire network. Returns how much was stored. */
+	addNetworkPower(node, amount) {
+		const bats = this.powerNetwork(node).filter((w) => w.kind === "bat").map((w) => w.n);
+		let left = amount;
+		for (const b of bats) {
+			if (left <= 0) break;
+			const room = Math.max(0, batteryCap(b) - (b.power ?? 0));
+			const add = Math.min(room, left);
+			b.power = (b.power ?? 0) + add;
+			left -= add;
+		}
+		return amount - left;
+	}
+	/** One placed block in front of a BlockGenerator. Returns true if it built something. */
+	runBlockGen(e) {
+		const save = this.save, world = this.world;
+		if (!world) return false;
+		const [dx, dy] = DIR_VEC[e.dir ?? 2];
+		const tx = e.tx + dx, ty = e.ty + dy;
+		const id = BLOCKGEN_ITEM[e.mat === "stone" ? "stone" : "wood"];
+		e.buf = e.buf ?? {};
+		if ((e.buf[id] ?? 0) < 1) return false;
+		if (save.survival.logs.length >= MAX_LOG_TILES) return false;
+		if (!this.frontFree(tx, ty)) return false;
+		if (!this.spendNetworkPower(e, BLOCK_MACHINE_POWER)) return false;
+		e.buf[id] -= 1;
+		if (e.buf[id] <= 0) delete e.buf[id];
+		const kind = e.mat === "stone" ? "stone" : "wood";
+		save.survival.logs.push({ map: save.map, tx, ty, kind });
+		world.solids = world.solids ?? new Set();
+		world.solids.add(ty * world.w + tx);
+		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: kind === "stone" ? 0.8 : 1 }, [kind === "stone" ? 150 : 190, .04, "square"]);
+		this.powerDirty = true;
+		return true;
+	}
+	/** One block broken in front of a BlockBreaker. Returns true if it broke something. */
+	runBlockBreaker(e) {
+		const save = this.save, world = this.world, sv = save.survival;
+		if (!world) return false;
+		const [dx, dy] = DIR_VEC[e.dir ?? 2];
+		const tx = e.tx + dx, ty = e.ty + dy;
+		e.buf = e.buf ?? {};
+		if (bufTotal(e.buf) >= MACHINE_BUF_MAX) return false;
+		const wall = sv.logs.find((l) => l.map === save.map && l.tx === tx && l.ty === ty && (!l.kind || SOLID_KINDS.has(l.kind)));
+		let id = null;
+		if (wall) {
+			if (!this.spendNetworkPower(e, BLOCK_MACHINE_POWER)) return false;
+			sv.logs = sv.logs.filter((l) => l !== wall);
+			world.solids?.delete(ty * world.w + tx);
+			id = wall.kind === "stone" ? "rock_ore" : "timber";
+		} else if (save.map === "custom-turbz" && save.turbzNewTex && !this.tileTaken(tx, ty)) {
+			const i = ty * world.w + tx;
+			const t = world.tiles[i];
+			const info = t && t.block === 1 ? mineInfo(t, tx, ty, world.w, world.h) : null;
+			if (!info) return false;
+			if (!this.spendNetworkPower(e, BLOCK_MACHINE_POWER)) return false;
+			breakBlock(t, info);
+			(save.mined = save.mined ?? {});
+			(save.mined[save.map] = save.mined[save.map] ?? []).push(i);
+			id = rollMineDrop(info, Math.random());
+			this.refreshTerrain();
+		} else return false;
+		if (id) e.buf[id] = (e.buf[id] ?? 0) + 1;
+		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: 0.6 }, [120, .05, "square"]);
+		if (id) this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a");
+		this.powerDirty = true;
+		return true;
+	}
+	/** Per-frame work for the new power blocks on this map. */
+	tickExtras(dt) {
+		const save = this.save;
+		const list = this.pex();
+		if (!list.length) return;
+		for (const e of list) {
+			if (e.map !== save.map || e.kind === "pipe" || e.kind === "capacitor") continue;
+			const cx = e.tx * 32 + 16;
+			if (e.kind === "logburner") {
+				if ((e.fuel ?? 0) <= 0) continue;
+				e.t = (e.t ?? 0) + dt;
+				if (e.t < LOGBURN_SECONDS) continue;
+				e.t -= LOGBURN_SECONDS;
+				e.fuel -= 1;
+				const stored = this.addNetworkPower(e, LOGBURN_POWER);
+				this.float(cx, e.ty * 32 - 8, stored > 0 ? `+${stored} Power` : "Power fades", stored > 0 ? "#ffb870" : "#9aa0a6");
+			} else if (e.kind === "solar") {
+				if (this.isNightNow()) { e.t = 0; continue; }
+				e.t = (e.t ?? 0) + dt;
+				if (e.t < SOLAR_SECONDS) continue;
+				e.t -= SOLAR_SECONDS;
+				const stored = this.addNetworkPower(e, SOLAR_POWER);
+				if (stored > 0) this.float(cx, e.ty * 32 - 8, `+${stored} Power`, "#ffe27a");
+			} else if (e.kind === "blockgen" || e.kind === "blockbreaker") {
+				if (e.on === false) continue;
+				e.t = Math.min(BLOCK_MACHINE_SECONDS, (e.t ?? 0) + dt);
+				if (e.t < BLOCK_MACHINE_SECONDS) continue;
+				const did = e.kind === "blockgen" ? this.runBlockGen(e) : this.runBlockBreaker(e);
+				e.t = did ? 0 : BLOCK_MACHINE_SECONDS - 0.25;
+			} else if (e.kind === "tesla") {
+				if (e.on === false) continue;
+				e.t = Math.min(TESLA_SECONDS, (e.t ?? 0) + dt);
+				if (e.t < TESLA_SECONDS) continue;
+				let best = null, bd = TESLA_RANGE;
+				for (const m of this.mobs) {
+					if (!m.alive || m.ally || m.friendly || m.pet || m.peaceful) continue;
+					const d = Math.hypot(m.x - cx, m.y - (e.ty * 32 + 16));
+					if (d < bd) { bd = d; best = m; }
+				}
+				if (!best || !this.spendNetworkPower(e, TESLA_POWER)) { e.t = TESLA_SECONDS - 0.3; continue; }
+				e.t = 0;
+				this.damageMob(best, Math.round(12 + (save.level ?? 1) * 5), false);
+				(this.teslaZaps = this.teslaZaps ?? new Map()).set(`${e.tx},${e.ty}`, { x: best.x, y: best.y, at: this.clock });
+				this.float(best.x, best.y - 26, "ZAP", "#9fe8ff");
+				this.cue("click", { rate: 1.6 }, [900, .05, "sawtooth"]);
+			}
+		}
+		if (this.powerDirty) {
+			this.powerDirtyT = (this.powerDirtyT ?? 0) + dt;
+			if (this.powerDirtyT >= 8) { this.powerDirty = false; this.powerDirtyT = 0; this.persist(); }
+		}
+	}
+	/** Pipes, the machines and the chest they touch, rebuilt only when something is placed or removed. */
+	pipeCache() {
+		const save = this.save;
+		const tc = save.turbzChest && save.turbzChest.map === save.map ? `${save.turbzChest.tx},${save.turbzChest.ty}` : "-";
+		const sig = `${save.map}|${this.pex().length}|${save.powerGens?.length ?? 0}|${save.powerDups?.length ?? 0}|${tc}|${this.pipeRev | 0}`;
+		if (this._pipeSig !== sig || !this._pipeC) {
+			const pipes = new Map(), ports = new Map();
+			const add = (kind, n) => { if (n.map === save.map) ports.set(`${n.tx},${n.ty}`, { kind, key: `${n.tx},${n.ty}`, n }); };
+			for (const g of save.powerGens ?? []) add("hellgen", g);
+			for (const d of save.powerDups ?? []) add("dup", d);
+			if (save.turbzChest) add("chest", save.turbzChest);
+			for (const e of this.pex()) {
+				if (e.map !== save.map) continue;
+				if (e.kind === "pipe") pipes.set(`${e.tx},${e.ty}`, e);
+				else if (e.kind === "logburner" || e.kind === "blockgen" || e.kind === "blockbreaker") add(e.kind, e);
+			}
+			this._pipeC = { pipes, ports };
+			this._pipeSig = sig;
+		}
+		return this._pipeC;
+	}
+	/** Which sides of a pipe tile connect (bit 1 up, 2 right, 4 down, 8 left), and which of those end in a machine. */
+	pipeLinks(tx, ty) {
+		const { pipes, ports } = this.pipeCache();
+		let mask = 0, port = 0;
+		for (let k = 0; k < 4; k++) {
+			const key = `${tx + DIR_VEC[k][0]},${ty + DIR_VEC[k][1]}`;
+			if (pipes.has(key)) mask |= 1 << k;
+			else if (ports.has(key)) { mask |= 1 << k; port |= 1 << k; }
+		}
+		return { mask, port };
+	}
+	/** Items flow along every connected run of pipes. */
+	tickPipes(dt) {
+		this.pipeT = (this.pipeT ?? 0) + dt;
+		if (this.pipeT < PIPE_SECONDS) return;
+		this.pipeT = 0;
+		const { pipes, ports } = this.pipeCache();
+		if (!pipes.size) return;
+		let chest = null, chestDirty = false;
+		for (const run of pipeRuns(pipes.keys(), ports)) {
+			if (run.ports.length < 2) continue;
+			chest = chest ?? this.turbzChestItems();
+			const r = pipeStep(run.ports, chest);
+			if (r.chestMoved) chestDirty = true;
+			if (r.moved > 0) {
+				this.powerDirty = true;
+				this.pipeLit = this.pipeLit ?? new Map();
+				for (const k of run.pipes) this.pipeLit.set(k, this.clock);
+			}
+		}
+		if (chestDirty && chest) this.writeTurbzChestItems(chest);
+	}
+	/** Put a LogBurner, Solar Panel, Capacitor, BlockGenerator, BlockBreaker, Tesla Coil or Pipe down. */
+	placePowerExtra(piece, tx, ty) {
+		const save = this.save;
+		const here = { kind: piece, map: save.map, tx, ty, t: 0 };
+		if (piece === "blockgen" || piece === "blockbreaker") {
+			const ddx = tx * 32 + 16 - save.x, ddy = ty * 32 + 16 - save.y;
+			here.dir = Math.abs(ddx) > Math.abs(ddy) ? (ddx > 0 ? 1 : 3) : (ddy > 0 ? 2 : 0);
+			here.on = true;
+			here.buf = {};
+			if (piece === "blockgen") here.mat = "wood";
+		}
+		if (piece === "tesla") here.on = true;
+		if (piece === "logburner") here.fuel = 0;
+		if (piece === "capacitor") here.power = 0;
+		save.powerExtra = this.pex();
+		save.powerExtra.push(here);
+		this._pexChecked = save.powerExtra;
+		this.pipeRev = (this.pipeRev | 0) + 1;
+		const say = {
+			logburner: "LogBurning Generator placed. Stand by it and press E to load Logs.",
+			solar: "Solar Panel placed. Wire it to a Battery. It works in daylight.",
+			capacitor: "Capacitor placed. Wire it to a Generator to store up to 500 Power.",
+			blockgen: `BlockGenerator placed, facing ${DIR_NAME[here.dir].toLowerCase()}. Press E to load material or rotate it.`,
+			blockbreaker: `BlockBreaker placed, facing ${DIR_NAME[here.dir].toLowerCase()}. Wire it to Power. Press E to rotate it.`,
+			tesla: "Tesla Coil placed. Wire it to a Battery. It zaps foes that come close.",
+		}[piece];
+		if (say) this.say(say);
+		this.cue("rattle", { rate: piece === "pipe" ? 1.4 : 1.1 }, [380, .05, "triangle"]);
+		if (piece === "pipe") this.powerDirty = true; else this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	removePowerExtra(e) {
+		const save = this.save;
+		if (Math.hypot(e.tx * 32 + 16 - save.x, e.ty * 32 + 16 - save.y) > BUILD_REACH) { this.say("Too far away to pick that up."); return false; }
+		save.powerExtra = this.pex().filter((x) => x !== e);
+		this._pexChecked = save.powerExtra;
+		this.pipeRev = (this.pipeRev | 0) + 1;
+		if ((e.fuel ?? 0) > 0) this.giveItem("timber", e.fuel);
+		for (const [id, n] of Object.entries(e.buf ?? {})) if (n > 0) this.giveItem(id, n);
+		for (const [id, n] of Object.entries(BUILD_PIECES[e.kind].cost)) this.giveItem(id, n);
+		this.say(`${BUILD_PIECES[e.kind].name} packed up.`);
+		if (this.powerOpen && this.powerOpen.tx === e.tx && this.powerOpen.ty === e.ty && this.powerOpen.map === e.map) this.closePower();
+		this.cue("click", { rate: 0.8 }, [160, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+		return true;
+	}
+	/** The open BlockGenerator / BlockBreaker / LogBurner, or null. */
+	openExtra(...kinds) {
+		const node = this.powerNode(this.powerOpen);
+		return node && kinds.includes(node.kind) ? node.n : null;
+	}
+	extraRotate() {
+		const e = this.openExtra("blockgen", "blockbreaker");
+		if (!e) return;
+		e.dir = ((e.dir ?? 2) + 1) % 4;
+		e.t = 0;
+		this.say(`Now facing ${DIR_NAME[e.dir].toLowerCase()}.`);
+		this.cue("click", { rate: 1.2 }, [420, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+	}
+	extraToggle() {
+		const e = this.openExtra("blockgen", "blockbreaker", "tesla");
+		if (!e) return;
+		e.on = e.on === false;
+		this.say(`${BUILD_PIECES[e.kind].name} ${e.on ? "on" : "off"}.`);
+		this.persist();
+		this.syncHud(true);
+	}
+	extraMat(mat) {
+		const e = this.openExtra("blockgen");
+		if (!e || (mat !== "wood" && mat !== "stone")) return;
+		e.mat = mat;
+		e.t = 0;
+		this.say(mat === "stone" ? "Building Stone blocks (1 Rock Ore each)." : "Building Wood blocks (1 Log each).");
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Move bag items into the open LogBurner (Logs) or BlockGenerator (its block's material). Negative n takes them back. */
+	extraLoad(n) {
+		const save = this.save;
+		const e = this.openExtra("logburner", "blockgen");
+		if (!save || !e) return;
+		const amt = Math.floor(Math.abs(n));
+		if (amt <= 0) return;
+		const id = e.kind === "logburner" ? "timber" : BLOCKGEN_ITEM[e.mat === "stone" ? "stone" : "wood"];
+		const name = ITEM_BY_ID[id]?.name ?? id;
+		const cap = e.kind === "logburner" ? LOGBURN_FUEL_MAX : MACHINE_BUF_MAX;
+		const held = e.kind === "logburner" ? (e.fuel ?? 0) : (e.buf?.[id] ?? 0);
+		if (n > 0) {
+			const take = Math.min(save.bag[id] ?? 0, amt, cap - held);
+			if (take <= 0) { this.say(held >= cap ? `It cannot hold more than ${cap}.` : `You have no ${name} to load.`); return; }
+			save.bag[id] -= take;
+			if (save.bag[id] <= 0) delete save.bag[id];
+			if (e.kind === "logburner") { if ((e.fuel ?? 0) <= 0) e.t = 0; e.fuel = held + take; }
+			else { e.buf = e.buf ?? {}; e.buf[id] = held + take; }
+			this.say(`Loaded ${take} ${name}.`);
+		} else {
+			const give = Math.min(held, amt);
+			if (give <= 0) { this.say("Nothing to take back."); return; }
+			if (e.kind === "logburner") e.fuel = held - give;
+			else { e.buf[id] = held - give; if (e.buf[id] <= 0) delete e.buf[id]; }
+			this.giveItem(id, give);
+			this.say(`Took ${give} ${name} back.`);
+		}
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Take everything the open BlockBreaker (or BlockGenerator) is holding, of one item id. */
+	extraTake(id, n) {
+		const e = this.openExtra("blockgen", "blockbreaker");
+		if (!e || !e.buf) return;
+		const take = Math.min(e.buf[id] ?? 0, Math.max(1, Math.floor(n)));
+		if (take <= 0) return;
+		e.buf[id] -= take;
+		if (e.buf[id] <= 0) delete e.buf[id];
+		this.giveItem(id, take);
+		this.say(`Took ${ITEM_BY_ID[id]?.name ?? id} ×${take}.`);
+		this.persist();
+		this.syncHud(true);
+	}
 	/** Every Power block on the save, as a reference plus a kind. */
 	powerNodes() {
 		const save = this.save;
@@ -2861,6 +3216,7 @@ export class TurbzGame {
 			...(save.powerWires ?? []).map((n) => ({ n, kind: "wire" })),
 			...(save.powerXps ?? []).map((n) => ({ n, kind: "xp" })),
 			...(save.powerDups ?? []).map((n) => ({ n, kind: "dup" })),
+			...this.pex().filter((e) => e.kind !== "pipe").map((n) => ({ n, kind: n.kind === "logburner" || n.kind === "solar" ? "gen" : n.kind === "capacitor" ? "bat" : "mach" })),
 		];
 	}
 	/** Generator, wires, batteries and machines touching this one (including itself). */
@@ -2894,27 +3250,20 @@ export class TurbzGame {
 			const far = !open || open.n.map !== save.map || Math.hypot(open.n.tx * 32 + 16 - save.x, open.n.ty * 32 + 16 - save.y) > 80;
 			if (far) { this.powerOpen = null; if (snap.panel === "power") publish({ panel: null }); }
 		}
-		if (!save.powerGens?.length && !save.powerDups?.length) return;
+		if (!save.powerGens?.length && !save.powerDups?.length && !save.powerExtra?.length) return;
 		for (const g of save.powerGens ?? []) {
 			if (g.map !== save.map || g.ore <= 0) continue;
 			g.t += dt;
 			if (g.t < 5) continue;
 			g.t -= 5;
 			g.ore = Math.max(0, g.ore - 1);
-			const bats = this.powerNetwork(g).filter((w) => w.kind === "bat").map((w) => w.n);
-			let left = 10;
-			for (const b of bats) {
-				if (left <= 0) break;
-				const room = Math.max(0, 100 - (b.power ?? 0));
-				const add = Math.min(room, left);
-				b.power = (b.power ?? 0) + add;
-				left -= add;
-			}
-			const stored = 10 - left;
+			const stored = this.addNetworkPower(g, 10);
 			if (stored > 0) this.float(g.tx * 32 + 16, g.ty * 32 - 8, `+${stored} Power`, "#8fd0ff");
 			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
 		}
+		this.tickExtras(dt);
 		this.tickDuplicators(dt);
+		this.tickPipes(dt);
 	}
 	/** Spend Power from batteries on a block's network. Returns false if there is not enough. */
 	spendNetworkPower(node, amount) {
@@ -2960,6 +3309,10 @@ export class TurbzGame {
 			xpgen: [save.powerXps, "xp"],
 			duplicator: [save.powerDups, "dup"],
 		};
+		if (isPowerExtra(open.kind)) {
+			const e = this.extraAt(open.tx, open.ty, open.map);
+			return e && e.kind === open.kind ? { n: e, kind: open.kind } : null;
+		}
 		const row = table[open.kind];
 		if (!row) return null;
 		const n = (row[0] ?? []).find((p) => p.map === open.map && p.tx === open.tx && p.ty === open.ty);
@@ -2976,7 +3329,8 @@ export class TurbzGame {
 		const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
 		const xp = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
 		const gen = open.kind === "hellgen" ? node.n : null;
-		const bat = open.kind === "battery" ? node.n : null;
+		const bat = open.kind === "battery" || open.kind === "capacitor" ? node.n : null;
+		const ex = isPowerExtra(open.kind) ? node.n : null;
 		const dup = open.kind === "duplicator" ? node.n : null;
 		const seedOn = !!(dup?.seed && dup.item);
 		const copies = dup?.stored ?? 0;
@@ -3007,6 +3361,7 @@ export class TurbzGame {
 				`Every ${DUP_SECONDS} seconds it spends ${DUP_POWER_COST} Power and stores one copy (up to ${DUP_STORE_MAX}).`,
 				"Ghost Jars, Drinking Water, ores, logs, Hell Ore — anything in the bag. Take the original back to stop it.",
 			],
+			...POWER_EXTRA_HOW,
 		};
 		return {
 			kind: open.kind,
@@ -3030,6 +3385,18 @@ export class TurbzGame {
 			copies,
 			copyMax: DUP_STORE_MAX,
 			dupNext: dupRunning ? Math.max(0, DUP_SECONDS - (dup.t ?? 0)) : -1,
+			dir: ex?.dir ?? 2,
+			dirName: DIR_NAME[ex?.dir ?? 2],
+			on: ex ? ex.on !== false : true,
+			cap: open.kind === "capacitor" ? CAP_MAX : BAT_MAX,
+			fuel: ex?.kind === "logburner" ? (ex.fuel ?? 0) : 0,
+			fuelNext: ex?.kind === "logburner" && (ex.fuel ?? 0) > 0 ? Math.max(0, LOGBURN_SECONDS - (ex.t ?? 0)) : -1,
+			mat: ex?.mat === "stone" ? "stone" : "wood",
+			buf: Object.entries(ex?.buf ?? {}).filter(([, n]) => n > 0).map(([id, count]) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, count })),
+			bufMax: MACHINE_BUF_MAX,
+			bagTimber: save.bag?.timber ?? 0,
+			bagRock: save.bag?.rock_ore ?? 0,
+			day: !this.isNightNow(),
 		};
 	}
 	/** Open the power block you are standing at. Pressing E again closes it. */
@@ -3046,7 +3413,7 @@ export class TurbzGame {
 			}
 			return best;
 		};
-		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen"), nearest(save.powerDups, "duplicator")].filter(Boolean).sort((a, b) => a.d - b.d)[0];
+		const hit = [nearest(save.powerGens, "hellgen"), nearest(save.powerBats, "battery"), nearest(save.powerWires, "wire"), nearest(save.powerXps, "xpgen"), nearest(save.powerDups, "duplicator"), ...POWER_EXTRA_MENU.map((k) => nearest(this.pex().filter((e) => e.kind === k), k))].filter(Boolean).sort((a, b) => a.d - b.d)[0];
 		if (!hit) return false;
 		const same = this.powerOpen && this.powerOpen.kind === hit.kind && this.powerOpen.tx === hit.n.tx && this.powerOpen.ty === hit.n.ty;
 		if (same && snap.panel === "power") { this.closePower(); return true; }
@@ -3368,6 +3735,8 @@ export class TurbzGame {
 		if (sv.beds.some((b) => b.map === save.map && b.tx === tx && b.ty === ty)) return pickup("Bed", this.costLine(BUILD_PIECES.bed.cost));
 		if (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty) return pickup("Ghost Box", this.costLine(BUILD_PIECES.ghostbox.cost));
 		if (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty) return pickup("Storage Chest", `${BUILD_PIECES.turbzchest.cost.kyo} kyo`);
+		const hovered = this.extraAt(tx, ty);
+		if (hovered) return pickup(BUILD_PIECES[hovered.kind].name, this.costLine(BUILD_PIECES[hovered.kind].cost));
 		const fire = sv.campfires.some((c) => c.map === save.map && tileOf(c.x) === tx && tileOf(c.y) === ty);
 		if (fire && !floorPiece) return { tx, ty, ok: false, pickup: false, text: this.turbz ? "Campfire · move it with Pack up camp (H)" : "Campfire · move it with Pick up campfire (H)" };
 		if (piece === "erase") return { tx, ty, ok: false, pickup: false, text: "Nothing to pick up here" };
@@ -12603,6 +12972,64 @@ export class TurbzGame {
 			drawShadowName(ctx, tag, dx + 16, dy - 10, "#7dffb3");
 			if (Math.hypot(dx + 16 - save.x, dy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", dx + 16, dy - 22, "#ffd166");
 		}
+		// Pipes first (they sit under the machines they feed), then the other new Power blocks.
+		{
+			const { pipes } = this.pipeCache();
+			for (const p of pipes.values()) {
+				const px = p.tx * 32, py = p.ty * 32;
+				if (Math.abs(px + 16 - this.cam.x) > halfW || Math.abs(py + 16 - this.cam.y) > halfH) continue;
+				const { mask, port } = this.pipeLinks(p.tx, p.ty);
+				const lit = this.clock - (this.pipeLit?.get(`${p.tx},${p.ty}`) ?? -9) < 0.9;
+				paintPipe(ctx, px, py, mask, port, lit, this.clock);
+			}
+			const arrow = (x, y, dir, col) => {
+				const [dx, dy] = DIR_VEC[dir];
+				const ax = x + 16 + dx * 13, ay = y + 16 + dy * 13;
+				ctx.fillStyle = col;
+				ctx.beginPath();
+				ctx.moveTo(ax + dx * 4, ay + dy * 4);
+				ctx.lineTo(ax - dx * 2 - dy * 4, ay - dy * 2 + dx * 4);
+				ctx.lineTo(ax - dx * 2 + dy * 4, ay - dy * 2 - dx * 4);
+				ctx.closePath();
+				ctx.fill();
+			};
+			const look = {
+				logburner: ["#5a2c12", "#ff9a4a", "LOG", "#ffb870"], solar: ["#17305a", "#6fb6ff", "SOLAR", "#ffe27a"], capacitor: ["#1a3a6b", "#7fd0ff", "CAP", "#8fd0ff"],
+				blockgen: ["#3a3a48", "#9bd18a", "PLACER", "#b8e8a8"], blockbreaker: ["#4a2a2a", "#e07a6a", "BREAKER", "#ffa898"], tesla: ["#20304a", "#9fe8ff", "TESLA", "#9fe8ff"],
+			};
+			for (const e of this.pex()) {
+				if (e.kind === "pipe" || e.map !== save.map || Math.abs(e.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(e.ty * 32 + 16 - this.cam.y) > halfH) continue;
+				const ex = e.tx * 32, ey = e.ty * 32;
+				const [c1, c2, label, tint] = look[e.kind];
+				paintSlot(e.kind, ex, ey, c1, c2);
+				const tag = e.kind === "logburner" ? `LOG · ${e.fuel || 0}` : e.kind === "capacitor" ? `CAP · ${e.power || 0}/${CAP_MAX}` : e.on === false ? `${label} · OFF` : label;
+				drawShadowName(ctx, tag, ex + 16, ey - 10, tint);
+				if (e.kind === "blockgen" || e.kind === "blockbreaker") {
+					const [dx, dy] = DIR_VEC[e.dir ?? 2];
+					ctx.strokeStyle = e.kind === "blockgen" ? "rgba(155,209,138,.55)" : "rgba(224,122,106,.55)";
+					ctx.lineWidth = 1;
+					ctx.setLineDash([3, 3]);
+					ctx.strokeRect((e.tx + dx) * 32 + .5, (e.ty + dy) * 32 + .5, 31, 31);
+					ctx.setLineDash([]);
+					arrow(ex, ey, e.dir ?? 2, e.on === false ? "#9aa0a6" : tint);
+				}
+				if (e.kind === "tesla") {
+					const z = this.teslaZaps?.get(`${e.tx},${e.ty}`);
+					if (z && this.clock - z.at < 0.25) {
+						ctx.save();
+						ctx.strokeStyle = "#e8fbff"; ctx.shadowColor = "#6fd8ff"; ctx.shadowBlur = 8; ctx.lineWidth = 2;
+						ctx.beginPath();
+						const x0 = ex + 16, y0 = ey + 10;
+						ctx.moveTo(x0, y0);
+						for (let k = 1; k < 6; k++) ctx.lineTo(x0 + (z.x - x0) * k / 6 + (Math.random() - .5) * 14, y0 + (z.y - y0) * k / 6 + (Math.random() - .5) * 14);
+						ctx.lineTo(z.x, z.y);
+						ctx.stroke();
+						ctx.restore();
+					}
+				}
+				if (Math.hypot(ex + 16 - save.x, ey + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", ex + 16, ey - 22, "#ffd166");
+			}
+		}
 		for (const c of save.chests ?? []) {
 			if (c.map !== save.map || Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
 			this.paintChest(ctx, c);
@@ -12687,7 +13114,8 @@ export class TurbzGame {
 			const placed = sv.logs.some((l) => l.map === save.map && l.tx === tx && l.ty === ty)
 				|| (sv.beds ?? []).some((b) => b.map === save.map && b.tx === tx && b.ty === ty)
 				|| (save.ghostBox && save.ghostBox.map === save.map && save.ghostBox.tx === tx && save.ghostBox.ty === ty)
-				|| (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty);
+				|| (save.turbzChest && save.turbzChest.map === save.map && save.turbzChest.tx === tx && save.turbzChest.ty === ty)
+				|| !!this.extraAt(tx, ty);
 			const check = placed ? { ok: true } : this.buildPiece === "erase" ? { ok: false } : this.checkPiece(this.buildPiece ?? "wood", tx, ty);
 			ctx.save();
 			ctx.fillStyle = placed ? "rgba(255,160,60,.35)" : check.ok ? "rgba(120,230,120,.35)" : "rgba(230,80,70,.35)";

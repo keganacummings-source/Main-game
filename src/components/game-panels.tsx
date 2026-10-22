@@ -4,6 +4,7 @@ import { classGendered, CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId } from "@
 import { bestFood } from "@/game/item-use";
 import { CAMP_RECIPE_LIST } from "@/game/survival";
 import { BLOCK_KYO, BUILD_GROUPS, BUILD_HOTKEY_ORDER, BUILD_PIECES, DUP_POWER_COST, DUP_SECONDS, DUP_STORE_MAX, MAX_BEDS, TURBZ_ONLY_PIECES } from "@/game/building";
+import { BLOCKGEN_ITEM, LOGBURN_POWER, LOGBURN_SECONDS, SOLAR_POWER, SOLAR_SECONDS } from "@/game/power-extra";
 import { GhostCard, GhostDetailCard, GhostName } from "./ghost-ui";
 import { resetLayout } from "@/game/ui-layout";
 import type { BoardView } from "@/game/quest-board";
@@ -1314,7 +1315,7 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
   const s = useSnapPick(["power", "bag"] as const);
   const p = s.power;
   const [q, setQ] = useState("");
-  if (!p) return <Empty>Stand beside a Generator, Battery, Wire, XP Producer, or Duplicator and press E.</Empty>;
+  if (!p) return <Empty>Stand beside a Generator, Battery, Wire, XP Producer, Duplicator, or any new Power machine and press E.</Empty>;
   const stack = (n: number) => game?.powerStack(n);
   const term = q.trim().toLowerCase();
   const bag = s.bag.filter((it) => it.count > 0 && (!term || it.name.toLowerCase().includes(term) || it.id.toLowerCase().includes(term)));
@@ -1358,11 +1359,84 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
           </Section>
         </>
       )}
-      {p.kind === "battery" && (
+      {(p.kind === "battery" || p.kind === "capacitor") && (
         <Section title="STORED">
-          <Meter kind="good" label="POWER" value={p.stored} max={100} detail={`${Math.floor(p.stored)}/100`} />
-          <p className="text-dim">This Battery fills by itself from Generators on the wire. It does not take items.</p>
+          <Meter kind="good" label="POWER" value={p.stored} max={p.cap} detail={`${Math.floor(p.stored)}/${p.cap}`} />
+          <p className="text-dim">This {p.kind === "capacitor" ? "Capacitor" : "Battery"} fills by itself from Generators on the wire. It does not take items.</p>
         </Section>
+      )}
+      {p.kind === "solar" && (
+        <Section title={p.day ? "SUNNY" : "NIGHT"}>
+          <Meter kind={p.day ? "good" : "void"} label="OUTPUT" value={p.day ? 1 : 0} max={1} detail={p.day ? `${SOLAR_POWER} Power / ${SOLAR_SECONDS}s` : "Nothing until dawn"} />
+          <p className="text-dim">No fuel and nothing to load. Put a few side by side and wire them to a Battery.</p>
+        </Section>
+      )}
+      {p.kind === "tesla" && (
+        <Section title={p.on ? "ARMED" : "OFF"} right={<span className="text-dim">Network {Math.floor(p.network)} Power</span>}>
+          <p className="text-dim">Zaps the closest foe in range. It rests when nothing is near or the network has less than 4 Power.</p>
+          <button type="button" className="px-btn ui-btn-sm" data-testid="extra-toggle" onClick={() => game?.extraToggle()}>{p.on ? "Switch off" : "Switch on"}</button>
+        </Section>
+      )}
+      {p.kind === "logburner" && (
+        <>
+          <Section title={`LOGS INSIDE · ${p.fuel}`}>
+            <Meter kind="bad" label="NEXT BURN" value={p.fuelNext < 0 ? 0 : LOGBURN_SECONDS - p.fuelNext} max={LOGBURN_SECONDS} detail={p.fuelNext < 0 ? "Needs Logs" : `${p.fuelNext.toFixed(1)}s`} />
+            <p className="text-dim">One Log burns every {LOGBURN_SECONDS} seconds and makes {LOGBURN_POWER} Power.</p>
+            <span className="cost-row">
+              <button type="button" className="px-btn ui-btn-sm" disabled={p.fuel < 1} onClick={() => game?.extraLoad(-1)}>Take 1</button>
+              <button type="button" className="px-btn ui-btn-sm" disabled={p.fuel < 1} onClick={() => game?.extraLoad(-1e9)}>Take all</button>
+            </span>
+          </Section>
+          <Section title={`YOUR LOGS · ${p.bagTimber}`}>
+            {p.bagTimber <= 0
+              ? <p className="text-dim">None in your bag. Chop a tree.</p>
+              : <span className="cost-row">
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(1)}>Load 1</button>
+                  {p.bagTimber >= 10 && <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(10)}>Load 10</button>}
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(1e9)}>Load all</button>
+                </span>}
+          </Section>
+        </>
+      )}
+      {(p.kind === "blockgen" || p.kind === "blockbreaker") && (
+        <>
+          <Section title={`${p.on ? "RUNNING" : "OFF"} · FACING ${p.dirName.toUpperCase()}`} right={<span className="text-dim">Network {Math.floor(p.network)} Power</span>}>
+            <p className="text-dim">{p.kind === "blockgen" ? "Builds on the tile it faces, once a second." : "Breaks the block on the tile it faces, once a second."} The tile is outlined in the world.</p>
+            <span className="cost-row">
+              <button type="button" className="px-btn ui-btn-sm" data-testid="extra-rotate" onClick={() => game?.extraRotate()}>Rotate</button>
+              <button type="button" className="px-btn ui-btn-sm" data-testid="extra-toggle" onClick={() => game?.extraToggle()}>{p.on ? "Switch off" : "Switch on"}</button>
+            </span>
+          </Section>
+          {p.kind === "blockgen" && (
+            <Section title="BLOCK TO BUILD">
+              <span className="cost-row">
+                <button type="button" className={`px-btn ui-btn-sm ${p.mat === "wood" ? "px-btn-kyo" : ""}`} aria-pressed={p.mat === "wood"} onClick={() => game?.extraMat("wood")}>Wood · Logs</button>
+                <button type="button" className={`px-btn ui-btn-sm ${p.mat === "stone" ? "px-btn-kyo" : ""}`} aria-pressed={p.mat === "stone"} onClick={() => game?.extraMat("stone")}>Stone · Rock Ore</button>
+              </span>
+              <p className="text-dim">Each block uses 1 {ITEM_BY_ID[BLOCKGEN_ITEM[p.mat]]?.name ?? BLOCKGEN_ITEM[p.mat]} and 1 Power. You have {p.mat === "stone" ? p.bagRock : p.bagTimber} in your bag.</p>
+              {(p.mat === "stone" ? p.bagRock : p.bagTimber) > 0 && (
+                <span className="cost-row">
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(1)}>Load 1</button>
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(10)}>Load 10</button>
+                  <button type="button" className="px-btn px-btn-kyo ui-btn-sm" onClick={() => game?.extraLoad(1e9)}>Load max</button>
+                </span>
+              )}
+            </Section>
+          )}
+          <Section title={p.kind === "blockgen" ? "LOADED" : "COLLECTED"} right={<span className="text-dim">up to {p.bufMax}</span>}>
+            {p.buf.length === 0
+              ? <p className="text-dim">{p.kind === "blockgen" ? "Empty. Load material above, or run a Pipe in from a Chest." : "Nothing yet. Run a Pipe to a Chest to empty it automatically."}</p>
+              : p.buf.map((it) => (
+                  <div key={it.id} className="ui-row">
+                    <span className="text-kyo">{it.name} ×{it.count}</span>
+                    <span className="cost-row">
+                      <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.extraTake(it.id, 1)}>Take 1</button>
+                      <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.extraTake(it.id, it.count)}>Take all</button>
+                    </span>
+                  </div>
+                ))}
+          </Section>
+        </>
       )}
       {p.kind === "xpgen" && (
         <Section title="RUN">

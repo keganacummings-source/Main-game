@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Draws the 32x32 New Texture Mode art for the five Power blocks and writes:
+Draws the 32x32 New Texture Mode art for the Power blocks and writes:
 
-  public/MapAssets/NewTex/{hellgen,battery,wire,xpgen,duplicator}.png   (shipped defaults)
+  public/MapAssets/NewTex/{hellgen,battery,wire,xpgen,duplicator,logburner,solar,capacitor,blockgen,blockbreaker,tesla}.png   (shipped defaults)
+  public/MapAssets/NewTex/pipe.png                                      (build-bar icon only; pipes are drawn from their neighbours)
   public/MapAssets/NewTex/power-pack.json                               (importable in the Tile Builder)
 
 The game draws these when you have not painted your own version in Designer Mode.
@@ -248,12 +249,143 @@ def duplicator():
     return a
 
 
+def logburner():
+    a = Art()
+    a.box(21, 3, 25, 11, "#4a3a2c", OUTLINE)
+    a.rect(22, 4, 22, 10, "#6a5340")
+    a.px(23, 1, "#7a6a5c"); a.px(24, 2, "#9a8a7c")
+    a.box(3, 10, 28, 30, "#4a2e18", OUTLINE)
+    for y in (14, 19, 24):
+        a.rect(4, y, 27, y, "#33200f")
+    a.rect(4, 11, 27, 11, "#6d4626")
+    a.rect(4, 12, 4, 29, "#6d4626")
+    a.rect(4, 17, 27, 17, "#5b6470"); a.rect(4, 27, 27, 27, "#5b6470")
+    a.rect(8, 18, 23, 26, OUTLINE)
+    a.rect(9, 19, 22, 25, "#1b0e0e")
+    for x0, y0 in ((9, 23), (13, 23), (17, 23)):
+        a.rect(x0, y0, x0 + 3, y0 + 2, "#8a5a2e"); a.rect(x0, y0, x0 + 3, y0, "#b07a40"); a.px(x0 + 1, y0 + 1, "#5a381a")
+    for x0 in (11, 15):
+        a.rect(x0, 20, x0 + 3, 22, "#8a5a2e"); a.rect(x0, 20, x0 + 3, 20, "#b07a40"); a.px(x0 + 1, 21, "#5a381a")
+    for x0, y0, x1, y1, c in ((13, 19, 18, 20, "#e8903a"), (14, 18, 17, 19, "#ffc45b"), (15, 17, 16, 18, "#fff0b0")):
+        a.rect(x0, y0, x1, y1, c)
+    a.rect(3, 30, 8, 31, OUTLINE); a.rect(23, 30, 28, 31, OUTLINE)
+    return a
+
+
+def solar():
+    a = Art()
+    a.box(2, 5, 29, 24, "#2b3340", OUTLINE)
+    for cy in range(7, 23, 5):
+        for cx in range(4, 28, 6):
+            a.rect(cx, cy, cx + 4, cy + 3, "#1f4f99")
+            a.rect(cx, cy, cx + 4, cy, "#3d86e0")
+            a.px(cx + 1, cy + 1, "#8cc4ff")
+    a.px(25, 8, "#ffe27a"); a.px(24, 8, "#ffe27a"); a.px(25, 7, "#ffe27a")
+    a.box(14, 24, 17, 28, "#6a7482", OUTLINE)
+    a.box(8, 28, 23, 31, "#4a5260", OUTLINE)
+    a.rect(9, 29, 22, 29, "#6a7482")
+    return a
+
+
+def capacitor():
+    a = Art()
+    a.box(11, 0, 20, 4, "#9aa0a6", OUTLINE); a.rect(12, 1, 19, 1, "#e8ecef")
+    a.px(14, 0, "#7fd0ff"); a.px(17, 0, "#7fd0ff")
+    a.box(3, 4, 28, 30, "#143a52", OUTLINE)
+    a.rect(4, 5, 4, 29, "#2f7fb0")
+    a.rect(5, 5, 27, 6, "#3a4a66"); a.rect(5, 7, 27, 7, OUTLINE)
+    for i, y in enumerate(range(9, 28, 6)):
+        a.rect(7, y, 24, y + 4, OUTLINE)
+        a.rect(8, y + 1, 23, y + 3, "#0c2236")
+        w = 22
+        a.rect(8, y + 1, w, y + 3, "#38b6ff")
+        a.rect(8, y + 1, w, y + 1, "#bdeaff")
+    for x, y in ((16, 9), (15, 10), (14, 11), (16, 12), (15, 13)):
+        a.px(x, y, "#fff6a8")
+    a.rect(5, 29, 26, 30, "#0b2234")
+    return a
+
+
+def blockgen():
+    a = Art()
+    a.box(3, 3, 28, 28, "#343846", OUTLINE)
+    a.rect(4, 4, 27, 4, "#555b70"); a.rect(4, 5, 4, 27, "#555b70")
+    a.box(8, 6, 23, 14, "#1c1f2a", OUTLINE)
+    a.rect(10, 8, 21, 12, "#2b3a2b")
+    a.rect(12, 9, 19, 11, "#6fae5c"); a.rect(12, 9, 19, 9, "#a8e090")
+    for x0, x1, y in ((13, 18, 17), (14, 17, 18), (15, 16, 19)):
+        a.rect(x0, y, x1, y, "#9bd18a")
+    a.rect(14, 15, 17, 16, "#9bd18a")
+    for x, y in ((5, 5), (26, 5), (5, 26), (26, 26)):
+        a.px(x, y, "#aab0c0")
+    a.box(11, 22, 20, 30, "#7a5a36", OUTLINE)
+    a.rect(12, 23, 19, 23, "#a98150"); a.px(14, 26, "#5a3f22"); a.px(17, 27, "#5a3f22")
+    return a
+
+
+def blockbreaker():
+    a = Art()
+    a.box(3, 3, 28, 28, "#3c2f30", OUTLINE)
+    a.rect(4, 4, 27, 4, "#6b5252"); a.rect(4, 5, 4, 27, "#6b5252")
+    a.box(8, 7, 23, 15, "#1c1416", OUTLINE)
+    for x in range(9, 23, 2):
+        a.px(x, 14, "#d8dde4"); a.px(x + 1, 13, "#aab0b8")
+    a.rect(9, 9, 22, 12, "#8a949e"); a.rect(9, 9, 22, 9, "#d8dde4")
+    a.box(11, 19, 20, 29, "#6a6a72", OUTLINE)
+    a.rect(12, 20, 19, 20, "#9a9aa4")
+    for x, y in ((15, 21), (16, 22), (15, 23), (16, 24), (17, 25), (14, 26)):
+        a.px(x, y, "#2a2a30")
+    for x, y in ((9, 18), (22, 20), (10, 28)):
+        a.px(x, y, "#e07a6a")
+    for x, y in ((5, 5), (26, 5), (5, 26), (26, 26)):
+        a.px(x, y, "#b09a9a")
+    return a
+
+
+def tesla():
+    a = Art()
+    a.box(6, 24, 25, 31, "#2b3340", OUTLINE)
+    a.rect(7, 25, 24, 25, "#556070")
+    a.box(11, 11, 20, 24, "#6a4a2a", OUTLINE)
+    for y in range(13, 24, 2):
+        a.rect(12, y, 19, y, "#c98a4a")
+    a.rect(12, 12, 12, 23, "#e0a866")
+    a.disc(15, 7, 5, OUTLINE)
+    a.disc(15, 7, 4, "#9fe8ff")
+    a.px(13, 5, "#ffffff"); a.px(14, 5, "#ffffff"); a.px(13, 6, "#ffffff")
+    for x, y in ((6, 3), (7, 4), (8, 4), (24, 3), (23, 4), (22, 4), (5, 10), (26, 11)):
+        a.px(x, y, "#e8fbff")
+    a.px(7, 5, "#6fd8ff"); a.px(23, 5, "#6fd8ff")
+    return a
+
+
+def pipe_icon():
+    a = Art()
+    body, light, dark = "#8794a6", "#c5d1df", "#566171"
+    def seg(x0, y0, x1, y1):
+        a.rect(x0 - 1, y0 - 1, x1 + 1, y1 + 1, OUTLINE)
+    seg(0, 11, 21, 21); seg(11, 11, 21, 31)
+    a.rect(0, 12, 20, 20, body); a.rect(12, 12, 20, 31, body)
+    a.rect(0, 13, 11, 14, light); a.rect(13, 12, 14, 31, light)
+    a.rect(0, 18, 11, 19, dark); a.rect(18, 20, 19, 31, dark)
+    seg(21, 13, 31, 19); a.rect(21, 14, 31, 18, body); a.rect(21, 14, 31, 15, light); a.rect(21, 17, 31, 18, dark)
+    a.rect(28, 12, 31, 20, OUTLINE); a.rect(28, 13, 30, 19, "#a9b6c7")
+    a.rect(4, 15, 6, 17, "#9fe8ff"); a.rect(14, 24, 16, 26, "#9fe8ff")
+    return a
+
+
 SLOTS = [
     ("hellgen", "HellStone Power Generator", hellgen),
     ("battery", "Battery", battery),
     ("wire", "Wire", wire),
     ("xpgen", "XP Producer", xpgen),
     ("duplicator", "Duplicator", duplicator),
+    ("logburner", "LogBurning Generator", logburner),
+    ("solar", "Solar Panel", solar),
+    ("capacitor", "Capacitor", capacitor),
+    ("blockgen", "BlockGenerator", blockgen),
+    ("blockbreaker", "BlockBreaker", blockbreaker),
+    ("tesla", "Tesla Coil", tesla),
 ]
 
 
@@ -277,6 +409,9 @@ def main():
             "live": True,
         })
         print("wrote", slot + ".png")
+    with open(os.path.join(OUT, "pipe.png"), "wb") as f:
+        f.write(pipe_icon().png_bytes())
+    print("wrote pipe.png")
     with open(os.path.join(OUT, "power-pack.json"), "w") as f:
         json.dump(pack, f, indent=2)
     print("wrote power-pack.json")

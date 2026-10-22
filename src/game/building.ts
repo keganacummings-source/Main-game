@@ -24,7 +24,7 @@ export type LogTile = { map: string; tx: number; ty: number; kind?: TileKind; op
 /** Camp furniture: beds for followers and the Ghost Box. Not solid. */
 export type Furniture = { map: string; tx: number; ty: number };
 
-export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen" | "duplicator";
+export type BuildPiece = "wood" | "stone" | "woodfloor" | "stonefloor" | "door" | "bed" | "ghostbox" | "turbzchest" | "hellgen" | "battery" | "wire" | "xpgen" | "duplicator" | "logburner" | "solar" | "capacitor" | "blockgen" | "blockbreaker" | "tesla" | "pipe";
 /** Kinds that block movement (floors never do; a door blocks only while closed). */
 export const SOLID_KINDS = new Set<TileKind>(["wood", "brick", "stone"]);
 export const FLOOR_KINDS = new Set<TileKind>(["woodfloor", "stonefloor"]);
@@ -45,11 +45,18 @@ export const BUILD_PIECES: Record<BuildPiece, { name: string; cost: Record<strin
   wire: { name: "Wire", cost: { wire: 1 }, about: "TURBZ + New Textures. Carries Power between a Generator, Batteries, and machines. Craft Wire at a campfire (1 Rock Ore)." },
   xpgen: { name: "XP Producer", cost: { kyo: 10000 }, about: "TURBZ + New Textures. Press E to spend 200 Power for the XP of about 50 kills at your level." },
   duplicator: { name: "Duplicator", cost: { hell_ore: 6, ore: 6, timber: 6 }, about: "TURBZ + New Textures. Press E and load any bag item. Every 5 seconds it spends 2 Power and stores one copy. Wire it to a Battery." },
+  logburner: { name: "LogBurning Generator", cost: { timber: 6, rock_ore: 2 }, about: "TURBZ + New Textures. Burns Logs for Power. Slower and weaker than the HellStone Generator (6 Power every 8s). Press E to load Logs." },
+  solar: { name: "Solar Panel", cost: { sand: 8, rock_ore: 4, wire: 2 }, about: "TURBZ + New Textures. Makes 1 Power every 4 seconds in daylight, no fuel. Nothing at night. Wire it to a Battery." },
+  capacitor: { name: "Capacitor", cost: { dirt: 8, sand: 8, rock_ore: 4 }, about: "TURBZ + New Textures. A big Battery: stores up to 500 Power from Generators on the same wire network." },
+  blockgen: { name: "BlockGenerator", cost: { rock_ore: 6, timber: 6, wire: 2 }, about: "TURBZ + New Textures. Places a Wood or Stone block on the tile in front of it every second while it has Power and material. Feed it by hand or with a Pipe. Press E to rotate or switch it off." },
+  blockbreaker: { name: "BlockBreaker", cost: { rock_ore: 6, timber: 4, wire: 2 }, about: "TURBZ + New Textures. Breaks the block in front of it every second for 1 Power. Walls give back their material; natural rock mines like normal. Pipe the haul into a chest." },
+  tesla: { name: "Tesla Coil", cost: { hell_ore: 3, rock_ore: 6, wire: 3 }, about: "TURBZ + New Textures. Zaps the nearest foe within 5 tiles every 1.5 seconds for 4 Power. Wire it to a Battery." },
+  pipe: { name: "Pipe", cost: { rock_ore: 1 }, about: "TURBZ + New Textures. Moves items between machines on its own: a Duplicator or BlockBreaker into a Chest, a Chest into a Generator or BlockGenerator. It bends, forks and caps itself to match its neighbours. Drag to lay a line." },
 };
 /** TURBZ-only camp pieces (hidden from the build menu in other modes). Power pieces also require New Texture Mode. */
-export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator"]);
+export const TURBZ_ONLY_PIECES = new Set<BuildPiece>(["turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla", "pipe"]);
 /** Hidden unless New Texture Mode is on (still also TURBZ-only). */
-export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen", "duplicator"]);
+export const NEWTEX_ONLY_PIECES = new Set<BuildPiece>(["hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "blockgen", "blockbreaker", "tesla", "pipe"]);
 export const BUILD_PIECE_IDS = Object.keys(BUILD_PIECES) as BuildPiece[];
 /** How the build menu and the build bar group the pieces. */
 export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "power"; label: string; pieces: BuildPiece[] }[] = [
@@ -57,10 +64,10 @@ export const BUILD_GROUPS: { id: "walls" | "floors" | "doors" | "furniture" | "p
   { id: "floors", label: "Floors", pieces: ["woodfloor", "stonefloor"] },
   { id: "doors", label: "Doors", pieces: ["door"] },
   { id: "furniture", label: "Furniture", pieces: ["bed", "ghostbox", "turbzchest"] },
-  { id: "power", label: "Power", pieces: ["hellgen", "battery", "wire", "xpgen", "duplicator"] },
+  { id: "power", label: "Power", pieces: ["hellgen", "logburner", "solar", "battery", "capacitor", "wire", "pipe", "blockgen", "blockbreaker", "tesla", "xpgen", "duplicator"] },
 ];
 /** Build-mode hotkeys: 1-8 pick these pieces in order (TURBZ-only pieces are skipped outside TURBZ). X is the Remove tool. */
-export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator"];
+export const BUILD_HOTKEY_ORDER: BuildPiece[] = ["wood", "stone", "woodfloor", "stonefloor", "door", "bed", "ghostbox", "turbzchest", "hellgen", "battery", "wire", "xpgen", "duplicator", "logburner", "solar", "capacitor", "pipe", "blockgen", "blockbreaker", "tesla"];
 /** The piece a digit key picks in build mode (1-based), or null. */
 export function buildHotkeyPiece(digit: number, turbz: boolean): BuildPiece | null {
   const list = BUILD_HOTKEY_ORDER.filter((id) => turbz || !TURBZ_ONLY_PIECES.has(id));
