@@ -1817,7 +1817,7 @@ export function DiedOverlay({ game }: GameProp) {
           {died.gear.length > 0 && row("Wore", died.gear.join(", "))}
         </div>
         <p className="text-dim">{died.mode === "turbz"
-          ? "Play again to start a new witch. Worn gear and party ghosts return at level 1, enchants kept. This run's skills, account level and pockets are wiped. Hunt and Hardcore are not."
+          ? "Play again to start a new witch. Worn gear and party ghosts return at level 1, enchants kept. Your skills, perks and account level are kept. Pockets and character level reset."
           : "Skills, account level and permanent bonuses stay with you."}</p>
         {died.mode !== "turbz" && (
         <div className="px-panel died-stats" data-testid="died-world">

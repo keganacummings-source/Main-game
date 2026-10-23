@@ -8013,11 +8013,13 @@ export class TurbzGame {
 		this.playYouDied();
 		this.syncHud(true);
 	}
-	/** TURBZ death: the run ends. Worn gear and party ghosts are kept for the next start, at level 1. Shared Hunt and Hardcore skills are not touched. */
+	/** TURBZ death: the run ends. Worn gear and party ghosts are kept for the next start, at level 1. Skills, perks and account level are account progress and are kept too. */
 	turbzFell() {
 		const save = this.save;
 		if (!save || this.dead) return;
 		this.stashTurbzKit?.();
+		// Bank skills, perks and account level on the account first: they are kept across death.
+		try { this.writeProgress(save); } catch { /* private mode */ }
 		// Pack up the camp (campfire + blocks + beds) so it drops back when you light a fire next life.
 		this.packTurbzCamp?.();
 		// The run is over — clear its resume slot. Starting over restores the kept armour (level 1, enchants).
@@ -8036,7 +8038,7 @@ export class TurbzGame {
 		save.lastDeath = this.deathReport(save, score, save.kyo | 0);
 		if (save.lastDeath) save.lastDeath.accountScore = 0;
 		publish({ panel: "died", died: save.lastDeath });
-		this.say("You died. Play again to start over. What you wore, and the ghosts in your party, come back at level 1 with their enchants. This run's skills are wiped. Hunt and Hardcore keep theirs.");
+		this.say("You died. Play again to start over. What you wore, and the ghosts in your party, come back at level 1 with their enchants. Your skills, perks and account level are kept.");
 		this.playYouDied();
 		this.syncHud(true);
 	}

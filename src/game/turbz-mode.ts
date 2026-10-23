@@ -141,12 +141,15 @@ export function installTurbz(game: any): void {
     if (!save) return;
     save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
     save.mergeArmor = true; // TURBZ: duplicate pieces merge/level up instead of cluttering the bag.
+    // Skills, perks, account level/XP and score are ACCOUNT progress: they are NOT wiped on death or a new run.
+    // Start from a blank sheet, then fold the saved account record back in (the furthest of each wins).
     save.skills = Object.fromEntries(SKILLS.map((sk) => [sk.id, { level: 1, xp: 0 }]));
     save.perks = {};
     save.perkPoints = 0;
     save.accountLevel = 1;
     save.accountXp = 0;
     save.accountScore = 0;
+    this.foldAccount(save);
     save.skillPoints = 0;
     save.level = 1;
     save.xp = 0;
@@ -236,6 +239,8 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (!this.turbz || !save || this.dead) return;
     try { localStorage.setItem(TURBZ_SAVE_KEY, JSON.stringify(save)); } catch { /* private mode */ }
+    // Skills, perks and account level are kept on the account, so they survive death and carry into the next run.
+    try { this.writeProgress(save); } catch { /* private mode */ }
     this.mirrorTurbzCamp();
   };
 
