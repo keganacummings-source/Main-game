@@ -60,6 +60,8 @@ import {
   ITEMS,
   ALCHEMY_RECIPES,
   ENEMY_MATS,
+  TURBZ_BUILD_MATS,
+  TURBZ_BUILD_MAT_POOL,
   SCRAP_LOOT,
   MONSTER_BY_ID,
   MONSTERS,
@@ -6318,6 +6320,7 @@ export class TurbzGame {
 		const mat = ENEMY_MATS[mob.type];
 		if (mat && Math.random() < Math.min(0.72, 0.38 + mob.rarity * 0.06)) this.lootItem(mob, mat, 1 + (mob.level >= 18 && Math.random() < 0.35 ? 1 : 0));
 		if (Math.random() < 0.16) this.lootItem(mob, SCRAP_LOOT[Math.floor(Math.random() * SCRAP_LOOT.length)], 1);
+		if (this.turbz) this.rollBuildMatDrops(mob);
 		if (this.shrine && mob.id.startsWith("shrine")) this.shrineClear();
 		if (this.role === "host") this.room?.send({
 			t: "dead",
@@ -7108,6 +7111,25 @@ export class TurbzGame {
 			chest.items[extra] = (chest.items[extra] ?? 0) + 1;
 		}
 		return chest;
+	}
+	/**
+	 * TURBZ only: every foe can drop the crafting / building resources, themed by its element.
+	 * Normal drops Hide, Electric drops Wire, Earth drops Dirt, Water drops Sand, and so on.
+	 * Bosses always drop their themed resource (more of it); every foe also has a small chance
+	 * at one random other building resource.
+	 */
+	rollBuildMatDrops(mob) {
+		const mainId = TURBZ_BUILD_MATS[mob.type] ?? "leather";
+		const qty = () => 1 + (mob.level >= 18 && Math.random() < 0.35 ? 1 : 0);
+		if (mob.boss) {
+			this.lootItem(mob, mainId, 2 + Math.floor(Math.random() * 3));
+		} else if (Math.random() < Math.min(0.75, 0.4 + (mob.rarity ?? 0) * 0.07)) {
+			this.lootItem(mob, mainId, qty());
+		}
+		if (Math.random() < (mob.boss ? 0.5 : 0.1)) {
+			const others = TURBZ_BUILD_MAT_POOL.filter((id) => id !== mainId);
+			this.lootItem(mob, others[Math.floor(Math.random() * others.length)], 1);
+		}
 	}
 	/** An item from a kill: into the chest in Hardcore, into the bag elsewhere. */
 	lootItem(mob, id, n) {

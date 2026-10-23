@@ -1569,6 +1569,27 @@ export const ENEMY_MATS: Partial<Record<TypeId, string>> = {
   normal: "beast_fang",
 };
 
+/**
+ * TURBZ: the crafting / building resource each element of foe can drop (on top of ENEMY_MATS).
+ * Normal = Hide, Electric = Wire, Earth = Dirt, Water = Sand, Fire/Void/Ghoul = Hell Ore,
+ * Ice = Rock Ore, Air = Logs, Light/Spirit = Vein Ore.
+ */
+export const TURBZ_BUILD_MATS: Partial<Record<TypeId, string>> = {
+  normal: "leather",
+  electric: "wire",
+  earth: "dirt",
+  water: "sand",
+  fire: "hell_ore",
+  ice: "rock_ore",
+  air: "timber",
+  void: "hell_ore",
+  ghoul: "hell_ore",
+  light: "ore",
+  spirit: "ore",
+};
+/** Every building resource a TURBZ foe can randomly drop as a bonus. */
+export const TURBZ_BUILD_MAT_POOL = ["leather", "wire", "dirt", "sand", "hell_ore", "rock_ore", "timber", "ore"] as const;
+
 /** Extra pocket scrap any foe can drop, on top of its element material. */
 export const SCRAP_LOOT = ["bone_shard", "beast_fang", "resin", "veil_dust", "cinder_ash", "spirit_ash"] as const;
 
