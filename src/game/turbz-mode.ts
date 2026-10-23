@@ -59,9 +59,44 @@ export const TURBZ_HEIR_KEY = "turbz-heirloom-v1";
 /** Your packed-up camp: it survives death and drops back when you place a campfire next life. */
 export const TURBZ_CAMP_KEY = "turbz-camp-v1";
 
+/**
+ * EASY MODE (the TurboHunt tile): the exact same TURBZ, with the same camp, build mode, Storage Chest, Ghost Box,
+ * power blocks, pools, dungeons and world bosses, but gentler. It keeps its OWN run, heirloom and camp slots so it
+ * never touches a real TURBZ run. See `easyTune` for every knob that makes it easier.
+ */
+export const TURBZ_EASY_SAVE_KEY = "turbz-easy-run-v1";
+export const TURBZ_EASY_HEIR_KEY = "turbz-easy-heirloom-v1";
+export const TURBZ_EASY_CAMP_KEY = "turbz-easy-camp-v1";
+let EASY = false;
+const saveKey = () => (EASY ? TURBZ_EASY_SAVE_KEY : TURBZ_SAVE_KEY);
+const heirKey = () => (EASY ? TURBZ_EASY_HEIR_KEY : TURBZ_HEIR_KEY);
+const campKey = () => (EASY ? TURBZ_EASY_CAMP_KEY : TURBZ_CAMP_KEY);
+
+/** Every easy-mode knob in one place. Tweak these numbers to make the TurboHunt version harder or easier. */
+export const EASY_TUNE = {
+  /** Rival witches on the wild (hard mode is 10 to 15). */
+  witchesMin: 3,
+  witchesSpread: 2,
+  /** The most rivals that can be alive at once (hard mode is 15). */
+  witchCap: 4,
+  /** A rival only commits to you inside this range (hard mode is 1900) and gives up past the chase range (hard is 5200). */
+  witchHunt: 520,
+  witchChase: 1100,
+  /** World bosses only notice you inside this range (hard mode is 2400). */
+  bossAggro: 900,
+  /** Damage you take, and the health of every foe. */
+  dmgTaken: 0.5,
+  foeHp: 0.8,
+  /** Mana and stamina refill speed. */
+  poolRegen: 1.6,
+  /** Fraction of health you wake with after a knockout, and kyo lost. */
+  reviveHp: 0.6,
+  kyoLoss: 0.1,
+};
+
 /** Is there a TURBZ run to continue? (Used by the menu to offer Continue.) */
-export function hasTurbzSave(): boolean {
-  try { return !!localStorage.getItem(TURBZ_SAVE_KEY); } catch { return false; }
+export function hasTurbzSave(easy = false): boolean {
+  try { return !!localStorage.getItem(easy ? TURBZ_EASY_SAVE_KEY : TURBZ_SAVE_KEY); } catch { return false; }
 }
 export const TURBZ_ORDERS = [
   { id: "combat", label: "Fight" },
@@ -118,10 +153,14 @@ const isOffense = (m: Move) => m.power > 0 && !isHeal(m) && !isWard(m) && !["rol
 
 export function installTurbz(game: any): void {
   game.turbz = false;
+  game.turbzEasy = false;
   game.pools = null;
   game.orders = null;
 
-  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean) {
+  game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean, easy?: boolean) {
+    // Easy (TurboHunt) is remembered on the game so a rebirth, which passes no choice, stays in the same mode.
+    this.turbzEasy = easy ?? !!this.turbzEasy;
+    EASY = !!this.turbzEasy;
     // Rebirth passes no choice: the next life keeps the texture mode the last one used.
     const useNewTex = true; // NewTex is permanent in TURBZ.
     // Parameter kept in the signature for back-compat but ignored.
@@ -139,6 +178,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (save) save.turbzPickedClass = false;
     if (!save) return;
+    save.turbzEasy = EASY;
     save.cryRebuildMark = Math.floor((save.level ?? 1) / 50);
     save.mergeArmor = true; // TURBZ: duplicate pieces merge/level up instead of cluttering the bag.
     // Skills, perks, account level/XP and score are ACCOUNT progress: they are NOT wiped on death or a new run.
@@ -173,7 +213,7 @@ export function installTurbz(game: any): void {
     this.contract = [];
     this.loadMap(TURBZ_MAP, true);
     if (this.world) this.world.swim = true;
-    const n = 10 + Math.floor(rand() * 6);
+    const n = EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6);
     const spots = lmsSpawns(this.world, n + 1);
     // Land ladder: continent levels climb 1, 13, 25, 37, 49... Start on the gentlest land, not a random one.
     const zones: { tx: number; ty: number; tw: number; th: number; levelMin: number }[] = file.zones ?? [];
@@ -200,10 +240,10 @@ export function installTurbz(game: any): void {
     this.witchGraves = [];
     this.spawnTurbzWitches(n, spots.filter((_, i) => i !== mine));
     this.plantTurbzHunts();
-    this.say(`TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
+    this.say(EASY ? `TURBZ (easy). Level 1 on a ${file.w}×${file.h} wild with ${n} calm witches. Light a campfire (H) to build a camp, a bed, a Storage Chest and a Ghost Box. If you fall you only lose a little kyo, never your level or gear.` : `TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
     this.giveTurbzHeirloom();
     // Bring back the camp you were packed up with, so placing a campfire drops it where you stand.
-    try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+    try { save.turbzCamp = JSON.parse(localStorage.getItem(campKey()) ?? "null"); } catch { save.turbzCamp = null; }
     // A Ghost Box still standing in the old run's wild is folded into the packed camp, so it comes back with it.
     if (save.ghostBox) {
       save.turbzCamp = save.turbzCamp ?? { logs: [], beds: [], chest: null, ghostBox: null, ghostStore: [] };
@@ -238,7 +278,7 @@ export function installTurbz(game: any): void {
   game.persistTurbz = function () {
     const save = this.save;
     if (!this.turbz || !save || this.dead) return;
-    try { localStorage.setItem(TURBZ_SAVE_KEY, JSON.stringify(save)); } catch { /* private mode */ }
+    try { localStorage.setItem(saveKey(), JSON.stringify(save)); } catch { /* private mode */ }
     // Skills, perks and account level are kept on the account, so they survive death and carry into the next run.
     try { this.writeProgress(save); } catch { /* private mode */ }
     this.mirrorTurbzCamp();
@@ -246,13 +286,15 @@ export function installTurbz(game: any): void {
 
   /** Forget the resume slot (on death — the next life starts fresh, keeping the armour heirloom). */
   game.clearTurbzSave = function () {
-    try { localStorage.removeItem(TURBZ_SAVE_KEY); } catch { /* private mode */ }
+    try { localStorage.removeItem(saveKey()); } catch { /* private mode */ }
   };
 
   /** Resume a saved TURBZ run: same world (from its seed), same witch, gear, skills and grind. */
-  game.continueTurbz = function (): boolean {
+  game.continueTurbz = function (easy?: boolean): boolean {
+    this.turbzEasy = easy ?? !!this.turbzEasy;
+    EASY = !!this.turbzEasy;
     let raw: any = null;
-    try { raw = JSON.parse(localStorage.getItem(TURBZ_SAVE_KEY) ?? "null"); } catch { raw = null; }
+    try { raw = JSON.parse(localStorage.getItem(saveKey()) ?? "null"); } catch { raw = null; }
     if (!raw || !raw.name) return false;
     this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
     this.teamSeq = 1;
@@ -261,6 +303,7 @@ export function installTurbz(game: any): void {
     this.turbz = true;
     const seed = (raw.turbzSeed as number) || ((Math.random() * 1e9) >>> 0 || 7);
     raw.turbzSeed = seed;
+    raw.turbzEasy = EASY;
     // Rebuild the exact same wild from the saved seed before booting into it (same generator it was made with).
     raw.turbzNewTex = true; // NewTex is permanent in TURBZ (migrates old saves on load).
     setTexMode(raw.turbzNewTex);
@@ -288,14 +331,14 @@ export function installTurbz(game: any): void {
     if (!(save.hp > 0)) save.hp = this.maxHp();
     this.turbzRoster = [];
     this.witchGraves = [];
-    this.spawnTurbzWitches(10 + Math.floor(rand() * 6));
+    this.spawnTurbzWitches(EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6));
     this.plantTurbzHunts();
     // No camp standing and none packed in this run? Pick up the one kept off-run (a camp from an older run).
     if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {
-      try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+      try { save.turbzCamp = JSON.parse(localStorage.getItem(campKey()) ?? "null"); } catch { save.turbzCamp = null; }
     }
     this.fixTurbzGhostBox?.();
-    this.say("TURBZ resumed. Your witch, your gear and your grind are right where you left them.");
+    this.say(EASY ? "TURBZ (easy) resumed. Your witch, camp and grind are right where you left them." : "TURBZ resumed. Your witch, your gear and your grind are right where you left them.");
     this.persistTurbz();
     this.syncHud(true);
     return true;
@@ -343,7 +386,7 @@ export function installTurbz(game: any): void {
       // TURBZ world bosses: always hunt the player when in range, never idle.
       // Their aggro radius is very wide so they come looking for you.
       m.aggro = true;
-      m.aggroRange = 2400;
+      m.aggroRange = EASY ? EASY_TUNE.bossAggro : 2400;
       m.homeX = p.x;
       m.homeY = p.y;
       // Bosses respawn on the wild (never permanently gone): long timer but they come back.
@@ -418,12 +461,12 @@ export function installTurbz(game: any): void {
     } : null;
     this.turbzHeirloom = { gear, equipped, spirits, superGhost };
     // Persist it so your armour survives even if you close the game on the You Died screen.
-    try { localStorage.setItem(TURBZ_HEIR_KEY, JSON.stringify(this.turbzHeirloom)); } catch { /* private mode */ }
+    try { localStorage.setItem(heirKey(), JSON.stringify(this.turbzHeirloom)); } catch { /* private mode */ }
   };
 
   game.giveTurbzHeirloom = function () {
     let kit = this.turbzHeirloom;
-    if (!kit) { try { kit = JSON.parse(localStorage.getItem(TURBZ_HEIR_KEY) ?? "null"); } catch { kit = null; } }
+    if (!kit) { try { kit = JSON.parse(localStorage.getItem(heirKey()) ?? "null"); } catch { kit = null; } }
     const save = this.save;
     if (!kit || !save) return;
     if (kit.gear?.length) {
@@ -511,7 +554,7 @@ export function installTurbz(game: any): void {
     const live = this.turbzCampBlueprint();
     const camp = live ? live.camp : save.turbzCamp;
     if (!this.turbzCampHasPieces(camp)) return;
-    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(camp)); } catch { /* private mode */ }
+    try { localStorage.setItem(campKey(), JSON.stringify(camp)); } catch { /* private mode */ }
   };
 
   /**
@@ -526,7 +569,7 @@ export function installTurbz(game: any): void {
     if (!live) {
       // Nothing standing. Never throw away a camp that is already packed.
       if (!save.turbzCamp) {
-        try { save.turbzCamp = JSON.parse(localStorage.getItem(TURBZ_CAMP_KEY) ?? "null"); } catch { save.turbzCamp = null; }
+        try { save.turbzCamp = JSON.parse(localStorage.getItem(campKey()) ?? "null"); } catch { save.turbzCamp = null; }
       }
       return false;
     }
@@ -549,7 +592,7 @@ export function installTurbz(game: any): void {
     save.powerExtra = (save.powerExtra ?? []).filter((n: any) => n.map !== fire.map);
     if (this.turbzChestOpen) this.turbzChestOpen = false;
     this.syncSolids?.(save.map);
-    try { localStorage.setItem(TURBZ_CAMP_KEY, JSON.stringify(camp)); } catch { /* private mode */ }
+    try { localStorage.setItem(campKey(), JSON.stringify(camp)); } catch { /* private mode */ }
     return true;
   };
 
@@ -928,8 +971,8 @@ export function installTurbz(game: any): void {
     p.maxStam = caps.maxStam;
     p.manaSlow = Math.max(0, p.manaSlow - dt);
     p.stamSlow = Math.max(0, p.stamSlow - dt);
-    let manaRate = combatRate(caps.manaRate, this.combat > 0);
-    let stamRate = combatRate(caps.stamRate, this.combat > 0);
+    let manaRate = combatRate(caps.manaRate, this.combat > 0) * (EASY ? EASY_TUNE.poolRegen : 1);
+    let stamRate = combatRate(caps.stamRate, this.combat > 0) * (EASY ? EASY_TUNE.poolRegen : 1);
     if (wounded) { manaRate *= 0.55; stamRate *= 0.55; }
     if (p.manaSlow > 0) stamRate *= 0.5;
     if (p.stamSlow > 0) manaRate *= 0.5;
@@ -992,7 +1035,7 @@ export function installTurbz(game: any): void {
       if (m?.twitch && m.alive && (m.rv?.level ?? 1) < save.level) this.autoLevelTwitch(m);
     }
     while (graves.length && (graves[0] ?? 1) <= 0) {
-      if (aliveN >= 15) break;
+      if (aliveN >= (EASY ? EASY_TUNE.witchCap : 15)) break;
       graves.shift();
       if (this.spawnReturnedWitch()) aliveN += 1;
     }
@@ -1000,7 +1043,7 @@ export function installTurbz(game: any): void {
     const huntMark = Math.floor(save.level / 10);
     if (huntMark >= 1 && huntMark > (save.turbzHuntMark ?? 0)) {
       save.turbzHuntMark = huntMark;
-      this.spawnTurbzHunterWitch();
+      if (!EASY) this.spawnTurbzHunterWitch(); // easy mode: no secret hunter witches
     }
   };
 
@@ -1042,6 +1085,46 @@ export function installTurbz(game: any): void {
       this.turbzRoster.push(m);
     }
     // Intentionally: no this.say() call. The player gets no warning.
+  };
+
+  /**
+   * Easy mode death: no run-ending. You wake at your campfire (or the dungeon door you fell near) with most of
+   * your health and mana, minus a little kyo. Level, gear, skills, ghosts and camp are untouched.
+   */
+  game.turbzKnockOut = function () {
+    const save = this.save;
+    if (!save) return;
+    const loss = Math.floor((save.kyo | 0) * EASY_TUNE.kyoLoss);
+    save.kyo = Math.max(0, (save.kyo | 0) - loss);
+    this.dead = false;
+    this.dest = null;
+    this.status = [];
+    this.shield = 0;
+    this.wardT = 0;
+    this.castLock = 0;
+    this.overcastT = 0;
+    this.lunge = null;
+    this.rush = null;
+    this.orbit = null;
+    this.combat = 0;
+    if (save.map !== TURBZ_MAP) {
+      const portal = save.dungeons?.portals?.find((q: any) => q.id === save.map);
+      if (portal) { save.x = portal.x; save.y = portal.y; }
+      save.map = TURBZ_MAP;
+      this.loadMap(TURBZ_MAP, false);
+    }
+    const fire = save.survival?.campfires?.find((c: any) => c.map === TURBZ_MAP);
+    if (fire) { save.x = fire.x; save.y = fire.y; }
+    // Whoever was chasing you loses the trail.
+    for (const m of this.mobs ?? []) if (m?.rv && m.rv.foe === "player") { m.rv.foe = ""; m.rv.foeT = 0; }
+    save.hp = Math.max(1, Math.floor(this.maxHp() * EASY_TUNE.reviveHp));
+    const caps = this.poolCaps();
+    this.pools = { mana: caps.maxMana, maxMana: caps.maxMana, stam: caps.maxStam, maxStam: caps.maxStam, manaSlow: 0, stamSlow: 0 };
+    this.cam.x = save.x;
+    this.cam.y = save.y;
+    this.say(loss > 0 ? `Knocked out. You wake ${fire ? "at your campfire" : "nearby"} and the wild keeps ${loss} kyo. Level and gear are safe.` : `Knocked out. You wake ${fire ? "at your campfire" : "nearby"}. Level and gear are safe.`);
+    this.persistTurbz();
+    this.syncHud(true);
   };
 
   /** A fallen witch comes back about five minutes later, one level under you. */
@@ -1127,7 +1210,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
     // Scent range: a witch who catches your trail turns hunter and heads your way from off-screen.
-    if (pd < 3600 && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
+    if (pd < (EASY ? EASY_TUNE.witchHunt : 3600) && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
     this.witchPlay(m, true);
   };
 
@@ -1187,7 +1270,8 @@ export function installTurbz(game: any): void {
     // already locked onto you), she drops crafting/gathering and comes straight for you.
     const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
     const lockable = m.hp > m.max * 0.25 || m.turbzHunter;
-    if (lockable && (pd < TWITCH_HUNT || m.turbzHunter || (r.foe === "player" && pd < TWITCH_CHASE))) {
+    const huntR = EASY ? EASY_TUNE.witchHunt : TWITCH_HUNT, chaseR = EASY ? EASY_TUNE.witchChase : TWITCH_CHASE;
+    if (lockable && (pd < huntR || m.turbzHunter || (r.foe === "player" && pd < chaseR))) {
       r.foe = "player";
       r.foeT = Math.max(r.foeT, 8);
       const foe = { player: true, x: save.x, y: save.y, alive: true, level: save.level };

@@ -97,7 +97,7 @@ function veilName(user: { id: string; displayName?: string | null; primaryEmail?
   return `w${tail}`.slice(0, 16);
 }
 
-type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "turbz" | "shinies";
+type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "turbz" | "turbzeasy" | "shinies";
 
 /** Re-renders the Shiny collection GIF and uploads it (for the Discord bot's /shiny). */
 function uploadShinies(): void {
@@ -238,7 +238,7 @@ function Hunt() {
         {screen === "hub" && !playing && (
           <Hub
             username={username}
-            onHunt={() => { g()?.swapRules("hunt"); setScreen("hunt"); }}
+            onHunt={() => setScreen("turbzeasy")}
             onCircle={() => setScreen("circle")}
             onLms={() => setScreen("lms")}
             onTurbz={() => setScreen("turbz")}
@@ -282,10 +282,15 @@ function Hunt() {
             }}
           />
         )}
-        {screen === "turbz" && !playing && (
-          <Screen kicker="TURBZ" title="A hard wild. Other witches." wide>
+        {(screen === "turbz" || screen === "turbzeasy") && !playing && (
+          <Screen kicker={screen === "turbzeasy" ? "TURBOHUNT · TURBZ EASY" : "TURBZ"} title={screen === "turbzeasy" ? "The TURBZ wild, made gentle." : "A hard wild. Other witches."} wide>
             <div className="ui-stack" data-testid="turbz-screen">
-              <p className="text-dim">You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
+              {screen === "turbzeasy" && (
+                <p className="text-dim" data-testid="turbz-easy-blurb">
+                  TurboHunt is TURBZ on easy mode: the same wild, the same camp, build mode, Storage Chest, Ghost Box, power blocks, dungeons and world bosses, so you can learn how TURBZ plays without the pressure. Only three or four calm witches wander and they only come for you when you are close. Foes have less health and hit for half. Your mana and stamina refill faster. If you fall you wake at your campfire, losing a little kyo, and you keep your level, gear, skills and camp. It keeps its own save, so it never touches a real TURBZ run. Press H at a campfire for the Camp menu and F for build mode.
+                </p>
+              )}
+              <p className="text-dim">{screen === "turbzeasy" ? "The rules below are real TURBZ. Where easy mode changes them, the paragraph above wins. " : ""}You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
               <p className="text-kyo font-display text-[9px]">Wake as any class at the full XP rate, or pick the Crying Lady and build her: perks, borrowed passives, elements and a trait.</p>
               <Field label="Name">
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
@@ -294,12 +299,12 @@ function Hunt() {
               {/* NewTex is now always on. The TURBZ world is always the New-Textures generator — plains, desert, jungle/swamp, snow and hell lands in an ocean, with the full-size trees, portals and Power machines. */}
               <div className="screen-actions">
                 <button type="button" className="px-btn" onClick={() => setScreen("hub")}>Back</button>
-                {hasTurbzSave() && (
-                  <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-continue" onClick={() => (g() as unknown as { continueTurbz?: () => boolean } | null)?.continueTurbz?.()}>
+                {hasTurbzSave(screen === "turbzeasy") && (
+                  <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-continue" onClick={() => (g() as unknown as { continueTurbz?: (easy?: boolean) => boolean } | null)?.continueTurbz?.(screen === "turbzeasy")}>
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true)}>
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true, screen === "turbzeasy")}>
                   Wake as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
                 </button>
               </div>

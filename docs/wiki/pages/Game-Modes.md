@@ -4,7 +4,7 @@ From the hub you can pick:
 
 | Mode | What it is |
 | --- | --- |
-| **TurboHunt** | The main game. Explore, fight, take bounties, climb the ladder. Forgiving: health regenerates out of combat and dungeon deaths only knock you out. |
+| **TurboHunt** | TURBZ on easy mode. The same wild, camp, build mode, Storage Chest, Ghost Box, power blocks, dungeons and world bosses as TURBZ, but with 3 to 4 calm rival witches, half damage taken, 20% less foe health and faster mana and stamina. Falling only knocks you out. It has its own save, separate from TURBZ. |
 | **Hardcore** | One life. Hunger, thirst and rest, nights that double enemy strength, camp building, loot chests and the Green Cave. Enemies hit harder and keep growing. |
 | **Last Man Standing** | You against 99 rival witches on Veilreach in an endless night. Everyone starts at level 1 under Hardcore rules; the last one alive wins. |
 | **TurboCircle Classic** | A battle simulator — 6 v 6 on any map. |
@@ -27,7 +27,20 @@ TurboHunt and Hardcore keep **separate saves**. Your account-wide progress (skil
 - **Winning:** be the last witch standing. A typical match runs 30–40 minutes.
 - **Map:** always Veilreach. In the Map Builder, **Use for my next life** can queue a custom world for your next LMS run instead.
 
-## TurboHunt vs Hardcore
+## TurboHunt (TURBZ easy)
+
+TurboHunt now launches the TURBZ ruleset with an `easy` flag. Every number lives in `EASY_TUNE` in `src/game/turbz-mode.ts`.
+
+- **Camp:** press H at a campfire for the Camp menu and F for build mode: walls, floors, beds, Storage Chest, Ghost Box and power blocks, exactly as in TURBZ. Pack up camp moves it.
+- **Witches:** 3 to 4 rivals (TURBZ: 10 to 15). They only go for you inside 520 px and give up past 1100 px. No secret hunter witches at level milestones.
+- **Damage and health:** you take 50% damage, foes have 80% health, world bosses notice you from 900 px.
+- **Mana and stamina:** refill 1.6× faster.
+- **Death:** you wake at your campfire with 60% health and lose 10% of your kyo. Level, gear, skills, ghosts and camp are kept.
+- **Saves:** separate from TURBZ (`turbz-easy-run-v1`, heirloom and camp keys too).
+
+The older forgiving Hunt rules (`rules === "hunt"`) are still in the code but no longer have a hub tile.
+
+## TurboHunt (classic) vs Hardcore
 
 | | TurboHunt | Hardcore |
 | --- | --- | --- |

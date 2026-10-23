@@ -266,7 +266,7 @@ export function Hub(props: {
       )}
       <div className="tile-grid">
         <Tile hero title="TURBZ" about="Hardcore wild. Level 1, no bounties. Other witches grind, craft and team up." onClick={props.onTurbz} badge="MAIN GAME" testid="turbz-tile" />
-        <Tile title="TurboHunt" about="Explore the wilds, take bounties, climb the ladder." onClick={props.onHunt} />
+        <Tile title="TurboHunt" about="TURBZ on easy mode: camps, building, dungeons and bosses, gentler." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
         <Tile title="Last Man Standing" about="You and 99 rival witches from level 1. Always night, only ghosts. Be the last one alive." onClick={props.onLms} badge="NEW" />
         <Tile title="TurboCircle" about="Battle simulator: Classic 6v6, or War up to 100 vs 100." onClick={props.onCircle} />

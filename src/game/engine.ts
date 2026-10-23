@@ -2180,7 +2180,7 @@ export class TurbzGame {
 		const turbzDungeon = !!(this.turbz && inDungeon);
 		const dungeonHp = ((inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.35 : 1.4) : 1) * (turbzDungeon ? 1.15 : 1);
 		const dungeonDmg = ((inDungeon || turbzOverworld) ? (m.dungeonBoss || m.turbzBoss || kind === "boss" ? 1.18 : 1.12) : 1) * (turbzDungeon ? 1.1 : 1);
-		const base = Math.max(floorHp, hitRef * t.hits) * stats.hp * party * shrineHp * dungeonHp;
+		const base = Math.max(floorHp, hitRef * t.hits) * stats.hp * party * shrineHp * dungeonHp * (this.turbz && this.turbzEasy ? 0.8 : 1);
 		const bountyRage = m.enraged && (m.bounty || m.bountySpirit);
 		const mult = (this.isNightNow() ? NIGHT.strength : 1) * (m.enraged ? 2 : 1) * (bountyRage ? BOUNTY_ENRAGE.hp : 1);
 		const max = Math.max(1, Math.floor(base * mult));
@@ -7800,7 +7800,7 @@ export class TurbzGame {
 			return;
 		}
 		if (this.gim && !this.gim.allowHit(m, this.foeForm(m, move))) return;
-		let dmg = this.foeHitRaw(m, move, dist) * mult;
+		let dmg = this.foeHitRaw(m, move, dist) * mult * (this.turbz && this.turbzEasy ? 0.5 : 1); // TURBZ easy (TurboHunt): half damage taken
 		const crit = Math.random() < bendChance((m.stats?.crit ?? .03) + (m.enraged && (m.bounty || m.bountySpirit) ? BOUNTY_ENRAGE.crit : 0));
 		if (crit) {
 			dmg *= 1.75;
@@ -7983,6 +7983,7 @@ export class TurbzGame {
 	}
 	die() {
 		if (this.lms) { this.lmsDefeat?.(); return; }
+		if (this.turbz && this.turbzEasy) { this.turbzKnockOut(); return; }
 		if (this.turbz) { this.turbzFell(); return; }
 		const save = this.save;
 		if (this.rules !== "hardcore" && (this.shrine || save.map !== "world")) {
@@ -14327,7 +14328,7 @@ export class TurbzGame {
 		if (ghosts.some((g) => g.shiny)) effects.push("Shiny ghost");
 		const look = this.graveLook(save);
 		const body: GraveBody = {
-			mode: this.turbz ? "turbz" : this.rules === "hardcore" ? "hardcore" : "hunt",
+			mode: this.turbz && !this.turbzEasy ? "turbz" : this.turbz ? "hunt" : this.rules === "hardcore" ? "hardcore" : "hunt",
 			score,
 			name: save.name,
 			race: RACES.find((r) => r.id === save.race)?.name ?? save.race,
