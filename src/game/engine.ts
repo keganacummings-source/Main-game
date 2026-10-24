@@ -388,6 +388,8 @@ export type Snap = {
   ghostBonus: GhostBonusView;
   spiritSlots: number;
   spiritCap: number;
+  /** The extracted Super Ghost that walks with you (GearSet/Ghost Merger), or null. */
+  superGhost: GhostDetail | null;
   /** Ghosts kept in the Ghost Box. */
   ghostStore: { uid: string; name: string; type: TypeId; level: number; rarity: number; shiny: boolean; tagged: boolean; palette: string | null; abilities: string[] }[];
   ghostBox: { placed: boolean; near: boolean; max: number };
@@ -811,6 +813,7 @@ const emptySnap = (): Snap => ({
 	spirits: [],
 	spiritSlots: 3,
 	spiritCap: 6,
+	superGhost: null,
 	ghostStore: [],
 	quick: [],
 	quickCd: 0,
@@ -3450,27 +3453,55 @@ export class TurbzGame {
 		}
 		const partial = m.super;
 		const hp = Math.floor(600 + partial.level * 40 + partial.fed * 30);
-		const activeMoves = partial.movesKnown.slice(0, 10);
+		const known = partial.movesKnown.slice(0, GHOSTMERGER_MOVES_KNOWN_MAX);
+		// The verses it actually fights with (its equipped slots). Fall back so it always has at least one.
+		const slots = (known.length ? known : ["measured"]).slice(0, 10);
+		const primary = slots[0] ?? "measured";
+		const type = (partial.types[0] ?? "normal") as TypeId;
+		// Build a COMPLETE Spirit: species, template, look, move, slots and max are all required by the
+		// ghost combat and draw paths — a super ghost missing them used to crash the moment it fought.
 		save.superGhost = {
 			uid: `super-${Date.now().toString(36)}`,
+			species: "wisp",
 			name: `Super Ghost (${partial.fed} fused)`,
-			type: partial.types[0] ?? "normal",
+			type,
+			template: 0,
 			level: partial.level,
 			rarity: 5,
-			shiny: true,
-			tagged: true,
-			palette: null,
-			hp, maxHp: hp,
+			look: rollGhostLook(mulberry32((Date.now() & 0xffffff) || 1), 5, primary, "hunt"),
+			move: primary,
+			hp, max: hp, maxHp: hp,
+			speed: 10 + Math.min(20, partial.level),
+			known,
+			slots,
 			abilities: partial.abilities.slice(0, GHOSTMERGER_ABILITIES_MAX),
 			active: true,
+			shiny: true,
+			tagged: false,
+			palette: null,
 			super: true,
 			types: partial.types.slice(),
-			movesKnown: partial.movesKnown.slice(0, GHOSTMERGER_MOVES_KNOWN_MAX),
-			moves: activeMoves,
+			movesKnown: known,
+			moves: slots,
 		};
+		this.finishGhost(save.superGhost, true);
 		m.super = null;
 		m.t = 0;
+		this.ghostCd = this.ghostCd ?? {};
+		delete this.ghostCd[save.superGhost.uid];
 		this.say(`Super Ghost extracted. ${partial.types.length} types, ${partial.abilities.length} abilities, ${activeMoves.length} active moves (knows ${partial.movesKnown.length}). It walks with you until it falls.`);
+		this.persist();
+		this.syncHud(true);
+	}
+
+	/** Dismiss the current Super Ghost (from the Spirits window). It is gone for good. */
+	releaseSuperGhost() {
+		const save = this.save;
+		if (!save?.superGhost) return;
+		const name = save.superGhost.name ?? "The Super Ghost";
+		if (this.ghostCd) delete this.ghostCd[save.superGhost.uid];
+		save.superGhost = null;
+		this.say(`${name} is released.`);
 		this.persist();
 		this.syncHud(true);
 	}
@@ -6956,6 +6987,31 @@ export class TurbzGame {
 		};
 		this.finishGhost(sp, true);
 		return sp;
+	}
+	/**
+	 * Repair a Super Ghost from an older save: early builds stored it without the fields the ghost
+	 * combat and draw code require (species, template, look, move, slots, max), which crashed it the
+	 * moment it tried to fight. Backfill anything missing so a loaded super ghost is a valid Spirit.
+	 */
+	repairSuperGhost(save) {
+		const sg = save?.superGhost;
+		if (!sg || typeof sg !== "object") return;
+		const known = Array.isArray(sg.known) && sg.known.length ? sg.known
+			: Array.isArray(sg.movesKnown) && sg.movesKnown.length ? sg.movesKnown
+			: Array.isArray(sg.moves) && sg.moves.length ? sg.moves : ["measured"];
+		if (!Array.isArray(sg.slots) || !sg.slots.length) sg.slots = known.slice(0, 10);
+		if (!Array.isArray(sg.known) || !sg.known.length) sg.known = known.slice(0, 50);
+		if (!sg.move) sg.move = sg.slots[0] ?? "measured";
+		if (typeof sg.species !== "string") sg.species = "wisp";
+		if (typeof sg.template !== "number") sg.template = 0;
+		if (typeof sg.type !== "string") sg.type = (Array.isArray(sg.types) && sg.types[0]) || "normal";
+		if (typeof sg.level !== "number") sg.level = 1;
+		if (typeof sg.max !== "number") sg.max = sg.maxHp ?? sg.hp ?? 600;
+		if (typeof sg.maxHp !== "number") sg.maxHp = sg.max;
+		if (typeof sg.hp !== "number") sg.hp = sg.max;
+		if (typeof sg.speed !== "number") sg.speed = 14;
+		if (!sg.look) sg.look = rollGhostLook(mulberry32((save.seed || 1) >>> 0 || 1), sg.rarity ?? 5, sg.move, "hunt");
+		this.finishGhost(sg, false);
 	}
 	/** Fills in what newer builds give every ghost: a valid rarity, a palette for shinies, and abilities. */
 	finishGhost(sp, fresh = false) {
@@ -11562,6 +11618,7 @@ export class TurbzGame {
 		}
 		// Older ghosts gain what newer builds roll: rarity in range, a palette for shinies, and abilities.
 		for (const g of [...save.spirits, ...save.ghostStore]) this.finishGhost(g);
+		this.repairSuperGhost(save);
 		save.quick = this.cleanQuickOf(save);
 		for (const w of Array.isArray(save.wildGhosts) ? save.wildGhosts : []) if (w?.spirit) this.finishGhost(w.spirit);
 		if (save.ghostStore.filter((g) => g.tagged).length > TINY_MAX) { let n = 0; for (const g of save.ghostStore) if (g.tagged && ++n > TINY_MAX) g.tagged = false; }
@@ -12463,6 +12520,7 @@ export class TurbzGame {
 			})),
 			spiritSlots: this.spiritCap(),
 			spiritCap: PARTY_MAX,
+			superGhost: (save.superGhost && save.superGhost.hp > 0) ? this.ghostDetail(save.superGhost, "out") : null,
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity ?? 0, shiny: !!g.shiny, tagged: !!g.tagged, palette: g.shiny ? g.palette ?? DEFAULT_PALETTE : null, abilities: (g.abilities ?? []).map((a) => GHOST_ABILITY_BY_ID[a.id]?.name ?? a.id) })),
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),
@@ -13306,7 +13364,7 @@ export class TurbzGame {
 				} else this.paintTurbzChest(ctx, cx, cy);
 			} else this.paintTurbzChest(ctx, cx, cy);
 			const near = !!this.nearTurbzChest();
-			drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
+			if (Math.hypot(tc.tx * 32 + 16 - save.x, tc.ty * 32 + 16 - save.y) <= 56) drawShadowName(ctx, `CHEST · ${this.turbzChestCount()}`, tc.tx * 32 + 16, tc.ty * 32 - 10, "#e6c15a");
 			if (near) drawShadowName(ctx, "E · OPEN", tc.tx * 32 + 16, tc.ty * 32 - 22, "#ffd166");
 		}
 		// HellStone Generators, Wires, Batteries, the XP Producer and the Duplicator (TURBZ + New Textures)
@@ -13327,7 +13385,7 @@ export class TurbzGame {
 			if (g.map !== save.map || Math.abs(g.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(g.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const gx = g.tx * 32, gy = g.ty * 32;
 			paintSlot("hellgen", gx, gy, "#6b2a1a", "#e25a32");
-			drawShadowName(ctx, `GEN · ${g.ore || 0} ORE`, gx + 16, gy - 10, "#ff8a5a");
+			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, `GEN · ${g.ore || 0} ORE`, gx + 16, gy - 10, "#ff8a5a");
 			if (Math.hypot(gx + 16 - save.x, gy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", gx + 16, gy - 22, "#ffd166");
 		}
 		for (const w of save.powerWires ?? []) {
@@ -13339,14 +13397,14 @@ export class TurbzGame {
 			if (b.map !== save.map || Math.abs(b.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(b.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const bx = b.tx * 32, by = b.ty * 32;
 			paintSlot("battery", bx, by, "#1a3a6b", "#4aa0ff");
-			drawShadowName(ctx, `BAT · ${b.power}/100`, bx + 16, by - 10, "#8fd0ff");
+			if (Math.hypot(bx + 16 - save.x, by + 16 - save.y) <= 56) drawShadowName(ctx, `BAT · ${b.power}/100`, bx + 16, by - 10, "#8fd0ff");
 			if (Math.hypot(bx + 16 - save.x, by + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", bx + 16, by - 22, "#ffd166");
 		}
 		for (const m of save.powerXps ?? []) {
 			if (m.map !== save.map || Math.abs(m.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(m.ty * 32 + 16 - this.cam.y) > halfH) continue;
 			const mx = m.tx * 32, my = m.ty * 32;
 			paintSlot("xpgen", mx, my, "#2a1a4a", "#c9a6e8");
-			drawShadowName(ctx, "XP", mx + 16, my - 10, "#c8beff");
+			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "XP", mx + 16, my - 10, "#c8beff");
 			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", mx + 16, my - 22, "#ffd166");
 		}
 		for (const d of save.powerDups ?? []) {
@@ -13354,7 +13412,7 @@ export class TurbzGame {
 			const dx = d.tx * 32, dy = d.ty * 32;
 			paintSlot("duplicator", dx, dy, "#143028", "#3dff9a");
 			const tag = d.seed && d.item ? `DUP · ${d.stored || 0}` : "DUP";
-			drawShadowName(ctx, tag, dx + 16, dy - 10, "#7dffb3");
+			if (Math.hypot(dx + 16 - save.x, dy + 16 - save.y) <= 56) drawShadowName(ctx, tag, dx + 16, dy - 10, "#7dffb3");
 			if (Math.hypot(dx + 16 - save.x, dy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", dx + 16, dy - 22, "#ffd166");
 		}
 		for (const m of save.powerMergers ?? []) {
@@ -13362,7 +13420,7 @@ export class TurbzGame {
 			const mx = m.tx * 32, my = m.ty * 32;
 			paintSlot("ghostmerger", mx, my, "#241a2e", "#b9a8e8");
 			const queued = m.stored?.length ?? 0;
-			drawShadowName(ctx, queued ? `MERGER · ${queued}` : "MERGER", mx + 16, my - 10, "#d8c4ff");
+			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, queued ? `MERGER · ${queued}` : "MERGER", mx + 16, my - 10, "#d8c4ff");
 			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", mx + 16, my - 22, "#ffd166");
 		}
 		for (const fo of save.powerForges ?? []) {
@@ -13370,7 +13428,7 @@ export class TurbzGame {
 			const fx = fo.tx * 32, fy = fo.ty * 32;
 			paintSlot("gearforge", fx, fy, "#3a3338", "#e8c878");
 			const pieces = fo.tally?.pieces ?? 0;
-			drawShadowName(ctx, pieces ? `FORGE · ${pieces}` : "FORGE", fx + 16, fy - 10, "#ffd37a");
+			if (Math.hypot(fx + 16 - save.x, fy + 16 - save.y) <= 56) drawShadowName(ctx, pieces ? `FORGE · ${pieces}` : "FORGE", fx + 16, fy - 10, "#ffd37a");
 			if (Math.hypot(fx + 16 - save.x, fy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", fx + 16, fy - 22, "#ffd166");
 		}
 		// Pipes first (they sit under the machines they feed), then the other new Power blocks.
@@ -13404,7 +13462,7 @@ export class TurbzGame {
 				const [c1, c2, label, tint] = look[e.kind];
 				paintSlot(e.kind, ex, ey, c1, c2);
 				const tag = e.kind === "logburner" ? `LOG · ${e.fuel || 0}` : e.kind === "capacitor" ? `CAP · ${e.power || 0}/${CAP_MAX}` : e.on === false ? `${label} · OFF` : label;
-				drawShadowName(ctx, tag, ex + 16, ey - 10, tint);
+				if (Math.hypot(ex + 16 - save.x, ey + 16 - save.y) <= 56) drawShadowName(ctx, tag, ex + 16, ey - 10, tint);
 				if (e.kind === "blockgen" || e.kind === "rockminer") {
 					const [dx, dy] = DIR_VEC[e.dir ?? 2];
 					ctx.strokeStyle = e.kind === "blockgen" ? "rgba(155,209,138,.55)" : "rgba(224,122,106,.55)";

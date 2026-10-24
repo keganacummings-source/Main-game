@@ -766,7 +766,7 @@ export const WildGhostPanel = memo(function WildGhostPanel({ game }: GameProp) {
 type SpiritTab = "party" | "box" | "bonus";
 
 export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
-  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "jarLeft", "ghostStore", "ghostBox", "ghostInspect", "ghostBonus", "rules", "bag", "kyo", "ghostAuto", "wildHere"] as const);
+  const s = useSnapPick(["spirits", "spiritSlots", "spiritCap", "superGhost", "jarLeft", "ghostStore", "ghostBox", "ghostInspect", "ghostBonus", "rules", "bag", "kyo", "ghostAuto", "wildHere"] as const);
   const [tab, setTab] = usePref<SpiritTab>("turbz-spirits-tab", ["party", "box", "bonus"], "party");
   const [gsort, setGsort] = usePref("turbz-spirits-sort", ["default", "level", "rarity", "name", "type"] as const, "default");
   const [gq, setGq] = useState("");
@@ -832,6 +832,16 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
 
       {tab === "party" && (
         <div className="ui-stack" data-testid="spirit-party">
+          {s.superGhost && (
+            <Section title="SUPER GHOST" right={<span className="text-dim">Lv {s.superGhost.level}</span>}>
+              <div className="ui-card" data-testid="super-ghost-card" style={{ borderColor: "#c9a6e8" }}>
+                <span className="ui-row"><span className="text-kyo">★ {s.superGhost.name}</span><span className="text-dim">{s.superGhost.type} · {s.superGhost.types?.length ?? 1} types</span></span>
+                <Meter kind="good" label="HP" value={Math.max(0, Math.floor(s.superGhost.hp))} max={Math.max(1, s.superGhost.max)} detail={`${Math.floor(s.superGhost.hp)}/${s.superGhost.max}`} />
+                <p className="text-dim">Your fused Super Ghost. It walks with you on top of your party and never rides in the Ghost Box. {s.superGhost.abilities.length} abilities · {s.superGhost.moves.length} active verses.</p>
+                <ConfirmButton plain label="Release Super Ghost" confirm="Tap again" onConfirm={() => game?.releaseSuperGhost?.()} />
+              </div>
+            </Section>
+          )}
           <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Ghosts out with you fight, earn XP from every kill, and their abilities and aid verses work: heals, wards, regen, barriers, a last-light save and more.</p>
           {s.spirits.length > 0 && (
             <div className="gear-actions" data-testid="spirit-bulk">
