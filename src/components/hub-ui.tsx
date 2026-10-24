@@ -269,7 +269,7 @@ export function Hub(props: {
         <Tile title="TurboHunt" about="TURBZ on easy mode: camps, building, dungeons and bosses, gentler." onClick={props.onHunt} />
         <Tile title="Hardcore" about="Hunger, thirst, nights that get worse. One life." onClick={props.onHard} badge="HARD" />
         <Tile title="Last Man Standing" about="You and 99 rival witches from level 1. Always night, only ghosts. Be the last one alive." onClick={props.onLms} badge="NEW" />
-        <Tile title="TurboCircle" about="Total War siege: build two class-built armies and storm a keep for the point." onClick={props.onCircle} />
+        <Tile title="TurboCircle" about="World battle simulator: watch factions fight over one continent until one wins." onClick={props.onCircle} />
         <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
         <Tile title="Designer Mode" about="Map Builder, Enemy Designer, and the Camp & Tile Asset Builder." onClick={props.onDesigner} />
         <Tile title="Shinys Seen" about={shinyCount ? `Your collection: ${shinyCount} shiny ghost${shinyCount === 1 ? "" : "s"}.` : "Every shiny you pick up is kept here."} onClick={props.onShinies} testid="shinies-tile" badge={shinyCount ? `✦ ${shinyCount}` : undefined} />

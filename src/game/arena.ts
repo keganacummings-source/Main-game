@@ -26,41 +26,42 @@ import { CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId, type Role, type StatMod
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { CombatFx } from "./combat-fx";
 import { defenseVs } from "./balance";
+import { TEX } from "./tex-world";
 import type { GraveBody } from "./social-types";
 import { drawActor, drawMonster, drawShadowName } from "./sprites";
 import { geneSeedOf } from "./fx-gene";
-import { drawWorldSlice, type WorldData } from "./world";
+import { drawWorldSlice, type Tile, type WorldData } from "./world";
 
 const TILE = 32;
 
-/* ----------------------------------------------------------------------------
- * TurboCircle — Total War style siege.
+/* ============================================================================
+ * TurboCircle — World Battle Simulator.
  *
- * One 250×250 procedurally generated battlefield with a fortified stronghold at
- * its heart. Two armies: ATTACKERS, who smart-push the keep to seize the capture
- * point, and DEFENDERS, who hold it. Each army is built out of CLASSES the player
- * picks — tanks, casters, marksmen, ghost-callers — so you decide what your army
- * is made of. Ghost-caller classes bring spirits onto the field with them.
- * ------------------------------------------------------------------------- */
+ * One 450×450 single-continent, TURBZ-textured map. Several named factions each
+ * hold Regions anchored on Objectives. Combat witches march out to take enemy
+ * and neutral Objectives — battles of every size (1v1 up to 10v10) break out all
+ * over the map at once. Non-combat witches HARVEST materials from the land and
+ * carry them home; a full stockpile recruits a fresh combat witch. You watch and
+ * see which faction swallows the continent.
+ * ========================================================================== */
 
-const ATTACKER = 0;
-const DEFENDER = 1;
+// --- factions ----------------------------------------------------------------
 
-type SideDef = { id: number; key: "attackers" | "defenders"; name: string; color: string };
-const SIDES: SideDef[] = [
-  { id: ATTACKER, key: "attackers", name: "Attackers", color: "#c4473a" },
-  { id: DEFENDER, key: "defenders", name: "Defenders", color: "#5ab0e8" },
+const FACTION_NAMES = [
+  "Crimson Host", "Pale Court", "Ash Legion", "Tide Circle",
+  "Green Compact", "Gold Pact", "Void Choir", "Rime Watch",
+];
+const FACTION_COLORS = [
+  "#d8524a", "#c9a6e8", "#f08a24", "#5ab0e8",
+  "#7dcea0", "#e6c15a", "#9a6ad8", "#cfe6ff",
 ];
 
-/** How many ghosts a class leads onto the field. Ties the ghost roster to the class you pick. */
+const GHOST_CLASSES: ClassId[] = ["spiritbinder", "hexbinder", "gravemage", "veilsinger", "vigilant", "nightlord"];
 const GHOSTS_BY_CLASS: Partial<Record<ClassId, number>> = {
-  spiritbinder: 3,
-  hexbinder: 2,
-  gravemage: 2,
-  veilsinger: 1,
-  vigilant: 1,
-  nightlord: 1,
+  spiritbinder: 3, hexbinder: 2, gravemage: 2, veilsinger: 1, vigilant: 1, nightlord: 1,
 };
+
+const FIELD_CLASSES = CLASSES.filter((c) => c.id !== "cryinggirl").map((c) => c.id as ClassId);
 
 const NAMES = [
   ...WITCH_NAMES,
@@ -68,10 +69,27 @@ const NAMES = [
   "Onyx Pell", "Moss Ives", "Hester Vetch", "Lumen Bret", "Silt Ama", "Bram of Glass",
   "Nell Dusk", "Pax Yarrow", "Ivy Sorrow", "Cass of Embers", "Wren Holt", "Otter Vine",
   "Isla Thorn", "Quill Mare", "Dusk Nen", "Cress Vail", "Vetch Ora", "Nim of the Well",
-  "Hale Mot", "Sera's Shadow", "Juniper Hex", "Tallow Mae", "Grey Pell", "Annis Coil",
-  "Mab of Rime", "Kit the Toll", "Edda Vellum", "Noa of Pitch", "Fern Widow", "Lux of Bone",
-  "Pim Salt", "Ysolde Marr", "Betony Vale", "Cressida Ash",
 ];
+
+const REGION_NAMES = [
+  "Ashford", "Larkfield", "Greymarch", "Thornwall", "Saltmere", "Duskhollow", "Irongate",
+  "Rookspire", "Fenwatch", "Oldcairn", "Mistvale", "Hollowreach", "Blackcross", "Windmoor",
+  "Stonewick", "Palehaven", "Emberlot", "Rimehold", "Gloamfen", "Highcroft", "Sorrow's End",
+  "Vellacre", "Northgate", "Redmire", "Thistledown", "Crowfell", "Marrowdeep", "Wyrmrest",
+];
+
+// --- economy / pacing --------------------------------------------------------
+
+const RECRUIT_COST = 40;          // materials to recruit one combat witch
+const HARVEST_PER_TRIP = 12;      // a harvester carries this much back
+const HARVEST_SECONDS = 3.2;      // time to fill a node bite
+const POINT_R = TILE * 4;         // objective capture/region radius (pixels)
+const CAP_RATE = 7;               // control gained per second per net attacker
+const CAP_RETAKE = 10;            // owner reclaim rate
+const UNIT_CAP = 170;             // hard cap on living units for performance
+const PARTY_MAX = 10;             // biggest war party
+
+// --- types -------------------------------------------------------------------
 
 export type ArenaSpiritDef = { name: string; type: TypeId; template: number; move: string; look: GhostLook };
 
@@ -92,51 +110,64 @@ export type ArenaWitch = {
   spirits: ArenaSpiritDef[];
   hair: number;
   skin: number;
-  /** Combat bonuses from the class, folded onto the body at spawn. */
   mods: { might: number; ward: number; crit: number; swift: number; dmg: number };
 };
 
-export type CamMode = "team" | "free";
+export type CamMode = "free" | "follow";
 
-/** What a side's army is made of: a size and the classes to fill it from. */
-export type ArmyPlan = { size: number; classes: ClassId[] };
+type Faction = { id: number; name: string; color: string; classes: ClassId[]; alive: boolean };
 
-export type ClassOption = { id: ClassId; name: string; role: Role; type: TypeId; typeName: string; ghosts: number; about: string };
+type ResNode = { x: number; y: number; amount: number; cd: number };
 
-export type ArmySnap = {
+type Objective = {
   id: number;
-  key: "attackers" | "defenders";
+  name: string;
+  tx: number;
+  ty: number;
+  x: number;
+  y: number;
+  owner: number;      // faction id, or -1 neutral
+  control: number;    // 0..100, how far a contender has pushed
+  contender: number;  // faction pushing control, or -1
+  stock: number;      // materials toward the next recruit
+  nodes: ResNode[];
+  neighbors: number[]; // nearest objective ids, for marching targets
+};
+
+export type FactionSnap = {
+  id: number;
   name: string;
   color: string;
-  size: number;
-  classes: ClassId[];
-  alive: number;
-  count: number;
-  level: number;
-  ghosts: number;
-  intent: string;
+  objectives: number;
+  combat: number;
+  harvesters: number;
+  materials: number;
+  alive: boolean;
 };
 
 export type ArenaSnap = {
-  phase: "setup" | "fight" | "result";
+  phase: "setup" | "run" | "result";
   note: string;
   speed: number;
   cam: CamMode;
   focus: number;
   clock: string;
-  timeLeft: string;
-  /** Attacker control of the point, 0 (fully held) … 100 (seized). */
-  control: number;
-  held: "attackers" | "defenders" | "contested";
-  armies: ArmySnap[];
-  classOptions: ClassOption[];
+  factionCount: number;
+  objectiveCount: number;
+  objectiveTotal: number;
+  factions: FactionSnap[];
+  events: string[];
+  battles: number;
   winner: string;
-  winSide: number;
+  winFaction: number;
 };
+
+type Order = "defend" | "attack" | "harvest" | "return" | "muster";
 
 type Fighter = {
   id: string;
-  side: number;
+  faction: number;
+  job: "combat" | "harvester";
   role: "witch" | "summoner" | "spirit";
   name: string;
   race: RaceId | null;
@@ -156,7 +187,6 @@ type Fighter = {
   root: number;
   sleep: number;
   burn: number;
-  trap: number;
   moveIds: string[];
   weapon: Gear | null;
   pieces: { slot: string; style: number; type: TypeId; fxSeed: number; quality: number; gene?: number }[];
@@ -178,31 +208,21 @@ type Fighter = {
   lastX: number;
   lastY: number;
   path: { x: number; y: number }[];
-  squad: number;
-  rank: number;
   hair: number;
   skin: number;
+  // orders
+  home: number;      // objective id this unit belongs to
+  order: Order;
+  target: number;    // objective id the order points at
+  carry: number;     // harvester: materials held
+  node: ResNode | null; // harvester: the node it is working
+  harvestT: number;
 };
 
 type Flo = { x: number; y: number; text: string; life: number; color: string };
 type Beam = { x0: number; y0: number; x1: number; y1: number; life: number; color: string };
 
 const QUALITY = ["worn", "common", "fine", "rare", "epic", "legendary"];
-
-/** Classes you can field. The Crying Girl is left out — she is a build-your-own, not an army unit. */
-const FIELD_CLASSES = CLASSES.filter((c) => c.id !== "cryinggirl");
-
-function classOptions(): ClassOption[] {
-  return FIELD_CLASSES.map((c) => ({
-    id: c.id as ClassId,
-    name: c.name,
-    role: c.role,
-    type: c.type,
-    typeName: TYPES[c.type]?.name ?? c.type,
-    ghosts: GHOSTS_BY_CLASS[c.id as ClassId] ?? 0,
-    about: `${c.role} · ${c.focus}`,
-  }));
-}
 
 function ench(gear: Gear[], id: string): number {
   let n = 0;
@@ -219,13 +239,12 @@ function rollMovesFor(classId: ClassId): string[] {
   return out;
 }
 
-/** Build one soldier of a given class. Modern witch, kitted and stat-leaned to match the class. */
-export function witchFromClass(rng: Rng, classId: ClassId, level: number): ArenaWitch {
+/** Build one modern witch of a class, kitted and stat-leaned to match it. */
+export function witchFromClass(rng: Rng, classId: ClassId, level: number, ghosts = GHOSTS_BY_CLASS[classId] ?? 0): ArenaWitch {
   const c = CLASS_BY_ID[classId] as unknown as { name: string; type: TypeId; role: Role; stats: StatMods };
   const race = CLASS_RACE[classId] ?? "vesper";
   const raceInfo = RACES.find((r) => r.id === race) ?? RACES[0]!;
   const stats = c.stats ?? {};
-  const ghosts = GHOSTS_BY_CLASS[classId] ?? 0;
   const role: "witch" | "summoner" = ghosts > 0 ? "summoner" : "witch";
 
   const gearLevel = Math.max(1, Math.round(level * (0.7 + rng() * 0.4)));
@@ -235,12 +254,10 @@ export function witchFromClass(rng: Rng, classId: ClassId, level: number): Arena
   const gear = slots.map((slot) =>
     rollGear(rng, { level: Math.max(1, gearLevel - irand(rng, 2)), slot, luck: Math.max(0, luck - 5), raceBias: race, typeBias: rng() < 0.5 ? c.type : null }),
   );
-
   const moves = rollMovesFor(classId);
 
   const spirits: ArenaSpiritDef[] = [];
   for (let i = 0; i < ghosts; i++) {
-    // The ghost's element matches the class, so a Spirit Caller's choir reads as hers.
     const pool = MONSTERS.filter((m) => m.type === c.type || m.type === "spirit" || m.type === "void");
     const spec = pool.length ? pick(rng, pool) : MONSTERS[0]!;
     const bag = MOVES.filter((m) => m.type === c.type && m.power > 0 && m.power < 56);
@@ -248,25 +265,14 @@ export function witchFromClass(rng: Rng, classId: ClassId, level: number): Arena
     spirits.push({ name: spec.name, type: c.type, template: spec.template, move, look: rollGhostLook(rng, 1, move, "hunt") });
   }
 
-  const name = pick(rng, NAMES);
   const roleHp = c.role === "Tank" ? 1.22 : c.role === "Caster" ? 0.9 : c.role === "Support" ? 1.02 : 1;
   const hpMul = 1 + (stats.hp ?? 0) / 100 + (stats.guard ?? 0) / 340;
-  const baseline = 82 + level * 16;
-  const maxHp = Math.floor(baseline * roleHp * hpMul);
+  const maxHp = Math.floor((82 + level * 16) * roleHp * hpMul);
   const speed = Math.max(44, Math.floor(70 + level * 0.3 + (stats.speed ?? 0) * 0.55 - (stats.guard ?? 0) * 0.12));
-
-  const mods = {
-    might: stats.might ?? 0,
-    ward: stats.guard ?? 0,
-    crit: stats.crit ?? 0,
-    swift: stats.haste ?? 0,
-    // Casters hit harder with spells via Arcana; a touch of leech never hurts a damage read.
-    dmg: 1 + (stats.arcana ?? 0) * 0.004 + (stats.leech ?? 0) * 0.002,
-  };
 
   return {
     uid: nextUid(),
-    name,
+    name: pick(rng, NAMES),
     race,
     classId,
     cls: c.name,
@@ -281,7 +287,13 @@ export function witchFromClass(rng: Rng, classId: ClassId, level: number): Arena
     spirits,
     hair: raceInfo.hair,
     skin: irand(rng, 5),
-    mods,
+    mods: {
+      might: stats.might ?? 0,
+      ward: stats.guard ?? 0,
+      crit: stats.crit ?? 0,
+      swift: stats.haste ?? 0,
+      dmg: 1 + (stats.arcana ?? 0) * 0.004 + (stats.leech ?? 0) * 0.002,
+    },
   };
 }
 
@@ -295,10 +307,7 @@ class Heap {
     while (n > 0) {
       const p = (n - 1) >> 1;
       if (a[p]!.c <= a[n]!.c) break;
-      const tmp = a[p]!;
-      a[p] = a[n]!;
-      a[n] = tmp;
-      n = p;
+      const t = a[p]!; a[p] = a[n]!; a[n] = t; n = p;
     }
   }
   pop(): { i: number; c: number } | null {
@@ -310,242 +319,211 @@ class Heap {
       a[0] = last;
       let n = 0;
       for (;;) {
-        const l = n * 2 + 1;
-        const r = l + 1;
+        const l = n * 2 + 1, r = l + 1;
         let m = n;
         if (l < a.length && a[l]!.c < a[m]!.c) m = l;
         if (r < a.length && a[r]!.c < a[m]!.c) m = r;
         if (m === n) break;
-        const tmp = a[m]!;
-        a[m] = a[n]!;
-        a[n] = tmp;
-        n = m;
+        const t = a[m]!; a[m] = a[n]!; a[n] = t; n = m;
       }
     }
     return top;
   }
 }
 
-function reachable(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1: number, y1: number): boolean {
-  const q = [y0 * w + x0];
-  const seen = new Uint8Array(w * h);
-  seen[q[0]!] = 1;
-  let qi = 0;
-  const goal = y1 * w + x1;
-  while (qi < q.length) {
-    const cur = q[qi++]!;
-    if (cur === goal) return true;
-    const x = cur % w;
-    const y = (cur / w) | 0;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-      const k = ny * w + nx;
-      if (seen[k] || grid[k] === 1) continue;
-      seen[k] = 1;
-      q.push(k);
-    }
-  }
-  return false;
-}
-
 function los(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1: number, y1: number): boolean {
-  const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 10));
+  const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 12));
   for (let s = 1; s < steps; s++) {
     const t = s / steps;
-    const x = x0 + (x1 - x0) * t;
-    const y = y0 + (y1 - y0) * t;
-    const tx = Math.floor(x / TILE);
-    const ty = Math.floor(y / TILE);
+    const tx = Math.floor((x0 + (x1 - x0) * t) / TILE);
+    const ty = Math.floor((y0 + (y1 - y0) * t) / TILE);
     if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
     if (grid[ty * w + tx] === 1) return false;
   }
   return true;
 }
 
-export type SiegeMap = {
-  grid: Uint8Array;
+// ---------------------------------------------------------------------------
+// World generation: one TURBZ-textured continent, no islands.
+// ---------------------------------------------------------------------------
+
+type BiomeArt = { ground: string; patch: string; patchAt: number; tree: string; treeType: TypeId };
+const CONTINENT_BIOMES: BiomeArt[] = [
+  { ground: TEX.grass, patch: TEX.flowers, patchAt: 0.74, tree: TEX.treePlains, treeType: "earth" },
+  { ground: TEX.swampFloor, patch: TEX.grass, patchAt: 0.7, tree: TEX.treeSwamp, treeType: "water" },
+  { ground: TEX.sand, patch: TEX.dirt, patchAt: 0.78, tree: TEX.treeDesert, treeType: "air" },
+  { ground: TEX.snow, patch: TEX.ice, patchAt: 0.7, tree: TEX.treeSnow, treeType: "ice" },
+  { ground: TEX.hellFloor, patch: TEX.stone, patchAt: 0.78, tree: TEX.treeHell, treeType: "fire" },
+];
+
+export type SimWorld = {
+  grid: Uint8Array; // 0 open land, 1 blocked (ocean/tree/mountain), 3 slow (shallows/mud)
   w: number;
   h: number;
   world: WorldData;
-  /** Capture point, in tiles. */
-  point: { tx: number; ty: number };
-  /** Open deploy tiles for each side. */
-  deploy: { tx: number; ty: number }[][];
+  land: Uint8Array; // 1 = walkable land tile
 };
 
-/**
- * One 250×250 battlefield: grass and forest and water, with a walled stronghold at the centre whose
- * courtyard holds the capture point. Attackers deploy in a wide ring at the map's edge; defenders
- * deploy inside and just outside the keep. Gates are carved so the keep is always reachable.
- */
-export function buildSiegeMap(rng: Rng): SiegeMap {
-  const w = 250;
-  const h = 250;
-  const grid = new Uint8Array(w * h);
-  const at = (x: number, y: number) => y * w + x;
-  const inb = (x: number, y: number) => x > 0 && y > 0 && x < w - 1 && y < h - 1;
-
-  // Border wall.
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[at(x, y)] = 1;
-
-  const cx = (w >> 1) + irand(rng, 21) - 10;
-  const cy = (h >> 1) + irand(rng, 21) - 10;
-  const keepR = 26 + irand(rng, 8); // outer keep radius, tiles
-  const courtR = keepR - 6;
-
-  // Forests and rock clusters — cover, kept clear of the keep interior and the capture lane.
-  const clusters = 150 + irand(rng, 70);
-  for (let i = 0; i < clusters; i++) {
-    const gx = 4 + irand(rng, w - 8);
-    const gy = 4 + irand(rng, h - 8);
-    const dk = Math.hypot(gx - cx, gy - cy);
-    if (dk < keepR + 6) continue; // never grow walls over the keep ring
-    const r = 1 + irand(rng, 3);
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      const x = gx + dx;
-      const y = gy + dy;
-      if (!inb(x, y)) continue;
-      if (dx * dx + dy * dy <= r * r && rng() < 0.82) grid[at(x, y)] = 1;
-    }
-  }
-
-  // A winding river of mud (slow terrain), with a couple of fords.
-  const ry = 30 + irand(rng, h - 60);
-  for (let x = 1; x < w - 1; x++) {
-    const wob = Math.round(Math.sin(x * 0.05 + rng() * 0.3) * 10 + Math.sin(x * 0.17) * 4);
-    for (let dy = -3; dy <= 3; dy++) {
-      const y = ry + wob + dy;
-      if (!inb(x, y)) continue;
-      if (Math.hypot(x - cx, y - cy) < keepR + 4) continue;
-      if (grid[at(x, y)] !== 1) grid[at(x, y)] = 3;
-    }
-  }
-
-  // Scattered hazards (spike pits) out in the field.
-  for (let i = 0; i < 90; i++) {
-    const x = 6 + irand(rng, w - 12);
-    const y = 6 + irand(rng, h - 12);
-    if (Math.hypot(x - cx, y - cy) < keepR + 3) continue;
-    if (grid[at(x, y)] === 0) grid[at(x, y)] = 2;
-  }
-
-  // The keep: a ring wall around an open courtyard.
-  for (let y = cy - keepR; y <= cy + keepR; y++) {
-    for (let x = cx - keepR; x <= cx + keepR; x++) {
-      if (!inb(x, y)) continue;
-      const d = Math.hypot(x - cx, y - cy);
-      if (d <= courtR) grid[at(x, y)] = 0; // clear courtyard
-      else if (d <= keepR && d > keepR - 2.2) grid[at(x, y)] = 1; // the wall itself
-      else if (d < keepR - 2.2 && d > courtR) grid[at(x, y)] = 0; // inner bailey, open
-    }
-  }
-  // Gates: carve openings through the wall at a few angles.
-  const gates = 3 + irand(rng, 2);
-  for (let g = 0; g < gates; g++) {
-    const ang = (g / gates) * Math.PI * 2 + rng() * 0.6;
-    for (let r = courtR - 1; r <= keepR + 3; r++) {
-      for (let s = -2; s <= 2; s++) {
-        const px = Math.round(cx + Math.cos(ang) * r - Math.sin(ang) * s);
-        const py = Math.round(cy + Math.sin(ang) * r + Math.cos(ang) * s);
-        if (inb(px, py)) grid[at(px, py)] = 0;
-      }
-    }
-  }
-  // Clear a small plaza right on the point.
-  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (inb(cx + dx, cy + dy)) grid[at(cx + dx, cy + dy)] = 0;
-
-  // Deploy zones. Defenders: a ring just inside the wall + the courtyard. Attackers: the open ground
-  // near the border, spread around the whole map so they converge from every side.
-  const defenders: { tx: number; ty: number }[] = [];
-  for (let y = cy - courtR + 1; y <= cy + courtR - 1; y++) {
-    for (let x = cx - courtR + 1; x <= cx + courtR - 1; x++) {
-      if (inb(x, y) && grid[at(x, y)] === 0) defenders.push({ tx: x, ty: y });
-    }
-  }
-  const attackers: { tx: number; ty: number }[] = [];
-  const band = 18;
-  for (let ring = 0; ring < band; ring++) {
-    const m = 4 + ring;
-    for (let x = m; x < w - m; x += 3) {
-      for (const y of [m, h - 1 - m]) if (inb(x, y) && grid[at(x, y)] === 0) attackers.push({ tx: x, ty: y });
-    }
-    for (let y = m; y < h - m; y += 3) {
-      for (const x of [m, w - 1 - m]) if (inb(x, y) && grid[at(x, y)] === 0) attackers.push({ tx: x, ty: y });
-    }
-  }
-
-  // Guarantee the point is reachable from a sample of attacker spawns; widen a gate if not.
-  const sample = attackers.length ? attackers[Math.floor(attackers.length / 2)]! : { tx: 4, ty: 4 };
-  if (!reachable(grid, w, h, sample.tx, sample.ty, cx, cy)) {
-    for (let r = courtR - 1; r <= keepR + 4; r++) {
-      for (let s = -3; s <= 3; s++) {
-        const px = cx + r;
-        const py = cy + s;
-        if (inb(px, py)) grid[at(px, py)] = 0;
-      }
-    }
-  }
-
-  const tiles = Array.from(grid, (c, i) => {
-    const x = i % w;
-    const y = (i / w) | 0;
-    const nearKeep = Math.hypot(x - cx, y - cy) <= keepR + 1;
-    if (c === 1) return { floor: nearKeep ? 1 : 1, biome: nearKeep ? 4 : 4, block: 1, decor: 0 };
-    if (c === 2) return { floor: 7, biome: 6, block: 0, decor: 0 };
-    if (c === 3) return { floor: 6, biome: 5, block: 0, decor: 0 };
-    return { floor: 0, biome: 2, block: 0, decor: 0 };
-  });
-  const world: WorldData = { w, h, tiles, spawns: [], cache: null };
-
-  return { grid, w, h, world, point: { tx: cx, ty: cy }, deploy: [attackers, defenders] };
+function valueNoise(seed: number) {
+  const r = (x: number, y: number) => {
+    let n = (x * 374761393 + y * 668265263 + seed * 69069) >>> 0;
+    n = (n ^ (n >>> 13)) * 1274126177 >>> 0;
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967295;
+  };
+  return (x: number, y: number, scale: number) => {
+    const gx = x / scale, gy = y / scale;
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const fx = gx - x0, fy = gy - y0;
+    const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    const a = r(x0, y0), b = r(x0 + 1, y0), c = r(x0, y0 + 1), d = r(x0 + 1, y0 + 1);
+    return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+  };
 }
 
-type Squad = { intent: "advance" | "hold"; gx: number; gy: number };
+export function buildSimWorld(rng: Rng, size = 450): SimWorld {
+  const w = size, h = size;
+  const seed = (rng() * 1e9) >>> 0 || 1;
+  const noise = valueNoise(seed);
+  const biomeNoise = valueNoise(seed ^ 0x9e3779b1);
+  const cx = w / 2, cy = h / 2;
+  const maxR = Math.min(w, h) * 0.46;
 
-const POINT_R = TILE * 3.4; // capture radius, pixels
-const CAP_RATE = 8; // attacker control gained per second per net body in the point
-const CAP_RETAKE = 6; // defender control regained per second when they own the point
-const TIME_LIMIT = 180; // seconds before the defenders win by holding
+  // 1) Landmask: a single blob — radial falloff plus low-frequency noise, thresholded.
+  const land = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const d = Math.hypot(x - cx, y - cy) / maxR;        // 0 centre … 1 edge
+      const coast = noise(x, y, 60) * 0.55 + noise(x, y, 22) * 0.25;
+      const v = coast + (1 - d * d) * 0.6;                // high in the middle
+      if (v > 0.62) land[y * w + x] = 1;
+    }
+  }
+  // Keep only the largest connected landmass (kills islands), then smooth edges.
+  keepLargest(land, w, h);
+  for (let pass = 0; pass < 2; pass++) smoothLand(land, w, h);
+  keepLargest(land, w, h);
+
+  // 2) Tiles + collision grid.
+  const grid = new Uint8Array(w * h);
+  const tiles: Tile[] = new Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!land[i]) {
+        // ocean: deep offshore, shallow at the coast.
+        const nearLand = hasLandNeighbor(land, w, h, x, y, 2);
+        tiles[i] = { floor: 2, biome: 5, block: 1, decor: 0, sprite: nearLand ? TEX.water : TEX.deep };
+        grid[i] = 1;
+        continue;
+      }
+      // biome by a big smooth field so each region has a texture.
+      const bn = biomeNoise(x, y, 120);
+      const bi = Math.min(CONTINENT_BIOMES.length - 1, Math.floor(bn * CONTINENT_BIOMES.length));
+      const art = CONTINENT_BIOMES[bi]!;
+      const patch = noise(x, y, 9) > art.patchAt;
+      tiles[i] = { floor: 0, biome: 2, block: 0, decor: 0, sprite: patch ? art.patch : art.ground };
+      grid[i] = 0;
+    }
+  }
+
+  // 3) Forests (blocking trees as 64px layers) and a few mountains, kept off the coast edge.
+  for (let y = 2; y < h - 2; y++) {
+    for (let x = 2; x < w - 2; x++) {
+      const i = y * w + x;
+      if (!land[i] || grid[i] !== 0) continue;
+      const bn = biomeNoise(x, y, 120);
+      const art = CONTINENT_BIOMES[Math.min(CONTINENT_BIOMES.length - 1, Math.floor(bn * CONTINENT_BIOMES.length))]!;
+      const forest = noise(x, y, 7);
+      if (forest > 0.80 && noise(x, y, 2) > 0.45) {
+        tiles[i] = { ...tiles[i]!, layers: [art.tree], block: 1 };
+        grid[i] = 1;
+      }
+    }
+  }
+
+  const world: WorldData = { w, h, tiles, spawns: [], cache: null };
+  return { grid, w, h, world, land };
+}
+
+function keepLargest(land: Uint8Array, w: number, h: number): void {
+  const comp = new Int32Array(w * h).fill(-1);
+  let best = -1, bestSize = 0, id = 0;
+  const q = new Int32Array(w * h);
+  for (let s = 0; s < w * h; s++) {
+    if (!land[s] || comp[s] !== -1) continue;
+    let qi = 0, qn = 0; q[qn++] = s; comp[s] = id; let size = 0;
+    while (qi < qn) {
+      const cur = q[qi++]!; size++;
+      const x = cur % w, y = (cur / w) | 0;
+      if (x > 0) { const k = cur - 1; if (land[k] && comp[k] === -1) { comp[k] = id; q[qn++] = k; } }
+      if (x < w - 1) { const k = cur + 1; if (land[k] && comp[k] === -1) { comp[k] = id; q[qn++] = k; } }
+      if (y > 0) { const k = cur - w; if (land[k] && comp[k] === -1) { comp[k] = id; q[qn++] = k; } }
+      if (y < h - 1) { const k = cur + w; if (land[k] && comp[k] === -1) { comp[k] = id; q[qn++] = k; } }
+    }
+    if (size > bestSize) { bestSize = size; best = id; }
+    id++;
+  }
+  for (let s = 0; s < w * h; s++) land[s] = comp[s] === best ? 1 : 0;
+}
+
+function smoothLand(land: Uint8Array, w: number, h: number): void {
+  const copy = land.slice();
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      let n = 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (copy[(y + dy) * w + (x + dx)]) n++;
+      land[y * w + x] = n >= 5 ? 1 : 0;
+    }
+  }
+  // Never let the very border be land.
+  for (let x = 0; x < w; x++) { land[x] = 0; land[(h - 1) * w + x] = 0; }
+  for (let y = 0; y < h; y++) { land[y * w] = 0; land[y * w + w - 1] = 0; }
+}
+
+function hasLandNeighbor(land: Uint8Array, w: number, h: number, x: number, y: number, r: number): boolean {
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    const nx = x + dx, ny = y + dy;
+    if (nx >= 0 && ny >= 0 && nx < w && ny < h && land[ny * w + nx]) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 
 export class WitchArena {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   phase: ArenaSnap["phase"] = "setup";
-  note = "Build each army, then loose the attack.";
+  note = "Set the factions and objectives, then begin the war.";
   speed = 1;
-  camMode: CamMode = "team";
-  focus = ATTACKER;
+  camMode: CamMode = "free";
+  focus = 0;
 
-  plans: ArmyPlan[] = [
-    { size: 24, classes: ["bloodrager", "nightblade", "pathfinder", "spellweaver", "spiritbinder"] },
-    { size: 20, classes: ["warden", "oathkeeper", "frostblade", "absolver", "vigilant"] },
-  ];
+  factionCount = 5;
+  objectiveCount = 12;
 
   world: WorldData | null = null;
   grid: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  gw = 250;
-  gh = 250;
-  point = { x: 0, y: 0 };
-  deploy: { tx: number; ty: number }[][] = [[], []];
+  land: Uint8Array = new Uint8Array(0);
+  gw = 450;
+  gh = 450;
 
+  factions: Faction[] = [];
+  objectives: Objective[] = [];
   fighters: Fighter[] = [];
-  squads: Squad[] = [];
-  centres: { x: number; y: number; n: number }[] = [];
-  inPoint = [0, 0];
-  control = 0; // attacker share, 0..100
-  winner = "";
-  winSide = -1;
+  events: string[] = [];
   age = 0;
   clock = 0;
+  winner = "";
+  winFaction = -1;
+  commandT = 0;
 
-  camX = 600;
-  camY = 400;
-  zoom = 0.4;
-  wantX = 600;
-  wantY = 400;
-  wantZ = 0.4;
+  camX = 0;
+  camY = 0;
+  zoom = 0.3;
+  wantX = 0;
+  wantY = 0;
+  wantZ = 0.3;
   floats: Flo[] = [];
   beams: Beam[] = [];
   cfx = new CombatFx();
@@ -563,11 +541,17 @@ export class WitchArena {
   private dpr = 1;
   private fitted = false;
   private pubAt = 0;
-  private pathBudget = 12;
+  private pathBudget = 10;
+  private seed = 1;
+  private minZoom = 0.3;
+  private mini: HTMLCanvasElement | null = null;
+  private miniRect: { x: number; y: number; w: number; h: number } | null = null;
+  // route scratch with generation stamps (no O(n) fills)
+  private gen = 1;
+  private seen = new Int32Array(0);
   private dist = new Float32Array(0);
   private prev = new Int32Array(0);
   private heap = new Heap();
-  private seed = 1;
   private listeners = new Set<() => void>();
   private snap: ArenaSnap = this.blankSnap();
 
@@ -580,19 +564,9 @@ export class WitchArena {
 
   private blankSnap(): ArenaSnap {
     return {
-      phase: "setup",
-      note: "",
-      speed: 1,
-      cam: "team",
-      focus: 0,
-      clock: "0:00",
-      timeLeft: "3:00",
-      control: 0,
-      held: "defenders",
-      armies: [],
-      classOptions: classOptions(),
-      winner: "",
-      winSide: -1,
+      phase: "setup", note: "", speed: 1, cam: "free", focus: 0, clock: "0:00",
+      factionCount: 5, objectiveCount: 12, objectiveTotal: 12, factions: [], events: [],
+      battles: 0, winner: "", winFaction: -1,
     };
   }
 
@@ -602,9 +576,7 @@ export class WitchArena {
     return () => this.listeners.delete(fn);
   }
 
-  getSnap(): ArenaSnap {
-    return this.snap;
-  }
+  getSnap(): ArenaSnap { return this.snap; }
 
   start(seed: unknown): void {
     this.running = true;
@@ -612,7 +584,7 @@ export class WitchArena {
     this.resize();
     this.seed = (typeof seed === "number" ? seed : Date.now()) >>> 0 || 1;
     this.regen();
-    this.note = "A walled keep, a point to take. Build both armies, then attack.";
+    this.note = "One continent, many factions. Set the numbers and begin.";
     this.bind();
     this.publish();
     const loop = (t: number) => {
@@ -621,16 +593,16 @@ export class WitchArena {
       this.lastT = t;
       if (!this.fitted && this.viewW > 8) {
         this.resize();
-        if (this.phase !== "fight") this.fitMap();
+        this.fitMap();
         this.fitted = true;
       }
-      if (this.phase === "fight") this.step(dt * this.speed);
+      if (this.phase === "run") this.step(dt * this.speed);
       else this.clock += dt;
       this.driveCam(dt);
       this.draw();
       this.pubAt -= dt;
-      if (this.phase === "fight" && this.pubAt <= 0) {
-        this.pubAt = 0.4;
+      if (this.phase !== "setup" && this.pubAt <= 0) {
+        this.pubAt = 0.5;
         this.publish();
       }
       this.raf = requestAnimationFrame(loop);
@@ -651,161 +623,315 @@ export class WitchArena {
     this.viewH = Math.max(1, r.height);
     this.canvas.width = Math.max(1, Math.floor(this.viewW * this.dpr));
     this.canvas.height = Math.max(1, Math.floor(this.viewH * this.dpr));
+    this.computeMinZoom();
   }
 
-  // --- setup controls -------------------------------------------------------
+  /** Smallest zoom that keeps drawWorldSlice on its fast cached-window path (under its ~4M px cap). */
+  private computeMinZoom(): void {
+    const CAP = 3.9 * 1024 * 1024;
+    let z = 0.12;
+    for (; z < 0.9; z += 0.02) {
+      const wpx = Math.ceil((this.viewW / z + 300) / TILE) * TILE;
+      const hpx = Math.ceil((this.viewH / z + 300) / TILE) * TILE;
+      if (wpx * hpx <= CAP) break;
+    }
+    this.minZoom = Math.min(0.9, Math.max(0.12, z));
+    if (this.zoom < this.minZoom) this.zoom = this.minZoom;
+  }
+
+  // --- setup ----------------------------------------------------------------
 
   private regen(): void {
-    const m = buildSiegeMap(mulberry32(this.seed));
+    const m = buildSimWorld(mulberry32(this.seed), 450);
     this.grid = m.grid;
+    this.land = m.land;
     this.gw = m.w;
     this.gh = m.h;
     this.world = m.world;
-    this.point = { x: m.point.tx * TILE + TILE / 2, y: m.point.ty * TILE + TILE / 2 };
-    this.deploy = m.deploy;
+    this.seen = new Int32Array(m.w * m.h);
     this.dist = new Float32Array(m.w * m.h);
     this.prev = new Int32Array(m.w * m.h);
+    this.gen = 1;
     this.fighters = [];
-    this.squads = [];
+    this.objectives = [];
+    this.factions = [];
+    this.buildMinimap();
     this.fitMap();
   }
 
-  newBattlefield(): void {
+  /** A 1px-per-tile terrain picture of the whole continent, built once, for the HUD minimap overlay. */
+  private buildMinimap(): void {
+    if (typeof document === "undefined" || !this.world) { this.mini = null; return; }
+    const c = document.createElement("canvas");
+    c.width = this.gw; c.height = this.gh;
+    const g = c.getContext("2d");
+    if (!g) { this.mini = null; return; }
+    const img = g.createImageData(this.gw, this.gh);
+    const d = img.data;
+    const put = (i: number, r: number, gg: number, b: number) => { const k = i * 4; d[k] = r; d[k + 1] = gg; d[k + 2] = b; d[k + 3] = 255; };
+    for (let i = 0; i < this.gw * this.gh; i++) {
+      if (!this.land[i]) {
+        const t = this.world.tiles[i];
+        if (t?.sprite === TEX.water) put(i, 36, 92, 132); else put(i, 16, 48, 78);
+      } else if (this.grid[i] === 1) {
+        put(i, 32, 64, 40); // forest/mountain
+      } else {
+        const t = this.world.tiles[i];
+        const sp = t?.sprite;
+        if (sp === TEX.sand) put(i, 150, 134, 92);
+        else if (sp === TEX.snow || sp === TEX.ice) put(i, 170, 184, 198);
+        else if (sp === TEX.hellFloor || sp === TEX.stone) put(i, 110, 78, 70);
+        else if (sp === TEX.swampFloor) put(i, 72, 92, 70);
+        else put(i, 86, 128, 74); // grass
+      }
+    }
+    g.putImageData(img, 0, 0);
+    this.mini = c;
+  }
+
+  newWorld(): void {
     this.seed = (this.seed * 1664525 + 1013904223) >>> 0 || 1;
     this.phase = "setup";
     this.winner = "";
-    this.winSide = -1;
-    this.control = 0;
+    this.winFaction = -1;
+    this.events = [];
     this.regen();
-    this.note = "A fresh battlefield. Same armies, new ground.";
+    this.note = "A fresh continent. Set the factions and begin.";
     this.publish();
   }
 
-  setSize(side: number, n: number): void {
-    const p = this.plans[side];
-    if (!p) return;
-    p.size = Math.max(4, Math.min(60, Math.round(n) || 4));
+  setFactionCount(n: number): void {
+    this.factionCount = Math.max(2, Math.min(FACTION_NAMES.length, Math.round(n) || 2));
     this.publish();
   }
 
-  toggleClass(side: number, id: ClassId): void {
-    const p = this.plans[side];
-    if (!p) return;
-    const i = p.classes.indexOf(id);
-    if (i >= 0) {
-      if (p.classes.length > 1) p.classes.splice(i, 1);
-    } else {
-      p.classes.push(id);
-    }
+  setObjectiveCount(n: number): void {
+    this.objectiveCount = Math.max(this.factionCount, Math.min(REGION_NAMES.length, Math.round(n) || 6));
     this.publish();
   }
 
   setSpeed(n: number): void {
-    this.speed = n >= 4 ? 4 : n >= 2 ? 2 : 1;
+    this.speed = n >= 6 ? 6 : n >= 3 ? 3 : n >= 2 ? 2 : 1;
     this.publish();
   }
 
   setCam(mode: CamMode): void {
     this.camMode = mode;
-    if (mode === "team") this.frame();
+    if (mode === "follow") this.frameFaction(this.focus);
     this.publish();
   }
 
-  cycleTeam(dir: number): void {
-    this.focus = (this.focus + dir + SIDES.length) % SIDES.length;
-    this.camMode = "team";
-    this.frame();
-    this.camX = this.wantX;
-    this.camY = this.wantY;
+  followFaction(id: number): void {
+    this.focus = ((id % this.factions.length) + this.factions.length) % this.factions.length;
+    this.camMode = "follow";
+    this.frameFaction(this.focus);
+    this.camX = this.wantX; this.camY = this.wantY;
+    this.publish();
+  }
+
+  cycleFocus(dir: number): void {
+    if (!this.factions.length) return;
+    this.followFaction(this.focus + dir);
+  }
+
+  /** Jump the camera to the biggest live battle. */
+  jumpBattle(): void {
+    const spot = this.biggestBattle();
+    if (!spot) return;
+    this.camMode = "free";
+    this.camX = this.wantX = spot.x;
+    this.camY = this.wantY = spot.y;
+    this.zoom = this.wantZ = Math.max(this.zoom, 0.8);
     this.publish();
   }
 
   zoomBy(factor: number): void {
-    this.zoom = Math.max(0.12, Math.min(2.4, this.zoom * factor));
-    if (this.phase === "fight" || this.phase === "result") this.camMode = "free";
+    this.zoom = Math.max(this.minZoom, Math.min(2.2, this.zoom * factor));
+    if (this.phase !== "setup") this.camMode = "free";
     this.publish();
   }
 
   // --- launch ---------------------------------------------------------------
 
-  launch(): void {
+  begin(): void {
     if (!this.world) this.regen();
-    const rng = mulberry32((Date.now() ^ ((Math.random() * 1e9) | 0)) >>> 0 || 9);
+    const rng = mulberry32((this.seed ^ 0xabcdef) >>> 0 || 7);
     this.fighters = [];
     this.floats = [];
     this.beams = [];
     this.cfx = new CombatFx();
+    this.events = [];
     this.age = 0;
     this.clock = 0;
-    this.control = 0;
+    this.commandT = 0;
     this.winner = "";
-    this.winSide = -1;
-    this.squads = [];
+    this.winFaction = -1;
 
-    for (const side of SIDES) {
-      const plan = this.plans[side.id]!;
-      const picks = plan.classes.length ? plan.classes : (["warlord"] as ClassId[]);
-      const spots = this.spotsFrom(this.deploy[side.id] ?? [], plan.size, side.id);
-      this.squads.push({ intent: side.id === ATTACKER ? "advance" : "hold", gx: this.point.x, gy: this.point.y });
-      for (let i = 0; i < plan.size; i++) {
-        const classId = picks[i % picks.length]!;
-        const level = side.id === DEFENDER ? 10 + irand(rng, 10) : 9 + irand(rng, 11);
-        const w = witchFromClass(rng, classId, level);
-        const spot = spots[i % spots.length]!;
-        this.spawnWitch(w, side.id, spot.tx, spot.ty, rng);
-        const body = this.fighters[this.fighters.length - 1 - w.spirits.length];
-        if (body) { body.squad = Math.floor(i / 10); body.rank = i % 10; }
-      }
-    }
+    this.buildFactions(rng);
+    this.placeObjectives(rng);
+    this.seedStartingForces(rng);
 
-    this.phase = "fight";
-    this.camMode = "team";
-    this.focus = ATTACKER;
-    this.frame();
-    this.camX = this.wantX;
-    this.camY = this.wantY;
-    this.zoom = this.wantZ;
-    this.note = "The attack is loosed. Take the point or wipe the defenders.";
+    this.phase = "run";
+    this.camMode = "free";
+    this.fitMap();
+    this.note = "The war is on. Watch the continent change hands.";
+    this.log("The war begins across the continent.");
     this.publish();
     this.resize();
   }
 
-  again(): void {
-    this.launch();
-  }
+  again(): void { this.begin(); }
 
   backSetup(): void {
     this.phase = "setup";
     this.fighters = [];
-    this.squads = [];
     this.winner = "";
-    this.winSide = -1;
-    this.control = 0;
+    this.winFaction = -1;
     this.cfx = new CombatFx();
     this.beams = [];
     this.floats = [];
     this.fitMap();
-    this.note = "Change the armies, or loose the attack again.";
+    this.note = "Change the factions or the objectives, then begin again.";
     this.publish();
   }
 
-  /** Spread n soldiers across a list of open deploy tiles. Attackers cluster into arcs; defenders ring the point. */
-  private spotsFrom(list: { tx: number; ty: number }[], n: number, side: number): { tx: number; ty: number }[] {
-    if (!list.length) return [{ tx: Math.floor(this.gw / 2), ty: Math.floor(this.gh / 2) }];
-    const sorted = side === DEFENDER
-      ? [...list].sort((a, b) => Math.hypot(a.tx * TILE - this.point.x, a.ty * TILE - this.point.y) - Math.hypot(b.tx * TILE - this.point.x, b.ty * TILE - this.point.y))
-      : list;
-    const out: { tx: number; ty: number }[] = [];
-    for (let i = 0; i < n; i++) out.push(sorted[Math.min(sorted.length - 1, Math.floor((i * sorted.length) / n))]!);
-    return out;
+  private buildFactions(rng: Rng): void {
+    const pool = [...FIELD_CLASSES];
+    // shuffle
+    for (let i = pool.length - 1; i > 0; i--) { const j = irand(rng, i + 1); const t = pool[i]!; pool[i] = pool[j]!; pool[j] = t; }
+    this.factions = [];
+    for (let f = 0; f < this.factionCount; f++) {
+      const classes: ClassId[] = [];
+      // one guaranteed ghost-caller so every faction fields ghosts
+      classes.push(pick(rng, GHOST_CLASSES));
+      while (classes.length < 5) {
+        const c = pool[(f * 5 + classes.length) % pool.length]!;
+        if (!classes.includes(c)) classes.push(c);
+      }
+      this.factions.push({ id: f, name: FACTION_NAMES[f]!, color: FACTION_COLORS[f]!, classes, alive: true });
+    }
   }
 
-  // --- spawning -------------------------------------------------------------
+  private placeObjectives(rng: Rng): void {
+    // Collect candidate land tiles well inside the coast.
+    const cand: number[] = [];
+    for (let y = 6; y < this.gh - 6; y += 2) {
+      for (let x = 6; x < this.gw - 6; x += 2) {
+        const i = y * this.gw + x;
+        if (this.grid[i] === 0 && this.land[i] && this.openAround(x, y, 3)) cand.push(i);
+      }
+    }
+    const names = [...REGION_NAMES];
+    for (let i = names.length - 1; i > 0; i--) { const j = irand(rng, i + 1); const t = names[i]!; names[i] = names[j]!; names[j] = t; }
+    const objs: Objective[] = [];
+    const minSep = Math.max(18, Math.floor(this.gw / (Math.sqrt(this.objectiveCount) * 2.4)));
+    let guard = 0;
+    while (objs.length < this.objectiveCount && cand.length && guard++ < 20000) {
+      const pickIdx = irand(rng, cand.length);
+      const i = cand[pickIdx]!;
+      const tx = i % this.gw, ty = (i / this.gw) | 0;
+      let ok = true;
+      for (const o of objs) if (Math.hypot(o.tx - tx, o.ty - ty) < minSep) { ok = false; break; }
+      if (!ok) continue;
+      const o: Objective = {
+        id: objs.length, name: names[objs.length % names.length]!,
+        tx, ty, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2,
+        owner: -1, control: 0, contender: -1, stock: 0, nodes: [], neighbors: [],
+      };
+      this.makeNodes(o, rng);
+      objs.push(o);
+    }
+    this.objectives = objs;
+    // neighbor links (nearest 3)
+    for (const o of objs) {
+      o.neighbors = objs.filter((p) => p.id !== o.id).sort((a, b) => dist2(a, o) - dist2(b, o)).slice(0, 3).map((p) => p.id);
+    }
+    // Assign each faction a starting home objective, spread apart.
+    const homes: Objective[] = [];
+    for (let f = 0; f < this.factions.length; f++) {
+      let best: Objective | null = null, bestScore = -1;
+      for (const o of objs) {
+        if (homes.includes(o)) continue;
+        const near = homes.length ? Math.min(...homes.map((hh) => Math.hypot(hh.tx - o.tx, hh.ty - o.ty))) : 1e9;
+        if (near > bestScore) { bestScore = near; best = o; }
+      }
+      if (best) { best.owner = f; best.stock = RECRUIT_COST; homes.push(best); }
+    }
+  }
 
-  private spawnWitch(w: ArenaWitch, side: number, tx: number, ty: number, rng: Rng): void {
+  private makeNodes(o: Objective, rng: Rng): void {
+    const want = 3 + irand(rng, 3);
+    let tries = 0;
+    while (o.nodes.length < want && tries++ < 80) {
+      const ang = rng() * Math.PI * 2;
+      const r = (1.4 + rng() * 2.4) * POINT_R;
+      const x = o.x + Math.cos(ang) * r;
+      const y = o.y + Math.sin(ang) * r;
+      const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE);
+      if (tx < 2 || ty < 2 || tx >= this.gw - 2 || ty >= this.gh - 2) continue;
+      if (this.grid[ty * this.gw + tx] !== 0) continue;
+      o.nodes.push({ x, y, amount: 1, cd: 0 });
+    }
+  }
+
+  private openAround(tx: number, ty: number, r: number): boolean {
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = tx + dx, y = ty + dy;
+      if (x < 0 || y < 0 || x >= this.gw || y >= this.gh) return false;
+      if (this.grid[y * this.gw + x] === 1) return false;
+    }
+    return true;
+  }
+
+  private seedStartingForces(rng: Rng): void {
+    for (const o of this.objectives) {
+      if (o.owner < 0) continue;
+      for (let i = 0; i < 4; i++) this.recruitCombat(o, rng);
+      for (let i = 0; i < 2; i++) this.recruitHarvester(o, rng);
+    }
+  }
+
+  // --- unit creation --------------------------------------------------------
+
+  private recruitCombat(o: Objective, rng: Rng): Fighter | null {
+    if (this.aliveCount() >= UNIT_CAP) return null;
+    const fac = this.factions[o.owner]!;
+    const classId = pick(rng, fac.classes);
+    const level = 8 + irand(rng, 12);
+    const w = witchFromClass(rng, classId, level);
+    const spot = this.openSpotNear(o.tx, o.ty, rng);
+    const body = this.spawnWitch(w, o.owner, "combat", o.id, spot.tx, spot.ty, rng);
+    body.order = "defend"; body.target = o.id;
+    return body;
+  }
+
+  private recruitHarvester(o: Objective, rng: Rng): Fighter | null {
+    if (this.aliveCount() >= UNIT_CAP) return null;
+    const fac = this.factions[o.owner]!;
+    const classId = pick(rng, fac.classes);
+    const w = witchFromClass(rng, classId, 4 + irand(rng, 4), 0);
+    const spot = this.openSpotNear(o.tx, o.ty, rng);
+    const body = this.spawnWitch(w, o.owner, "harvester", o.id, spot.tx, spot.ty, rng);
+    body.order = "harvest"; body.target = o.id;
+    body.speed *= 1.05;
+    return body;
+  }
+
+  private openSpotNear(tx: number, ty: number, rng: Rng): { tx: number; ty: number } {
+    for (let r = 1; r < 10; r++) {
+      for (let k = 0; k < 8; k++) {
+        const a = rng() * Math.PI * 2;
+        const x = Math.round(tx + Math.cos(a) * r), y = Math.round(ty + Math.sin(a) * r);
+        if (x > 1 && y > 1 && x < this.gw - 1 && y < this.gh - 1 && this.grid[y * this.gw + x] === 0) return { tx: x, ty: y };
+      }
+    }
+    return { tx, ty };
+  }
+
+  private spawnWitch(w: ArenaWitch, faction: number, job: "combat" | "harvester", home: number, tx: number, ty: number, rng: Rng): Fighter {
     const gear = [w.weapon, ...w.gear];
     const id = nextUid();
-    const body = this.makeBody(w, side, tx, ty, id, "", w.role, w.mods.dmg);
+    const body = this.makeBody(w, faction, job, home, tx, ty, id, "", w.role, w.mods.dmg);
     body.moveIds = w.moves;
     body.might = ench(gear, "might") + w.mods.might;
     body.ward = ench(gear, "ward") + w.mods.ward;
@@ -815,40 +941,19 @@ export class WitchArena {
     body.double = ench(gear, "double_strike");
     body.second = ench(gear, "second_chance") > 0;
     this.fighters.push(body);
-    if (!w.spirits.length) return;
-    w.spirits.forEach((s, i) => {
-      const spot = this.openNear(tx, ty, i);
-      const spirit = this.makeBody(
-        {
-          name: s.name,
-          race: w.race,
-          type: s.type,
-          level: w.level,
-          maxHp: Math.floor((78 + w.level * 16) * 0.22),
-          speed: Math.floor(68 + w.level * 0.2),
-          moves: [s.move],
-          weapon: w.weapon,
-          gear: w.gear,
-          hair: w.hair,
-          skin: w.skin,
-        },
-        side,
-        spot.tx,
-        spot.ty,
-        nextUid(),
-        id,
-        "spirit",
-        0.34,
-      );
-      spirit.template = s.template;
-      spirit.look = s.look;
-      spirit.race = null;
-      spirit.pieces = [];
-      spirit.weapon = null;
-      spirit.moveIds = [s.move];
-      spirit.walk = rng() * 4;
-      this.fighters.push(spirit);
-    });
+    if (job === "combat") {
+      w.spirits.forEach((s, i) => {
+        const spot = this.openNear(tx, ty, i);
+        const spirit = this.makeBody(
+          { name: s.name, race: w.race, type: s.type, level: w.level, maxHp: Math.floor((78 + w.level * 16) * 0.22), speed: Math.floor(68 + w.level * 0.2), moves: [s.move], weapon: w.weapon, gear: w.gear, hair: w.hair, skin: w.skin },
+          faction, "combat", home, spot.tx, spot.ty, nextUid(), id, "spirit", 0.34,
+        );
+        spirit.template = s.template; spirit.look = s.look; spirit.race = null; spirit.pieces = []; spirit.weapon = null;
+        spirit.moveIds = [s.move]; spirit.walk = rng() * 4;
+        this.fighters.push(spirit);
+      });
+    }
+    return body;
   }
 
   private openNear(tx: number, ty: number, i: number): { tx: number; ty: number } {
@@ -860,89 +965,40 @@ export class WitchArena {
 
   private makeBody(
     w: Pick<ArenaWitch, "name" | "race" | "type" | "level" | "maxHp" | "speed" | "moves" | "weapon" | "gear" | "hair" | "skin">,
-    side: number,
-    tx: number,
-    ty: number,
-    id: string,
-    master: string,
-    role: Fighter["role"],
-    dmgMul: number,
+    faction: number, job: "combat" | "harvester", home: number, tx: number, ty: number, id: string, master: string, role: Fighter["role"], dmgMul: number,
   ): Fighter {
-    const pieces = [w.weapon, ...w.gear].map((g) => ({
-      slot: g.slot,
-      style: g.style,
-      type: g.type,
-      fxSeed: g.fxSeed,
-      gene: geneSeedOf(g),
-      quality: Math.max(0, QUALITY.indexOf(g.quality)),
-    }));
+    const pieces = [w.weapon, ...w.gear].map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, QUALITY.indexOf(g.quality)) }));
     return {
-      id,
-      side,
-      role,
-      name: w.name,
-      race: w.race,
-      type: w.type,
-      level: w.level,
-      x: tx * TILE + TILE / 2,
-      y: ty * TILE + TILE / 2,
-      hp: w.maxHp,
-      max: w.maxHp,
-      speed: w.speed,
-      facing: 1,
-      direction: "down",
-      walk: 0,
-      hurt: 0,
-      cd: 0.25 + Math.random() * 0.45,
-      shield: 0,
-      root: 0,
-      sleep: 0,
-      burn: 0,
-      trap: 0.2,
-      moveIds: w.moves,
-      weapon: w.weapon,
-      pieces,
-      template: 20,
-      look: null,
-      master,
-      alive: true,
-      dmgMul,
-      might: 0,
-      ward: 0,
-      crit: 4,
-      swift: 0,
-      echo: 0,
-      double: 0,
-      second: false,
-      usedSecond: false,
-      think: Math.random() * 0.3,
-      stuck: 0,
-      lastX: tx * TILE,
-      lastY: ty * TILE,
-      path: [],
-      hair: w.hair,
-      skin: w.skin,
-      squad: 0,
-      rank: 0,
+      id, faction, job, role,
+      name: w.name, race: w.race, type: w.type, level: w.level,
+      x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2,
+      hp: w.maxHp, max: w.maxHp, speed: w.speed, facing: 1, direction: "down",
+      walk: 0, hurt: 0, cd: 0.25 + Math.random() * 0.45, shield: 0, root: 0, sleep: 0, burn: 0,
+      moveIds: w.moves, weapon: w.weapon, pieces, template: 20, look: null, master,
+      alive: true, dmgMul, might: 0, ward: 0, crit: 4, swift: 0, echo: 0, double: 0,
+      second: false, usedSecond: false, think: Math.random() * 0.3, stuck: 0,
+      lastX: tx * TILE, lastY: ty * TILE, path: [], hair: w.hair, skin: w.skin,
+      home, order: "muster", target: home, carry: 0, node: null, harvestT: 0,
     };
   }
 
   // --- simulation -----------------------------------------------------------
 
+  private aliveCount(): number {
+    let n = 0;
+    for (const f of this.fighters) if (f.alive && f.role !== "spirit") n++;
+    return n;
+  }
+
   private step(dt: number): void {
     this.age += dt;
     this.clock += dt;
-    this.pathBudget = 14;
-    this.centres = [{ x: 0, y: 0, n: 0 }, { x: 0, y: 0, n: 0 }];
-    this.inPoint = [0, 0];
-    for (const f of this.fighters) {
-      if (!f.alive || f.role === "spirit") continue;
-      const c = this.centres[f.side];
-      if (c) { c.x += f.x; c.y += f.y; c.n += 1; }
-      if (Math.hypot(f.x - this.point.x, f.y - this.point.y) <= POINT_R) this.inPoint[f.side]! += 1;
-    }
-    for (const c of this.centres) if (c.n) { c.x /= c.n; c.y /= c.n; }
+    this.pathBudget = 12;
 
+    // economy: harvesters refill nodes slowly so the map never runs dry
+    for (const o of this.objectives) for (const nd of o.nodes) if (nd.amount < 1) { nd.cd -= dt; if (nd.cd <= 0) { nd.amount = 1; } }
+
+    // per-fighter update
     for (const f of this.fighters) {
       if (!f.alive) continue;
       f.hurt = Math.max(0, f.hurt - dt * 3);
@@ -953,159 +1009,403 @@ export class WitchArena {
       f.sleep = Math.max(0, f.sleep - dt);
       f.burn = Math.max(0, f.burn - dt);
       if (f.burn > 0) this.hurt(f, (3 + f.level * 0.15) * dt, "#e25a32");
-      const tx = Math.floor(f.x / TILE);
-      const ty = Math.floor(f.y / TILE);
+      const tx = Math.floor(f.x / TILE), ty = Math.floor(f.y / TILE);
       const cell = this.grid[ty * this.gw + tx] ?? 1;
-      if (cell === 2) {
-        f.trap -= dt;
-        if (f.trap <= 0) {
-          f.trap = 0.6;
-          this.hurt(f, 5 + f.level * 0.35, "#c4473a");
-          this.float(f.x, f.y - 20, "trap", "#ffb4a8");
-        }
-      }
       if (f.sleep > 0) continue;
       f.think -= dt;
-      if (f.think <= 0) {
-        f.think = 0.3 + Math.random() * 0.18;
-        this.think(f);
-      }
+      if (f.think <= 0) { f.think = 0.34 + Math.random() * 0.2; this.think(f, dt); }
+      if (f.job === "harvester") this.harvestTick(f, dt);
       if (f.root <= 0) this.follow(f, dt, cell === 3);
-      this.strike(f);
+      if (f.job !== "harvester") this.strike(f);
     }
 
-    // Capture progress.
-    const a = this.inPoint[ATTACKER]!;
-    const d = this.inPoint[DEFENDER]!;
-    if (a > 0 && a > d) this.control = Math.min(100, this.control + CAP_RATE * dt * Math.min(3, a - d));
-    else if (d >= a) this.control = Math.max(0, this.control - CAP_RETAKE * dt);
+    this.captureTick(dt);
+
+    // faction command & economy tick
+    this.commandT -= dt;
+    if (this.commandT <= 0) { this.commandT = 1.1; this.command(); }
 
     this.cfx.tick(dt);
     for (const b of this.beams) b.life -= dt;
     this.beams = this.beams.filter((b) => b.life > 0);
     for (const fl of this.floats) fl.life -= dt;
     this.floats = this.floats.filter((fl) => fl.life > 0);
-    if (this.age > 1) this.maybeEnd();
+
+    // prune dead non-spirits occasionally to keep arrays small
+    if (this.fighters.length > 600) this.fighters = this.fighters.filter((f) => f.alive);
+
+    if (this.age > 1.5) this.checkWin();
   }
 
-  private think(f: Fighter): void {
-    const allies = this.fighters.filter((o) => o.alive && o.side === f.side);
-    const foesAll = this.fighters.filter((o) => o.alive && o.side !== f.side);
-    const foes = foesAll.filter((o) => o.role !== "spirit");
-    const pool = foes.length ? foes : foesAll;
+  private obj(id: number): Objective | null { return this.objectives[id] ?? null; }
 
+  // ----- AI -----------------------------------------------------------------
+
+  private think(f: Fighter, _dt: number): void {
     if (f.role === "spirit") {
-      const master = allies.find((a) => a.id === f.master);
-      if (master) {
-        const ang = Math.atan2(f.y - master.y, f.x - master.x) || 0;
-        this.seek(f, master.x + Math.cos(ang) * 26, master.y + Math.sin(ang) * 20);
-      }
+      const master = this.fighters.find((a) => a.id === f.master && a.alive);
+      if (master) { const ang = Math.atan2(f.y - master.y, f.x - master.x) || 0; this.seek(f, master.x + Math.cos(ang) * 26, master.y + Math.sin(ang) * 20); }
       return;
     }
-    if (!pool.length) {
-      this.seek(f, this.point.x, this.point.y);
-      return;
-    }
-
-    const near = nearest(pool, f.x, f.y);
-    const nd = Math.hypot(near.x - f.x, near.y - f.y);
-    const dPoint = Math.hypot(f.x - this.point.x, f.y - this.point.y);
-
-    if (f.side === ATTACKER) {
-      // Smart assault: brush aside whoever is in reach, otherwise press the point.
-      if (nd < 240) return this.engage(f, pool, allies);
-      if (dPoint > POINT_R * 0.7) {
-        const slot = this.ringSlot(f, POINT_R * 0.6);
-        this.seek(f, slot.x, slot.y);
-        return;
-      }
-      this.engage(f, pool, allies);
-      return;
-    }
-
-    // Defender: hold the point. Engage attackers that come to the walls; collapse onto the point if
-    // it is being contested; otherwise fall back to a defensive ring and wait.
-    const leash = POINT_R * 3.2;
-    const contested = this.inPoint[ATTACKER]! > 0;
-    const nearFromPoint = Math.hypot(near.x - this.point.x, near.y - this.point.y);
-    if (contested) {
-      // Someone is on the point — converge and fight the nearest intruder.
-      if (nd < 260) return this.engage(f, pool, allies);
-      this.seek(f, this.point.x, this.point.y);
-      return;
-    }
-    if (nd < 220 && nearFromPoint < leash) return this.engage(f, pool, allies);
-    const ring = POINT_R * 1.7;
-    if (dPoint > ring) {
-      const slot = this.ringSlot(f, ring);
-      this.seek(f, slot.x, slot.y);
-      return;
-    }
-    // Idle on the ring, facing out.
-    if (nd < 240) this.engage(f, pool, allies);
+    if (f.job === "harvester") { this.thinkHarvester(f); return; }
+    this.thinkCombat(f);
   }
 
-  /** A standing position spread around the point, keyed to the fighter so a line forms rather than a pile. */
-  private ringSlot(f: Fighter, radius: number): { x: number; y: number } {
-    const seed = (f.squad * 7 + f.rank) || (f.x + f.y);
-    const ang = (seed * 0.61803) * Math.PI * 2 + (f.side === ATTACKER ? Math.atan2(f.y - this.point.y, f.x - this.point.x) : 0);
-    return { x: this.point.x + Math.cos(ang) * radius, y: this.point.y + Math.sin(ang) * radius };
+  private thinkHarvester(f: Fighter): void {
+    // Flee if an enemy combatant is close.
+    const threat = this.nearestEnemyCombat(f, 200);
+    if (threat) {
+      const home = this.obj(f.home) ?? this.ownedNearest(f.faction, f.x, f.y);
+      const to = home ?? { x: f.x, y: f.y };
+      this.seek(f, to.x, to.y);
+      f.node = null;
+      return;
+    }
+    if (f.carry >= HARVEST_PER_TRIP) {
+      // return to home objective
+      const home = this.obj(f.home)?.owner === f.faction ? this.obj(f.home) : this.ownedNearest(f.faction, f.x, f.y);
+      if (!home) return;
+      f.target = home.id;
+      if (Math.hypot(f.x - home.x, f.y - home.y) <= POINT_R * 0.8) {
+        home.stock += f.carry; f.carry = 0; f.node = null;
+      } else this.seek(f, home.x, home.y);
+      return;
+    }
+    // find a node near any owned objective
+    if (!f.node || f.node.amount <= 0) f.node = this.pickNode(f);
+    if (f.node) {
+      if (Math.hypot(f.x - f.node.x, f.y - f.node.y) > 24) this.seek(f, f.node.x, f.node.y);
+      else f.path = [];
+    } else {
+      const home = this.obj(f.home);
+      if (home) this.seek(f, home.x, home.y);
+    }
   }
 
-  /** Approach-and-hold against the best nearby target, spreading fire so no one is mobbed alone. */
-  private engage(f: Fighter, foes: Fighter[], allies: Fighter[]): void {
-    const near = nearest(foes, f.x, f.y);
-    const nd = Math.hypot(near.x - f.x, near.y - f.y);
-    let best = near;
-    let bestS = 1e9;
-    for (const o of foes) {
-      const d = Math.hypot(o.x - f.x, o.y - f.y);
-      if (d > nd + 160) continue;
-      const crowd = allies.filter((al) => al.path.length && Math.hypot(al.x - o.x, al.y - o.y) < 70).length;
-      const s = d + crowd * 45 + (o.hp / o.max) * 60;
-      if (s < bestS) { bestS = s; best = o; }
+  private harvestTick(f: Fighter, dt: number): void {
+    if (!f.node || f.carry >= HARVEST_PER_TRIP) return;
+    if (Math.hypot(f.x - f.node.x, f.y - f.node.y) > 26) return;
+    f.harvestT += dt;
+    if (f.harvestT >= HARVEST_SECONDS) {
+      f.harvestT = 0;
+      f.carry += 4;
+      f.node.amount = 0; f.node.cd = 6 + Math.random() * 6;
+      this.float(f.x, f.y - 26, "+mat", "#d8c48a");
+      f.node = null;
     }
-    const move = this.bestMove(f, best, false);
+  }
+
+  private pickNode(f: Fighter): ResNode | null {
+    let best: ResNode | null = null, bd = 1e9;
+    for (const o of this.objectives) {
+      if (o.owner !== f.faction && o.owner !== -1) continue; // harvest own or neutral land
+      for (const nd of o.nodes) {
+        if (nd.amount <= 0) continue;
+        const d = Math.hypot(nd.x - f.x, nd.y - f.y);
+        if (d < bd) { bd = d; best = nd; }
+      }
+    }
+    return best;
+  }
+
+  private thinkCombat(f: Fighter): void {
+    const foe = this.nearestEnemy(f, 300);
+    if (foe) { this.engage(f, foe); return; }
+    // No one near: move toward the order's objective.
+    const o = this.obj(f.target) ?? this.obj(f.home);
+    if (!o) return;
+    const d = Math.hypot(f.x - o.x, f.y - o.y);
+    if (f.order === "attack") {
+      if (d > POINT_R * 0.7) { this.seek(f, o.x, o.y); return; }
+      // on the point: hold / push
+      const near = this.nearestEnemy(f, 420);
+      if (near) this.engage(f, near); else { const s = this.ringSlot(f, o, POINT_R * 0.5); this.seek(f, s.x, s.y); }
+      return;
+    }
+    // defend: ring the home objective
+    const ring = POINT_R * 1.3;
+    if (d > ring) this.seek(f, o.x, o.y);
+    else { const s = this.ringSlot(f, o, ring * 0.8); if (Math.hypot(f.x - s.x, f.y - s.y) > 20) this.seek(f, s.x, s.y); else f.path = []; }
+  }
+
+  private ringSlot(f: Fighter, o: Objective, radius: number): { x: number; y: number } {
+    const seed = (f.x * 0.013 + f.y * 0.017);
+    const ang = (seed % (Math.PI * 2)) + (f.id.length % 7);
+    return { x: o.x + Math.cos(ang) * radius, y: o.y + Math.sin(ang) * radius };
+  }
+
+  private engage(f: Fighter, foe: Fighter): void {
+    const move = this.bestMove(f, foe, false);
     const reach = attackRange(move);
     const form = attackForm(move);
-    const d = Math.hypot(best.x - f.x, best.y - f.y);
-    if (form !== "melee" && d <= reach * 0.85 && d > reach * 0.35 && this.sees(f.x, f.y, best.x, best.y)) {
-      f.path = [];
-      return;
-    }
-    const ang = Math.atan2(f.y - best.y, f.x - best.x);
+    const d = Math.hypot(foe.x - f.x, foe.y - f.y);
+    if (form !== "melee" && d <= reach * 0.85 && d > reach * 0.35 && this.sees(f.x, f.y, foe.x, foe.y)) { f.path = []; return; }
+    const ang = Math.atan2(f.y - foe.y, f.x - foe.x);
     const hold = form === "melee" ? 24 : Math.min(reach * 0.7, 120);
-    this.seek(f, best.x + Math.cos(ang) * hold, best.y + Math.sin(ang) * hold);
+    this.seek(f, foe.x + Math.cos(ang) * hold, foe.y + Math.sin(ang) * hold);
   }
+
+  private nearestEnemy(f: Fighter, range: number): Fighter | null {
+    let best: Fighter | null = null, bd = range;
+    for (const o of this.fighters) {
+      if (!o.alive || o.faction === f.faction) continue;
+      const d = Math.hypot(o.x - f.x, o.y - f.y);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  }
+
+  private nearestEnemyCombat(f: Fighter, range: number): Fighter | null {
+    let best: Fighter | null = null, bd = range;
+    for (const o of this.fighters) {
+      if (!o.alive || o.faction === f.faction || o.role === "spirit" || o.job !== "combat") continue;
+      const d = Math.hypot(o.x - f.x, o.y - f.y);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  }
+
+  private ownedNearest(faction: number, x: number, y: number): Objective | null {
+    let best: Objective | null = null, bd = 1e9;
+    for (const o of this.objectives) {
+      if (o.owner !== faction) continue;
+      const d = Math.hypot(o.x - x, o.y - y);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  }
+
+  /** Faction command: recruit from stockpiles, garrison home objectives, and send war parties. */
+  private command(): void {
+    // 1) recruitment from objective stockpiles
+    const rng = Math.random;
+    for (const o of this.objectives) {
+      if (o.owner < 0) continue;
+      while (o.stock >= RECRUIT_COST && this.aliveCount() < UNIT_CAP) {
+        o.stock -= RECRUIT_COST;
+        // mostly combat; occasionally a harvester to grow the economy
+        if (Math.random() < 0.28 && this.factionHarvesters(o.owner) < this.factionObjectives(o.owner) * 3) this.recruitHarvester(o, rng);
+        else this.recruitCombat(o, rng);
+        this.log(`${this.factions[o.owner]!.name} musters a witch at ${o.name}.`);
+      }
+    }
+    // 2) per faction: assign idle combat units to defend or attack
+    for (const fac of this.factions) {
+      if (!fac.alive) continue;
+      const mine = this.objectives.filter((o) => o.owner === fac.id);
+      if (!mine.length) { fac.alive = false; continue; }
+      const combat = this.fighters.filter((f) => f.alive && f.faction === fac.id && f.job === "combat" && f.role !== "spirit");
+      // ensure each owned objective keeps a small garrison
+      const garrisonNeed = 2;
+      for (const o of mine) {
+        const here = combat.filter((f) => f.target === o.id && f.order === "defend").length;
+        if (here < garrisonNeed) {
+          const free = combat.filter((f) => f.order === "defend" && f.target !== o.id && this.obj(f.target)?.owner === fac.id);
+          const grab = free.sort((a, b) => dist2b(a, o) - dist2b(b, o)).slice(0, garrisonNeed - here);
+          for (const g of grab) { g.order = "defend"; g.target = o.id; }
+        }
+      }
+      // surplus → attack a nearby enemy/neutral objective
+      const surplus = combat.filter((f) => f.order === "defend").length - mine.length * garrisonNeed;
+      if (surplus >= 2) {
+        // pick a source objective with spare defenders and a target next to it
+        for (const src of mine) {
+          const spare = combat.filter((f) => f.order === "defend" && f.target === src.id);
+          if (spare.length <= garrisonNeed) continue;
+          const targetId = src.neighbors.find((nid) => this.obj(nid)?.owner !== fac.id);
+          const target = targetId != null ? this.obj(targetId) : this.weakestEnemyObjective(fac.id);
+          if (!target) continue;
+          const party = spare.slice(garrisonNeed, garrisonNeed + PARTY_MAX);
+          for (const u of party) { u.order = "attack"; u.target = target.id; }
+          if (party.length) this.log(`${fac.name} marches ${party.length} on ${target.name}.`);
+          break;
+        }
+      }
+    }
+  }
+
+  private weakestEnemyObjective(faction: number): Objective | null {
+    let best: Objective | null = null, bestScore = 1e9;
+    for (const o of this.objectives) {
+      if (o.owner === faction) continue;
+      const def = this.fighters.filter((f) => f.alive && f.job === "combat" && f.role !== "spirit" && f.faction === o.owner && Math.hypot(f.x - o.x, f.y - o.y) < POINT_R * 1.6).length;
+      if (def < bestScore) { bestScore = def; best = o; }
+    }
+    return best;
+  }
+
+  private factionObjectives(id: number): number { return this.objectives.filter((o) => o.owner === id).length; }
+  private factionHarvesters(id: number): number { return this.fighters.filter((f) => f.alive && f.faction === id && f.job === "harvester").length; }
+
+  // ----- capture ------------------------------------------------------------
+
+  private captureTick(dt: number): void {
+    for (const o of this.objectives) {
+      // tally combat presence per faction inside the ring
+      const counts = new Map<number, number>();
+      for (const f of this.fighters) {
+        if (!f.alive || f.job !== "combat" || f.role === "spirit") continue;
+        if (Math.hypot(f.x - o.x, f.y - o.y) > POINT_R) continue;
+        counts.set(f.faction, (counts.get(f.faction) ?? 0) + 1);
+      }
+      const ownerN = o.owner >= 0 ? (counts.get(o.owner) ?? 0) : 0;
+      // strongest non-owner present
+      let topFac = -1, topN = 0;
+      for (const [fac, n] of counts) { if (fac === o.owner) continue; if (n > topN) { topN = n; topFac = fac; } }
+
+      if (topFac >= 0 && topN > ownerN) {
+        if (o.contender !== topFac) { o.contender = topFac; } // a new challenger resets the push slowly
+        o.control = Math.min(100, o.control + CAP_RATE * dt * Math.min(3, topN - ownerN));
+        if (o.control >= 100) this.flip(o, topFac);
+      } else {
+        // owner (or nobody) holds — bleed control back down
+        o.control = Math.max(0, o.control - CAP_RETAKE * dt);
+        if (o.control <= 0) o.contender = -1;
+      }
+    }
+  }
+
+  private flip(o: Objective, faction: number): void {
+    const from = o.owner;
+    o.owner = faction;
+    o.control = 0;
+    o.contender = -1;
+    o.stock = Math.floor(o.stock * 0.5); // spoils lost in the sack
+    // units garrisoning here for the new owner stay; enemies retreat toward their nearest home
+    for (const f of this.fighters) {
+      if (!f.alive || f.role === "spirit") continue;
+      if (f.target === o.id && f.faction === faction) { f.order = "defend"; }
+    }
+    const fromName = from >= 0 ? this.factions[from]!.name : "the wild";
+    this.log(`${this.factions[faction]!.name} takes ${o.name} from ${fromName}.`);
+    this.float(o.x, o.y - 40, o.name.toUpperCase(), this.factions[faction]!.color);
+  }
+
+  private checkWin(): void {
+    const owners = new Set<number>();
+    for (const o of this.objectives) if (o.owner >= 0) owners.add(o.owner);
+    for (const fac of this.factions) fac.alive = owners.has(fac.id);
+    if (owners.size === 1) {
+      const id = [...owners][0]!;
+      this.winFaction = id;
+      this.winner = `${this.factions[id]!.name} controls the whole continent.`;
+      this.phase = "result";
+      this.note = this.winner;
+      this.log(this.winner);
+      this.publish();
+    } else if (owners.size === 0) {
+      this.winFaction = -1;
+      this.winner = "The continent lies empty. No faction remains.";
+      this.phase = "result";
+      this.note = this.winner;
+      this.publish();
+    }
+  }
+
+  // ----- movement & pathfinding (generation-stamped A*) ---------------------
 
   private seek(f: Fighter, x: number, y: number): void {
     const moved = Math.hypot(f.x - f.lastX, f.y - f.lastY);
-    if (moved < 4) f.stuck += 0.4;
-    else f.stuck = 0;
-    f.lastX = f.x;
-    f.lastY = f.y;
-    if (f.stuck > 1.15) {
-      f.stuck = 0;
-      const ang = Math.random() * Math.PI * 2;
-      x = f.x + Math.cos(ang) * 90;
-      y = f.y + Math.sin(ang) * 90;
-      f.path = [];
-    }
+    if (moved < 4) f.stuck += 0.4; else f.stuck = 0;
+    f.lastX = f.x; f.lastY = f.y;
+    if (f.stuck > 1.3) { f.stuck = 0; const ang = Math.random() * Math.PI * 2; x = f.x + Math.cos(ang) * 110; y = f.y + Math.sin(ang) * 110; f.path = []; }
     const d = Math.hypot(x - f.x, y - f.y);
-    if (d < 16) {
-      f.path = [];
-      return;
-    }
-    if (d < 560 && this.sees(f.x, f.y, x, y)) {
-      f.path = [{ x, y }];
-      return;
-    }
-    this.pathTo(f, x, y, f.hp / f.max > 0.35);
+    if (d < 16) { f.path = []; return; }
+    if (d < 620 && this.sees(f.x, f.y, x, y)) { f.path = [{ x, y }]; return; }
+    this.pathTo(f, x, y);
   }
 
-  private sees(x0: number, y0: number, x1: number, y1: number): boolean {
-    return los(this.grid, this.gw, this.gh, x0, y0, x1, y1);
+  private sees(x0: number, y0: number, x1: number, y1: number): boolean { return los(this.grid, this.gw, this.gh, x0, y0, x1, y1); }
+
+  private pathTo(f: Fighter, x: number, y: number): void {
+    const sx = Math.floor(f.x / TILE), sy = Math.floor(f.y / TILE);
+    const gx = Math.floor(x / TILE), gy = Math.floor(y / TILE);
+    if (sx === gx && sy === gy) { f.path = [{ x, y }]; return; }
+    if (this.pathBudget <= 0) { f.path = [{ x, y }]; return; }
+    this.pathBudget -= 1;
+    f.path = this.route(sx, sy, gx, gy);
   }
+
+  private route(sx: number, sy: number, gxIn: number, gyIn: number): { x: number; y: number }[] {
+    const w = this.gw, h = this.gh, grid = this.grid;
+    sx = Math.max(1, Math.min(w - 2, sx)); sy = Math.max(1, Math.min(h - 2, sy));
+    let gx = Math.max(1, Math.min(w - 2, gxIn)), gy = Math.max(1, Math.min(h - 2, gyIn));
+    if (grid[gy * w + gx] === 1) {
+      let found = false;
+      for (let r = 1; r <= 5 && !found; r++) for (let dy = -r; dy <= r && !found; dy++) for (let dx = -r; dx <= r; dx++) {
+        const nx = gx + dx, ny = gy + dy;
+        if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+        if (grid[ny * w + nx] !== 1) { gx = nx; gy = ny; found = true; break; }
+      }
+    }
+    const start = sy * w + sx, goal = gy * w + gx;
+    const gen = ++this.gen;
+    const seen = this.seen, dist = this.dist, prev = this.prev;
+    seen[start] = gen; dist[start] = 0; prev[start] = -1;
+    this.heap.clear(); this.heap.push(start, 0);
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    const hcost = (i: number) => Math.abs((i % w) - gx) + Math.abs(((i / w) | 0) - gy);
+    let best = start, bestH = hcost(start), guard = 0;
+    const budget = 12000;
+    while (guard++ < budget) {
+      const cur = this.heap.pop();
+      if (!cur) break;
+      if (seen[cur.i] === gen && cur.c > dist[cur.i]! + 0.01) continue;
+      const hc = hcost(cur.i);
+      if (hc < bestH) { bestH = hc; best = cur.i; }
+      if (cur.i === goal) break;
+      const x = cur.i % w, y = (cur.i / w) | 0;
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const k = ny * w + nx;
+        if (grid[k] === 1) continue;
+        const stepC = grid[k] === 3 ? 2.4 : 1;
+        const nd = (seen[cur.i] === gen ? dist[cur.i]! : 0) + stepC;
+        if (seen[k] !== gen || nd + 0.01 < dist[k]!) { seen[k] = gen; dist[k] = nd; prev[k] = cur.i; this.heap.push(k, nd); }
+      }
+    }
+    const end = (seen[goal] === gen) ? goal : best;
+    if (end === start) return [{ x: gx * TILE + TILE / 2, y: gy * TILE + TILE / 2 }];
+    const raw: { x: number; y: number }[] = [];
+    let c = end, safety = 0;
+    while (c !== -1 && safety++ < 2000) { raw.push({ x: (c % w) * TILE + TILE / 2, y: ((c / w) | 0) * TILE + TILE / 2 }); if (c === start) break; c = seen[c] === gen ? prev[c]! : -1; }
+    raw.reverse();
+    if (raw.length <= 2) return raw;
+    const open = (x: number, y: number) => { const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE); if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false; return grid[ty * w + tx] !== 1; };
+    const seesLocal = (a: { x: number; y: number }, b: { x: number; y: number }) => { const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 14)); for (let s = 1; s < steps; s++) { const t = s / steps; if (!open(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return false; } return true; };
+    const slim: { x: number; y: number }[] = [];
+    let i = 0;
+    while (i < raw.length - 1) { let j = Math.min(raw.length - 1, i + 16); while (j > i + 1 && !seesLocal(raw[i]!, raw[j]!)) j--; slim.push(raw[j]!); i = j; }
+    return slim;
+  }
+
+  private follow(f: Fighter, dt: number, mud: boolean): void {
+    let tx = f.x, ty = f.y;
+    const step = f.path[0];
+    if (step) { tx = step.x; ty = step.y; if (Math.hypot(step.x - f.x, step.y - f.y) < 10) f.path.shift(); }
+    let dx = tx - f.x, dy = ty - f.y;
+    if (Math.hypot(dx, dy) < 2) return;
+    for (const o of this.fighters) {
+      if (o === f || !o.alive || o.faction !== f.faction) continue;
+      const d = Math.hypot(f.x - o.x, f.y - o.y);
+      if (d < 16 && d > 0.2) { dx += ((f.x - o.x) / d) * 7; dy += ((f.y - o.y) / d) * 7; }
+    }
+    const mag = Math.hypot(dx, dy) || 1;
+    const speed = f.speed * (mud ? 0.55 : 1) * (f.role === "spirit" ? 1.05 : 1);
+    this.slide(f, (dx / mag) * speed * dt, (dy / mag) * speed * dt);
+  }
+
+  private slide(f: Fighter, dx: number, dy: number): void {
+    const blocked = (x: number, y: number) => { const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE); if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return true; return this.grid[ty * this.gw + tx] === 1; };
+    const x = f.x, y = f.y;
+    if (!blocked(f.x + dx, f.y)) f.x += dx;
+    if (!blocked(f.x, f.y + dy)) f.y += dy;
+    f.direction = directionFromDelta(f.x - x, f.y - y, f.direction);
+    if (f.x !== x) f.facing = f.x < x ? -1 : 1;
+  }
+
+  // ----- combat -------------------------------------------------------------
 
   private bestMove(f: Fighter, target: Fighter | null, commit: boolean): Move {
     const list = f.moveIds.map((id) => MOVE_BY_ID[id]).filter((m): m is Move => !!m);
@@ -1114,251 +1414,42 @@ export class WitchArena {
     const hurt = f.hp / f.max < 0.48;
     if (hurt) {
       const mend = bag.find((m) => m.effect === "mend" || moveTactic(m) === "heal");
-      if (mend) {
-        const ally = this.lowestFriend(f);
-        if (ally && ally.hp / ally.max < 0.62) return mend;
-      }
+      if (mend) { const ally = this.lowestFriend(f); if (ally && ally.hp / ally.max < 0.62) return mend; }
       const ward = bag.find((m) => m.effect === "shell" || moveTactic(m) === "ward");
       if (ward && f.shield <= 0) return ward;
     }
-    if (f.role === "summoner") {
-      const spirits = this.fighters.filter((a) => a.alive && a.master === f.id);
-      const bruised = spirits.find((s) => s.hp / s.max < 0.55);
-      const mend = bag.find((m) => m.effect === "mend" || moveTactic(m) === "heal");
-      if (bruised && mend) return mend;
-    }
     const d = target ? Math.hypot(target.x - f.x, target.y - f.y) : 999;
     const inReach = bag.filter((m) => attackRange(m) + 10 >= d);
-    const use = (inReach.length ? inReach : bag).slice().sort((a, b) => b.power - a.power);
-    return use[0]!;
+    return (inReach.length ? inReach : bag).slice().sort((a, b) => b.power - a.power)[0]!;
   }
 
   private lowestFriend(f: Fighter): Fighter | null {
-    const allies = this.fighters.filter((a) => a.alive && a.side === f.side);
-    if (!allies.length) return f;
-    return allies.reduce((a, b) => (a.hp / a.max < b.hp / b.max ? a : b));
-  }
-
-  private pathTo(f: Fighter, x: number, y: number, fear: boolean): void {
-    const sx = Math.floor(f.x / TILE);
-    const sy = Math.floor(f.y / TILE);
-    const gx = Math.floor(x / TILE);
-    const gy = Math.floor(y / TILE);
-    if (sx === gx && sy === gy) {
-      f.path = [{ x, y }];
-      return;
-    }
-    if (this.pathBudget <= 0) {
-      f.path = [{ x, y }];
-      return;
-    }
-    this.pathBudget -= 1;
-    f.path = this.route(sx, sy, gx, gy, fear);
-  }
-
-  /** A* / greedy best-first on the tile grid, reusing per-instance scratch buffers. */
-  private route(sx: number, sy: number, gxIn: number, gyIn: number, fear: boolean): { x: number; y: number }[] {
-    const w = this.gw;
-    const h = this.gh;
-    const grid = this.grid;
-    sx = Math.max(1, Math.min(w - 2, sx));
-    sy = Math.max(1, Math.min(h - 2, sy));
-    let gx = Math.max(1, Math.min(w - 2, gxIn));
-    let gy = Math.max(1, Math.min(h - 2, gyIn));
-    if (grid[gy * w + gx] === 1) {
-      let found = false;
-      for (let r = 1; r <= 4 && !found; r++) {
-        for (let dy = -r; dy <= r && !found; dy++) {
-          for (let dx = -r; dx <= r; dx++) {
-            const nx = gx + dx;
-            const ny = gy + dy;
-            if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
-            if (grid[ny * w + nx] !== 1) { gx = nx; gy = ny; found = true; break; }
-          }
-        }
-      }
-    }
-    const start = sy * w + sx;
-    const goal = gy * w + gx;
-    const dist = this.dist;
-    const prev = this.prev;
-    dist.fill(1e9);
-    prev.fill(-1);
-    dist[start] = 0;
-    this.heap.clear();
-    this.heap.push(start, 0);
-    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
-    const hcost = (i: number) => Math.abs((i % w) - gx) + Math.abs(((i / w) | 0) - gy);
-    let best = start;
-    let bestH = hcost(start);
-    let guard = 0;
-    const budget = Math.min(w * h, 9000);
-    while (guard++ < budget) {
-      const cur = this.heap.pop();
-      if (!cur) break;
-      if (cur.c > dist[cur.i]! + 0.01) continue;
-      const hc = hcost(cur.i);
-      if (hc < bestH) { bestH = hc; best = cur.i; }
-      if (cur.i === goal) break;
-      const x = cur.i % w;
-      const y = (cur.i / w) | 0;
-      for (const [dx, dy] of dirs) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-        const k = ny * w + nx;
-        if (grid[k] === 1) continue;
-        const stepC = grid[k] === 2 ? (fear ? 7 : 2.2) : grid[k] === 3 ? 2.4 : 1;
-        const next = dist[cur.i]! + stepC;
-        if (next + 0.01 < dist[k]!) {
-          dist[k] = next;
-          prev[k] = cur.i;
-          this.heap.push(k, next);
-        }
-      }
-    }
-    const end = prev[goal] !== -1 || goal === start ? goal : best;
-    if (end === start) return [{ x: gx * TILE + TILE / 2, y: gy * TILE + TILE / 2 }];
-    const raw: { x: number; y: number }[] = [];
-    let c = end;
-    let safety = 0;
-    while (c !== -1 && safety++ < 1200) {
-      raw.push({ x: (c % w) * TILE + TILE / 2, y: ((c / w) | 0) * TILE + TILE / 2 });
-      if (c === start) break;
-      c = prev[c] ?? -1;
-    }
-    raw.reverse();
-    if (raw.length <= 2) return raw;
-    const open = (x: number, y: number) => {
-      const tx = Math.floor(x / TILE);
-      const ty = Math.floor(y / TILE);
-      if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
-      return grid[ty * w + tx] !== 1;
-    };
-    const seesLocal = (a: { x: number; y: number }, b: { x: number; y: number }) => {
-      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 12));
-      for (let s = 1; s < steps; s++) {
-        const t = s / steps;
-        if (!open(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return false;
-      }
-      return true;
-    };
-    const slim: { x: number; y: number }[] = [];
-    let i = 0;
-    while (i < raw.length - 1) {
-      let j = Math.min(raw.length - 1, i + 14);
-      while (j > i + 1 && !seesLocal(raw[i]!, raw[j]!)) j--;
-      slim.push(raw[j]!);
-      i = j;
-    }
-    return slim;
-  }
-
-  private follow(f: Fighter, dt: number, mud: boolean): void {
-    let tx = f.x;
-    let ty = f.y;
-    const step = f.path[0];
-    if (step) {
-      tx = step.x;
-      ty = step.y;
-      if (Math.hypot(step.x - f.x, step.y - f.y) < 10) f.path.shift();
-    }
-    let dx = tx - f.x;
-    let dy = ty - f.y;
-    const l = Math.hypot(dx, dy);
-    if (l < 2) return;
-    for (const o of this.fighters) {
-      if (o === f || !o.alive || o.side !== f.side) continue;
-      const d = Math.hypot(f.x - o.x, f.y - o.y);
-      if (d < 18 && d > 0.2) {
-        dx += ((f.x - o.x) / d) * 8;
-        dy += ((f.y - o.y) / d) * 8;
-      }
-    }
-    const mag = Math.hypot(dx, dy) || 1;
-    const speed = f.speed * (mud ? 0.55 : 1) * (f.role === "spirit" ? 1.05 : 1);
-    this.slide(f, (dx / mag) * speed * dt, (dy / mag) * speed * dt);
-  }
-
-  private slide(f: Fighter, dx: number, dy: number): void {
-    const blocked = (x: number, y: number) => {
-      const tx = Math.floor(x / TILE);
-      const ty = Math.floor(y / TILE);
-      if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return true;
-      return this.grid[ty * this.gw + tx] === 1;
-    };
-    const x = f.x;
-    const y = f.y;
-    if (!blocked(f.x + dx, f.y)) f.x += dx;
-    if (!blocked(f.x, f.y + dy)) f.y += dy;
-    f.direction = directionFromDelta(f.x - x, f.y - y, f.direction);
-    if (f.x !== x) f.facing = f.x < x ? -1 : 1;
-  }
-
-  private pickTarget(f: Fighter, foes: Fighter[]): Fighter {
-    let best = foes[0]!;
-    let score = 1e9;
-    for (const o of foes) {
-      const d = Math.hypot(o.x - f.x, o.y - f.y);
-      const low = o.hp / o.max < 0.34 ? 0.62 : 1;
-      const s = d * low;
-      if (s < score) { score = s; best = o; }
-    }
-    return best;
+    let best: Fighter | null = null, bv = 2;
+    for (const a of this.fighters) { if (!a.alive || a.faction !== f.faction) continue; const v = a.hp / a.max; if (v < bv) { bv = v; best = a; } }
+    return best ?? f;
   }
 
   private strike(f: Fighter): void {
     if (f.cd > 0 || f.sleep > 0) return;
-    const foes = this.fighters.filter((o) => o.alive && o.side !== f.side);
-    const allies = this.fighters.filter((o) => o.alive && o.side === f.side);
-    const hurt = f.hp / f.max < 0.5 ? this.lowestFriend(f) : null;
-    if (hurt && hurt.hp / hurt.max < 0.55) {
+    const hurtAlly = f.hp / f.max < 0.5 ? this.lowestFriend(f) : null;
+    if (hurtAlly && hurtAlly.hp / hurtAlly.max < 0.55) {
       const mend = f.moveIds.map((id) => MOVE_BY_ID[id]).find((m) => m && (m.effect === "mend" || moveTactic(m) === "heal"));
-      if (mend && Math.hypot(hurt.x - f.x, hurt.y - f.y) < attackRange(mend) + 8) {
-        this.cast(f, hurt, mend, true);
-        f.cd = this.cooldown(f, mend);
-        return;
-      }
+      if (mend && Math.hypot(hurtAlly.x - f.x, hurtAlly.y - f.y) < attackRange(mend) + 8) { this.cast(f, hurtAlly, mend, true); f.cd = this.cooldown(f, mend); return; }
     }
-    if (!foes.length) return;
-    const witches = foes.filter((o) => o.role !== "spirit");
-    const target = this.pickTarget(f, witches.length ? witches : foes);
+    const target = this.nearestEnemy(f, 420);
+    if (!target) return;
     const move = this.bestMove(f, target, true);
     const tactic = moveTactic(move);
-    if (tactic === "heal" || move.effect === "mend") {
-      const ally = hurt && hurt.hp / hurt.max < 0.7 ? hurt : allies.reduce((a, b) => (a.hp / a.max < b.hp / b.max ? a : b), f);
-      if (Math.hypot(ally.x - f.x, ally.y - f.y) > attackRange(move) + 8) return;
-      this.cast(f, ally, move, true);
-      f.cd = this.cooldown(f, move);
-      return;
-    }
-    if ((tactic === "ward" || move.effect === "shell") && f.shield <= 0) {
-      this.cast(f, f, move, true);
-      f.shield = 2.6;
-      f.cd = this.cooldown(f, move);
-      return;
-    }
+    if ((tactic === "ward" || move.effect === "shell") && f.shield <= 0) { this.cast(f, f, move, true); f.shield = 2.6; f.cd = this.cooldown(f, move); return; }
     const d = Math.hypot(target.x - f.x, target.y - f.y);
     const reach = attackRange(move);
-    if (tactic === "roll" && d < 78) {
-      const ang = Math.atan2(f.y - target.y, f.x - target.x);
-      this.slide(f, Math.cos(ang) * 54, Math.sin(ang) * 54);
-      this.cfx.cast(move, attackForm(move), tactic, f.x, f.y - 16, f.x + Math.cos(ang) * 54, f.y + Math.sin(ang) * 54);
-      f.cd = 0.55;
-      return;
-    }
     if (d > reach + 8) return;
     const form = attackForm(move);
     if (form !== "melee" && !this.sees(f.x, f.y - 8, target.x, target.y - 8)) return;
     if (tactic === "blink" && d > 46) {
       const ang = Math.atan2(target.y - f.y, target.x - f.x);
-      const nx = target.x - Math.cos(ang) * 30;
-      const ny = target.y - Math.sin(ang) * 30;
-      if (!this.pillar(nx, ny)) {
-        this.cfx.cast(move, form, tactic, f.x, f.y - 12, nx, ny - 12);
-        f.x = nx;
-        f.y = ny;
-      }
+      const nx = target.x - Math.cos(ang) * 30, ny = target.y - Math.sin(ang) * 30;
+      if (!this.pillar(nx, ny)) { this.cfx.cast(move, form, tactic, f.x, f.y - 12, nx, ny - 12); f.x = nx; f.y = ny; }
     } else if (tactic === "lunge" && d > 36) {
       const ang = Math.atan2(target.y - f.y, target.x - f.x);
       this.slide(f, Math.cos(ang) * Math.min(d - 24, 80), Math.sin(ang) * Math.min(d - 24, 80));
@@ -1375,42 +1466,21 @@ export class WitchArena {
   }
 
   private cast(f: Fighter, target: Fighter, move: Move, aid: boolean): void {
-    const y0 = f.y - 18;
-    const y1 = target.y - 14;
-    this.beams.push({ x0: f.x, y0, x1: target.x, y1, life: 0.34, color: TYPES[move.type].color });
+    const y0 = f.y - 18, y1 = target.y - 14;
+    this.beams.push({ x0: f.x, y0, x1: target.x, y1, life: 0.3, color: TYPES[move.type].color });
     this.cfx.cast(move, attackForm(move), moveTactic(move), f.x, y0, target.x, y1);
     if (aid) {
-      if (move.effect === "mend" || moveTactic(move) === "heal") {
-        const heal = (10 + move.power * 0.7) * (0.75 + f.dmgMul);
-        target.hp = Math.min(target.max, target.hp + heal);
-        this.float(target.x, target.y - 28, `${Math.round(heal)}`, "#9ad8c8");
-      } else this.float(f.x, f.y - 30, "ward", "#e6c15a");
+      if (move.effect === "mend" || moveTactic(move) === "heal") { const heal = (10 + move.power * 0.7) * (0.75 + f.dmgMul); target.hp = Math.min(target.max, target.hp + heal); this.float(target.x, target.y - 28, `${Math.round(heal)}`, "#9ad8c8"); }
       return;
     }
     const tm = typeMult(move.type, target.type);
-    if (tm === 0) {
-      this.float(target.x, target.y - 26, "immune", "#e7d9ff");
-      return;
-    }
-    if (Math.random() * 100 < target.echo) {
-      this.float(target.x, target.y - 26, "miss", "#f0e2c8");
-      this.cfx.evade(target.x, target.y - 12);
-      return;
-    }
+    if (tm === 0) { this.float(target.x, target.y - 26, "immune", "#e7d9ff"); return; }
+    if (Math.random() * 100 < target.echo) { this.cfx.evade(target.x, target.y - 12); return; }
     const form = attackForm(move);
     const gear = 1 + (f.weapon?.level ?? f.level) * 0.035;
     const might = 1 + f.might / 100;
     const stab = move.type === f.type ? 1.12 : 1;
-    let dmg =
-      (5 + move.power * 0.34) *
-      (1 + f.level * 0.045) *
-      gear *
-      might *
-      stab *
-      tm *
-      f.dmgMul *
-      (form === "melee" ? 1.15 : 1) *
-      (moveTactic(move) === "heavy" ? 1.35 : 1);
+    let dmg = (5 + move.power * 0.34) * (1 + f.level * 0.045) * gear * might * stab * tm * f.dmgMul * (form === "melee" ? 1.15 : 1) * (moveTactic(move) === "heavy" ? 1.35 : 1);
     const crit = Math.random() * 100 < move.crit + f.crit;
     if (crit) dmg *= 1.65;
     if (target.shield > 0 && form !== "melee") dmg *= 0.55;
@@ -1419,150 +1489,77 @@ export class WitchArena {
     for (let i = 0; i < hits; i++) this.hurt(target, Math.max(1, dmg * (hits === 2 ? 0.8 : 1)), crit ? "#fff1a8" : "#fff6e8");
     if (move.effect === "burn") target.burn = Math.max(target.burn, 2.4);
     if (move.effect === "root") target.root = Math.max(target.root, 1.3);
-    if (target.sleep > 0) target.sleep = 0;
-    else if (move.effect === "sleep" && Math.random() < 0.45) target.sleep = 1.4;
+    if (target.sleep > 0) target.sleep = 0; else if (move.effect === "sleep" && Math.random() < 0.45) target.sleep = 1.4;
     if (move.effect === "leech") f.hp = Math.min(f.max, f.hp + dmg * 0.25);
   }
 
   private hurt(f: Fighter, amount: number, color: string | null): void {
     if (!f.alive) return;
-    f.hp -= amount;
-    f.hurt = 0.35;
-    if (color && amount >= 1) this.float(f.x, f.y - 24, `${Math.round(amount)}`, color);
+    f.hp -= amount; f.hurt = 0.35;
+    if (color && amount >= 1 && this.floats.length < 110) this.float(f.x, f.y - 24, `${Math.round(amount)}`, color);
     if (f.hp > 0) return;
-    if (f.second && !f.usedSecond) {
-      f.usedSecond = true;
-      f.hp = Math.max(1, f.max * 0.22);
-      this.float(f.x, f.y - 36, "second", "#e6c15a");
-      return;
-    }
-    f.hp = 0;
-    f.alive = false;
-    if (f.role !== "spirit") {
-      for (const s of this.fighters) {
-        if (s.master === f.id && s.alive) {
-          s.alive = false;
-          s.hp = 0;
-          this.float(s.x, s.y - 16, "unravels", "#b9a8d8");
-        }
-      }
-    }
+    if (f.second && !f.usedSecond) { f.usedSecond = true; f.hp = Math.max(1, f.max * 0.22); return; }
+    f.hp = 0; f.alive = false;
+    if (f.role !== "spirit") for (const s of this.fighters) if (s.master === f.id && s.alive) { s.alive = false; s.hp = 0; }
   }
 
-  private pillar(x: number, y: number): boolean {
-    const tx = Math.floor(x / TILE);
-    const ty = Math.floor(y / TILE);
-    if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return true;
-    return this.grid[ty * this.gw + tx] === 1;
-  }
+  private pillar(x: number, y: number): boolean { const tx = Math.floor(x / TILE), ty = Math.floor(y / TILE); if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return true; return this.grid[ty * this.gw + tx] === 1; }
 
-  private maybeEnd(): void {
-    const atkAlive = this.fighters.some((f) => f.alive && f.side === ATTACKER && f.role !== "spirit");
-    const defAlive = this.fighters.some((f) => f.alive && f.side === DEFENDER && f.role !== "spirit");
-    if (this.control >= 100) return this.finish(ATTACKER, "Attackers seize the stronghold.");
-    if (!defAlive) return this.finish(ATTACKER, "The defenders are broken. The keep falls.");
-    if (!atkAlive) return this.finish(DEFENDER, "The assault is spent. The defenders hold.");
-    if (this.age >= TIME_LIMIT) return this.finish(DEFENDER, "Time. The defenders held the point.");
-  }
+  // ----- camera & render ----------------------------------------------------
 
-  private finish(side: number, note: string): void {
-    this.winSide = side;
-    this.winner = note;
-    this.phase = "result";
-    this.note = note;
-    this.publish();
-  }
-
-  // --- camera & render ------------------------------------------------------
-
-  private frame(): void {
-    const live = this.fighters.filter((f) => f.alive && f.role !== "spirit");
-    const pack = this.phase === "fight" || this.phase === "result" ? live.filter((f) => f.side === this.focus) : live;
-    const use = pack.length ? pack : live;
-    if (!use.length) {
-      this.wantX = this.point.x;
-      this.wantY = this.point.y;
-      this.wantZ = Math.max(0.2, Math.min(1.2, this.zoom));
-      return;
+  private biggestBattle(): { x: number; y: number; n: number } | null {
+    let best: { x: number; y: number; n: number } | null = null;
+    for (const o of this.objectives) {
+      if (o.contender < 0 && o.control <= 0) continue;
+      let n = 0, sx = 0, sy = 0;
+      for (const f of this.fighters) { if (!f.alive || f.role === "spirit") continue; if (Math.hypot(f.x - o.x, f.y - o.y) < POINT_R * 1.3) { n++; sx += f.x; sy += f.y; } }
+      if (n >= 2 && (!best || n > best.n)) best = { x: sx / n, y: sy / n, n };
     }
-    let minX = 1e9;
-    let minY = 1e9;
-    let maxX = -1e9;
-    let maxY = -1e9;
-    for (const f of use) {
-      minX = Math.min(minX, f.x);
-      minY = Math.min(minY, f.y);
-      maxX = Math.max(maxX, f.x);
-      maxY = Math.max(maxY, f.y);
-    }
-    const span = Math.max(maxX - minX, maxY - minY, 200);
-    const fit = Math.min(this.viewW, this.viewH) / (span + 320);
-    this.wantX = (minX + maxX) / 2;
-    this.wantY = (minY + maxY) / 2 - 8;
-    this.wantZ = Math.max(0.22, Math.min(1.3, fit));
-    const k = 0.12;
-    this.camX += (this.wantX - this.camX) * k;
-    this.camY += (this.wantY - this.camY) * k;
-    this.zoom += (this.wantZ - this.zoom) * k;
+    return best;
+  }
+
+  private frameFaction(id: number): void {
+    const units = this.fighters.filter((f) => f.alive && f.faction === id && f.role !== "spirit");
+    if (!units.length) { const o = this.objectives.find((ob) => ob.owner === id); if (o) { this.wantX = o.x; this.wantY = o.y; } return; }
+    let mnX = 1e9, mnY = 1e9, mxX = -1e9, mxY = -1e9;
+    for (const f of units) { mnX = Math.min(mnX, f.x); mnY = Math.min(mnY, f.y); mxX = Math.max(mxX, f.x); mxY = Math.max(mxY, f.y); }
+    this.wantX = (mnX + mxX) / 2; this.wantY = (mnY + mxY) / 2;
+    const span = Math.max(mxX - mnX, mxY - mnY, 400);
+    this.wantZ = Math.max(this.minZoom, Math.min(0.9, Math.min(this.viewW, this.viewH) / (span + 400)));
+    const k = 0.1;
+    this.camX += (this.wantX - this.camX) * k; this.camY += (this.wantY - this.camY) * k; this.zoom += (this.wantZ - this.zoom) * k;
   }
 
   private driveCam(dt: number): void {
-    let x = 0;
-    let y = 0;
+    let x = 0, y = 0;
     if (this.keys.has("a") || this.keys.has("arrowleft")) x -= 1;
     if (this.keys.has("d") || this.keys.has("arrowright")) x += 1;
     if (this.keys.has("w") || this.keys.has("arrowup")) y -= 1;
     if (this.keys.has("s") || this.keys.has("arrowdown")) y += 1;
-    if ((x || y) && this.camMode === "team" && (this.phase === "fight" || this.phase === "result")) {
-      this.camMode = "free";
-      this.publish();
-    }
-    const pan = this.camMode === "free" || this.phase === "setup" || this.phase === "result";
-    if ((x || y) && pan && !(this.camMode === "team" && this.phase === "result")) {
-      const m = Math.hypot(x, y) || 1;
-      const sp = 640 / Math.max(0.3, this.zoom);
-      this.camX += (x / m) * sp * dt;
-      this.camY += (y / m) * sp * dt;
-      this.clampCam();
-      return;
-    }
-    if ((this.phase === "fight" || this.phase === "result") && this.camMode === "team") this.frame();
+    if ((x || y) && this.camMode === "follow") { this.camMode = "free"; this.publish(); }
+    if (x || y) { const m = Math.hypot(x, y) || 1; const sp = 900 / Math.max(0.3, this.zoom); this.camX += (x / m) * sp * dt; this.camY += (y / m) * sp * dt; this.clampCam(); return; }
+    if (this.phase !== "setup" && this.camMode === "follow") this.frameFaction(this.focus);
   }
 
   private fitMap(): void {
-    if (this.viewW < 8 || this.viewH < 8 || this.gw < 2) return;
-    const mw = this.gw * TILE;
-    const mh = this.gh * TILE;
-    this.camX = this.point.x || mw / 2;
-    this.camY = this.point.y || mh / 2;
-    this.zoom = Math.max(0.12, Math.min(1, Math.min(this.viewW / mw, this.viewH / mh) * 1.6));
-    this.wantX = this.camX;
-    this.wantY = this.camY;
-    this.wantZ = this.zoom;
+    if (this.viewW < 8 || this.gw < 2) return;
+    const mw = this.gw * TILE, mh = this.gh * TILE;
+    this.camX = this.wantX = mw / 2; this.camY = this.wantY = mh / 2;
+    // Open as wide as the fast render path allows; the minimap shows the whole continent.
+    this.zoom = this.wantZ = this.minZoom;
     this.clampCam();
   }
 
-  private clampCam(): void {
-    const mw = this.gw * TILE;
-    const mh = this.gh * TILE;
-    this.camX = Math.max(0, Math.min(mw, this.camX));
-    this.camY = Math.max(0, Math.min(mh, this.camY));
-  }
+  private clampCam(): void { const mw = this.gw * TILE, mh = this.gh * TILE; this.camX = Math.max(0, Math.min(mw, this.camX)); this.camY = Math.max(0, Math.min(mh, this.camY)); }
 
-  private float(x: number, y: number, text: string, color: string): void {
-    if (this.floats.length > 90) this.floats.shift();
-    this.floats.push({ x, y, text, life: 0.9, color });
-  }
+  private float(x: number, y: number, text: string, color: string): void { if (this.floats.length > 120) this.floats.shift(); this.floats.push({ x, y, text, life: 0.9, color }); }
 
-  private color(side: number): string {
-    return SIDES[side]?.color ?? "#f0e2c8";
-  }
+  private color(fac: number): string { return this.factions[fac]?.color ?? "#f0e2c8"; }
 
   private draw(): void {
-    const ctx = this.ctx;
-    const dpr = this.dpr;
+    const ctx = this.ctx, dpr = this.dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#100c0a";
+    ctx.fillStyle = "#0b1420";
     ctx.fillRect(0, 0, this.viewW, this.viewH);
     if (!this.world) return;
     ctx.save();
@@ -1571,107 +1568,139 @@ export class WitchArena {
     ctx.translate(-this.camX, -this.camY);
     ctx.imageSmoothingEnabled = false;
     drawWorldSlice(ctx, this.world, this.camX, this.camY, this.viewW, this.viewH, this.zoom);
-    this.drawPoint(ctx);
-    const order = this.fighters.filter((f) => f.alive).sort((a, b) => a.y - b.y);
+
+    this.drawRegions(ctx);
+    this.drawObjectives(ctx);
+    if (this.zoom > 0.45) this.drawNodes(ctx);
+
+    const halfW = this.viewW / this.zoom * 0.6 + 120, halfH = this.viewH / this.zoom * 0.6 + 120;
+    const order = this.fighters.filter((f) => f.alive && Math.abs(f.x - this.camX) < halfW && Math.abs(f.y - this.camY) < halfH).sort((a, b) => a.y - b.y);
     for (const f of order) {
       if (f.role === "spirit" && f.look) {
-        drawMonster(ctx, {
-          x: f.x,
-          y: f.y,
-          template: f.template,
-          type: f.type,
-          facing: f.facing,
-          walk: f.walk,
-          hurt: f.hurt,
-          boss: false,
-          rarity: 0,
-          ghost: true,
-          look: f.look,
-          time: this.clock,
-        });
+        drawMonster(ctx, { x: f.x, y: f.y, template: f.template, type: f.type, facing: f.facing, walk: f.walk, hurt: f.hurt, boss: false, rarity: 0, ghost: true, look: f.look, time: this.clock });
       } else if (f.race) {
-        drawActor(ctx, {
-          x: f.x,
-          y: f.y,
-          race: f.race,
-          direction: f.direction,
-          female: true,
-          hair: f.hair,
-          skin: f.skin,
-          facing: f.facing,
-          walk: f.walk,
-          attack: f.cd > 0.55 ? 0.4 : 0,
-          hurt: f.hurt,
-          pieces: f.pieces,
-          setFx: null,
-          setOn: false,
-          time: this.clock,
-          scale: 1,
-        });
+        const scale = f.job === "harvester" ? 0.86 : 1;
+        drawActor(ctx, { x: f.x, y: f.y, race: f.race, direction: f.direction, female: true, hair: f.hair, skin: f.skin, facing: f.facing, walk: f.walk, attack: f.cd > 0.55 ? 0.4 : 0, hurt: f.hurt, pieces: f.pieces, setFx: null, setOn: false, time: this.clock, scale });
       }
-      const bar = f.role === "spirit" ? 26 : 42;
-      const by = f.y - (f.role === "spirit" ? 34 : 42);
-      ctx.fillStyle = "#1a1214";
-      ctx.fillRect(f.x - bar / 2 - 1, by - 1, bar + 2, 6);
-      ctx.fillStyle = this.color(f.side);
-      ctx.fillRect(f.x - bar / 2, by, bar * Math.max(0, f.hp / f.max), 4);
-      if (f.role !== "spirit" && this.zoom > 0.75) drawShadowName(ctx, `${f.name} ${f.level}`, f.x, by - 12, this.color(f.side));
+      // faction ring at the feet
+      if (f.role !== "spirit" && this.zoom > 0.4) {
+        ctx.fillStyle = this.color(f.faction);
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(f.x - 5, f.y + 2, 10, 2);
+        ctx.globalAlpha = 1;
+      }
+      if (this.zoom > 0.55) {
+        const bar = f.role === "spirit" ? 20 : f.job === "harvester" ? 22 : 30;
+        const by = f.y - (f.role === "spirit" ? 30 : 38);
+        ctx.fillStyle = "#1a1214"; ctx.fillRect(f.x - bar / 2 - 1, by - 1, bar + 2, 5);
+        ctx.fillStyle = f.job === "harvester" ? "#d8c48a" : this.color(f.faction);
+        ctx.fillRect(f.x - bar / 2, by, bar * Math.max(0, f.hp / f.max), 3);
+      }
     }
     for (const b of this.beams) {
       const a = Math.max(0, Math.min(1, b.life * 3));
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = b.color; ctx.lineWidth = 3 / Math.max(0.4, this.zoom);
+      ctx.beginPath(); ctx.moveTo(b.x0, b.y0); ctx.lineTo(b.x1, b.y1); ctx.stroke(); ctx.restore();
+    }
+    this.cfx.draw(ctx, this.clock);
+    for (const fl of this.floats) { ctx.globalAlpha = Math.max(0, Math.min(1, fl.life * 2)); drawShadowName(ctx, fl.text, fl.x, fl.y - (0.9 - fl.life) * 22, fl.color); ctx.globalAlpha = 1; }
+    ctx.restore();
+
+    this.drawMinimap(ctx);
+  }
+
+  /** The whole-continent overview, bottom-right: terrain, faction regions, objectives, unit blips, view box. */
+  private drawMinimap(ctx: CanvasRenderingContext2D): void {
+    if (!this.mini || this.phase === "setup") { this.miniRect = null; return; }
+    const size = Math.max(120, Math.min(220, Math.min(this.viewW, this.viewH) * 0.3));
+    const pad = 12;
+    const rx = this.viewW - size - pad, ry = this.viewH - size - pad;
+    this.miniRect = { x: rx, y: ry, w: size, h: size };
+    const sx = size / (this.gw * TILE), sy = size / (this.gh * TILE);
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    ctx.fillStyle = "#05080c";
+    ctx.fillRect(rx - 2, ry - 2, size + 4, size + 4);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.mini, rx, ry, size, size);
+    // faction region tints
+    for (const o of this.objectives) {
+      if (o.owner < 0) continue;
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = this.color(o.owner);
+      ctx.beginPath();
+      ctx.arc(rx + o.x * sx, ry + o.y * sy, POINT_R * 2.1 * sx, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // objective dots
+    ctx.globalAlpha = 1;
+    for (const o of this.objectives) {
+      ctx.fillStyle = o.owner >= 0 ? this.color(o.owner) : "#b8ad9a";
+      ctx.fillRect(rx + o.x * sx - 2, ry + o.y * sy - 2, 4, 4);
+      if (o.control > 0 && o.contender >= 0) { ctx.fillStyle = this.color(o.contender); ctx.fillRect(rx + o.x * sx - 1, ry + o.y * sy - 1, 2, 2); }
+    }
+    // unit blips (combat only, to keep it light)
+    for (const f of this.fighters) {
+      if (!f.alive || f.role === "spirit" || f.job !== "combat") continue;
+      ctx.fillStyle = this.color(f.faction);
+      ctx.fillRect(rx + f.x * sx, ry + f.y * sy, 1, 1);
+    }
+    // current view rectangle
+    const vw = this.viewW / this.zoom, vh = this.viewH / this.zoom;
+    ctx.globalAlpha = 0.9; ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
+    ctx.strokeRect(rx + (this.camX - vw / 2) * sx, ry + (this.camY - vh / 2) * sy, vw * sx, vh * sy);
+    ctx.restore();
+  }
+
+  /** Faint territory tint around every owned objective, coloured by its faction. */
+  private drawRegions(ctx: CanvasRenderingContext2D): void {
+    for (const o of this.objectives) {
+      if (o.owner < 0) continue;
       ctx.save();
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = b.color;
-      ctx.lineWidth = 4 / Math.max(0.4, this.zoom);
+      ctx.globalAlpha = 0.1;
+      ctx.fillStyle = this.color(o.owner);
       ctx.beginPath();
-      ctx.moveTo(b.x0, b.y0);
-      ctx.lineTo(b.x1, b.y1);
-      ctx.stroke();
-      ctx.fillStyle = "#fff6d8";
-      ctx.beginPath();
-      ctx.arc(b.x1, b.y1, 5, 0, Math.PI * 2);
+      ctx.arc(o.x, o.y, POINT_R * 2.3, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
     }
-    this.cfx.draw(ctx, this.clock);
-    for (const fl of this.floats) {
-      ctx.globalAlpha = Math.max(0, Math.min(1, fl.life * 2));
-      drawShadowName(ctx, fl.text, fl.x, fl.y - (0.9 - fl.life) * 22, fl.color);
+  }
+
+  private drawObjectives(ctx: CanvasRenderingContext2D): void {
+    for (const o of this.objectives) {
+      const col = o.owner >= 0 ? this.color(o.owner) : "#9a8f80";
+      ctx.save();
+      // ring
+      ctx.globalAlpha = 0.85; ctx.lineWidth = 2.5 / Math.max(0.4, this.zoom); ctx.strokeStyle = col;
+      ctx.beginPath(); ctx.arc(o.x, o.y, POINT_R, 0, Math.PI * 2); ctx.stroke();
+      // contest arc
+      if (o.control > 0 && o.contender >= 0) {
+        ctx.lineWidth = 5 / Math.max(0.4, this.zoom); ctx.strokeStyle = this.color(o.contender);
+        ctx.beginPath(); ctx.arc(o.x, o.y, POINT_R - 5, -Math.PI / 2, -Math.PI / 2 + (o.control / 100) * Math.PI * 2); ctx.stroke();
+      }
+      // banner pole
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#2a1f18"; ctx.fillRect(o.x - 1, o.y - 30, 2, 30);
+      ctx.fillStyle = col; ctx.fillRect(o.x, o.y - 30, 14, 9);
+      ctx.restore();
+      if (this.zoom > 0.3) {
+        const garr = this.fighters.filter((f) => f.alive && f.role !== "spirit" && f.job === "combat" && f.faction === o.owner && Math.hypot(f.x - o.x, f.y - o.y) < POINT_R).length;
+        drawShadowName(ctx, o.name.toUpperCase(), o.x, o.y - POINT_R - 10, col);
+        if (this.zoom > 0.5) drawShadowName(ctx, o.owner >= 0 ? `${this.factions[o.owner]!.name} · ${garr}` : "neutral", o.x, o.y - POINT_R + 4, col);
+      }
+    }
+  }
+
+  private drawNodes(ctx: CanvasRenderingContext2D): void {
+    for (const o of this.objectives) for (const nd of o.nodes) {
+      ctx.globalAlpha = nd.amount > 0 ? 0.9 : 0.3;
+      ctx.fillStyle = nd.amount > 0 ? "#7bd06a" : "#4a5240";
+      ctx.fillRect(nd.x - 3, nd.y - 3, 6, 6);
       ctx.globalAlpha = 1;
     }
-    ctx.restore();
   }
 
-  private drawPoint(ctx: CanvasRenderingContext2D): void {
-    const held = this.control >= 99 ? ATTACKER : this.inPoint[ATTACKER]! > this.inPoint[DEFENDER]! && this.phase === "fight" ? ATTACKER : DEFENDER;
-    const col = this.control >= 99 ? this.color(ATTACKER) : this.control <= 1 ? this.color(DEFENDER) : "#e6c15a";
-    ctx.save();
-    // Capture disc.
-    ctx.globalAlpha = 0.14;
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.arc(this.point.x, this.point.y, POINT_R, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 0.9;
-    ctx.lineWidth = 3 / Math.max(0.4, this.zoom);
-    ctx.strokeStyle = col;
-    ctx.beginPath();
-    ctx.arc(this.point.x, this.point.y, POINT_R, 0, Math.PI * 2);
-    ctx.stroke();
-    // Control arc: how far the attackers have pushed it.
-    if (this.phase === "fight" || this.phase === "result") {
-      ctx.lineWidth = 6 / Math.max(0.4, this.zoom);
-      ctx.strokeStyle = this.color(ATTACKER);
-      ctx.beginPath();
-      ctx.arc(this.point.x, this.point.y, POINT_R - 6, -Math.PI / 2, -Math.PI / 2 + (this.control / 100) * Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    drawShadowName(ctx, held === ATTACKER ? "TAKEN" : "THE POINT", this.point.x, this.point.y - POINT_R - 10, col);
-    ctx.restore();
-  }
-
-  // --- input ----------------------------------------------------------------
+  // ----- input --------------------------------------------------------------
 
   private bind(): void {
     this.canvas.addEventListener("pointerdown", this.onPointerDown);
@@ -1681,7 +1710,6 @@ export class WitchArena {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
   }
-
   private unbind(): void {
     this.canvas.removeEventListener("pointerdown", this.onPointerDown);
     window.removeEventListener("pointermove", this.onPointerMove);
@@ -1691,118 +1719,73 @@ export class WitchArena {
     window.removeEventListener("keyup", this.onKeyUp);
     this.keys.clear();
   }
-
-  private typing(e: Event): boolean {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  }
-
+  private typing(e: Event): boolean { const tag = (e.target as HTMLElement | null)?.tagName; return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT"; }
   private onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 0) return;
     const p = this.local(e);
+    const mr = this.miniRect;
+    if (mr && p.x >= mr.x && p.x <= mr.x + mr.w && p.y >= mr.y && p.y <= mr.y + mr.h) {
+      // Click the minimap to re-centre the main view there.
+      this.camMode = "free";
+      this.camX = this.wantX = ((p.x - mr.x) / mr.w) * this.gw * TILE;
+      this.camY = this.wantY = ((p.y - mr.y) / mr.h) * this.gh * TILE;
+      this.clampCam();
+      this.publish();
+      return;
+    }
     this.drag = { x: p.x, y: p.y, camX: this.camX, camY: this.camY, moved: false };
   };
-
   private onPointerMove = (e: PointerEvent): void => {
     if (!this.drag) return;
-    const p = this.local(e);
-    const dx = p.x - this.drag.x;
-    const dy = p.y - this.drag.y;
+    const p = this.local(e); const dx = p.x - this.drag.x, dy = p.y - this.drag.y;
     if (Math.hypot(dx, dy) > 5) this.drag.moved = true;
-    const look = this.camMode === "free" || this.phase === "setup" || this.phase === "result";
-    if (this.drag.moved && look) {
-      this.camX = this.drag.camX - dx / this.zoom;
-      this.camY = this.drag.camY - dy / this.zoom;
-      this.clampCam();
-    }
+    if (this.drag.moved) { if (this.camMode === "follow") this.camMode = "free"; this.camX = this.drag.camX - dx / this.zoom; this.camY = this.drag.camY - dy / this.zoom; this.clampCam(); }
   };
-
-  private onPointerUp = (): void => {
-    this.drag = null;
-  };
-
-  private onWheel = (e: WheelEvent): void => {
-    e.preventDefault();
-    this.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
-  };
-
+  private onPointerUp = (): void => { this.drag = null; };
+  private onWheel = (e: WheelEvent): void => { e.preventDefault(); this.zoomBy(e.deltaY > 0 ? 0.9 : 1.1); };
   private onKeyDown = (e: KeyboardEvent): void => {
     if (this.typing(e)) return;
     const k = e.key.toLowerCase();
-    if (k === "q") { this.cycleTeam(-1); e.preventDefault(); return; }
-    if (k === "e") { this.cycleTeam(1); e.preventDefault(); return; }
-    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
-      this.keys.add(k);
-      e.preventDefault();
-    }
+    if (k === "q") { this.cycleFocus(-1); e.preventDefault(); return; }
+    if (k === "e") { this.cycleFocus(1); e.preventDefault(); return; }
+    if (k === "b") { this.jumpBattle(); e.preventDefault(); return; }
+    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) { this.keys.add(k); e.preventDefault(); }
   };
+  private onKeyUp = (e: KeyboardEvent): void => { this.keys.delete(e.key.toLowerCase()); };
+  private local(e: { clientX: number; clientY: number }): { x: number; y: number } { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
 
-  private onKeyUp = (e: KeyboardEvent): void => {
-    this.keys.delete(e.key.toLowerCase());
-  };
+  // ----- log & snapshot -----------------------------------------------------
 
-  private local(e: { clientX: number; clientY: number }): { x: number; y: number } {
-    const r = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  private log(text: string): void {
+    this.events.unshift(text);
+    if (this.events.length > 40) this.events.length = 40;
   }
 
-  // --- snapshot -------------------------------------------------------------
-
   private publish(): void {
-    const fighting = this.phase === "fight" || this.phase === "result";
-    const armies: ArmySnap[] = SIDES.map((side) => {
-      const plan = this.plans[side.id]!;
-      const pack = this.fighters.filter((f) => f.side === side.id && f.role !== "spirit");
-      const alive = pack.filter((f) => f.alive);
-      const level = alive.length ? Math.round(alive.reduce((s, f) => s + f.level, 0) / alive.length) : 0;
-      const ghosts = plan.classes.reduce((s, id) => s + (GHOSTS_BY_CLASS[id] ?? 0), 0);
-      const intent = fighting
-        ? side.id === ATTACKER
-          ? this.inPoint[ATTACKER]! > 0 ? "On the point" : "Assaulting"
-          : this.inPoint[ATTACKER]! > 0 ? "Point contested" : "Holding"
-        : "Mustering";
-      return {
-        id: side.id,
-        key: side.key,
-        name: side.name,
-        color: side.color,
-        size: plan.size,
-        classes: [...plan.classes],
-        alive: fighting ? alive.length : 0,
-        count: plan.size,
-        level,
-        ghosts,
-        intent,
-      };
-    });
+    const total = this.objectives.length || this.objectiveCount;
+    const factions: FactionSnap[] = this.factions.map((fac) => {
+      const objectives = this.objectives.filter((o) => o.owner === fac.id).length;
+      const units = this.fighters.filter((f) => f.alive && f.faction === fac.id && f.role !== "spirit");
+      const combat = units.filter((f) => f.job === "combat").length;
+      const harvesters = units.filter((f) => f.job === "harvester").length;
+      const materials = this.objectives.filter((o) => o.owner === fac.id).reduce((s, o) => s + o.stock, 0) + units.filter((f) => f.job === "harvester").reduce((s, f) => s + f.carry, 0);
+      return { id: fac.id, name: fac.name, color: fac.color, objectives, combat, harvesters, materials: Math.round(materials), alive: fac.alive && objectives > 0 };
+    }).sort((a, b) => b.objectives - a.objectives || b.combat - a.combat);
+
+    let battles = 0;
+    for (const o of this.objectives) if (o.control > 0 && o.contender >= 0) battles++;
+
     const s = Math.max(0, Math.floor(this.age));
-    const left = Math.max(0, Math.ceil(TIME_LIMIT - this.age));
-    const held: ArenaSnap["held"] = this.control >= 99 ? "attackers" : this.inPoint[ATTACKER]! > 0 && this.phase === "fight" ? "contested" : "defenders";
     this.snap = {
-      phase: this.phase,
-      note: this.note,
-      speed: this.speed,
-      cam: this.camMode,
-      focus: this.focus,
+      phase: this.phase, note: this.note, speed: this.speed, cam: this.camMode, focus: this.focus,
       clock: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`,
-      timeLeft: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
-      control: Math.round(this.control),
-      held,
-      armies,
-      classOptions: classOptions(),
-      winner: this.winner,
-      winSide: this.winSide,
+      factionCount: this.factionCount, objectiveCount: this.objectiveCount, objectiveTotal: total,
+      factions, events: this.events.slice(0, 8), battles,
+      winner: this.winner, winFaction: this.winFaction,
     };
     this.listeners.forEach((fn) => fn());
   }
 }
 
-function nearest(list: Fighter[], x: number, y: number): Fighter {
-  let best = list[0]!;
-  let bd = 1e9;
-  for (const f of list) {
-    const d = Math.hypot(f.x - x, f.y - y);
-    if (d < bd) { bd = d; best = f; }
-  }
-  return best;
-}
+function dist2(a: Objective, b: Objective): number { const dx = a.tx - b.tx, dy = a.ty - b.ty; return dx * dx + dy * dy; }
+function dist2b(f: Fighter, o: Objective): number { const dx = f.x - o.x, dy = f.y - o.y; return dx * dx + dy * dy; }

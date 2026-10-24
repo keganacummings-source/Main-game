@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { WitchArena, type ArenaSnap, type ArmySnap, type ClassOption } from "@/game/arena";
+import { WitchArena, type ArenaSnap } from "@/game/arena";
 import type { GraveBody } from "@/game/social-types";
-import type { ClassId, Role } from "@/game/classes";
-
-const ROLE_ORDER: Role[] = ["Tank", "Bruiser", "Marksman", "Caster", "Mobility", "Support"];
 
 export function ArenaScreen(props: {
   seed: unknown;
@@ -40,39 +37,38 @@ export function ArenaScreen(props: {
 
   const arena = () => arenaRef.current;
   const setup = snap && snap.phase === "setup";
-  const live = snap && (snap.phase === "fight" || snap.phase === "result");
+  const live = snap && (snap.phase === "run" || snap.phase === "result");
 
   return (
     <div className="arena-root">
-      <canvas ref={canvasRef} className="arena-canvas" aria-label="TurboCircle siege" />
+      <canvas ref={canvasRef} className="arena-canvas" aria-label="TurboCircle world simulator" />
 
       {setup && snap && (
         <div className="arena-setup">
-          <div className="px-panel arena-setup-card siege-setup p-4">
+          <div className="px-panel arena-setup-card p-4">
             <p className="font-display text-xs text-blood">TURBOCIRCLE</p>
-            <h2 className="font-display mt-2 text-sm text-bone">Siege of the Keep</h2>
+            <h2 className="font-display mt-2 text-sm text-bone">World Battle Simulator</h2>
             <p className="mt-2 text-dim">
-              One 250×250 battlefield, one walled keep, one point to hold. Build both armies out of classes, then loose
-              the attack. Attackers smart-push the gates to seize the point; defenders dig in and hold.
+              One 450×450 continent. Several factions each hold Regions anchored on Objectives. Combat witches march
+              out to take ground — battles from 1v1 to 10v10 break out all over at once. Non-combat witches harvest the
+              land and carry materials home; a full stockpile recruits another witch. Set it up, then watch who wins.
             </p>
 
-            <div className="siege-armies mt-3">
-              {snap.armies.map((army) => (
-                <ArmyBuilder key={army.id} army={army} options={snap.classOptions} arena={arena} />
-              ))}
-            </div>
+            <label className="arena-field mt-3">
+              Factions: {snap.factionCount}
+              <input type="range" min={2} max={8} step={1} value={snap.factionCount} onChange={(e) => arena()?.setFactionCount(Number(e.target.value))} />
+            </label>
+            <label className="arena-field mt-3">
+              Objectives / Regions: {snap.objectiveCount}
+              <input type="range" min={Math.max(snap.factionCount, 6)} max={28} step={1} value={snap.objectiveCount} onChange={(e) => arena()?.setObjectiveCount(Number(e.target.value))} />
+            </label>
+            <p className="mt-2 text-dim">Each faction starts on one Region; the rest are neutral and up for grabs.</p>
 
             <div className="mt-3 grid gap-2">
-              <button className="px-btn px-btn-kyo" type="button" onClick={() => arena()?.launch()}>
-                Loose the attack
-              </button>
+              <button className="px-btn px-btn-kyo" type="button" onClick={() => arena()?.begin()}>Begin the war</button>
               <div className="flex gap-2">
-                <button className="px-btn flex-1" type="button" onClick={() => arena()?.newBattlefield()}>
-                  New battlefield
-                </button>
-                <button className="px-btn flex-1" type="button" onClick={props.onClose}>
-                  Back to the title
-                </button>
+                <button className="px-btn flex-1" type="button" onClick={() => arena()?.newWorld()}>New continent</button>
+                <button className="px-btn flex-1" type="button" onClick={props.onClose}>Back to the title</button>
               </div>
             </div>
           </div>
@@ -83,122 +79,66 @@ export function ArenaScreen(props: {
         <div className="arena-hud">
           <div className="px-panel px-3 py-2">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="font-display text-xs text-kyo">SIEGE · {snap.clock}</span>
-              <span className="text-dim">Defenders hold in {snap.timeLeft}</span>
-              <button className="px-btn" type="button" onClick={() => arena()?.setSpeed(snap.speed >= 4 ? 1 : snap.speed === 2 ? 4 : 2)}>
-                {snap.speed}×
-              </button>
-              <button className={`px-btn ${snap.cam === "team" ? "arena-mode-on" : ""}`} type="button" onClick={() => arena()?.setCam("team")}>
-                Follow
-              </button>
-              <button className={`px-btn ${snap.cam === "free" ? "arena-mode-on" : ""}`} type="button" onClick={() => arena()?.setCam("free")}>
-                Free
-              </button>
-              <button className="px-btn" type="button" onClick={() => arena()?.cycleTeam(1)}>
-                Switch side
-              </button>
+              <span className="font-display text-xs text-kyo">WORLD WAR · {snap.clock}</span>
+              <span className="text-dim">{snap.battles} battle{snap.battles === 1 ? "" : "s"} raging</span>
+              <button className="px-btn" type="button" onClick={() => arena()?.setSpeed(snap.speed >= 6 ? 1 : snap.speed === 3 ? 6 : snap.speed === 2 ? 3 : 2)}>{snap.speed}×</button>
+              <button className={`px-btn ${snap.cam === "follow" ? "arena-mode-on" : ""}`} type="button" onClick={() => arena()?.setCam(snap.cam === "follow" ? "free" : "follow")}>{snap.cam === "follow" ? "Following" : "Follow"}</button>
+              <button className="px-btn" type="button" onClick={() => arena()?.jumpBattle()}>Jump to battle</button>
+              <button className="px-btn" type="button" onClick={() => arena()?.cycleFocus(-1)}>Prev</button>
+              <button className="px-btn" type="button" onClick={() => arena()?.cycleFocus(1)}>Next</button>
               <button className="px-btn" type="button" onClick={() => arena()?.zoomBy(1.15)}>+</button>
               <button className="px-btn" type="button" onClick={() => arena()?.zoomBy(0.87)}>−</button>
             </div>
 
-            <div className="siege-meter mt-2" aria-label={`Capture ${snap.control}%`}>
-              <div className="siege-meter-fill" style={{ width: `${snap.control}%` }} />
-              <span className="siege-meter-label">
-                {snap.held === "attackers" ? "Point taken" : snap.held === "contested" ? "Point contested" : "Point held"} · {snap.control}%
-              </span>
-            </div>
-
-            <div className="arena-teams mt-2">
-              {snap.armies.map((t) => (
+            <div className="sim-standings mt-2">
+              {snap.factions.map((f) => (
                 <button
-                  key={t.id}
+                  key={f.id}
                   type="button"
-                  className="arena-team"
-                  style={{ borderColor: t.id === snap.focus ? t.color : "#5a4a40", color: t.color }}
-                  onClick={() => arena()?.cycleTeam(t.id - snap.focus)}
+                  className="sim-faction"
+                  style={{ borderColor: f.id === snap.focus ? f.color : "#5a4a40", opacity: f.alive ? 1 : 0.45 }}
+                  onClick={() => arena()?.followFaction(f.id)}
+                  title={`${f.name}: ${f.objectives} regions, ${f.combat} combat, ${f.harvesters} harvesters, ${f.materials} materials`}
                 >
-                  {t.name} {t.alive}/{t.count}
-                  {t.level ? ` · Lv ${t.level}` : ""} · {t.intent}
+                  <span className="sim-swatch" style={{ background: f.color }} />
+                  <span className="sim-name" style={{ color: f.color }}>{f.name}{f.alive ? "" : " ✕"}</span>
+                  <span className="sim-stat">◧ {f.objectives}/{snap.objectiveTotal}</span>
+                  <span className="sim-stat">⚔ {f.combat}</span>
+                  <span className="sim-stat">⛏ {f.harvesters}</span>
+                  <span className="sim-stat">◆ {f.materials}</span>
                 </button>
               ))}
             </div>
+
             <p className="mt-1 text-dim">
-              {snap.cam === "free" ? "Free camera. Drag, WASD, or arrows." : "Following a side. Q and E switch; WASD frees the camera."}
+              {snap.cam === "follow" ? "Following a faction. Q / E change faction, WASD frees the camera." : "Free camera: drag, WASD, scroll. Click the minimap to jump. B = biggest battle."}
             </p>
           </div>
 
+          {snap.events.length > 0 && (
+            <div className="px-panel sim-log mt-2 px-3 py-2">
+              {snap.events.map((e, i) => (
+                <p key={`${i}-${e}`} className="text-dim" style={{ opacity: 1 - i * 0.1 }}>· {e}</p>
+              ))}
+            </div>
+          )}
+
           {snap.phase === "result" && (
             <div className="px-panel mt-2 max-w-md p-3">
-              <p className="font-display text-xs" style={{ color: snap.winSide >= 0 ? snap.armies[snap.winSide]?.color : "#e6c15a" }}>
-                {snap.winSide === 0 ? "The keep falls" : "The line holds"}
+              <p className="font-display text-xs" style={{ color: snap.winFaction >= 0 ? snap.factions.find((f) => f.id === snap.winFaction)?.color : "#e6c15a" }}>
+                The continent is decided
               </p>
               <p className="mt-2">{snap.winner || snap.note}</p>
               <div className="mt-3 grid gap-2">
-                <button className="px-btn px-btn-kyo" type="button" onClick={() => arena()?.again()}>
-                  Run it again
-                </button>
-                <button className="px-btn" type="button" onClick={() => arena()?.newBattlefield()}>
-                  New battlefield
-                </button>
-                <button className="px-btn" type="button" onClick={() => arena()?.backSetup()}>
-                  Change the armies
-                </button>
-                <button className="px-btn" type="button" onClick={props.onClose}>
-                  Back to the title
-                </button>
+                <button className="px-btn px-btn-kyo" type="button" onClick={() => arena()?.again()}>Run it again</button>
+                <button className="px-btn" type="button" onClick={() => arena()?.newWorld()}>New continent</button>
+                <button className="px-btn" type="button" onClick={() => arena()?.backSetup()}>Change the setup</button>
+                <button className="px-btn" type="button" onClick={props.onClose}>Back to the title</button>
               </div>
             </div>
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-function ArmyBuilder(props: { army: ArmySnap; options: ClassOption[]; arena: () => WitchArena | null }) {
-  const { army, options, arena } = props;
-  const picked = new Set(army.classes);
-  const byRole = ROLE_ORDER.map((role) => ({ role, list: options.filter((o) => o.role === role) })).filter((g) => g.list.length);
-  return (
-    <div className="siege-army px-panel p-3" style={{ borderColor: army.color }}>
-      <div className="flex items-center justify-between">
-        <span className="font-display text-xs" style={{ color: army.color }}>{army.name}</span>
-        <span className="text-dim">{army.ghosts > 0 ? `${army.ghosts} ghost kinds` : "no ghosts"}</span>
-      </div>
-      <label className="arena-field mt-2">
-        Army size: {army.size}
-        <input
-          type="range"
-          min={4}
-          max={60}
-          step={2}
-          value={army.size}
-          onChange={(e) => arena()?.setSize(army.id, Number(e.target.value))}
-        />
-      </label>
-      <p className="mt-2 text-dim">Tap classes to set what this army is made of. Ghost-callers bring their own spirits.</p>
-      <div className="siege-classes mt-2">
-        {byRole.map((group) => (
-          <div key={group.role} className="siege-class-group">
-            <span className="siege-class-role">{group.role}</span>
-            <div className="siege-class-chips">
-              {group.list.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={`siege-chip ${picked.has(o.id) ? "siege-chip-on" : ""}`}
-                  style={picked.has(o.id) ? { borderColor: army.color, boxShadow: `3px 3px 0 ${army.color}` } : undefined}
-                  title={`${o.name} · ${o.typeName} · ${o.about}${o.ghosts ? ` · brings ${o.ghosts} ghosts` : ""}`}
-                  onClick={() => arena()?.toggleClass(army.id, o.id as ClassId)}
-                >
-                  {o.name}
-                  {o.ghosts ? " ✦" : ""}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

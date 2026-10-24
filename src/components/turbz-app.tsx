@@ -358,7 +358,7 @@ function Title(props: {
       <div className="tile-grid">
         <Tile primary title={props.hasSave ? "Continue" : "No witch yet"} about={props.hasSave ? "Pick up where you stopped." : "Start a new witch below."} onClick={props.onContinue} disabled={!props.hasSave} />
         <Tile title={hard ? "New hardcore witch" : "New hunt"} about="Choose a class and a trait." onClick={props.onNew} />
-        {!hard && <Tile title="TurboCircle" about="Total War siege simulator." onClick={props.onCircle} disabled={!props.circleReady} />}
+        {!hard && <Tile title="TurboCircle" about="World battle simulator." onClick={props.onCircle} disabled={!props.circleReady} />}
         <Tile title="Back" about="Return to the veil." onClick={props.onBack} />
       </div>
       <p className="text-dim">
