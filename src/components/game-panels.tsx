@@ -1276,8 +1276,12 @@ export const TurbzChestPanel = memo(function TurbzChestPanel({ game }: GameProp)
   const bagTotal = s.bag.reduce((a, it) => a + it.count, 0);
   return (
     <div className="ui-stack" data-testid="turbzchest-panel">
-      <StatusChips items={[{ label: `${s.turbzChest.count} stored · ${s.turbzChest.items.length} kinds`, tone: "kyo" }, { label: `Bag ${bagTotal}` }, { label: "Survives death", tone: "on" }]} />
+      <StatusChips items={[{ label: `${s.turbzChest.count} stored · ${s.turbzChest.items.length} kinds`, tone: "kyo" }, { label: `Bag ${bagTotal}` }, { label: "Survives death", tone: "on" }, { label: `Pipe: ${s.turbzChest.ioLabel}` }]} />
       <p className="text-dim">Anything you stash here stays safe when you die — rebuild your camp and it is still inside. Kyo and worn gear are not stored here.</p>
+      <Section title={`PIPE FLOW · ${s.turbzChest.ioLabel.toUpperCase()}`}>
+        <p className="text-dim">Controls how pipes move items through this chest. <b>Output ▸</b> pushes stored items into a wired Generator or Block Generator; <b>◂ Input</b> only receives (from a Duplicator or Rock Miner); <b>Auto</b> does both; <b>Off</b> ignores pipes.</p>
+        <button type="button" className="px-btn ui-btn-sm" data-testid="chest-pipe-flow" onClick={() => game?.chestPipeFlowCycle()}>Flow: {s.turbzChest.ioLabel}</button>
+      </Section>
       <div className="menu-toolbar">
         <input className="px-input" aria-label="Search items" placeholder="Search items" value={q} onChange={(e) => setQ(e.target.value)} data-testid="turbzchest-search" />
         <select className="px-input" aria-label="Sort items" value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
@@ -1354,6 +1358,12 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
       <Section title="HOW IT WORKS">
         {p.how.map((line) => <p key={line} className="text-dim">{line}</p>)}
       </Section>
+      {p.canPipe && (
+        <Section title={`PIPE FLOW · ${p.ioLabel.toUpperCase()}`}>
+          <p className="text-dim">{p.ioAbout} Set a source (Duplicator, Rock Miner, or a Chest) to <b>Output ▸</b> and a destination (a Generator, Block Generator, or a Chest) to <b>◂ Input</b> to pipe one into the other. <b>Auto</b> sends and receives by role; <b>Off</b> ignores pipes.</p>
+          <button type="button" className="px-btn ui-btn-sm" data-testid="pipe-flow" onClick={() => game?.pipeFlowCycle()}>Flow: {p.ioLabel}</button>
+        </Section>
+      )}
       {p.kind === "hellgen" && (
         <>
           <Section title={`HELL ORE INSIDE · ${p.ore}`}>

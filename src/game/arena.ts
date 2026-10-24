@@ -1,5 +1,4 @@
 import {
-  ENCHANT_BY_ID,
   MONSTERS,
   MOVE_BY_ID,
   MOVES,
@@ -8,7 +7,6 @@ import {
   WITCH_NAMES,
   attackForm,
   attackRange,
-  gearScore,
   irand,
   moveTactic,
   mulberry32,
@@ -24,75 +22,67 @@ import {
   type TypeId,
   typeMult,
 } from "./content";
+import { CLASSES, CLASS_BY_ID, CLASS_RACE, type ClassId, type Role, type StatMods } from "./classes";
 import { directionFromDelta, type ActorDirection } from "./actor-sheets.config";
 import { CombatFx } from "./combat-fx";
 import { defenseVs } from "./balance";
-import { savedMaps, mapToWorld } from "./map-format";
 import type { GraveBody } from "./social-types";
 import { drawActor, drawMonster, drawShadowName } from "./sprites";
 import { geneSeedOf } from "./fx-gene";
 import { drawWorldSlice, type WorldData } from "./world";
 
 const TILE = 32;
-const NAMES = [
-  ...WITCH_NAMES,
-  "Vellum Sax",
-  "Nix of Salt",
-  "Sable Quill",
-  "Ione Marr",
-  "Cairn Hess",
-  "Rue the Lid",
-  "Onyx Pell",
-  "Moss Ives",
-  "Hester Vetch",
-  "Lumen Bret",
-  "Silt Ama",
-  "Bram of Glass",
-  "Nell Dusk",
-  "Pax Yarrow",
-  "Ivy Sorrow",
-  "Cass of Embers",
-  "Wren Holt",
-  "Otter Vine",
-  "Isla Thorn",
-  "Quill Mare",
-  "Dusk Nen",
-  "Cress Vail",
-  "Vetch Ora",
-  "Nim of the Well",
-  "Hale Mot",
-  "Sera's Shadow",
-  "Juniper Hex",
-  "Tallow Mae",
-  "Grey Pell",
-  "Annis Coil",
-  "Mab of Rime",
-  "Kit the Toll",
-  "Edda Vellum",
-  "Noa of Pitch",
-  "Fern Widow",
-  "Lux of Bone",
-  "Pim Salt",
-  "Ysolde Marr",
-  "Betony Vale",
-  "Cressida Ash",
+
+/* ----------------------------------------------------------------------------
+ * TurboCircle — Total War style siege.
+ *
+ * One 250×250 procedurally generated battlefield with a fortified stronghold at
+ * its heart. Two armies: ATTACKERS, who smart-push the keep to seize the capture
+ * point, and DEFENDERS, who hold it. Each army is built out of CLASSES the player
+ * picks — tanks, casters, marksmen, ghost-callers — so you decide what your army
+ * is made of. Ghost-caller classes bring spirits onto the field with them.
+ * ------------------------------------------------------------------------- */
+
+const ATTACKER = 0;
+const DEFENDER = 1;
+
+type SideDef = { id: number; key: "attackers" | "defenders"; name: string; color: string };
+const SIDES: SideDef[] = [
+  { id: ATTACKER, key: "attackers", name: "Attackers", color: "#c4473a" },
+  { id: DEFENDER, key: "defenders", name: "Defenders", color: "#5ab0e8" },
 ];
 
-export type ArenaSpiritDef = {
-  name: string;
-  type: TypeId;
-  template: number;
-  move: string;
-  look: GhostLook;
+/** How many ghosts a class leads onto the field. Ties the ghost roster to the class you pick. */
+const GHOSTS_BY_CLASS: Partial<Record<ClassId, number>> = {
+  spiritbinder: 3,
+  hexbinder: 2,
+  gravemage: 2,
+  veilsinger: 1,
+  vigilant: 1,
+  nightlord: 1,
 };
+
+const NAMES = [
+  ...WITCH_NAMES,
+  "Vellum Sax", "Nix of Salt", "Sable Quill", "Ione Marr", "Cairn Hess", "Rue the Lid",
+  "Onyx Pell", "Moss Ives", "Hester Vetch", "Lumen Bret", "Silt Ama", "Bram of Glass",
+  "Nell Dusk", "Pax Yarrow", "Ivy Sorrow", "Cass of Embers", "Wren Holt", "Otter Vine",
+  "Isla Thorn", "Quill Mare", "Dusk Nen", "Cress Vail", "Vetch Ora", "Nim of the Well",
+  "Hale Mot", "Sera's Shadow", "Juniper Hex", "Tallow Mae", "Grey Pell", "Annis Coil",
+  "Mab of Rime", "Kit the Toll", "Edda Vellum", "Noa of Pitch", "Fern Widow", "Lux of Bone",
+  "Pim Salt", "Ysolde Marr", "Betony Vale", "Cressida Ash",
+];
+
+export type ArenaSpiritDef = { name: string; type: TypeId; template: number; move: string; look: GhostLook };
 
 export type ArenaWitch = {
   uid: string;
   name: string;
   race: RaceId;
+  classId: ClassId;
+  cls: string;
   role: "witch" | "summoner";
   level: number;
-  talent: number;
   type: TypeId;
   maxHp: number;
   speed: number;
@@ -102,72 +92,51 @@ export type ArenaWitch = {
   spirits: ArenaSpiritDef[];
   hair: number;
   skin: number;
+  /** Combat bonuses from the class, folded onto the body at spawn. */
+  mods: { might: number; ward: number; crit: number; swift: number; dmg: number };
 };
 
-export type ArenaSave = {
-  v: 1;
-  points: number;
-  tokens: number;
-  wins: number;
-  losses: number;
-  roster: ArenaWitch[];
-  party: string[];
-};
-
-export type ArenaCard = {
-  uid: string;
-  name: string;
-  role: "witch" | "summoner";
-  race: string;
-  typeName: string;
-  type: TypeId;
-  level: number;
-  power: number;
-  moves: string;
-  gear: string;
-  enchants: string;
-  spirits: string;
-  marked: boolean;
-};
-
-export type CircleMode = "classic" | "war";
 export type CamMode = "team" | "free";
-export type TeamZone = { tx: number; ty: number; tw: number; th: number };
-export type ArenaTeamSnap = {
+
+/** What a side's army is made of: a size and the classes to fill it from. */
+export type ArmyPlan = { size: number; classes: ClassId[] };
+
+export type ClassOption = { id: ClassId; name: string; role: Role; type: TypeId; typeName: string; ghosts: number; about: string };
+
+export type ArmySnap = {
   id: number;
+  key: "attackers" | "defenders";
   name: string;
   color: string;
+  size: number;
+  classes: ClassId[];
   alive: number;
   count: number;
   level: number;
+  ghosts: number;
   intent: string;
-  placed: boolean;
 };
+
 export type ArenaSnap = {
   phase: "setup" | "fight" | "result";
   note: string;
   speed: number;
-  mode: CircleMode;
   cam: CamMode;
-  mapId: string;
-  mapName: string;
-  maps: { id: string; name: string }[];
-  teamCount: number;
-  perTeam: number;
-  /** War: soldiers per army (10–100). */
-  warSize: number;
-  placing: boolean;
-  placeFor: number;
   focus: number;
-  teams: ArenaTeamSnap[];
   clock: string;
+  timeLeft: string;
+  /** Attacker control of the point, 0 (fully held) … 100 (seized). */
+  control: number;
+  held: "attackers" | "defenders" | "contested";
+  armies: ArmySnap[];
+  classOptions: ClassOption[];
   winner: string;
+  winSide: number;
 };
 
 type Fighter = {
   id: string;
   side: number;
-  xp: number;
   role: "witch" | "summoner" | "spirit";
   name: string;
   race: RaceId | null;
@@ -204,20 +173,15 @@ type Fighter = {
   double: number;
   second: boolean;
   usedSecond: boolean;
-  tokened: boolean;
-  buried: boolean;
-  grave: GraveBody | null;
   think: number;
   stuck: number;
   lastX: number;
   lastY: number;
   path: { x: number; y: number }[];
-  /** War: which squad of ten, and the place in it. */
   squad: number;
   rank: number;
   hair: number;
   skin: number;
-  tall: number;
 };
 
 type Flo = { x: number; y: number; text: string; life: number; color: string };
@@ -225,13 +189,19 @@ type Beam = { x0: number; y0: number; x1: number; y1: number; life: number; colo
 
 const QUALITY = ["worn", "common", "fine", "rare", "epic", "legendary"];
 
-export function readArena(raw: unknown): ArenaSave | null {
-  if (!raw || typeof raw !== "object") return null;
-  const s = raw as ArenaSave;
-  if (s.v !== 1 || !Array.isArray(s.roster) || s.roster.length < 6) return null;
-  if (typeof s.points !== "number" || s.points <= 0) return null;
-  if (!Array.isArray(s.party)) return null;
-  return s;
+/** Classes you can field. The Crying Girl is left out — she is a build-your-own, not an army unit. */
+const FIELD_CLASSES = CLASSES.filter((c) => c.id !== "cryinggirl");
+
+function classOptions(): ClassOption[] {
+  return FIELD_CLASSES.map((c) => ({
+    id: c.id as ClassId,
+    name: c.name,
+    role: c.role,
+    type: c.type,
+    typeName: TYPES[c.type]?.name ?? c.type,
+    ghosts: GHOSTS_BY_CLASS[c.id as ClassId] ?? 0,
+    about: `${c.role} · ${c.focus}`,
+  }));
 }
 
 function ench(gear: Gear[], id: string): number {
@@ -240,153 +210,84 @@ function ench(gear: Gear[], id: string): number {
   return n;
 }
 
-function graveOf(w: ArenaWitch): GraveBody {
-  const all = [w.weapon, ...w.gear];
-  return {
-    mode: "arena",
-    score: powerOf(w),
-    name: w.name,
-    race: RACES.find((r) => r.id === w.race)?.name ?? w.race,
-    level: w.level,
-    accountScore: 0,
-    skills: [{ name: w.role === "summoner" ? "Summoning" : "Circle", level: w.level }],
-    gear: all.map((g) => ({
-      slot: g.slot,
-      name: g.name,
-      level: g.level,
-      quality: g.quality,
-      type: TYPES[g.type]?.name ?? g.type,
-      enchants: g.enchants.map((e) => ({ name: ENCHANT_BY_ID[e.id]?.name ?? e.id, power: e.power })),
-      moves: (g.moves ?? []).map((id) => MOVE_BY_ID[id]?.name ?? id),
-    })),
-    note: w.role === "summoner" ? `Summoner. Spirits: ${w.spirits.map((s) => s.name).join(", ") || "none"}.` : "Witch of the circle.",
-  };
-}
-
-function powerOf(w: ArenaWitch): number {
-  const gear = gearScore(w.weapon) + w.gear.reduce((s, g) => s + gearScore(g), 0);
-  const moves = w.moves.reduce((s, id) => s + (MOVE_BY_ID[id]?.power ?? 0), 0);
-  return Math.round(w.level * 16 + w.talent * 40 + gear * 0.22 + moves + (w.role === "summoner" ? 24 : 0));
-}
-
-function cardOf(w: ArenaWitch, marked: boolean): ArenaCard {
-  const all = [w.weapon, ...w.gear];
-  const enchants = all
-    .flatMap((g) => g.enchants)
-    .slice(0, 4)
-    .map((e) => `${ENCHANT_BY_ID[e.id]?.name ?? e.id} ${e.power}`);
-  return {
-    uid: w.uid,
-    name: w.name,
-    role: w.role,
-    race: RACES.find((r) => r.id === w.race)?.name ?? w.race,
-    typeName: TYPES[w.type].name,
-    type: w.type,
-    level: w.level,
-    power: powerOf(w),
-    moves: w.moves.map((id) => MOVE_BY_ID[id]?.name ?? id).join(" · "),
-    gear: w.weapon.name,
-    enchants: enchants.length ? enchants.join(" · ") : "Bare. No enchant.",
-    spirits: w.role === "summoner" ? w.spirits.map((s) => s.name).join(", ") : "",
-    marked,
-  };
-}
-
-function rollMoves(rng: Rng, type: TypeId, strong: boolean): string[] {
-  const pool = MOVES.filter((m) => m.power > 0 || m.effect === "mend" || m.effect === "shell");
-  const biased = pool.filter((m) => m.type === type || m.type === "normal");
-  const source = biased.length > 4 ? biased : pool;
-  const count = strong ? 3 + irand(rng, 3) : 2 + irand(rng, 2);
+function rollMovesFor(classId: ClassId): string[] {
+  const c = CLASS_BY_ID[classId] as { signature?: string; starterMoves?: string[] };
+  const want = [c.signature ?? "", ...(c.starterMoves ?? [])].filter((id) => id && MOVE_BY_ID[id]);
   const out: string[] = [];
-  const bag = [...(strong && rng() < 0.55 ? source : pool)];
-  for (let i = 0; i < count && bag.length; i++) {
-    const idx = irand(rng, bag.length);
-    const m = bag.splice(idx, 1)[0]!;
-    if (!out.includes(m.id)) out.push(m.id);
-  }
+  for (const id of want) if (!out.includes(id) && out.length < 6) out.push(id);
   if (!out.length) out.push("measured");
   return out;
 }
 
-export function rollWitch(rng: Rng, forcedLevel?: number): ArenaWitch {
-  const fortune = rng();
-  const level =
-    forcedLevel ??
-    (fortune < 0.18 ? 1 + irand(rng, 8) : fortune > 0.84 ? 22 + irand(rng, 18) : 4 + irand(rng, 20));
-  const talent = fortune < 0.14 ? 0.48 + rng() * 0.22 : fortune > 0.9 ? 1.35 + rng() * 0.55 : 0.72 + rng() * 0.55;
-  const race = pick(rng, RACES);
-  const role: "witch" | "summoner" = rng() < 0.22 ? "summoner" : "witch";
-  const strong = talent > 1.15 || level >= 24;
-  const weak = talent < 0.7 || level <= 4;
-  const luck = weak ? irand(rng, 8) : strong ? 28 + irand(rng, 50) : 8 + irand(rng, 28);
-  const floor = strong && rng() < 0.35 ? (rng() < 0.18 ? "legendary" : "epic") : weak ? "worn" : null;
-  const gearLevel = Math.max(1, Math.round(level * (weak ? 0.45 + rng() * 0.3 : strong ? 0.9 + rng() * 0.45 : 0.6 + rng() * 0.5)));
-  const weapon = rollGear(rng, {
-    level: gearLevel,
-    slot: "weapon",
-    luck,
-    floor,
-    raceBias: race.id,
-    typeBias: rng() < 0.7 ? race.type : null,
-  });
-  const slots = weak ? (["chest"] as const) : (["head", "chest", "legs", "feet", "relic"] as const);
+/** Build one soldier of a given class. Modern witch, kitted and stat-leaned to match the class. */
+export function witchFromClass(rng: Rng, classId: ClassId, level: number): ArenaWitch {
+  const c = CLASS_BY_ID[classId] as unknown as { name: string; type: TypeId; role: Role; stats: StatMods };
+  const race = CLASS_RACE[classId] ?? "vesper";
+  const raceInfo = RACES.find((r) => r.id === race) ?? RACES[0]!;
+  const stats = c.stats ?? {};
+  const ghosts = GHOSTS_BY_CLASS[classId] ?? 0;
+  const role: "witch" | "summoner" = ghosts > 0 ? "summoner" : "witch";
+
+  const gearLevel = Math.max(1, Math.round(level * (0.7 + rng() * 0.4)));
+  const luck = 10 + irand(rng, 30);
+  const weapon = rollGear(rng, { level: gearLevel, slot: "weapon", luck, raceBias: race, typeBias: rng() < 0.75 ? c.type : null });
+  const slots = ["head", "chest", "legs", "feet", "relic"] as const;
   const gear = slots.map((slot) =>
-    rollGear(rng, {
-      level: Math.max(1, gearLevel - irand(rng, 3)),
-      slot,
-      luck: Math.max(0, luck - 6),
-      floor: weak ? "worn" : floor && rng() < 0.4 ? floor : null,
-      raceBias: race.id,
-      typeBias: rng() < 0.45 ? race.type : null,
-    }),
+    rollGear(rng, { level: Math.max(1, gearLevel - irand(rng, 2)), slot, luck: Math.max(0, luck - 5), raceBias: race, typeBias: rng() < 0.5 ? c.type : null }),
   );
-  const moves = rollMoves(rng, race.type, strong);
-  for (const id of weapon.moves ?? []) if (!moves.includes(id) && moves.length < 6) moves.push(id);
-  if (role === "summoner" && !moves.some((id) => MOVE_BY_ID[id]?.effect === "mend" || MOVE_BY_ID[id]?.effect === "shell")) {
-    moves.push(rng() < 0.5 ? "tidemend" : "aegis");
-  }
+
+  const moves = rollMovesFor(classId);
+
   const spirits: ArenaSpiritDef[] = [];
-  if (role === "summoner") {
-    const pool = MONSTERS.filter((m) => m.type === "spirit" || m.type === "void" || m.template === 23 || m.template === 16);
-    for (let i = 0; i < 3; i++) {
-      const spec = pick(rng, pool);
-      const bag = MOVES.filter((m) => m.type === spec.type && m.power > 0 && m.power < 56);
-      const move = (bag.length ? pick(rng, bag) : MOVES[0]!).id;
-      spirits.push({
-        name: spec.name,
-        type: spec.type,
-        template: spec.template,
-        move,
-        look: rollGhostLook(rng, 1, move, "hunt"),
-      });
-    }
+  for (let i = 0; i < ghosts; i++) {
+    // The ghost's element matches the class, so a Spirit Caller's choir reads as hers.
+    const pool = MONSTERS.filter((m) => m.type === c.type || m.type === "spirit" || m.type === "void");
+    const spec = pool.length ? pick(rng, pool) : MONSTERS[0]!;
+    const bag = MOVES.filter((m) => m.type === c.type && m.power > 0 && m.power < 56);
+    const move = (bag.length ? pick(rng, bag) : MOVES[0]!).id;
+    spirits.push({ name: spec.name, type: c.type, template: spec.template, move, look: rollGhostLook(rng, 1, move, "hunt") });
   }
-  const used = new Set<string>();
-  let name = pick(rng, NAMES);
-  for (let i = 0; i < 6 && used.has(name); i++) name = pick(rng, NAMES);
-  if (rng() < 0.08) name = `${name} II`;
-  const baseline = 78 + level * 16;
+
+  const name = pick(rng, NAMES);
+  const roleHp = c.role === "Tank" ? 1.22 : c.role === "Caster" ? 0.9 : c.role === "Support" ? 1.02 : 1;
+  const hpMul = 1 + (stats.hp ?? 0) / 100 + (stats.guard ?? 0) / 340;
+  const baseline = 82 + level * 16;
+  const maxHp = Math.floor(baseline * roleHp * hpMul);
+  const speed = Math.max(44, Math.floor(70 + level * 0.3 + (stats.speed ?? 0) * 0.55 - (stats.guard ?? 0) * 0.12));
+
+  const mods = {
+    might: stats.might ?? 0,
+    ward: stats.guard ?? 0,
+    crit: stats.crit ?? 0,
+    swift: stats.haste ?? 0,
+    // Casters hit harder with spells via Arcana; a touch of leech never hurts a damage read.
+    dmg: 1 + (stats.arcana ?? 0) * 0.004 + (stats.leech ?? 0) * 0.002,
+  };
+
   return {
     uid: nextUid(),
     name,
-    race: race.id,
+    race,
+    classId,
+    cls: c.name,
     role,
     level,
-    talent,
-    type: race.type,
-    maxHp: Math.floor(baseline * talent * (role === "summoner" ? 1.08 : 1)),
-    speed: Math.floor((role === "summoner" ? 62 : 74) + level * 0.35 + (strong ? 8 : 0)),
+    type: c.type,
+    maxHp,
+    speed,
     moves,
     weapon,
     gear,
     spirits,
-    hair: race.hair,
+    hair: raceInfo.hair,
     skin: irand(rng, 5),
+    mods,
   };
 }
 
 class Heap {
   private a: { i: number; c: number }[] = [];
+  clear(): void { this.a.length = 0; }
   push(i: number, c: number): void {
     const a = this.a;
     a.push({ i, c });
@@ -425,87 +326,6 @@ class Heap {
   }
 }
 
-function buildMap(rng: Rng): { grid: Uint8Array; w: number; h: number } {
-  const w = 42;
-  const h = 28;
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const grid = new Uint8Array(w * h);
-    const at = (x: number, y: number) => y * w + x;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[at(x, y)] = 1;
-    }
-    const clusters = 9 + irand(rng, 7);
-    for (let i = 0; i < clusters; i++) {
-      const x = 6 + irand(rng, w - 12);
-      const y = 3 + irand(rng, h - 6);
-      grid[at(x, y)] = 1;
-      if (rng() < 0.55 && x + 1 < w - 1) grid[at(x + 1, y)] = 1;
-      if (rng() < 0.4 && y + 1 < h - 1) grid[at(x, y + 1)] = 1;
-      if (rng() < 0.25 && x + 1 < w - 1 && y + 1 < h - 1) grid[at(x + 1, y + 1)] = 1;
-    }
-    for (let i = 0; i < 12 + irand(rng, 8); i++) {
-      const x = 3 + irand(rng, w - 6);
-      const y = 2 + irand(rng, h - 4);
-      if (grid[at(x, y)] === 0) grid[at(x, y)] = 2;
-    }
-    for (let i = 0; i < 7 + irand(rng, 6); i++) {
-      const x = 3 + irand(rng, w - 6);
-      const y = 2 + irand(rng, h - 4);
-      if (grid[at(x, y)] === 0) grid[at(x, y)] = 3;
-    }
-    const pads = [4, 8, 12, 16, 20, 23];
-    for (const y of pads) {
-      for (const x of [2, 3, w - 3, w - 4]) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const xx = x + dx;
-            const yy = y + dy;
-            if (xx > 0 && yy > 0 && xx < w - 1 && yy < h - 1) grid[at(xx, yy)] = 0;
-          }
-        }
-      }
-    }
-    if (reachable(grid, w, h, 2, 4, w - 3, 4)) return { grid, w, h };
-  }
-  const grid = new Uint8Array(w * h);
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[y * w + x] = 1;
-  return { grid, w, h };
-}
-
-/** War: a wide battlefield with groves for cover, a muddy ford and a few traps. */
-function buildWarMap(rng: Rng): { grid: Uint8Array; w: number; h: number } {
-  const w = 160;
-  const h = 96;
-  const grid = new Uint8Array(w * h);
-  const at = (x: number, y: number) => y * w + x;
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[at(x, y)] = 1;
-  // Groves and rocks, kept out of the two deployment strips.
-  for (let i = 0; i < 70; i++) {
-    const cx = 22 + irand(rng, w - 44);
-    const cy = 3 + irand(rng, h - 6);
-    const r = 1 + irand(rng, 3);
-    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
-      const x = cx + dx, y = cy + dy;
-      if (x < 22 || x > w - 23 || y < 2 || y > h - 3) continue;
-      if (dx * dx + dy * dy <= r * r && rng() < 0.8) grid[at(x, y)] = 1;
-    }
-  }
-  // A muddy ford across the middle.
-  const mid = (w >> 1) + irand(rng, 9) - 4;
-  for (let y = 1; y < h - 1; y++) {
-    const wob = Math.round(Math.sin(y * 0.18) * 3);
-    for (let dx = -3; dx <= 3; dx++) {
-      const x = mid + wob + dx;
-      if (grid[at(x, y)] !== 1) grid[at(x, y)] = 3;
-    }
-  }
-  for (let i = 0; i < 26; i++) {
-    const x = 24 + irand(rng, w - 48), y = 2 + irand(rng, h - 4);
-    if (grid[at(x, y)] === 0) grid[at(x, y)] = 2;
-  }
-  return { grid, w, h };
-}
-
 function reachable(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1: number, y1: number): boolean {
   const q = [y0 * w + x0];
   const seen = new Uint8Array(w * h);
@@ -517,12 +337,7 @@ function reachable(grid: Uint8Array, w: number, h: number, x0: number, y0: numbe
     if (cur === goal) return true;
     const x = cur % w;
     const y = (cur / w) | 0;
-    for (const [dx, dy] of [
-      [1, 0],
-      [-1, 0],
-      [0, 1],
-      [0, -1],
-    ] as const) {
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
       const nx = x + dx;
       const ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
@@ -533,113 +348,6 @@ function reachable(grid: Uint8Array, w: number, h: number, x0: number, y0: numbe
     }
   }
   return false;
-}
-
-function route(grid: Uint8Array, w: number, h: number, sx: number, sy: number, gx: number, gy: number, fear: boolean): { x: number; y: number }[] {
-  sx = Math.max(1, Math.min(w - 2, sx));
-  sy = Math.max(1, Math.min(h - 2, sy));
-  gx = Math.max(1, Math.min(w - 2, gx));
-  gy = Math.max(1, Math.min(h - 2, gy));
-  if (grid[gy * w + gx] === 1) {
-    let found = false;
-    for (let r = 1; r <= 4 && !found; r++) {
-      for (let dy = -r; dy <= r && !found; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          const nx = gx + dx;
-          const ny = gy + dy;
-          if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
-          if (grid[ny * w + nx] !== 1) {
-            gx = nx;
-            gy = ny;
-            found = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-  const start = sy * w + sx;
-  const goal = gy * w + gx;
-  const dist = new Float32Array(w * h);
-  dist.fill(1e9);
-  dist[start] = 0;
-  const prev = new Int32Array(w * h);
-  prev.fill(-1);
-  const heap = new Heap();
-  heap.push(start, 0);
-  const dirs = [
-    [1, 0],
-    [-1, 0],
-    [0, 1],
-    [0, -1],
-  ] as const;
-  const hcost = (i: number) => Math.abs((i % w) - gx) + Math.abs(((i / w) | 0) - gy);
-  let best = start;
-  let bestH = hcost(start);
-  let guard = 0;
-  const budget = Math.min(w * h, 7000);
-  while (guard++ < budget) {
-    const cur = heap.pop();
-    if (!cur) break;
-    if (cur.c > dist[cur.i]! + 0.01) continue;
-    const h = hcost(cur.i);
-    if (h < bestH) {
-      bestH = h;
-      best = cur.i;
-    }
-    if (cur.i === goal) break;
-    const x = cur.i % w;
-    const y = (cur.i / w) | 0;
-    for (const [dx, dy] of dirs) {
-      const nx = x + dx;
-      const ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-      const k = ny * w + nx;
-      if (grid[k] === 1) continue;
-      const step = grid[k] === 2 ? (fear ? 7 : 2.2) : grid[k] === 3 ? 2.4 : 1;
-      const next = dist[cur.i]! + step;
-      if (next + 0.01 < dist[k]!) {
-        dist[k] = next;
-        prev[k] = cur.i;
-        heap.push(k, next);
-      }
-    }
-  }
-  const end = prev[goal] !== -1 || goal === start ? goal : best;
-  if (end === start) return [{ x: gx * TILE + TILE / 2, y: gy * TILE + TILE / 2 }];
-  const raw: { x: number; y: number }[] = [];
-  let c = end;
-  let safety = 0;
-  while (c !== -1 && safety++ < 800) {
-    raw.push({ x: (c % w) * TILE + TILE / 2, y: ((c / w) | 0) * TILE + TILE / 2 });
-    if (c === start) break;
-    c = prev[c] ?? -1;
-  }
-  raw.reverse();
-  if (raw.length <= 2) return raw;
-  const open = (x: number, y: number) => {
-    const tx = Math.floor(x / TILE);
-    const ty = Math.floor(y / TILE);
-    if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
-    return grid[ty * w + tx] !== 1;
-  };
-  const sees = (a: { x: number; y: number }, b: { x: number; y: number }) => {
-    const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 12));
-    for (let s = 1; s < steps; s++) {
-      const t = s / steps;
-      if (!open(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return false;
-    }
-    return true;
-  };
-  const slim: { x: number; y: number }[] = [];
-  let i = 0;
-  while (i < raw.length - 1) {
-    let j = Math.min(raw.length - 1, i + 14);
-    while (j > i + 1 && !sees(raw[i]!, raw[j]!)) j--;
-    slim.push(raw[j]!);
-    i = j;
-  }
-  return slim;
 }
 
 function los(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1: number, y1: number): boolean {
@@ -656,60 +364,195 @@ function los(grid: Uint8Array, w: number, h: number, x0: number, y0: number, x1:
   return true;
 }
 
-const SQUADS = [
-  { name: "Gold", color: "#e6c15a" },
-  { name: "Crimson", color: "#c4473a" },
-  { name: "Tide", color: "#5ab0e8" },
-  { name: "Moss", color: "#7dcea0" },
-  { name: "Violet", color: "#c9a6e8" },
-  { name: "Ember", color: "#f08a24" },
-  { name: "Rime", color: "#d7ecff" },
-  { name: "Ash", color: "#d2c4b0" },
-] as const;
+export type SiegeMap = {
+  grid: Uint8Array;
+  w: number;
+  h: number;
+  world: WorldData;
+  /** Capture point, in tiles. */
+  point: { tx: number; ty: number };
+  /** Open deploy tiles for each side. */
+  deploy: { tx: number; ty: number }[][];
+};
 
-type Squad = { intent: "hunt" | "train"; until: number; gx: number; gy: number; told: boolean };
+/**
+ * One 250×250 battlefield: grass and forest and water, with a walled stronghold at the centre whose
+ * courtyard holds the capture point. Attackers deploy in a wide ring at the map's edge; defenders
+ * deploy inside and just outside the keep. Gates are carved so the keep is always reachable.
+ */
+export function buildSiegeMap(rng: Rng): SiegeMap {
+  const w = 250;
+  const h = 250;
+  const grid = new Uint8Array(w * h);
+  const at = (x: number, y: number) => y * w + x;
+  const inb = (x: number, y: number) => x > 0 && y > 0 && x < w - 1 && y < h - 1;
+
+  // Border wall.
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (x === 0 || y === 0 || x === w - 1 || y === h - 1) grid[at(x, y)] = 1;
+
+  const cx = (w >> 1) + irand(rng, 21) - 10;
+  const cy = (h >> 1) + irand(rng, 21) - 10;
+  const keepR = 26 + irand(rng, 8); // outer keep radius, tiles
+  const courtR = keepR - 6;
+
+  // Forests and rock clusters — cover, kept clear of the keep interior and the capture lane.
+  const clusters = 150 + irand(rng, 70);
+  for (let i = 0; i < clusters; i++) {
+    const gx = 4 + irand(rng, w - 8);
+    const gy = 4 + irand(rng, h - 8);
+    const dk = Math.hypot(gx - cx, gy - cy);
+    if (dk < keepR + 6) continue; // never grow walls over the keep ring
+    const r = 1 + irand(rng, 3);
+    for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+      const x = gx + dx;
+      const y = gy + dy;
+      if (!inb(x, y)) continue;
+      if (dx * dx + dy * dy <= r * r && rng() < 0.82) grid[at(x, y)] = 1;
+    }
+  }
+
+  // A winding river of mud (slow terrain), with a couple of fords.
+  const ry = 30 + irand(rng, h - 60);
+  for (let x = 1; x < w - 1; x++) {
+    const wob = Math.round(Math.sin(x * 0.05 + rng() * 0.3) * 10 + Math.sin(x * 0.17) * 4);
+    for (let dy = -3; dy <= 3; dy++) {
+      const y = ry + wob + dy;
+      if (!inb(x, y)) continue;
+      if (Math.hypot(x - cx, y - cy) < keepR + 4) continue;
+      if (grid[at(x, y)] !== 1) grid[at(x, y)] = 3;
+    }
+  }
+
+  // Scattered hazards (spike pits) out in the field.
+  for (let i = 0; i < 90; i++) {
+    const x = 6 + irand(rng, w - 12);
+    const y = 6 + irand(rng, h - 12);
+    if (Math.hypot(x - cx, y - cy) < keepR + 3) continue;
+    if (grid[at(x, y)] === 0) grid[at(x, y)] = 2;
+  }
+
+  // The keep: a ring wall around an open courtyard.
+  for (let y = cy - keepR; y <= cy + keepR; y++) {
+    for (let x = cx - keepR; x <= cx + keepR; x++) {
+      if (!inb(x, y)) continue;
+      const d = Math.hypot(x - cx, y - cy);
+      if (d <= courtR) grid[at(x, y)] = 0; // clear courtyard
+      else if (d <= keepR && d > keepR - 2.2) grid[at(x, y)] = 1; // the wall itself
+      else if (d < keepR - 2.2 && d > courtR) grid[at(x, y)] = 0; // inner bailey, open
+    }
+  }
+  // Gates: carve openings through the wall at a few angles.
+  const gates = 3 + irand(rng, 2);
+  for (let g = 0; g < gates; g++) {
+    const ang = (g / gates) * Math.PI * 2 + rng() * 0.6;
+    for (let r = courtR - 1; r <= keepR + 3; r++) {
+      for (let s = -2; s <= 2; s++) {
+        const px = Math.round(cx + Math.cos(ang) * r - Math.sin(ang) * s);
+        const py = Math.round(cy + Math.sin(ang) * r + Math.cos(ang) * s);
+        if (inb(px, py)) grid[at(px, py)] = 0;
+      }
+    }
+  }
+  // Clear a small plaza right on the point.
+  for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (inb(cx + dx, cy + dy)) grid[at(cx + dx, cy + dy)] = 0;
+
+  // Deploy zones. Defenders: a ring just inside the wall + the courtyard. Attackers: the open ground
+  // near the border, spread around the whole map so they converge from every side.
+  const defenders: { tx: number; ty: number }[] = [];
+  for (let y = cy - courtR + 1; y <= cy + courtR - 1; y++) {
+    for (let x = cx - courtR + 1; x <= cx + courtR - 1; x++) {
+      if (inb(x, y) && grid[at(x, y)] === 0) defenders.push({ tx: x, ty: y });
+    }
+  }
+  const attackers: { tx: number; ty: number }[] = [];
+  const band = 18;
+  for (let ring = 0; ring < band; ring++) {
+    const m = 4 + ring;
+    for (let x = m; x < w - m; x += 3) {
+      for (const y of [m, h - 1 - m]) if (inb(x, y) && grid[at(x, y)] === 0) attackers.push({ tx: x, ty: y });
+    }
+    for (let y = m; y < h - m; y += 3) {
+      for (const x of [m, w - 1 - m]) if (inb(x, y) && grid[at(x, y)] === 0) attackers.push({ tx: x, ty: y });
+    }
+  }
+
+  // Guarantee the point is reachable from a sample of attacker spawns; widen a gate if not.
+  const sample = attackers.length ? attackers[Math.floor(attackers.length / 2)]! : { tx: 4, ty: 4 };
+  if (!reachable(grid, w, h, sample.tx, sample.ty, cx, cy)) {
+    for (let r = courtR - 1; r <= keepR + 4; r++) {
+      for (let s = -3; s <= 3; s++) {
+        const px = cx + r;
+        const py = cy + s;
+        if (inb(px, py)) grid[at(px, py)] = 0;
+      }
+    }
+  }
+
+  const tiles = Array.from(grid, (c, i) => {
+    const x = i % w;
+    const y = (i / w) | 0;
+    const nearKeep = Math.hypot(x - cx, y - cy) <= keepR + 1;
+    if (c === 1) return { floor: nearKeep ? 1 : 1, biome: nearKeep ? 4 : 4, block: 1, decor: 0 };
+    if (c === 2) return { floor: 7, biome: 6, block: 0, decor: 0 };
+    if (c === 3) return { floor: 6, biome: 5, block: 0, decor: 0 };
+    return { floor: 0, biome: 2, block: 0, decor: 0 };
+  });
+  const world: WorldData = { w, h, tiles, spawns: [], cache: null };
+
+  return { grid, w, h, world, point: { tx: cx, ty: cy }, deploy: [attackers, defenders] };
+}
+
+type Squad = { intent: "advance" | "hold"; gx: number; gy: number };
+
+const POINT_R = TILE * 3.4; // capture radius, pixels
+const CAP_RATE = 8; // attacker control gained per second per net body in the point
+const CAP_RETAKE = 6; // defender control regained per second when they own the point
+const TIME_LIMIT = 180; // seconds before the defenders win by holding
 
 export class WitchArena {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   phase: ArenaSnap["phase"] = "setup";
-  note = "Pick a map, plant the packs, and let them fight.";
+  note = "Build each army, then loose the attack.";
   speed = 1;
-  mode: CircleMode = "classic";
-  warSize = 40;
-  /** War: army centres, refreshed each step. */
-  private centres: { x: number; y: number; n: number }[] = [];
-  /** Path searches left this step (War keeps big armies fast). */
-  private pathBudget = 99;
   camMode: CamMode = "team";
-  mapId = "default";
-  mapName = "Default circle";
-  teamCount = 2;
-  perTeam = 6;
-  zones: (TeamZone | null)[] = [];
-  placing = false;
-  placeFor = 0;
-  focus = 0;
+  focus = ATTACKER;
+
+  plans: ArmyPlan[] = [
+    { size: 24, classes: ["bloodrager", "nightblade", "pathfinder", "spellweaver", "spiritbinder"] },
+    { size: 20, classes: ["warden", "oathkeeper", "frostblade", "absolver", "vigilant"] },
+  ];
+
   world: WorldData | null = null;
-  fighters: Fighter[] = [];
   grid: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
-  gw = 42;
-  gh = 28;
+  gw = 250;
+  gh = 250;
+  point = { x: 0, y: 0 };
+  deploy: { tx: number; ty: number }[][] = [[], []];
+
+  fighters: Fighter[] = [];
+  squads: Squad[] = [];
+  centres: { x: number; y: number; n: number }[] = [];
+  inPoint = [0, 0];
+  control = 0; // attacker share, 0..100
+  winner = "";
+  winSide = -1;
+  age = 0;
+  clock = 0;
+
   camX = 600;
   camY = 400;
-  zoom = 0.8;
+  zoom = 0.4;
   wantX = 600;
   wantY = 400;
-  wantZ = 0.8;
+  wantZ = 0.4;
   floats: Flo[] = [];
   beams: Beam[] = [];
   cfx = new CombatFx();
-  squads: Squad[] = [];
-  winner = "";
-  age = 0;
-  clock = 0;
-  onCloud: (save: ArenaSave | null) => void = () => {};
+
+  onCloud: (save: unknown) => void = () => {};
   onGrave: (body: GraveBody) => void = () => {};
+
   private keys = new Set<string>();
   private drag: { x: number; y: number; camX: number; camY: number; moved: boolean } | null = null;
   private running = false;
@@ -720,32 +563,37 @@ export class WitchArena {
   private dpr = 1;
   private fitted = false;
   private pubAt = 0;
+  private pathBudget = 12;
+  private dist = new Float32Array(0);
+  private prev = new Int32Array(0);
+  private heap = new Heap();
+  private seed = 1;
   private listeners = new Set<() => void>();
-  private snap: ArenaSnap = {
-    phase: "setup",
-    note: "",
-    speed: 1,
-    mode: "classic",
-    cam: "team",
-    mapId: "default",
-    mapName: "Default circle",
-    maps: [],
-    teamCount: 2,
-    perTeam: 6,
-    warSize: 40,
-    placing: false,
-    placeFor: 0,
-    focus: 0,
-    teams: [],
-    clock: "0:00",
-    winner: "",
-  };
+  private snap: ArenaSnap = this.blankSnap();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("canvas");
     this.ctx = ctx;
+  }
+
+  private blankSnap(): ArenaSnap {
+    return {
+      phase: "setup",
+      note: "",
+      speed: 1,
+      cam: "team",
+      focus: 0,
+      clock: "0:00",
+      timeLeft: "3:00",
+      control: 0,
+      held: "defenders",
+      armies: [],
+      classOptions: classOptions(),
+      winner: "",
+      winSide: -1,
+    };
   }
 
   subscribe(fn: () => void): () => void {
@@ -758,12 +606,13 @@ export class WitchArena {
     return this.snap;
   }
 
-  start(_seed: unknown): void {
+  start(seed: unknown): void {
     this.running = true;
     this.lastT = performance.now();
     this.resize();
-    this.loadMap("default");
-    this.note = "Classic: six against six. War: two armies of up to a hundred each.";
+    this.seed = (typeof seed === "number" ? seed : Date.now()) >>> 0 || 1;
+    this.regen();
+    this.note = "A walled keep, a point to take. Build both armies, then attack.";
     this.bind();
     this.publish();
     const loop = (t: number) => {
@@ -781,7 +630,7 @@ export class WitchArena {
       this.draw();
       this.pubAt -= dt;
       if (this.phase === "fight" && this.pubAt <= 0) {
-        this.pubAt = 0.45;
+        this.pubAt = 0.4;
         this.publish();
       }
       this.raf = requestAnimationFrame(loop);
@@ -804,52 +653,50 @@ export class WitchArena {
     this.canvas.height = Math.max(1, Math.floor(this.viewH * this.dpr));
   }
 
-  setMap(id: string): void {
-    this.loadMap(id);
-    this.phase = "setup";
-    this.placing = false;
+  // --- setup controls -------------------------------------------------------
+
+  private regen(): void {
+    const m = buildSiegeMap(mulberry32(this.seed));
+    this.grid = m.grid;
+    this.gw = m.w;
+    this.gh = m.h;
+    this.world = m.world;
+    this.point = { x: m.point.tx * TILE + TILE / 2, y: m.point.ty * TILE + TILE / 2 };
+    this.deploy = m.deploy;
+    this.dist = new Float32Array(m.w * m.h);
+    this.prev = new Int32Array(m.w * m.h);
     this.fighters = [];
-    this.note = `${this.mapName}. Plant where each pack appears.`;
+    this.squads = [];
+    this.fitMap();
+  }
+
+  newBattlefield(): void {
+    this.seed = (this.seed * 1664525 + 1013904223) >>> 0 || 1;
+    this.phase = "setup";
+    this.winner = "";
+    this.winSide = -1;
+    this.control = 0;
+    this.regen();
+    this.note = "A fresh battlefield. Same armies, new ground.";
     this.publish();
   }
 
-  setTeamCount(n: number): void {
-    if (this.mode === "war" || this.mode === "classic") n = 2;
-    this.teamCount = Math.max(2, Math.min(SQUADS.length, Math.round(n) || 2));
-    this.zones = Array.from({ length: this.teamCount }, (_, i) => this.zones[i] ?? null);
-    if (this.placeFor >= this.teamCount) this.placeFor = 0;
-    if (this.focus >= this.teamCount) this.focus = 0;
+  setSize(side: number, n: number): void {
+    const p = this.plans[side];
+    if (!p) return;
+    p.size = Math.max(4, Math.min(60, Math.round(n) || 4));
     this.publish();
   }
 
-  setPerTeam(n: number): void {
-    if (this.mode === "war") return this.setWarSize(n);
-    this.perTeam = 6;
-    this.publish();
-  }
-
-  /** War: soldiers per army, 10 to 100. */
-  setWarSize(n: number): void {
-    this.warSize = Math.max(10, Math.min(100, Math.round(n) || 10));
-    if (this.mode === "war") this.perTeam = this.warSize;
-    this.publish();
-  }
-
-  setMode(mode: CircleMode): void {
-    this.mode = mode;
-    this.teamCount = 2;
-    this.zones = [null, null];
-    if (mode === "war") {
-      this.perTeam = this.warSize;
-      if (this.mapId === "default") this.loadMap("battlefield");
-      this.note = "War. Two armies in squads of ten march in formation, then break into a brawl. Set the army size (up to 100 a side).";
+  toggleClass(side: number, id: ClassId): void {
+    const p = this.plans[side];
+    if (!p) return;
+    const i = p.classes.indexOf(id);
+    if (i >= 0) {
+      if (p.classes.length > 1) p.classes.splice(i, 1);
     } else {
-      this.perTeam = 6;
-      if (this.mapId === "battlefield") this.loadMap("default");
-      this.note = "Classic. Six against six; the last team standing wins.";
+      p.classes.push(id);
     }
-    this.phase = "setup";
-    this.fighters = [];
     this.publish();
   }
 
@@ -865,7 +712,7 @@ export class WitchArena {
   }
 
   cycleTeam(dir: number): void {
-    this.focus = (this.focus + dir + this.teamCount) % this.teamCount;
+    this.focus = (this.focus + dir + SIDES.length) % SIDES.length;
     this.camMode = "team";
     this.frame();
     this.camX = this.wantX;
@@ -874,98 +721,51 @@ export class WitchArena {
   }
 
   zoomBy(factor: number): void {
-    this.zoom = Math.max(0.22, Math.min(2.6, this.zoom * factor));
+    this.zoom = Math.max(0.12, Math.min(2.4, this.zoom * factor));
     if (this.phase === "fight" || this.phase === "result") this.camMode = "free";
     this.publish();
   }
 
-  armPlace(): void {
-    if (!this.world) this.loadMap(this.mapId);
-    this.phase = "setup";
-    this.placing = true;
-    this.fighters = [];
-    const empty = this.zones.findIndex((z) => !z);
-    this.placeFor = empty >= 0 ? empty : 0;
-    this.fitMap();
-    this.note = `Click the ground for ${SQUADS[this.placeFor]!.name}. Drag to pan. Scroll or the buttons to zoom.`;
-    this.publish();
-  }
-
-  setPlace(i: number): void {
-    if (i < 0 || i >= this.teamCount) return;
-    this.placeFor = i;
-    this.placing = true;
-    this.phase = "setup";
-    this.note = `Plant ${SQUADS[i]!.name}.`;
-    this.publish();
-  }
-
-  autoZones(): void {
-    if (!this.world) this.loadMap(this.mapId);
-    if (this.mode === "war") {
-      // Two deployment strips on opposite flanks.
-      const depth = Math.max(4, Math.min(12, Math.floor(this.gw / 12)));
-      const th = Math.max(6, this.gh - 8);
-      this.zones[0] = { tx: 2, ty: 4, tw: depth, th };
-      this.zones[1] = { tx: this.gw - 2 - depth, ty: 4, tw: depth, th };
-      this.note = "Armies deploy on opposite flanks. Move them, or start.";
-      this.publish();
-      return;
-    }
-    const n = this.teamCount;
-    for (let i = 0; i < n; i++) {
-      const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
-      const cx = Math.round(this.gw / 2 + Math.cos(ang) * this.gw * 0.32);
-      const cy = Math.round(this.gh / 2 + Math.sin(ang) * this.gh * 0.32);
-      this.zones[i] = this.clampZone(cx, cy);
-    }
-    this.note = "Pads scattered around the map. Move any of them, or start.";
-    this.publish();
-  }
+  // --- launch ---------------------------------------------------------------
 
   launch(): void {
-    if (!this.world) this.loadMap(this.mapId);
-    this.ensureZones();
+    if (!this.world) this.regen();
     const rng = mulberry32((Date.now() ^ ((Math.random() * 1e9) | 0)) >>> 0 || 9);
     this.fighters = [];
     this.floats = [];
     this.beams = [];
     this.cfx = new CombatFx();
     this.age = 0;
+    this.clock = 0;
+    this.control = 0;
     this.winner = "";
+    this.winSide = -1;
     this.squads = [];
-    for (let t = 0; t < this.teamCount; t++) {
-      const zone = this.zones[t]!;
-      const spots = this.mode === "war" ? this.ranksIn(zone, this.perTeam, t === 0 ? 1 : -1) : this.spotsIn(zone, this.perTeam);
-      this.squads.push({
-        intent: "hunt",
-        until: 3 + Math.random() * 4,
-        gx: (zone.tx + zone.tw / 2) * TILE,
-        gy: (zone.ty + zone.th / 2) * TILE,
-        told: false,
-      });
-      for (let i = 0; i < this.perTeam; i++) {
-        const level = this.mode === "war" ? 8 + irand(rng, 9) : 10 + irand(rng, 14);
-        const w = rollWitch(rng, level);
-        // War: soldiers only (no summoned spirits), so a hundred a side stays a hundred a side.
-        if (this.mode === "war") { w.role = "witch"; w.spirits = []; }
+
+    for (const side of SIDES) {
+      const plan = this.plans[side.id]!;
+      const picks = plan.classes.length ? plan.classes : (["warlord"] as ClassId[]);
+      const spots = this.spotsFrom(this.deploy[side.id] ?? [], plan.size, side.id);
+      this.squads.push({ intent: side.id === ATTACKER ? "advance" : "hold", gx: this.point.x, gy: this.point.y });
+      for (let i = 0; i < plan.size; i++) {
+        const classId = picks[i % picks.length]!;
+        const level = side.id === DEFENDER ? 10 + irand(rng, 10) : 9 + irand(rng, 11);
+        const w = witchFromClass(rng, classId, level);
         const spot = spots[i % spots.length]!;
-        this.spawnWitch(w, t, spot.tx, spot.ty, rng);
-        const body = this.fighters[this.fighters.length - 1 - (w.role === "summoner" ? w.spirits.length : 0)];
+        this.spawnWitch(w, side.id, spot.tx, spot.ty, rng);
+        const body = this.fighters[this.fighters.length - 1 - w.spirits.length];
         if (body) { body.squad = Math.floor(i / 10); body.rank = i % 10; }
       }
     }
+
     this.phase = "fight";
-    this.placing = false;
     this.camMode = "team";
-    this.focus = 0;
+    this.focus = ATTACKER;
     this.frame();
     this.camX = this.wantX;
     this.camY = this.wantY;
     this.zoom = this.wantZ;
-    this.note = this.mode === "war"
-      ? `War: ${this.perTeam} against ${this.perTeam}. Squads march in formation, then the lines break.`
-      : "Six against six. Last team standing.";
+    this.note = "The attack is loosed. Take the point or wipe the defenders.";
     this.publish();
     this.resize();
   }
@@ -976,300 +776,46 @@ export class WitchArena {
 
   backSetup(): void {
     this.phase = "setup";
-    this.placing = false;
     this.fighters = [];
     this.squads = [];
     this.winner = "";
+    this.winSide = -1;
+    this.control = 0;
     this.cfx = new CombatFx();
     this.beams = [];
     this.floats = [];
     this.fitMap();
-    this.note = "Same map. Change the packs or run it again.";
+    this.note = "Change the armies, or loose the attack again.";
     this.publish();
   }
 
-  private bind(): void {
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    window.addEventListener("pointermove", this.onPointerMove);
-    window.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    window.addEventListener("keydown", this.onKeyDown);
-    window.addEventListener("keyup", this.onKeyUp);
-  }
-
-  private unbind(): void {
-    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    window.removeEventListener("pointermove", this.onPointerMove);
-    window.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("wheel", this.onWheel);
-    window.removeEventListener("keydown", this.onKeyDown);
-    window.removeEventListener("keyup", this.onKeyUp);
-    this.keys.clear();
-  }
-
-  private typing(e: Event): boolean {
-    const tag = (e.target as HTMLElement | null)?.tagName;
-    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
-  }
-
-  private onPointerDown = (e: PointerEvent): void => {
-    if (e.button !== 0) return;
-    const p = this.local(e);
-    this.drag = { x: p.x, y: p.y, camX: this.camX, camY: this.camY, moved: false };
-  };
-
-  private onPointerMove = (e: PointerEvent): void => {
-    if (!this.drag) return;
-    const p = this.local(e);
-    const dx = p.x - this.drag.x;
-    const dy = p.y - this.drag.y;
-    if (Math.hypot(dx, dy) > 5) this.drag.moved = true;
-    const look = this.camMode === "free" || this.placing || this.phase === "setup";
-    if (this.drag.moved && look) {
-      this.camX = this.drag.camX - dx / this.zoom;
-      this.camY = this.drag.camY - dy / this.zoom;
-      this.clampCam();
-    }
-  };
-
-  private onPointerUp = (e: PointerEvent): void => {
-    if (!this.drag) return;
-    const p = this.local(e);
-    const moved = this.drag.moved;
-    this.drag = null;
-    if (!moved && this.placing) this.dropZone(p.x, p.y);
-  };
-
-  private onWheel = (e: WheelEvent): void => {
-    e.preventDefault();
-    this.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
-  };
-
-  private onKeyDown = (e: KeyboardEvent): void => {
-    if (this.typing(e)) return;
-    const k = e.key.toLowerCase();
-    if (k === "q") {
-      this.cycleTeam(-1);
-      e.preventDefault();
-      return;
-    }
-    if (k === "e") {
-      this.cycleTeam(1);
-      e.preventDefault();
-      return;
-    }
-    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
-      this.keys.add(k);
-      e.preventDefault();
-    }
-  };
-
-  private onKeyUp = (e: KeyboardEvent): void => {
-    this.keys.delete(e.key.toLowerCase());
-  };
-
-  private local(e: { clientX: number; clientY: number }): { x: number; y: number } {
-    const r = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
-  }
-
-  private screenToWorld(sx: number, sy: number): { x: number; y: number } {
-    return {
-      x: (sx - this.viewW / 2) / this.zoom + this.camX,
-      y: (sy - this.viewH / 2) / this.zoom + this.camY,
-    };
-  }
-
-  private dropZone(sx: number, sy: number): void {
-    const w = this.screenToWorld(sx, sy);
-    const tx = Math.floor(w.x / TILE);
-    const ty = Math.floor(w.y / TILE);
-    if (tx < 0 || ty < 0 || tx >= this.gw || ty >= this.gh) return;
-    const i = Math.max(0, Math.min(this.teamCount - 1, this.placeFor));
-    this.zones[i] = this.mode === "war" ? this.warZone(tx, ty) : this.clampZone(tx, ty);
-    const next = this.zones.findIndex((z, idx) => idx !== i && !z);
-    this.placeFor = next >= 0 ? next : (i + 1) % this.teamCount;
-    this.note = `${SQUADS[i]!.name} is planted. ${this.zones.every(Boolean) ? "All pads are set." : `Next: ${SQUADS[this.placeFor]!.name}.`}`;
-    this.publish();
-  }
-
-  private clampZone(tx: number, ty: number): TeamZone {
-    const span = Math.max(3, Math.min(6, Math.floor(Math.min(this.gw, this.gh) / 8)));
-    const x = Math.max(1, Math.min(this.gw - span - 1, tx - Math.floor(span / 2)));
-    const y = Math.max(1, Math.min(this.gh - span - 1, ty - Math.floor(span / 2)));
-    return { tx: x, ty: y, tw: span, th: span };
-  }
-
-  private warZone(tx: number, ty: number): TeamZone {
-    const tw = Math.max(4, Math.min(12, Math.floor(this.gw / 12)));
-    const th = Math.max(6, Math.min(this.gh - 4, Math.ceil(this.warSize / tw) + 6));
-    return { tx: Math.max(1, Math.min(this.gw - tw - 1, tx - (tw >> 1))), ty: Math.max(1, Math.min(this.gh - th - 1, ty - (th >> 1))), tw, th };
-  }
-
-  private ensureZones(): void {
-    let missing = false;
-    for (let i = 0; i < this.teamCount; i++) if (!this.zones[i]) missing = true;
-    if (missing || this.zones.length < this.teamCount) this.autoZones();
-  }
-
-  private loadMap(id: string): void {
-    const file = id === "default" || id === "battlefield" ? null : savedMaps().find((m) => m.id === id) ?? null;
-    const useDefault = !file;
-    const war = id === "battlefield";
-    this.mapId = useDefault ? (war ? "battlefield" : "default") : file.id;
-    if (useDefault) {
-      const built = war ? buildWarMap(mulberry32((Date.now() & 0xffff) ^ 0xba771e)) : buildMap(mulberry32(0xc1ec1e));
-      this.grid = built.grid;
-      this.gw = built.w;
-      this.gh = built.h;
-      const tiles = Array.from(built.grid, (c) => {
-        if (c === 1) return { floor: 1, biome: 4, block: 1, decor: 0 };
-        if (c === 2) return { floor: 7, biome: 6, block: 0, decor: 0 };
-        if (c === 3) return { floor: 6, biome: 5, block: 0, decor: 0 };
-        return { floor: 0, biome: 2, block: 0, decor: 0 };
-      });
-      this.world = { w: built.w, h: built.h, tiles, spawns: [], cache: null };
-      this.mapName = war ? "Battlefield" : "Default circle";
-    } else {
-      const world = mapToWorld(file);
-      this.world = world;
-      this.gw = world.w;
-      this.gh = world.h;
-      this.grid = new Uint8Array(world.tiles.length);
-      world.tiles.forEach((t, i) => {
-        this.grid[i] = t.block ? 1 : t.floor === 11 || t.floor === 7 ? 2 : t.floor === 2 || t.floor === 5 ? 3 : 0;
-      });
-      this.mapName = file.name;
-    }
-    this.zones = Array.from({ length: this.teamCount }, () => null);
-    this.fitMap();
-  }
-
-  private fitMap(): void {
-    if (this.viewW < 8 || this.viewH < 8 || this.gw < 2) return;
-    const mw = this.gw * TILE;
-    const mh = this.gh * TILE;
-    this.camX = mw / 2;
-    this.camY = mh / 2;
-    this.zoom = Math.max(0.18, Math.min(1.5, Math.min(this.viewW / mw, this.viewH / mh) * 0.92));
-    this.wantX = this.camX;
-    this.wantY = this.camY;
-    this.wantZ = this.zoom;
-    this.clampCam();
-  }
-
-  private clampCam(): void {
-    const mw = this.gw * TILE;
-    const mh = this.gh * TILE;
-    this.camX = Math.max(0, Math.min(mw, this.camX));
-    this.camY = Math.max(0, Math.min(mh, this.camY));
-  }
-
-  /** War: soldiers in ranks of ten, front rank facing the enemy. */
-  private ranksIn(zone: TeamZone, n: number, facing: number): { tx: number; ty: number }[] {
+  /** Spread n soldiers across a list of open deploy tiles. Attackers cluster into arcs; defenders ring the point. */
+  private spotsFrom(list: { tx: number; ty: number }[], n: number, side: number): { tx: number; ty: number }[] {
+    if (!list.length) return [{ tx: Math.floor(this.gw / 2), ty: Math.floor(this.gh / 2) }];
+    const sorted = side === DEFENDER
+      ? [...list].sort((a, b) => Math.hypot(a.tx * TILE - this.point.x, a.ty * TILE - this.point.y) - Math.hypot(b.tx * TILE - this.point.x, b.ty * TILE - this.point.y))
+      : list;
     const out: { tx: number; ty: number }[] = [];
-    const cols = Math.max(1, Math.ceil(n / Math.max(1, zone.th - 1)));
-    const front = facing > 0 ? zone.tx + zone.tw - 1 : zone.tx;
-    for (let i = 0; i < n; i++) {
-      const col = Math.floor(i / Math.max(1, zone.th - 1)) % Math.max(cols, zone.tw);
-      const row = i % Math.max(1, zone.th - 1);
-      let tx = front - col * facing;
-      let ty = zone.ty + row;
-      if ((this.grid[ty * this.gw + tx] ?? 1) === 1) {
-        const near = this.spotsIn({ tx: tx - 1, ty: ty - 1, tw: 3, th: 3 }, 1)[0]!;
-        tx = near.tx;
-        ty = near.ty;
-      }
-      out.push({ tx, ty });
-    }
+    for (let i = 0; i < n; i++) out.push(sorted[Math.min(sorted.length - 1, Math.floor((i * sorted.length) / n))]!);
     return out;
   }
 
-  private spotsIn(zone: TeamZone, n: number): { tx: number; ty: number }[] {
-    const open: { tx: number; ty: number }[] = [];
-    for (let y = zone.ty; y < zone.ty + zone.th; y++) {
-      for (let x = zone.tx; x < zone.tx + zone.tw; x++) {
-        if ((this.grid[y * this.gw + x] ?? 1) !== 1) open.push({ tx: x, ty: y });
-      }
-    }
-    if (!open.length) {
-      const cx = zone.tx + (zone.tw >> 1);
-      const cy = zone.ty + (zone.th >> 1);
-      for (let r = 1; r < 40 && !open.length; r++) {
-        for (let y = cy - r; y <= cy + r; y++) {
-          for (let x = cx - r; x <= cx + r; x++) {
-            if (x < 1 || y < 1 || x >= this.gw - 1 || y >= this.gh - 1) continue;
-            if (this.grid[y * this.gw + x] !== 1) open.push({ tx: x, ty: y });
-          }
-        }
-      }
-    }
-    if (!open.length) open.push({ tx: Math.min(this.gw - 2, 2), ty: Math.min(this.gh - 2, 2) });
-    const out: { tx: number; ty: number }[] = [];
-    for (let i = 0; i < n; i++) out.push(open[Math.min(open.length - 1, Math.floor((i * open.length) / n))]!);
-    return out;
-  }
-
-  private color(side: number): string {
-    return SQUADS[side]?.color ?? "#f0e2c8";
-  }
-
-  private publish(): void {
-    const maps = [{ id: "default", name: "Default circle" }, { id: "battlefield", name: "Battlefield (large)" }, ...savedMaps().map((m) => ({ id: m.id, name: m.name }))];
-    const fighting = this.phase === "fight" || this.phase === "result";
-    const teams: ArenaTeamSnap[] = Array.from({ length: this.teamCount }, (_, id) => {
-      const pack = this.fighters.filter((f) => f.side === id && f.role !== "spirit");
-      const alive = pack.filter((f) => f.alive);
-      const level = alive.length ? Math.round(alive.reduce((s, f) => s + f.level, 0) / alive.length) : 0;
-      const intent = fighting ? (this.mode === "war" ? (this.centres[id] && this.centres[1 - id] && Math.hypot(this.centres[id]!.x - this.centres[1 - id]!.x, this.centres[id]!.y - this.centres[1 - id]!.y) < 360 ? "Clashing" : "Marching") : "Hunting") : this.zones[id] ? "Placed" : "No pad";
-      return {
-        id,
-        name: SQUADS[id]!.name,
-        color: SQUADS[id]!.color,
-        alive: fighting ? alive.length : 0,
-        count: this.perTeam,
-        level,
-        intent,
-        placed: !!this.zones[id],
-      };
-    });
-    const s = Math.max(0, Math.floor(this.age));
-    this.snap = {
-      phase: this.phase,
-      note: this.note,
-      speed: this.speed,
-      mode: this.mode,
-      cam: this.camMode,
-      mapId: this.mapId,
-      mapName: this.mapName,
-      maps,
-      teamCount: this.teamCount,
-      perTeam: this.perTeam,
-      warSize: this.warSize,
-      placing: this.placing,
-      placeFor: this.placeFor,
-      focus: this.focus,
-      teams,
-      clock: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`,
-      winner: this.winner,
-    };
-    this.listeners.forEach((fn) => fn());
-  }
+  // --- spawning -------------------------------------------------------------
 
   private spawnWitch(w: ArenaWitch, side: number, tx: number, ty: number, rng: Rng): void {
     const gear = [w.weapon, ...w.gear];
     const id = nextUid();
-    const body = this.makeBody(w, side, tx, ty, id, "", w.role, w.talent * (w.role === "summoner" ? 0.2 : 1));
+    const body = this.makeBody(w, side, tx, ty, id, "", w.role, w.mods.dmg);
     body.moveIds = w.moves;
-    body.might = ench(gear, "might");
-    body.ward = ench(gear, "ward");
-    body.crit = ench(gear, "crit_edge");
-    body.swift = ench(gear, "swift");
+    body.might = ench(gear, "might") + w.mods.might;
+    body.ward = ench(gear, "ward") + w.mods.ward;
+    body.crit = 4 + ench(gear, "crit_edge") + w.mods.crit;
+    body.swift = ench(gear, "swift") + w.mods.swift;
     body.echo = ench(gear, "echo_guard");
     body.double = ench(gear, "double_strike");
     body.second = ench(gear, "second_chance") > 0;
     this.fighters.push(body);
-    if (w.role !== "summoner") return;
+    if (!w.spirits.length) return;
     w.spirits.forEach((s, i) => {
       const spot = this.openNear(tx, ty, i);
       const spirit = this.makeBody(
@@ -1278,7 +824,7 @@ export class WitchArena {
           race: w.race,
           type: s.type,
           level: w.level,
-          maxHp: Math.floor((78 + w.level * 16) * 0.2),
+          maxHp: Math.floor((78 + w.level * 16) * 0.22),
           speed: Math.floor(68 + w.level * 0.2),
           moves: [s.move],
           weapon: w.weapon,
@@ -1292,7 +838,7 @@ export class WitchArena {
         nextUid(),
         id,
         "spirit",
-        w.talent * 0.34,
+        0.34,
       );
       spirit.template = s.template;
       spirit.look = s.look;
@@ -1306,14 +852,7 @@ export class WitchArena {
   }
 
   private openNear(tx: number, ty: number, i: number): { tx: number; ty: number } {
-    const opts = [
-      [tx + 1, ty],
-      [tx - 1, ty],
-      [tx, ty + 1],
-      [tx, ty - 1],
-      [tx + 1, ty + 1],
-      [tx - 1, ty - 1],
-    ];
+    const opts = [[tx + 1, ty], [tx - 1, ty], [tx, ty + 1], [tx, ty - 1], [tx + 1, ty + 1], [tx - 1, ty - 1]];
     const [x, y] = opts[i % opts.length]!;
     if (x > 0 && y > 0 && x < this.gw - 1 && y < this.gh - 1 && this.grid[y * this.gw + x] !== 1) return { tx: x, ty: y };
     return { tx, ty };
@@ -1376,9 +915,6 @@ export class WitchArena {
       double: 0,
       second: false,
       usedSecond: false,
-      tokened: false,
-      buried: false,
-      grave: null,
       think: Math.random() * 0.3,
       stuck: 0,
       lastX: tx * TILE,
@@ -1386,25 +922,27 @@ export class WitchArena {
       path: [],
       hair: w.hair,
       skin: w.skin,
-      tall: 1,
-      xp: 0,
       squad: 0,
       rank: 0,
     };
   }
 
+  // --- simulation -----------------------------------------------------------
+
   private step(dt: number): void {
     this.age += dt;
     this.clock += dt;
-    this.pathBudget = this.mode === "war" ? 10 : 99;
-    this.centres = Array.from({ length: this.teamCount }, () => ({ x: 0, y: 0, n: 0 }));
+    this.pathBudget = 14;
+    this.centres = [{ x: 0, y: 0, n: 0 }, { x: 0, y: 0, n: 0 }];
+    this.inPoint = [0, 0];
     for (const f of this.fighters) {
       if (!f.alive || f.role === "spirit") continue;
       const c = this.centres[f.side];
-      if (!c) continue;
-      c.x += f.x; c.y += f.y; c.n += 1;
+      if (c) { c.x += f.x; c.y += f.y; c.n += 1; }
+      if (Math.hypot(f.x - this.point.x, f.y - this.point.y) <= POINT_R) this.inPoint[f.side]! += 1;
     }
     for (const c of this.centres) if (c.n) { c.x /= c.n; c.y /= c.n; }
+
     for (const f of this.fighters) {
       if (!f.alive) continue;
       f.hurt = Math.max(0, f.hurt - dt * 3);
@@ -1429,56 +967,33 @@ export class WitchArena {
       if (f.sleep > 0) continue;
       f.think -= dt;
       if (f.think <= 0) {
-        f.think = 0.32 + Math.random() * 0.16;
+        f.think = 0.3 + Math.random() * 0.18;
         this.think(f);
       }
       if (f.root <= 0) this.follow(f, dt, cell === 3);
       this.strike(f);
     }
+
+    // Capture progress.
+    const a = this.inPoint[ATTACKER]!;
+    const d = this.inPoint[DEFENDER]!;
+    if (a > 0 && a > d) this.control = Math.min(100, this.control + CAP_RATE * dt * Math.min(3, a - d));
+    else if (d >= a) this.control = Math.max(0, this.control - CAP_RETAKE * dt);
+
     this.cfx.tick(dt);
     for (const b of this.beams) b.life -= dt;
     this.beams = this.beams.filter((b) => b.life > 0);
     for (const fl of this.floats) fl.life -= dt;
     this.floats = this.floats.filter((fl) => fl.life > 0);
-    if (this.age > 1.2) this.maybeEnd();
-  }
-
-  private drill(dt: number): void {
-    return;
-    for (let s = 0; s < this.squads.length; s++) {
-      const squad = this.squads[s]!;
-      if (squad.intent !== "train") continue;
-      const pack = this.fighters.filter((f) => f.alive && f.side === s && f.role !== "spirit");
-      if (!pack.length) continue;
-      let cx = 0;
-      let cy = 0;
-      for (const f of pack) {
-        cx += f.x;
-        cy += f.y;
-      }
-      cx /= pack.length;
-      cy /= pack.length;
-      if (Math.hypot(cx - squad.gx, cy - squad.gy) > 78) continue;
-      for (const f of pack) {
-        f.xp += dt * 16;
-        f.hp = Math.min(f.max, f.hp + dt * 4);
-        if (f.xp < 32) continue;
-        f.xp = 0;
-        f.level += 1;
-        f.max = Math.round(f.max + 8 + f.level * 0.35);
-        f.hp = Math.min(f.max, f.hp + 16);
-        f.dmgMul *= 1.05;
-        f.speed += 1;
-        this.float(f.x, f.y - 36, `Lv ${f.level}`, this.color(s));
-      }
-    }
+    if (this.age > 1) this.maybeEnd();
   }
 
   private think(f: Fighter): void {
     const allies = this.fighters.filter((o) => o.alive && o.side === f.side);
-    const foes = this.fighters.filter((o) => o.alive && o.side !== f.side && o.role !== "spirit");
-    const anyFoe = this.fighters.filter((o) => o.alive && o.side !== f.side);
-    const pool = foes.length ? foes : anyFoe;
+    const foesAll = this.fighters.filter((o) => o.alive && o.side !== f.side);
+    const foes = foesAll.filter((o) => o.role !== "spirit");
+    const pool = foes.length ? foes : foesAll;
+
     if (f.role === "spirit") {
       const master = allies.find((a) => a.id === f.master);
       if (master) {
@@ -1487,108 +1002,80 @@ export class WitchArena {
       }
       return;
     }
-    if (this.mode === "war") {
-      this.thinkWar(f, allies, pool);
-      return;
-    }
-    const witches = allies.filter((o) => o.role !== "spirit");
-    const leader = witches[0];
-    if (!leader) return;
-    if (f.id !== leader.id) {
-      const idx = Math.max(1, witches.indexOf(f));
-      const ang = (idx / Math.max(2, witches.length)) * Math.PI * 2;
-      const radius = 28 + (idx % 3) * 12;
-      this.seek(f, leader.x + Math.cos(ang) * radius, leader.y + Math.sin(ang) * radius * 0.82);
-      return;
-    }
-    const squad = this.squads[f.side];
-    if (!squad) return;
-    if (this.age >= squad.until) this.retarget(f, squad, pool);
     if (!pool.length) {
-      this.seek(f, squad.gx, squad.gy);
+      this.seek(f, this.point.x, this.point.y);
       return;
     }
-    if (squad.intent === "hunt") {
-      const target = this.pickTarget(f, pool);
-      const move = this.bestMove(f, target, false);
-      const reach = attackRange(move);
-      const d = Math.hypot(target.x - f.x, target.y - f.y);
-      const form = attackForm(move);
-      if (form !== "melee" && d <= reach * 0.88 && this.sees(f.x, f.y, target.x, target.y)) {
-        f.path = [];
+
+    const near = nearest(pool, f.x, f.y);
+    const nd = Math.hypot(near.x - f.x, near.y - f.y);
+    const dPoint = Math.hypot(f.x - this.point.x, f.y - this.point.y);
+
+    if (f.side === ATTACKER) {
+      // Smart assault: brush aside whoever is in reach, otherwise press the point.
+      if (nd < 240) return this.engage(f, pool, allies);
+      if (dPoint > POINT_R * 0.7) {
+        const slot = this.ringSlot(f, POINT_R * 0.6);
+        this.seek(f, slot.x, slot.y);
         return;
       }
-      const ang = Math.atan2(f.y - target.y, f.x - target.x);
-      const hold = form === "melee" ? 26 : Math.min(reach * 0.7, 108);
-      this.seek(f, target.x + Math.cos(ang) * hold, target.y + Math.sin(ang) * hold);
+      this.engage(f, pool, allies);
       return;
     }
-    this.seek(f, squad.gx, squad.gy);
+
+    // Defender: hold the point. Engage attackers that come to the walls; collapse onto the point if
+    // it is being contested; otherwise fall back to a defensive ring and wait.
+    const leash = POINT_R * 3.2;
+    const contested = this.inPoint[ATTACKER]! > 0;
+    const nearFromPoint = Math.hypot(near.x - this.point.x, near.y - this.point.y);
+    if (contested) {
+      // Someone is on the point — converge and fight the nearest intruder.
+      if (nd < 260) return this.engage(f, pool, allies);
+      this.seek(f, this.point.x, this.point.y);
+      return;
+    }
+    if (nd < 220 && nearFromPoint < leash) return this.engage(f, pool, allies);
+    const ring = POINT_R * 1.7;
+    if (dPoint > ring) {
+      const slot = this.ringSlot(f, ring);
+      this.seek(f, slot.x, slot.y);
+      return;
+    }
+    // Idle on the ring, facing out.
+    if (nd < 240) this.engage(f, pool, allies);
   }
 
-  /**
-   * War brain. Out of contact, each squad of ten marches on the enemy army in formation behind its
-   * captain (ranks of five, front rank toward the foe). In contact (a foe within 260 px) every
-   * soldier engages: casters hold range, melee close in, and targets spread so no one is mobbed
-   * by forty while the rest stand idle.
-   */
-  private thinkWar(f: Fighter, allies: Fighter[], foes: Fighter[]): void {
-    if (!foes.length) return;
+  /** A standing position spread around the point, keyed to the fighter so a line forms rather than a pile. */
+  private ringSlot(f: Fighter, radius: number): { x: number; y: number } {
+    const seed = (f.squad * 7 + f.rank) || (f.x + f.y);
+    const ang = (seed * 0.61803) * Math.PI * 2 + (f.side === ATTACKER ? Math.atan2(f.y - this.point.y, f.x - this.point.x) : 0);
+    return { x: this.point.x + Math.cos(ang) * radius, y: this.point.y + Math.sin(ang) * radius };
+  }
+
+  /** Approach-and-hold against the best nearby target, spreading fire so no one is mobbed alone. */
+  private engage(f: Fighter, foes: Fighter[], allies: Fighter[]): void {
     const near = nearest(foes, f.x, f.y);
     const nd = Math.hypot(near.x - f.x, near.y - f.y);
-    if (nd < 260 || f.hp / f.max < 0.999) {
-      // Spread out: prefer the near foe with the fewest of us already on it.
-      let best = near, bestS = 1e9;
-      for (const o of foes) {
-        const d = Math.hypot(o.x - f.x, o.y - f.y);
-        if (d > nd + 140) continue;
-        const crowd = allies.filter((a) => a.path.length && Math.hypot(a.x - o.x, a.y - o.y) < 70).length;
-        const s = d + crowd * 45 + (o.hp / o.max) * 60;
-        if (s < bestS) { bestS = s; best = o; }
-      }
-      const move = this.bestMove(f, best, false);
-      const reach = attackRange(move);
-      const form = attackForm(move);
-      const d = Math.hypot(best.x - f.x, best.y - f.y);
-      if (form !== "melee" && d <= reach * 0.85 && d > reach * 0.4 && this.sees(f.x, f.y, best.x, best.y)) { f.path = []; return; }
-      const ang = Math.atan2(f.y - best.y, f.x - best.x);
-      const hold = form === "melee" ? 24 : Math.min(reach * 0.7, 120);
-      this.seek(f, best.x + Math.cos(ang) * hold, best.y + Math.sin(ang) * hold);
+    let best = near;
+    let bestS = 1e9;
+    for (const o of foes) {
+      const d = Math.hypot(o.x - f.x, o.y - f.y);
+      if (d > nd + 160) continue;
+      const crowd = allies.filter((al) => al.path.length && Math.hypot(al.x - o.x, al.y - o.y) < 70).length;
+      const s = d + crowd * 45 + (o.hp / o.max) * 60;
+      if (s < bestS) { bestS = s; best = o; }
+    }
+    const move = this.bestMove(f, best, false);
+    const reach = attackRange(move);
+    const form = attackForm(move);
+    const d = Math.hypot(best.x - f.x, best.y - f.y);
+    if (form !== "melee" && d <= reach * 0.85 && d > reach * 0.35 && this.sees(f.x, f.y, best.x, best.y)) {
+      f.path = [];
       return;
     }
-    const enemy = this.centres[1 - f.side] ?? { x: near.x, y: near.y, n: 1 };
-    const squad = allies.filter((a) => a.role !== "spirit" && a.squad === f.squad).sort((a, b) => a.rank - b.rank);
-    const captain = squad[0] ?? f;
-    const dir = enemy.x >= captain.x ? 1 : -1;
-    if (captain === f) {
-      // The captain marches toward the enemy army, drifting toward its centre line.
-      const tx = f.x + dir * 120;
-      const ty = f.y + Math.max(-60, Math.min(60, (enemy.y - f.y) * 0.25));
-      this.seek(f, tx, ty);
-      return;
-    }
-    const slot = Math.max(1, squad.indexOf(f));
-    const row = slot % 5;
-    const col = Math.floor(slot / 5);
-    this.seek(f, captain.x - dir * (col + 1) * 26, captain.y + (row - 2) * 24);
-  }
-
-  private retarget(_leader: Fighter, squad: Squad, _foes: Fighter[]): void {
-    // Classic packs always hunt (the old drill/roam mode is gone).
-    squad.intent = "hunt";
-    squad.until = this.age + 2.2;
-  }
-
-  private roamSpot(f: Fighter): { x: number; y: number } {
-    for (let i = 0; i < 16; i++) {
-      const tx = 2 + Math.floor(Math.random() * Math.max(1, this.gw - 4));
-      const ty = 2 + Math.floor(Math.random() * Math.max(1, this.gh - 4));
-      if ((this.grid[ty * this.gw + tx] ?? 1) === 1) continue;
-      const x = tx * TILE + TILE / 2;
-      const y = ty * TILE + TILE / 2;
-      if (Math.hypot(x - f.x, y - f.y) > 180 || i > 10) return { x, y };
-    }
-    return { x: f.x, y: f.y };
+    const ang = Math.atan2(f.y - best.y, f.x - best.x);
+    const hold = form === "melee" ? 24 : Math.min(reach * 0.7, 120);
+    this.seek(f, best.x + Math.cos(ang) * hold, best.y + Math.sin(ang) * hold);
   }
 
   private seek(f: Fighter, x: number, y: number): void {
@@ -1609,8 +1096,7 @@ export class WitchArena {
       f.path = [];
       return;
     }
-    const direct = this.gw * this.gh > 8000 ? 520 : 240;
-    if (d < direct && this.sees(f.x, f.y, x, y)) {
+    if (d < 560 && this.sees(f.x, f.y, x, y)) {
       f.path = [{ x, y }];
       return;
     }
@@ -1619,21 +1105,6 @@ export class WitchArena {
 
   private sees(x0: number, y0: number, x1: number, y1: number): boolean {
     return los(this.grid, this.gw, this.gh, x0, y0, x1, y1);
-  }
-
-  private pickTarget(f: Fighter, foes: Fighter[]): Fighter {
-    let best = foes[0]!;
-    let score = 1e9;
-    for (const o of foes) {
-      const d = Math.hypot(o.x - f.x, o.y - f.y);
-      const low = o.hp / o.max < 0.34 ? 0.62 : 1;
-      const s = d * low;
-      if (s < score) {
-        score = s;
-        best = o;
-      }
-    }
-    return best;
   }
 
   private bestMove(f: Fighter, target: Fighter | null, commit: boolean): Move {
@@ -1678,12 +1149,109 @@ export class WitchArena {
       return;
     }
     if (this.pathBudget <= 0) {
-      // Out of path searches this step: head straight there; the next think will path properly.
       f.path = [{ x, y }];
       return;
     }
     this.pathBudget -= 1;
-    f.path = route(this.grid, this.gw, this.gh, sx, sy, gx, gy, fear);
+    f.path = this.route(sx, sy, gx, gy, fear);
+  }
+
+  /** A* / greedy best-first on the tile grid, reusing per-instance scratch buffers. */
+  private route(sx: number, sy: number, gxIn: number, gyIn: number, fear: boolean): { x: number; y: number }[] {
+    const w = this.gw;
+    const h = this.gh;
+    const grid = this.grid;
+    sx = Math.max(1, Math.min(w - 2, sx));
+    sy = Math.max(1, Math.min(h - 2, sy));
+    let gx = Math.max(1, Math.min(w - 2, gxIn));
+    let gy = Math.max(1, Math.min(h - 2, gyIn));
+    if (grid[gy * w + gx] === 1) {
+      let found = false;
+      for (let r = 1; r <= 4 && !found; r++) {
+        for (let dy = -r; dy <= r && !found; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            const nx = gx + dx;
+            const ny = gy + dy;
+            if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+            if (grid[ny * w + nx] !== 1) { gx = nx; gy = ny; found = true; break; }
+          }
+        }
+      }
+    }
+    const start = sy * w + sx;
+    const goal = gy * w + gx;
+    const dist = this.dist;
+    const prev = this.prev;
+    dist.fill(1e9);
+    prev.fill(-1);
+    dist[start] = 0;
+    this.heap.clear();
+    this.heap.push(start, 0);
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    const hcost = (i: number) => Math.abs((i % w) - gx) + Math.abs(((i / w) | 0) - gy);
+    let best = start;
+    let bestH = hcost(start);
+    let guard = 0;
+    const budget = Math.min(w * h, 9000);
+    while (guard++ < budget) {
+      const cur = this.heap.pop();
+      if (!cur) break;
+      if (cur.c > dist[cur.i]! + 0.01) continue;
+      const hc = hcost(cur.i);
+      if (hc < bestH) { bestH = hc; best = cur.i; }
+      if (cur.i === goal) break;
+      const x = cur.i % w;
+      const y = (cur.i / w) | 0;
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const k = ny * w + nx;
+        if (grid[k] === 1) continue;
+        const stepC = grid[k] === 2 ? (fear ? 7 : 2.2) : grid[k] === 3 ? 2.4 : 1;
+        const next = dist[cur.i]! + stepC;
+        if (next + 0.01 < dist[k]!) {
+          dist[k] = next;
+          prev[k] = cur.i;
+          this.heap.push(k, next);
+        }
+      }
+    }
+    const end = prev[goal] !== -1 || goal === start ? goal : best;
+    if (end === start) return [{ x: gx * TILE + TILE / 2, y: gy * TILE + TILE / 2 }];
+    const raw: { x: number; y: number }[] = [];
+    let c = end;
+    let safety = 0;
+    while (c !== -1 && safety++ < 1200) {
+      raw.push({ x: (c % w) * TILE + TILE / 2, y: ((c / w) | 0) * TILE + TILE / 2 });
+      if (c === start) break;
+      c = prev[c] ?? -1;
+    }
+    raw.reverse();
+    if (raw.length <= 2) return raw;
+    const open = (x: number, y: number) => {
+      const tx = Math.floor(x / TILE);
+      const ty = Math.floor(y / TILE);
+      if (tx < 0 || ty < 0 || tx >= w || ty >= h) return false;
+      return grid[ty * w + tx] !== 1;
+    };
+    const seesLocal = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const steps = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 12));
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps;
+        if (!open(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)) return false;
+      }
+      return true;
+    };
+    const slim: { x: number; y: number }[] = [];
+    let i = 0;
+    while (i < raw.length - 1) {
+      let j = Math.min(raw.length - 1, i + 14);
+      while (j > i + 1 && !seesLocal(raw[i]!, raw[j]!)) j--;
+      slim.push(raw[j]!);
+      i = j;
+    }
+    return slim;
   }
 
   private follow(f: Fighter, dt: number, mud: boolean): void {
@@ -1725,6 +1293,18 @@ export class WitchArena {
     if (!blocked(f.x, f.y + dy)) f.y += dy;
     f.direction = directionFromDelta(f.x - x, f.y - y, f.direction);
     if (f.x !== x) f.facing = f.x < x ? -1 : 1;
+  }
+
+  private pickTarget(f: Fighter, foes: Fighter[]): Fighter {
+    let best = foes[0]!;
+    let score = 1e9;
+    for (const o of foes) {
+      const d = Math.hypot(o.x - f.x, o.y - f.y);
+      const low = o.hp / o.max < 0.34 ? 0.62 : 1;
+      const s = d * low;
+      if (s < score) { score = s; best = o; }
+    }
+    return best;
   }
 
   private strike(f: Fighter): void {
@@ -1833,7 +1413,6 @@ export class WitchArena {
       (moveTactic(move) === "heavy" ? 1.35 : 1);
     const crit = Math.random() * 100 < move.crit + f.crit;
     if (crit) dmg *= 1.65;
-    // Melee ignores the target's shield cut and ward, as everywhere else (balance.ts MELEE_ARMOR_PIERCE).
     if (target.shield > 0 && form !== "melee") dmg *= 0.55;
     dmg *= 1 - Math.min(0.45, defenseVs(form, target.ward) / 140);
     const hits = Math.random() * 100 < f.double ? 2 : 1;
@@ -1878,43 +1457,34 @@ export class WitchArena {
   }
 
   private maybeEnd(): void {
-    const living = new Set<number>();
-    for (const f of this.fighters) if (f.alive && f.role !== "spirit") living.add(f.side);
-    const cap = this.mode === "war" ? 900 : 480;
-    if (living.size > 1 && this.age < cap) return;
-    if (living.size === 0) {
-      this.finish("No one left standing.");
-      return;
-    }
-    if (living.size === 1) {
-      const id = [...living][0]!;
-      this.finish(`${SQUADS[id]!.name} holds the field.`);
-      return;
-    }
-    let best = 0;
-    let bestS = -1;
-    for (const id of living) {
-      const score = this.fighters.filter((f) => f.alive && f.side === id && f.role !== "spirit").reduce((s, f) => s + f.hp / f.max, 0);
-      if (score > bestS) {
-        bestS = score;
-        best = id;
-      }
-    }
-    this.finish(`Time. ${SQUADS[best]!.name} still has the most life.`);
+    const atkAlive = this.fighters.some((f) => f.alive && f.side === ATTACKER && f.role !== "spirit");
+    const defAlive = this.fighters.some((f) => f.alive && f.side === DEFENDER && f.role !== "spirit");
+    if (this.control >= 100) return this.finish(ATTACKER, "Attackers seize the stronghold.");
+    if (!defAlive) return this.finish(ATTACKER, "The defenders are broken. The keep falls.");
+    if (!atkAlive) return this.finish(DEFENDER, "The assault is spent. The defenders hold.");
+    if (this.age >= TIME_LIMIT) return this.finish(DEFENDER, "Time. The defenders held the point.");
   }
 
-  private finish(note: string): void {
+  private finish(side: number, note: string): void {
+    this.winSide = side;
     this.winner = note;
     this.phase = "result";
     this.note = note;
     this.publish();
   }
 
+  // --- camera & render ------------------------------------------------------
+
   private frame(): void {
-    const pack = this.fighters.filter((f) => f.alive && f.side === this.focus && f.role !== "spirit");
-    const focus = pack.length ? pack : this.fighters.filter((f) => f.alive && f.role !== "spirit");
-    const use = focus.length ? focus : this.fighters.filter((f) => f.alive);
-    if (!use.length) return;
+    const live = this.fighters.filter((f) => f.alive && f.role !== "spirit");
+    const pack = this.phase === "fight" || this.phase === "result" ? live.filter((f) => f.side === this.focus) : live;
+    const use = pack.length ? pack : live;
+    if (!use.length) {
+      this.wantX = this.point.x;
+      this.wantY = this.point.y;
+      this.wantZ = Math.max(0.2, Math.min(1.2, this.zoom));
+      return;
+    }
     let minX = 1e9;
     let minY = 1e9;
     let maxX = -1e9;
@@ -1925,12 +1495,12 @@ export class WitchArena {
       maxX = Math.max(maxX, f.x);
       maxY = Math.max(maxY, f.y);
     }
-    const span = Math.max(maxX - minX, maxY - minY, 150);
-    const fit = Math.min(this.viewW, this.viewH) / (span + 240);
+    const span = Math.max(maxX - minX, maxY - minY, 200);
+    const fit = Math.min(this.viewW, this.viewH) / (span + 320);
     this.wantX = (minX + maxX) / 2;
     this.wantY = (minY + maxY) / 2 - 8;
-    this.wantZ = Math.max(this.mode === "war" ? 0.3 : 0.85, Math.min(1.5, fit));
-    const k = Math.min(1, 0.12);
+    this.wantZ = Math.max(0.22, Math.min(1.3, fit));
+    const k = 0.12;
     this.camX += (this.wantX - this.camX) * k;
     this.camY += (this.wantY - this.camY) * k;
     this.zoom += (this.wantZ - this.zoom) * k;
@@ -1947,10 +1517,10 @@ export class WitchArena {
       this.camMode = "free";
       this.publish();
     }
-    const pan = this.camMode === "free" || this.placing || this.phase === "setup" || this.phase === "result";
+    const pan = this.camMode === "free" || this.phase === "setup" || this.phase === "result";
     if ((x || y) && pan && !(this.camMode === "team" && this.phase === "result")) {
       const m = Math.hypot(x, y) || 1;
-      const sp = 520 / Math.max(0.35, this.zoom);
+      const sp = 640 / Math.max(0.3, this.zoom);
       this.camX += (x / m) * sp * dt;
       this.camY += (y / m) * sp * dt;
       this.clampCam();
@@ -1959,9 +1529,33 @@ export class WitchArena {
     if ((this.phase === "fight" || this.phase === "result") && this.camMode === "team") this.frame();
   }
 
+  private fitMap(): void {
+    if (this.viewW < 8 || this.viewH < 8 || this.gw < 2) return;
+    const mw = this.gw * TILE;
+    const mh = this.gh * TILE;
+    this.camX = this.point.x || mw / 2;
+    this.camY = this.point.y || mh / 2;
+    this.zoom = Math.max(0.12, Math.min(1, Math.min(this.viewW / mw, this.viewH / mh) * 1.6));
+    this.wantX = this.camX;
+    this.wantY = this.camY;
+    this.wantZ = this.zoom;
+    this.clampCam();
+  }
+
+  private clampCam(): void {
+    const mw = this.gw * TILE;
+    const mh = this.gh * TILE;
+    this.camX = Math.max(0, Math.min(mw, this.camX));
+    this.camY = Math.max(0, Math.min(mh, this.camY));
+  }
+
   private float(x: number, y: number, text: string, color: string): void {
-    if (this.floats.length > 80) this.floats.shift();
+    if (this.floats.length > 90) this.floats.shift();
     this.floats.push({ x, y, text, life: 0.9, color });
+  }
+
+  private color(side: number): string {
+    return SIDES[side]?.color ?? "#f0e2c8";
   }
 
   private draw(): void {
@@ -1977,8 +1571,7 @@ export class WitchArena {
     ctx.translate(-this.camX, -this.camY);
     ctx.imageSmoothingEnabled = false;
     drawWorldSlice(ctx, this.world, this.camX, this.camY, this.viewW, this.viewH, this.zoom);
-    if (this.phase !== "fight") this.drawZones(ctx, false);
-    else this.drawZones(ctx, true);
+    this.drawPoint(ctx);
     const order = this.fighters.filter((f) => f.alive).sort((a, b) => a.y - b.y);
     for (const f of order) {
       if (f.role === "spirit" && f.look) {
@@ -2016,13 +1609,13 @@ export class WitchArena {
           scale: 1,
         });
       }
-      const bar = f.role === "spirit" ? 28 : 46;
-      const by = f.y - (f.role === "spirit" ? 36 : 44);
+      const bar = f.role === "spirit" ? 26 : 42;
+      const by = f.y - (f.role === "spirit" ? 34 : 42);
       ctx.fillStyle = "#1a1214";
       ctx.fillRect(f.x - bar / 2 - 1, by - 1, bar + 2, 6);
       ctx.fillStyle = this.color(f.side);
       ctx.fillRect(f.x - bar / 2, by, bar * Math.max(0, f.hp / f.max), 4);
-      if (f.role !== "spirit" && (this.mode !== "war" || this.zoom > 0.9)) drawShadowName(ctx, `${f.name} ${f.level}`, f.x, by - 12, this.color(f.side));
+      if (f.role !== "spirit" && this.zoom > 0.75) drawShadowName(ctx, `${f.name} ${f.level}`, f.x, by - 12, this.color(f.side));
     }
     for (const b of this.beams) {
       const a = Math.max(0, Math.min(1, b.life * 3));
@@ -2049,24 +1642,158 @@ export class WitchArena {
     ctx.restore();
   }
 
-  private drawZones(ctx: CanvasRenderingContext2D, faint: boolean): void {
-    this.zones.forEach((z, i) => {
-      if (!z) return;
-      const x = z.tx * TILE;
-      const y = z.ty * TILE;
-      const w = z.tw * TILE;
-      const h = z.th * TILE;
-      ctx.save();
-      ctx.fillStyle = this.color(i);
-      ctx.globalAlpha = faint ? 0.07 : i === this.placeFor && this.placing ? 0.28 : 0.16;
-      ctx.fillRect(x, y, w, h);
-      ctx.globalAlpha = faint ? 0.45 : 1;
-      ctx.strokeStyle = this.color(i);
-      ctx.lineWidth = !faint && i === this.placeFor && this.placing ? 3 : 2;
-      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
-      ctx.restore();
-      if (!faint) drawShadowName(ctx, SQUADS[i]!.name, x + w / 2, y + 16, this.color(i));
+  private drawPoint(ctx: CanvasRenderingContext2D): void {
+    const held = this.control >= 99 ? ATTACKER : this.inPoint[ATTACKER]! > this.inPoint[DEFENDER]! && this.phase === "fight" ? ATTACKER : DEFENDER;
+    const col = this.control >= 99 ? this.color(ATTACKER) : this.control <= 1 ? this.color(DEFENDER) : "#e6c15a";
+    ctx.save();
+    // Capture disc.
+    ctx.globalAlpha = 0.14;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.arc(this.point.x, this.point.y, POINT_R, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 0.9;
+    ctx.lineWidth = 3 / Math.max(0.4, this.zoom);
+    ctx.strokeStyle = col;
+    ctx.beginPath();
+    ctx.arc(this.point.x, this.point.y, POINT_R, 0, Math.PI * 2);
+    ctx.stroke();
+    // Control arc: how far the attackers have pushed it.
+    if (this.phase === "fight" || this.phase === "result") {
+      ctx.lineWidth = 6 / Math.max(0.4, this.zoom);
+      ctx.strokeStyle = this.color(ATTACKER);
+      ctx.beginPath();
+      ctx.arc(this.point.x, this.point.y, POINT_R - 6, -Math.PI / 2, -Math.PI / 2 + (this.control / 100) * Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    drawShadowName(ctx, held === ATTACKER ? "TAKEN" : "THE POINT", this.point.x, this.point.y - POINT_R - 10, col);
+    ctx.restore();
+  }
+
+  // --- input ----------------------------------------------------------------
+
+  private bind(): void {
+    this.canvas.addEventListener("pointerdown", this.onPointerDown);
+    window.addEventListener("pointermove", this.onPointerMove);
+    window.addEventListener("pointerup", this.onPointerUp);
+    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    window.addEventListener("keydown", this.onKeyDown);
+    window.addEventListener("keyup", this.onKeyUp);
+  }
+
+  private unbind(): void {
+    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
+    window.removeEventListener("pointermove", this.onPointerMove);
+    window.removeEventListener("pointerup", this.onPointerUp);
+    this.canvas.removeEventListener("wheel", this.onWheel);
+    window.removeEventListener("keydown", this.onKeyDown);
+    window.removeEventListener("keyup", this.onKeyUp);
+    this.keys.clear();
+  }
+
+  private typing(e: Event): boolean {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
+  private onPointerDown = (e: PointerEvent): void => {
+    if (e.button !== 0) return;
+    const p = this.local(e);
+    this.drag = { x: p.x, y: p.y, camX: this.camX, camY: this.camY, moved: false };
+  };
+
+  private onPointerMove = (e: PointerEvent): void => {
+    if (!this.drag) return;
+    const p = this.local(e);
+    const dx = p.x - this.drag.x;
+    const dy = p.y - this.drag.y;
+    if (Math.hypot(dx, dy) > 5) this.drag.moved = true;
+    const look = this.camMode === "free" || this.phase === "setup" || this.phase === "result";
+    if (this.drag.moved && look) {
+      this.camX = this.drag.camX - dx / this.zoom;
+      this.camY = this.drag.camY - dy / this.zoom;
+      this.clampCam();
+    }
+  };
+
+  private onPointerUp = (): void => {
+    this.drag = null;
+  };
+
+  private onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+    this.zoomBy(e.deltaY > 0 ? 0.9 : 1.1);
+  };
+
+  private onKeyDown = (e: KeyboardEvent): void => {
+    if (this.typing(e)) return;
+    const k = e.key.toLowerCase();
+    if (k === "q") { this.cycleTeam(-1); e.preventDefault(); return; }
+    if (k === "e") { this.cycleTeam(1); e.preventDefault(); return; }
+    if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
+      this.keys.add(k);
+      e.preventDefault();
+    }
+  };
+
+  private onKeyUp = (e: KeyboardEvent): void => {
+    this.keys.delete(e.key.toLowerCase());
+  };
+
+  private local(e: { clientX: number; clientY: number }): { x: number; y: number } {
+    const r = this.canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  }
+
+  // --- snapshot -------------------------------------------------------------
+
+  private publish(): void {
+    const fighting = this.phase === "fight" || this.phase === "result";
+    const armies: ArmySnap[] = SIDES.map((side) => {
+      const plan = this.plans[side.id]!;
+      const pack = this.fighters.filter((f) => f.side === side.id && f.role !== "spirit");
+      const alive = pack.filter((f) => f.alive);
+      const level = alive.length ? Math.round(alive.reduce((s, f) => s + f.level, 0) / alive.length) : 0;
+      const ghosts = plan.classes.reduce((s, id) => s + (GHOSTS_BY_CLASS[id] ?? 0), 0);
+      const intent = fighting
+        ? side.id === ATTACKER
+          ? this.inPoint[ATTACKER]! > 0 ? "On the point" : "Assaulting"
+          : this.inPoint[ATTACKER]! > 0 ? "Point contested" : "Holding"
+        : "Mustering";
+      return {
+        id: side.id,
+        key: side.key,
+        name: side.name,
+        color: side.color,
+        size: plan.size,
+        classes: [...plan.classes],
+        alive: fighting ? alive.length : 0,
+        count: plan.size,
+        level,
+        ghosts,
+        intent,
+      };
     });
+    const s = Math.max(0, Math.floor(this.age));
+    const left = Math.max(0, Math.ceil(TIME_LIMIT - this.age));
+    const held: ArenaSnap["held"] = this.control >= 99 ? "attackers" : this.inPoint[ATTACKER]! > 0 && this.phase === "fight" ? "contested" : "defenders";
+    this.snap = {
+      phase: this.phase,
+      note: this.note,
+      speed: this.speed,
+      cam: this.camMode,
+      focus: this.focus,
+      clock: `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`,
+      timeLeft: `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`,
+      control: Math.round(this.control),
+      held,
+      armies,
+      classOptions: classOptions(),
+      winner: this.winner,
+      winSide: this.winSide,
+    };
+    this.listeners.forEach((fn) => fn());
   }
 }
 
@@ -2075,11 +1802,7 @@ function nearest(list: Fighter[], x: number, y: number): Fighter {
   let bd = 1e9;
   for (const f of list) {
     const d = Math.hypot(f.x - x, f.y - y);
-    if (d < bd) {
-      bd = d;
-      best = f;
-    }
+    if (d < bd) { bd = d; best = f; }
   }
   return best;
 }
-

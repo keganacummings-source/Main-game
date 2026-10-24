@@ -31,6 +31,35 @@ const LEGACY_KINDS: Record<string, PowerExtraKind> = { blockbreaker: "rockminer"
 export const DIR_VEC: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 export const DIR_NAME = ["up", "right", "down", "left"];
 
+/**
+ * Pipe flow direction, set per machine (and per Storage Chest). It overrides the automatic
+ * source/sink roles so you can route items deliberately — e.g. force a Chest to push INTO a
+ * Generator, or stop a Duplicator from dumping into a Chest.
+ *   auto — send and receive as the machine's role allows (the original behaviour)
+ *   out  — only push items OUT into the pipe
+ *   in   — only pull items IN from the pipe
+ *   off  — ignore pipes entirely
+ */
+export type PipeIo = "auto" | "out" | "in" | "off";
+export const PIPE_IO_ORDER: PipeIo[] = ["auto", "out", "in", "off"];
+export const PIPE_IO_LABEL: Record<PipeIo, string> = { auto: "Auto", out: "Output ▸", in: "◂ Input", off: "Off" };
+export const PIPE_IO_ABOUT: Record<PipeIo, string> = {
+  auto: "Sends and receives as its role allows.",
+  out: "Only pushes items OUT into the pipe. Will not receive.",
+  in: "Only pulls items IN from the pipe. Will not send.",
+  off: "Ignores pipes entirely.",
+};
+/** Read a node's pipe flow, defaulting to auto. Safe on any object or null. */
+export function pipeIoOf(n: { io?: unknown } | null | undefined): PipeIo {
+  const v = n?.io;
+  return v === "out" || v === "in" || v === "off" ? v : "auto";
+}
+/** Cycle Auto → Output → Input → Off → Auto. */
+export function nextPipeIo(cur: unknown): PipeIo {
+  const i = PIPE_IO_ORDER.indexOf(pipeIoOf({ io: cur }));
+  return PIPE_IO_ORDER[(i + 1) % PIPE_IO_ORDER.length]!;
+}
+
 // ---- Rates (weaker/slower than HellStone's 10 Power / 5s) ----
 export const LOGBURN_SECONDS = 8;
 export const LOGBURN_POWER = 6;
@@ -72,6 +101,8 @@ export type PowerExtra = {
   buf?: Record<string, number>;
   fuel?: number;
   power?: number;
+  /** Pipe flow override. Undefined means "auto". */
+  io?: PipeIo;
 };
 
 /** Clean a saved list so a bad file never crashes a tick. Keeps object identity for the survivors. */
@@ -91,6 +122,7 @@ export function sanitizePowerExtra(raw: unknown): PowerExtra[] {
     seen.add(key);
     // clamp
     if (o.dir != null) o.dir = ((Math.floor(Number(o.dir)) % 4) + 4) % 4;
+    if (o.io !== "out" && o.io !== "in" && o.io !== "off") delete o.io;
     if (o.kind === "blockgen" || o.kind === "rockminer") {
       o.on = o.on !== false;
       if (o.kind === "blockgen" && o.mat !== "stone") o.mat = "wood";
@@ -173,15 +205,28 @@ export function pipeRuns(pipeKeys: Iterable<string>, ports: Map<string, PipePort
   return runs;
 }
 
-/** One step of item flow on a pipe run. Mutates ports and the chest bag. Returns how many items moved. */
+/**
+ * One step of item flow on a pipe run. Mutates ports and the chest bag. Returns how many items moved.
+ *
+ * Flow direction is controlled per machine/chest by its `io` setting (see PipeIo): a port can act as
+ * a source only when its io allows output (auto/out), and as a sink only when its io allows input
+ * (auto/in). `off` opts a machine out of pipes entirely. With everything on `auto` this behaves
+ * exactly as before.
+ */
 export function pipeStep(ports: PipePort[], chest: Record<string, number>): { moved: number; chestMoved: boolean } {
   let moved = 0;
   let chestMoved = false;
   if (ports.length < 2) return { moved, chestMoved };
 
-  // Sources first (machines that produce), then chest as source for sinks.
-  const sources = ports.filter((p) => p.kind === "dup" || p.kind === "rockminer");
-  const sinks = ports.filter((p) => p.kind === "hellgen" || p.kind === "logburner" || p.kind === "blockgen" || p.kind === "chest");
+  const canOut = (p: PipePort): boolean => { const io = pipeIoOf(p.n); return io === "auto" || io === "out"; };
+  const canIn = (p: PipePort): boolean => { const io = pipeIoOf(p.n); return io === "auto" || io === "in"; };
+
+  // Producers that are allowed to push this tick, and the sinks allowed to receive.
+  const sources = ports.filter((p) => (p.kind === "dup" || p.kind === "rockminer") && canOut(p));
+  const machineSinks = ports.filter((p) => (p.kind === "hellgen" || p.kind === "logburner" || p.kind === "blockgen") && canIn(p));
+  const chestPort = ports.find((p) => p.kind === "chest");
+  const chestTakesItems = !!chestPort && canIn(chestPort); // chest may receive from producers
+  const chestFeedsMachines = !!chestPort && canOut(chestPort); // chest may supply generators
 
   const takeFrom = (src: PipePort, id: string, n = 1): boolean => {
     if (src.kind === "dup") {
@@ -230,10 +275,6 @@ export function pipeStep(ports: PipePort[], chest: Record<string, number>): { mo
     return false;
   };
 
-  // Prefer feeding machines over dumping into the chest.
-  const machineSinks = sinks.filter((s) => s.kind !== "chest");
-  const chestSink = sinks.find((s) => s.kind === "chest");
-
   for (const src of sources) {
     // what can this source give?
     let id: string | null = null;
@@ -248,13 +289,16 @@ export function pipeStep(ports: PipePort[], chest: Record<string, number>): { mo
     for (const sink of machineSinks) {
       if (giveTo(sink, id)) { takeFrom(src, id); moved++; delivered = true; break; }
     }
-    if (!delivered && chestSink) {
-      if (giveTo(chestSink, id)) { takeFrom(src, id); moved++; }
+    if (!delivered && chestTakesItems) {
+      chest[id] = (chest[id] ?? 0) + 1;
+      chestMoved = true;
+      takeFrom(src, id);
+      moved++;
     }
   }
 
-  // Chest can feed sinks (generators / blockgens).
-  if (chestSink) {
+  // Chest can feed sinks (generators / blockgens) when it is allowed to output.
+  if (chestFeedsMachines) {
     for (const sink of machineSinks) {
       let id: string | null = null;
       if (sink.kind === "hellgen") id = "hell_ore";

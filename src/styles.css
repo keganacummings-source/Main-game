@@ -632,6 +632,95 @@
   }
 }
 
+/* ---- TurboCircle siege: army composition + capture meter ---- */
+.siege-setup {
+  width: min(720px, 100%);
+}
+
+.siege-armies {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.siege-army {
+  border-width: 3px;
+  min-width: 0;
+}
+
+.siege-classes {
+  display: grid;
+  gap: 8px;
+  max-height: 40dvh;
+  overflow: auto;
+}
+
+.siege-class-group {
+  display: grid;
+  gap: 4px;
+}
+
+.siege-class-role {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+
+.siege-class-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.siege-chip {
+  border: 2px solid var(--color-dim);
+  background: rgba(20, 14, 12, 0.92);
+  color: var(--color-bone);
+  padding: 4px 7px;
+  font-size: 15px;
+  line-height: 1.1;
+  min-height: 32px;
+}
+
+.siege-chip-on {
+  background: rgba(60, 44, 34, 0.95);
+  color: var(--color-kyo);
+}
+
+.siege-meter {
+  position: relative;
+  height: 20px;
+  border: 2px solid var(--color-dim);
+  background: rgba(90, 176, 232, 0.25);
+  overflow: hidden;
+}
+
+.siege-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--color-blood, #c4473a);
+  transition: width 0.3s linear;
+}
+
+.siege-meter-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--color-bone);
+  text-shadow: 1px 1px 0 #000;
+}
+
+@media (max-width: 640px) {
+  .siege-armies {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Designer tools share the game's pixel panel and button palette. */
 .designer-screen { pointer-events: auto; position: absolute; inset: 0; overflow: auto; padding: 24px; background: var(--color-ink); color: var(--color-bone, #f0e2c8); }
 .designer-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:24px; }

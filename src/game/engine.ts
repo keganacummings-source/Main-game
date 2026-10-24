@@ -28,6 +28,7 @@ import {
   LOGBURN_SECONDS, LOGBURN_POWER, LOGBURN_FUEL_MAX, SOLAR_SECONDS, SOLAR_POWER, BLOCK_MACHINE_SECONDS, BLOCK_MACHINE_POWER, MACHINE_BUF_MAX,
   ROCKMINER_SECONDS, ROCKMINER_POWER,
   PIPE_SECONDS, TESLA_RANGE, TESLA_SECONDS, TESLA_POWER, CAP_MAX, BAT_MAX,
+  pipeIoOf, nextPipeIo, PIPE_IO_LABEL, PIPE_IO_ABOUT,
   sanitizeGhostMergers, sanitizeGearForges, emptyTally, mergeGhostInto, pickWeighted, bumpedQuality,
   GHOSTMERGER_SECONDS, GHOSTMERGER_POWER, GHOSTMERGER_STORED_MAX, GHOSTMERGER_EXTRACT_MIN,
   GHOSTMERGER_ABILITIES_MAX, GHOSTMERGER_MOVES_KNOWN_MAX,
@@ -291,6 +292,12 @@ export type PowerView = {
   copyMax: number;
   /** Seconds until the next copy, or -1 if it is not running. */
   dupNext: number;
+  /** Pipe flow for machines that move items (generators, duplicators, block gens, rock miners, log burners). */
+  io: "auto" | "out" | "in" | "off";
+  ioLabel: string;
+  ioAbout: string;
+  /** Whether this machine takes part in pipe item flow (shows the Pipe Flow control). */
+  canPipe: boolean;
 };
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
@@ -388,7 +395,7 @@ export type Snap = {
   ghostAuto: string;
   wildHere: number;
   /** TURBZ storage chest: whether one is built, whether you're beside it, and its persistent contents. */
-  turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[] };
+  turbzChest: { placed: boolean; near: boolean; count: number; items: { id: string; name: string; count: number }[]; io: "auto" | "out" | "in" | "off"; ioLabel: string };
   /** The power block you have open, or null. */
   power: PowerView | null;
   /** Your camp: a fire lit (anywhere), one in reach of you here, and (TURBZ) a camp packed up waiting to be dropped. */
@@ -3220,6 +3227,30 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
+	/** Cycle the open machine's pipe flow: Auto → Output → Input → Off. Controls which way items move. */
+	pipeFlowCycle() {
+		const open = this.powerOpen;
+		if (!open || !["hellgen", "duplicator", "blockgen", "rockminer", "logburner"].includes(open.kind)) return;
+		const node = this.powerNode(open);
+		if (!node || !node.n) return;
+		node.n.io = nextPipeIo(node.n.io);
+		this.pipeRev = (this.pipeRev | 0) + 1;
+		this.say(`${BUILD_PIECES[open.kind].name} pipe flow: ${PIPE_IO_LABEL[node.n.io]}.`);
+		this.cue("click", { rate: 1.2 }, [420, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+	}
+	/** Cycle the Storage Chest's pipe flow: Auto → Output → Input → Off. */
+	chestPipeFlowCycle() {
+		const save = this.save;
+		if (!save || !save.turbzChest) return;
+		save.turbzChest.io = nextPipeIo(save.turbzChest.io);
+		this.pipeRev = (this.pipeRev | 0) + 1;
+		this.say(`Storage Chest pipe flow: ${PIPE_IO_LABEL[save.turbzChest.io]}.`);
+		this.cue("click", { rate: 1.2 }, [420, .05, "triangle"]);
+		this.persist();
+		this.syncHud(true);
+	}
 	/** Move bag items into the open LogBurner (Logs) or BlockGenerator (its block's material). Negative n takes them back. */
 	extraLoad(n) {
 		const save = this.save;
@@ -3625,13 +3656,33 @@ export class TurbzGame {
 				`Every ${DUP_SECONDS} seconds it spends ${DUP_POWER_COST} Power and stores one copy (up to ${DUP_STORE_MAX}).`,
 				"Ghost Jars, Drinking Water, ores, logs, Hell Ore — anything in the bag. Take the original back to stop it.",
 			],
+			ghostmerger: [
+				"Press E to shove a ghost in from your party or Ghost Box.",
+				"Every 8 seconds it burns one queued ghost for 3 Power and folds its type, an ability and its known moves into the Super slot.",
+				"Extract the finished Super Ghost once it has been fed enough. Only one worn at a time.",
+			],
+			gearforge: [
+				"Dump gear from your bag (one piece, a whole slot, or everything) to build the pile.",
+				"Casting melts the pile into a fresh 6-piece set with bonus enchants over the normal cap.",
+				"The more you feed it, the better the roll; a big enough pile casts a MegaSet.",
+			],
 			...POWER_EXTRA_HOW,
 		};
+		// POWER_EXTRA_HOW entries are single strings; the others are string arrays. Normalise so the
+		// panel can always map over lines — a mismatch here is what used to crash the Power UI.
+		const howRaw = (how as Record<string, string | string[]>)[open.kind];
+		const howLines = Array.isArray(howRaw) ? howRaw : howRaw ? [howRaw] : [BUILD_PIECES[open.kind]?.about ?? ""];
+		const io = pipeIoOf(node.n);
+		const canPipe = ["hellgen", "duplicator", "blockgen", "rockminer", "logburner"].includes(open.kind);
 		return {
 			kind: open.kind,
 			name: BUILD_PIECES[open.kind].name,
 			about: BUILD_PIECES[open.kind].about,
-			how: how[open.kind],
+			how: howLines,
+			io,
+			ioLabel: PIPE_IO_LABEL[io],
+			ioAbout: PIPE_IO_ABOUT[io],
+			canPipe,
 			ore: gen?.ore ?? 0,
 			bagOre: save.bag?.hell_ore ?? 0,
 			next: gen && gen.ore > 0 ? Math.max(0, 5 - (gen.t ?? 0)) : -1,
@@ -12437,6 +12488,8 @@ export class TurbzGame {
 					near: hasChest && !!this.nearTurbzChest(),
 					count: Object.values(items).reduce((a, v) => a + (v as number), 0),
 					items: Object.entries(items).map(([id, c]) => ({ id, name: ITEM_BY_ID[id]?.name ?? id, count: c as number })).sort((a, b) => a.name.localeCompare(b.name)),
+						io: pipeIoOf(save.turbzChest),
+						ioLabel: PIPE_IO_LABEL[pipeIoOf(save.turbzChest)],
 				};
 			})(),
 			power: this.powerView(),
