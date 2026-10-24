@@ -374,6 +374,63 @@ def pipe_icon():
     return a
 
 
+def ghostmerger():
+    a = Art()
+    # cauldron base
+    a.box(4, 16, 27, 30, "#241a2e", OUTLINE)
+    a.rect(5, 17, 26, 17, "#3a2a4a")
+    a.rect(5, 18, 5, 29, "#3a2a4a")
+    # rim
+    a.box(3, 13, 28, 17, "#3a2a4a", OUTLINE)
+    a.rect(4, 14, 27, 14, "#5a4472")
+    # inner glow mouth
+    a.rect(6, 18, 25, 24, "#120a1c")
+    a.disc(16, 22, 6, (120, 80, 190, 120))
+    a.disc(16, 22, 4, (160, 110, 220, 150))
+    # ghost rising out
+    a.disc(16, 11, 5, OUTLINE)
+    a.disc(16, 11, 4, "#d8c4ff")
+    a.disc(15, 10, 2, "#ffffff")
+    a.px(14, 11, "#3a2a4a"); a.px(18, 11, "#3a2a4a")  # eyes
+    # wispy tail
+    a.px(13, 15, "#b9a8e8"); a.px(16, 16, "#b9a8e8"); a.px(19, 15, "#b9a8e8")
+    a.px(14, 14, "#c9bcf0"); a.px(18, 14, "#c9bcf0")
+    # sparkles
+    for (x, y) in ((6, 8), (26, 9), (9, 4), (24, 5)):
+        a.px(x, y, "#e6d0ff")
+    # feet
+    a.rect(4, 30, 9, 31, OUTLINE); a.rect(22, 30, 27, 31, OUTLINE)
+    return a
+
+
+def gearforge():
+    a = Art()
+    # stone base
+    a.box(3, 24, 28, 31, "#3a3338", OUTLINE)
+    a.rect(4, 25, 27, 25, "#55505a")
+    # forge glow under the anvil
+    a.rect(8, 23, 23, 23, "#e2541f")
+    for x in (10, 14, 18, 21):
+        a.px(x, 24, "#ffb04a")
+    # anvil: top face, waist, body
+    a.rect(5, 15, 26, 18, "#3a3a44")
+    a.rect(6, 16, 25, 16, "#5a5a66")
+    a.rect(24, 13, 27, 16, "#3a3a44")          # horn
+    a.rect(25, 14, 27, 14, "#5a5a66")
+    a.box(10, 18, 21, 23, "#2a2a30", OUTLINE)  # body
+    a.rect(11, 19, 11, 22, "#4a4a54")
+    # gear emblem on the face
+    a.disc(14, 9, 5, OUTLINE)
+    a.disc(14, 9, 4, "#c9a25a")
+    a.disc(14, 9, 2, "#2a2a30")
+    for (dx, dy) in ((0, -6), (0, 6), (-6, 0), (6, 0), (-4, -4), (4, 4), (-4, 4), (4, -4)):
+        a.px(14 + dx, 9 + dy, "#e8c878")
+    # hammer sparks
+    for (x, y) in ((9, 6), (20, 5), (23, 8)):
+        a.px(x, y, "#ffd37a")
+    return a
+
+
 SLOTS = [
     ("hellgen", "HellStone Power Generator", hellgen),
     ("battery", "Battery", battery),
@@ -385,7 +442,12 @@ SLOTS = [
     ("capacitor", "Capacitor", capacitor),
     ("blockgen", "BlockGenerator", blockgen),
     ("blockbreaker", "BlockBreaker", blockbreaker),
+    # Rock Miner is the renamed BlockBreaker; it draws in-world from the "rockminer" slot, so
+    # ship that file too (same art) or it falls back to a blank square.
+    ("rockminer", "Rock Miner", blockbreaker),
     ("tesla", "Tesla Coil", tesla),
+    ("ghostmerger", "Ghost Merger", ghostmerger),
+    ("gearforge", "GearSet Forge", gearforge),
 ]
 
 

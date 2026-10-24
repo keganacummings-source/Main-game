@@ -13357,6 +13357,22 @@ export class TurbzGame {
 			drawShadowName(ctx, tag, dx + 16, dy - 10, "#7dffb3");
 			if (Math.hypot(dx + 16 - save.x, dy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", dx + 16, dy - 22, "#ffd166");
 		}
+		for (const m of save.powerMergers ?? []) {
+			if (m.map !== save.map || Math.abs(m.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(m.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const mx = m.tx * 32, my = m.ty * 32;
+			paintSlot("ghostmerger", mx, my, "#241a2e", "#b9a8e8");
+			const queued = m.stored?.length ?? 0;
+			drawShadowName(ctx, queued ? `MERGER · ${queued}` : "MERGER", mx + 16, my - 10, "#d8c4ff");
+			if (Math.hypot(mx + 16 - save.x, my + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", mx + 16, my - 22, "#ffd166");
+		}
+		for (const fo of save.powerForges ?? []) {
+			if (fo.map !== save.map || Math.abs(fo.tx * 32 + 16 - this.cam.x) > halfW || Math.abs(fo.ty * 32 + 16 - this.cam.y) > halfH) continue;
+			const fx = fo.tx * 32, fy = fo.ty * 32;
+			paintSlot("gearforge", fx, fy, "#3a3338", "#e8c878");
+			const pieces = fo.tally?.pieces ?? 0;
+			drawShadowName(ctx, pieces ? `FORGE · ${pieces}` : "FORGE", fx + 16, fy - 10, "#ffd37a");
+			if (Math.hypot(fx + 16 - save.x, fy + 16 - save.y) <= 56) drawShadowName(ctx, "E · OPEN", fx + 16, fy - 22, "#ffd166");
+		}
 		// Pipes first (they sit under the machines they feed), then the other new Power blocks.
 		{
 			const { pipes } = this.pipeCache();
