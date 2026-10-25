@@ -41,9 +41,16 @@ export const CREATURE_SPRITE_SCALE = 2;
 export const BOSS_SPRITE_SCALE = 2;
 let image: HTMLImageElement | null = null;
 
+/**
+ * How fast a designed enemy's two frames swap. Enemies always animate, so this is the heartbeat of
+ * every custom foe on screen; slow enough to read as a creature breathing rather than a flicker.
+ */
+export const ENEMY_ANIM_FPS = 5;
+
 /** Looks registered by the Enemy Designer: a sheet cell or a drawn 16×16 canvas, plus a size.
+ *  `canvas2` is the second animation frame; enemies play both whenever one is registered.
  *  `noTint` marks a full-colour skin that must be drawn as-is (no element tint laid over it). */
-export type CustomSprite = { cell?: [number, number]; canvas?: HTMLCanvasElement | null; scale?: number; noTint?: boolean };
+export type CustomSprite = { cell?: [number, number]; canvas?: HTMLCanvasElement | null; canvas2?: HTMLCanvasElement | null; scale?: number; noTint?: boolean };
 const customSprites = new Map<string, CustomSprite>();
 export function setCustomSprite(species: string, sprite: CustomSprite): void {
   customSprites.set(species, sprite);
@@ -71,7 +78,18 @@ export function customSpriteForTyped(species: string, type: string): CustomSprit
   if (!base.canvas || !typedResolver) return base;
   const typedCanvas = typedResolver(species, type);
   if (!typedCanvas) return base;
-  return { cell: base.cell, canvas: typedCanvas, scale: base.scale, noTint: base.noTint };
+  // Frame 2 is retinted through the same hook, under its own key, so an animated foe keeps both
+  // frames in the element's palette. A null answer means frame 2 needs no shift.
+  const typedCanvas2 = base.canvas2 ? typedResolver(frameTwoKey(species), type) : null;
+  return { cell: base.cell, canvas: typedCanvas, canvas2: typedCanvas2 ?? base.canvas2, scale: base.scale, noTint: base.noTint };
+}
+
+/**
+ * The species key frame 2 is registered under for retinting. Keeping it separate means the two
+ * frames never overwrite each other in the palette caches.
+ */
+export function frameTwoKey(species: string): string {
+  return `${species}\u0000f2`;
 }
 
 /**
@@ -89,9 +107,10 @@ export function clearEnemySkins(): void {
 }
 
 /**
- * A skin tinted by an element list is a static image (custom sprites don't animate), so we build it
- * once and reuse it every frame — one cached canvas per skin+elements combo. Keeps the per-frame cost
- * of hundreds of foes down to a single drawImage each.
+ * A skin tinted by an element list is one still image — skins carry a single frame, so unlike a
+ * designed enemy there is nothing to animate — and we build it once and reuse it every frame, one
+ * cached canvas per skin+elements combo. Keeps the per-frame cost of hundreds of foes down to a
+ * single drawImage each.
  */
 const tintCache = new Map<string, HTMLCanvasElement>();
 function tintedSkinCanvas(key: string, base: HTMLCanvasElement, w: number, h: number, colors: string[]): HTMLCanvasElement | null {
@@ -321,8 +340,12 @@ export function drawCreatureSprite(ctx: CanvasRenderingContext2D, m: MonsterDraw
   if (m.spin) ctx.rotate(Math.sin(m.spin) * 0.6);
   ctx.scale(m.facing < 0 ? -1 : 1, 1);
   ctx.globalAlpha = (m.hurt > 0 ? 0.65 : 1) * (m.ghost && !m.shiny ? style.alpha : 1);
+  // Designed enemies are two-frame: pick the frame from the clock so every custom foe animates.
+  // Staggered by position so a pack of the same species does not breathe in lockstep.
+  const frame2 = custom?.canvas2 ?? null;
+  const animCanvas = frame2 && (Math.floor(t * ENEMY_ANIM_FPS + (m.x + m.y) * 0.01) & 1) ? frame2 : custom?.canvas;
   const draw = (target: CanvasRenderingContext2D, ox: number, oy: number) => {
-    if (custom?.canvas) target.drawImage(custom.canvas, ox, oy, 16 * scale, 16 * scale);
+    if (animCanvas) target.drawImage(animCanvas, ox, oy, 16 * scale, 16 * scale);
     else if (cell && image!.complete && image!.naturalWidth) target.drawImage(image!, cell[0] * 16, cell[1] * 16, 16, 16, ox, oy, 16 * scale, 16 * scale);
     else target.drawImage(pixelSpirit(m.type), ox, oy, 16 * scale, 18 * scale);
   };

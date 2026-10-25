@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Two-frame animation, Tile and Enemy editor QOL, new class skins
+
+- **Enemies animate.** Every drawn enemy is now two frames and plays both — there is no toggle, enemies simply move from here on. Enemies made before two-frame art existed, including the twenty shipped with the game, get a second frame generated for them (a one-pixel breath that keeps the top row and the bottom row exactly as drawn, so no head is clipped and no feet float), so your whole roster starts moving without being repainted. A frame 2 you paint yourself is always kept as-is.
+- **Tiles can animate.** Every tile and camp piece now has a second frame too, but a tile only loops when you turn **Animate** on — a tile drawn as a still picture stays a still picture. Loop speed is yours to set, 1 to 12 frames per second. Animated tiles are painted over the cached terrain rather than baked into it, so a loop never forces the world to redraw and costs nothing on maps that do not use one.
+- **Enemy Designer QOL:** Frame 1 / Frame 2 tabs with a separate undo history each; **Onion** skin showing the other frame faintly underneath; **Auto idle** and **Copy 1 → 2** and **Swap** for building frame 2; a **fill** tool, a colour **picker** that takes a colour off the canvas, **nudge** to shift the whole sprite a pixel in any direction, and **redo** alongside undo. The preview plays the enemy exactly as the game will.
+- **Tile Builder QOL:** the same Frame 1 / Frame 2 tabs and per-frame undo, **Copy frame 1 → 2**, **Swap frames** and **Clear frame 2**, a speed slider, and a preview that loops at the real game speed. The builder's tile palette animates too, so a live animated tile moves while you are laying out a map.
+- **New class skins** ship as the default: the painted Ruin Mage, Radiant and Gravemage skins are joined by **Crying Girl** and **Pathfinder**. A skin you painted yourself still wins over the shipped one.
+
 ## Super Ghost fixes, shiny rebalance, TURBZ2 battlefield
 
 - **Super Ghost revives.** It lived outside the party's heal loop, so once it fell it stayed at 0 HP forever and never rejoined you. It now regenerates out of combat like your other ghosts, scaled to its larger health pool, and recovers to full in roughly 30-60 seconds.

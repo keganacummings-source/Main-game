@@ -28,6 +28,25 @@ Export a pack to ship pieces in a game update.
 Also: flip, rotate 90°, zoom, hex colour box, recent colours, colours already in the art, and a palette taken from the game's own art.
 Changing the canvas size (16 / 32 / 64) re-samples your art instead of stretching it. The game draws pieces at 32×32.
 
+## Animation (two frames)
+
+Every piece has **two frames**. Frame 1 is the piece as it has always been; frame 2 is the one that
+makes it move.
+
+- Switch between them with the **Frame 1 / Frame 2** tabs in the **Animation** panel. Each frame
+  keeps its own undo history, so undoing on frame 2 never reaches back into frame 1.
+- **Animate** turns the loop on. It is **off by default**: a tile you drew as a still picture stays a
+  still picture, and turning animation on changes nothing until frame 2 actually differs from frame 1.
+- **Speed** sets the loop in frames per second (1–12, default 4). Slow reads better than fast for
+  terrain — ground that flickers is worse than ground that sits still.
+- **Copy frame 1 → 2** starts frame 2 from a copy, so you only change the part that moves.
+  **Swap frames** exchanges them, and **Clear frame 2** turns the piece back into a still.
+- The **Preview** plays the frames at exactly the speed the game will use, so what you watch here is
+  what you get.
+
+Animated tiles are drawn on top of the cached terrain rather than baked into it, so a loop never
+forces the world to be re-drawn and animation costs nothing on maps that do not use it.
+
 ## Power blocks
 
 HellStone Generator, Battery, Wire, XP Producer and Duplicator. The game ships default art for each

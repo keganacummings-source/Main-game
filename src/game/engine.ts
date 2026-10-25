@@ -249,6 +249,7 @@ import {
   dungeonExit,
   drawRift,
   paintArena,
+  drawAnimatedTiles,
   drawWorldSlice,
   paintNode,
   paintWorld,
@@ -12871,6 +12872,9 @@ export class TurbzGame {
 		ctx.imageSmoothingEnabled = false;
 		if (this.world.cache) ctx.drawImage(this.world.cache, 0, 0);
 		else drawWorldSlice(ctx, this.world, this.cam.x, this.cam.y, w, h, this.zoom);
+		// Animated tiles live on top of the baked terrain, which holds frame 1. Costs nothing
+		// when no live tile animates, which is the normal case.
+		drawAnimatedTiles(ctx, this.world, this.cam.x, this.cam.y, w, h, this.zoom, this.clock);
 		const save = this.save;
 		this.gim?.drawUnder(ctx, this.clock);
 		if (save.map === "world") for (const p of POIS) {

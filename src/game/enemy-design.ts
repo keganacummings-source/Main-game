@@ -8,7 +8,7 @@
  */
 import { ANIMAL_BY_ID, BIOME_MONSTERS, MONSTERS, MONSTER_BY_ID, MOVE_BY_ID, TYPES, type BiomeId, type MonsterDef, type TypeId, MOVES, attackForm, moveTactic } from "./content";
 import { MOB_ENCHANT_IDS, type EnemyStats, type MobEnchantId } from "./balance";
-import { CREATURE_CELLS, setCustomSprite, clearCustomSprites, setTypedSpriteResolver } from "./creature-sprites";
+import { CREATURE_CELLS, frameTwoKey, setCustomSprite, clearCustomSprites, setTypedSpriteResolver } from "./creature-sprites";
 import { retintPixels } from "./type-palettes";
 import shipped from "./enemies/custom-enemies.json";
 
@@ -17,7 +17,51 @@ export const BIOME_IDS: BiomeId[] = ["crown", "verdant", "frost", "void", "tide"
 export const SHEET_COLS = 8;
 export const SHEET_ROWS = 9;
 
-export type EnemySprite = { kind: "sheet"; cell: [number, number] } | { kind: "pixels"; pixels: (string | null)[] };
+/**
+ * A design's look.
+ *
+ * Drawn enemies are two-frame from this update on: `pixels` is frame 1 and `pixels2` is frame 2,
+ * and the game always plays both — unlike tiles, an enemy has no animation toggle. A design made
+ * before two-frame art existed gets a frame 2 generated for it (see `idleFrame`), so every enemy
+ * in a player's roster starts moving without anyone having to repaint it.
+ */
+export type EnemySprite =
+  | { kind: "sheet"; cell: [number, number] }
+  | { kind: "pixels"; pixels: (string | null)[]; pixels2?: (string | null)[] };
+
+/** A drawn sprite is this many pixels on a side. */
+export const SPRITE_SIDE = 16;
+export const SPRITE_CELLS = SPRITE_SIDE * SPRITE_SIDE;
+
+/**
+ * Builds a second frame from the first: a one-pixel squash that reads as the creature breathing.
+ *
+ * The top row and the bottom row are both kept exactly as drawn, and the body in between settles
+ * down by one pixel. That way nothing is clipped off the top of a head or the bottom of a pair of
+ * feet, however full the sprite is — which matters, because most sprites paint right to the edge.
+ * A 1px squash has to merge one row somewhere, and it does so low in the body, where a creature's
+ * base tends to repeat itself and the merge does not read.
+ *
+ * This is only a starting point: it exists so that every enemy already in a roster starts moving
+ * without anyone repainting it. Frame 2 is fully editable in the Enemy Designer, and a hand-painted
+ * one always wins.
+ */
+export function idleFrame(pixels: (string | null)[]): (string | null)[] {
+  const out = pixels.slice();
+  const last = SPRITE_SIDE - 1;
+  // Rows 1..last-1 take the row above them; row 0 and the last row stay put.
+  for (let y = last - 1; y >= 1; y--) {
+    for (let x = 0; x < SPRITE_SIDE; x++) out[y * SPRITE_SIDE + x] = pixels[(y - 1) * SPRITE_SIDE + x] ?? null;
+  }
+  return out;
+}
+
+/** True when the two frames differ, i.e. the enemy visibly moves. */
+export function framesDiffer(a: (string | null)[], b: (string | null)[] | undefined): boolean {
+  if (!b || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+  return false;
+}
 export type EnemyBehaviour = "hunt" | "drift" | "flee";
 
 /** What kind of foe this design is. More than one can be on (a witch who is also a world boss).
@@ -149,8 +193,13 @@ export function parseEnemyDesign(raw: unknown): EnemyDesign {
   const replaces = typeof d.replaces === "string" && (MONSTER_BY_ID[d.replaces] || ANIMAL_BY_ID[d.replaces]) ? d.replaces : null;
   if (!replaces && (MONSTER_BY_ID[d.id] && !(MONSTER_BY_ID[d.id] as MonsterDef & { custom?: boolean }).custom || ANIMAL_BY_ID[d.id])) throw Error(`"${d.id}" is a built-in enemy. Use "Replaces" or a different ID.`);
   let sprite: EnemySprite;
-  if (d.sprite?.kind === "pixels" && Array.isArray(d.sprite.pixels) && d.sprite.pixels.length === 256) {
-    sprite = { kind: "pixels", pixels: d.sprite.pixels.map((p) => (typeof p === "string" && /^#[0-9a-f]{6}$/i.test(p) ? p : null)) };
+  if (d.sprite?.kind === "pixels" && Array.isArray(d.sprite.pixels) && d.sprite.pixels.length === SPRITE_CELLS) {
+    const cell = (p: unknown) => (typeof p === "string" && /^#[0-9a-f]{6}$/i.test(p) ? p : null);
+    const frame1 = d.sprite.pixels.map(cell);
+    // Frame 2: the designer's own if it is there, otherwise one generated so the enemy animates.
+    const raw2 = (d.sprite as { pixels2?: unknown }).pixels2;
+    const frame2 = Array.isArray(raw2) && raw2.length === SPRITE_CELLS ? raw2.map(cell) : idleFrame(frame1);
+    sprite = { kind: "pixels", pixels: frame1, pixels2: frame2 };
   } else if (d.sprite?.kind === "sheet" && Array.isArray(d.sprite.cell)) {
     sprite = { kind: "sheet", cell: [Math.floor(clamp(d.sprite.cell[0], 0, SHEET_COLS - 1, 0)), Math.floor(clamp(d.sprite.cell[1], 0, SHEET_ROWS - 1, 0))] };
   } else throw Error("The enemy needs a sprite.");
@@ -273,12 +322,21 @@ export function typedSpriteCanvas(species: string, type: TypeId): HTMLCanvasElem
   return canvas;
 }
 
-/** Register a design's look with the sprite renderer under a species id. */
+/** Register a design's look with the sprite renderer under a species id, both frames. */
 export function registerSprite(species: string, d: Pick<EnemyDesign, "sprite" | "scale" | "type">): void {
   if (d.sprite.kind === "sheet") setCustomSprite(species, { cell: d.sprite.cell, scale: d.scale });
   else {
-    setCustomSprite(species, { canvas: spriteCanvas(d.sprite.pixels), scale: d.scale });
+    const frame2 = d.sprite.pixels2;
+    // Only register a second frame when it actually differs, so a held-still design costs nothing.
+    const animated = framesDiffer(d.sprite.pixels, frame2);
+    setCustomSprite(species, {
+      canvas: spriteCanvas(d.sprite.pixels),
+      canvas2: animated ? spriteCanvas(frame2!) : null,
+      scale: d.scale,
+    });
     basePixels.set(species, { pixels: d.sprite.pixels, baseType: d.type, scale: d.scale });
+    // Frame 2 goes in under its own key so the per-element retint can find it too.
+    if (animated) basePixels.set(frameTwoKey(species), { pixels: frame2!, baseType: d.type, scale: d.scale });
   }
 }
 

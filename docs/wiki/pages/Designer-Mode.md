@@ -59,7 +59,7 @@ Create brand-new enemies, or **replace** built-in ones everywhere they spawn:
 | Setting | What it does |
 | --- | --- |
 | **Name, description, element** | Who it is |
-| **Sprite and scale** | Its look (1×–3× size) |
+| **Sprite and scale** | Its look (1×–3× size), drawn across two animation frames |
 | **Temperament** | Hunt (comes for you), Drift (ignores you until hit) or Flee (never fights) |
 | **Boss** | Treat it as a boss |
 | **Stats** | Health, damage and speed multipliers; crit, dodge and resist chances |
@@ -68,5 +68,25 @@ Create brand-new enemies, or **replace** built-in ones everywhere they spawn:
 | **Level bonus** | Extra levels above the normal scaling |
 | **Loot multiplier** | More (or less) kyo and drop chance |
 | **Biomes** | Where a new enemy spawns |
+
+### Enemy animation
+
+Drawn enemies are **two-frame, and they always animate** — unlike map tiles, there is no toggle: if
+an enemy has two frames that differ, it moves.
+
+- The **Frame 1 / Frame 2** tabs switch which frame you are painting, and each keeps its own undo
+  history.
+- **Onion** shows the frame you are not editing, faintly, underneath — the quickest way to see how
+  far something actually moves between frames.
+- **Auto idle** builds frame 2 from frame 1 as a one-pixel breath: the body settles by a pixel while
+  the top row and the bottom row stay exactly as drawn, so a head is never clipped and feet never
+  float. **Copy 1 → 2** gives you an exact copy to edit by hand instead, and **Swap** exchanges them.
+- Drawing tools: pencil, eraser, **fill** (flood-fill a touching area), **pick** (take a colour off
+  the canvas), mirror, **nudge** the whole sprite a pixel in any direction, and undo/redo.
+- The preview at the top plays the enemy exactly as the game will.
+
+Enemies that were made before two-frame art existed, including the ones shipped with the game, get a
+frame 2 generated for them, so they start moving without being repainted. A frame 2 you painted
+yourself is always kept as-is.
 
 Designed enemies still follow the normal [scaling rules](Enemies): designer stats multiply on top. Caps still apply: dodge 35%, crit 45%, resists 55%.
