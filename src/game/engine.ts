@@ -7748,6 +7748,7 @@ export class TurbzGame {
 				continue;
 			}
 			if (m.rival) { this.tickRival(m, dt); continue; }
+			if (m.harvester) { this.tickHarvester?.(m, dt); continue; }
 			if (m.twitch) { this.tickTwitch?.(m, dt); continue; }
 			if (m.status.some((s) => s.id === "sleep")) continue;
 			const dx = save.x - m.x;

@@ -91,6 +91,8 @@ const PARTY_MAX = 10;             // biggest war party
 const ENGAGE_R = 460;             // how far a combatant will peel off to fight a foe it meets
 const SQUAD_MIN = 3;              // squads range small (skirmish) to large (siege)
 const SQUAD_MAX = 7;
+const COMBAT_MIN = 4;            // a faction drafts harvesters into fighters below this army size
+const HARVEST_MIN = 2;          // a faction demobilizes fighters into harvesters below this many
 const RESPAWN_SECONDS = 300;      // every 5 minutes a fresh objective rises somewhere reachable
 
 // --- types -------------------------------------------------------------------
@@ -1227,6 +1229,9 @@ export class WitchArena {
       if (!fac.alive) continue;
       const mine = this.objectives.filter((o) => o.owner === fac.id);
       if (!mine.length) { fac.alive = false; continue; }
+      // Rebalance labour vs war so a faction is never stuck as all-harvesters or all-defenders:
+      // draft harvesters when the army is too thin, demobilize fighters when the economy is starving.
+      this.rebalanceJobs(fac.id);
       const combat = this.fighters.filter((f) => f.alive && f.faction === fac.id && f.job === "combat" && f.role !== "spirit");
       if (!combat.length) continue;
 
@@ -1269,6 +1274,34 @@ export class WitchArena {
       // any leftover free units pile onto the nearest target (reinforcements → big battles)
       if (pool.length) { const t = targets[0]!; for (const f of pool) { f.order = "attack"; f.target = t.id; f.squad = t.id; } }
     }
+  }
+
+  /**
+   * Flex a faction's workforce between war and labour based on what it needs right now, so no
+   * faction gets locked into a single job. Drafts harvesters into fighters when the army is too
+   * thin to hold its ground; sends surplus fighters back to harvest when the economy runs dry.
+   */
+  private rebalanceJobs(faction: number): void {
+    const combat = this.fighters.filter((f) => f.alive && f.faction === faction && f.job === "combat" && f.role !== "spirit");
+    const harv = this.fighters.filter((f) => f.alive && f.faction === faction && f.job === "harvester" && f.role !== "spirit");
+    if (combat.length < COMBAT_MIN && harv.length > HARVEST_MIN) {
+      const n = Math.min(COMBAT_MIN - combat.length, harv.length - HARVEST_MIN);
+      harv.sort((a, b) => a.carry - b.carry); // call up the least-laden harvesters first
+      for (let i = 0; i < n; i++) this.reassignJob(harv[i]!, "combat");
+    } else if (harv.length < HARVEST_MIN && combat.length > COMBAT_MIN) {
+      const n = Math.min(HARVEST_MIN - harv.length, combat.length - COMBAT_MIN);
+      combat.sort((a, b) => (a.order === "attack" ? 1 : 0) - (b.order === "attack" ? 1 : 0)); // spare the ones already fighting
+      for (let i = 0; i < n; i++) this.reassignJob(combat[i]!, "harvester");
+    }
+  }
+
+  /** Switch one fighter's job, resetting the state tied to the old one. Familiars never switch. */
+  private reassignJob(f: Fighter, job: "combat" | "harvester"): void {
+    if (f.role === "spirit") return;
+    f.job = job;
+    f.carry = 0; f.node = null; f.harvestT = 0; f.squad = -1;
+    f.target = f.home;
+    f.order = job === "harvester" ? "harvest" : "defend";
   }
 
   /** Distance from a faction's nearest owned objective to a target objective. */

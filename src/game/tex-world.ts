@@ -136,7 +136,7 @@ function distField(w: number, h: number, src: (i: number) => boolean, cap: numbe
 // World
 // ---------------------------------------------------------------------------
 
-export type TexWorldOptions = { id?: string; name?: string; seed: number; w?: number; h?: number };
+export type TexWorldOptions = { id?: string; name?: string; seed: number; w?: number; h?: number; single?: boolean };
 
 type Site = { biome: TexBiome; x: number; y: number; r: number; levelMin: number; levelMax: number; island: boolean; name: string };
 
@@ -152,27 +152,43 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
   const idn = { n: 0 };
   const nid = (p: string) => `${p}-${(idn.n++).toString(36)}`;
 
-  // ---- sites: five continents on a ring (level ladder 1, 13, 25, 37, 49) and a few islands ----
+  // ---- sites ----
   const sites: Site[] = [];
   const rot = rng() * Math.PI * 2;
-  ORDER.forEach((biome, i) => {
-    const a = rot + (i * 2 * Math.PI) / ORDER.length + (rng() - 0.5) * 0.25;
-    const ring = mn * 0.31 * (0.95 + rng() * 0.1);
-    sites.push({
-      biome, x: w / 2 + Math.cos(a) * ring, y: h / 2 + Math.sin(a) * ring, r: mn * (0.145 + rng() * 0.015),
-      levelMin: 1 + i * 12, levelMax: 12 + i * 12, island: false, name: `${pick(DEF[biome].names)} ${DEF[biome].word}`,
+  if (opts.single) {
+    // ONE continent: the biome sites are packed near the centre and given big radii so their land
+    // masks overlap into a single landmass with biome regions. No outer continents, no islands.
+    const core = pick(ORDER);
+    sites.push({ biome: core, x: w / 2, y: h / 2, r: mn * (0.185 + rng() * 0.02), levelMin: 1, levelMax: 14, island: false, name: `${pick(DEF[core].names)} Heartland` });
+    ORDER.forEach((biome, i) => {
+      const a = rot + (i * 2 * Math.PI) / ORDER.length + (rng() - 0.5) * 0.2;
+      const ring = mn * 0.17 * (0.9 + rng() * 0.14);
+      sites.push({
+        biome, x: w / 2 + Math.cos(a) * ring, y: h / 2 + Math.sin(a) * ring, r: mn * (0.17 + rng() * 0.02),
+        levelMin: 1 + i * 9, levelMax: 12 + i * 9, island: false, name: `${pick(DEF[biome].names)} ${DEF[biome].word}`,
+      });
     });
-  });
-  // The middle of the ring: a temple isle for the brave.
-  sites.push({ biome: pick(ORDER), x: w / 2, y: h / 2, r: mn * 0.05, levelMin: 40, levelMax: 55, island: true, name: "The Heart Isle" });
-  for (let k = 0, tries = 0; k < 5 && tries < 200; tries++) {
-    const r = mn * (0.02 + rng() * 0.018);
-    const x = mn * 0.05 + 14 + rng() * (w - mn * 0.1 - 28), y = mn * 0.05 + 14 + rng() * (h - mn * 0.1 - 28);
-    if (sites.some((s) => Math.hypot(s.x - x, s.y - y) < s.r * 1.5 + r * 1.6 + 6)) continue;
-    const biome = pick(ORDER);
-    const li = ORDER.indexOf(pick(ORDER));
-    sites.push({ biome, x, y, r, levelMin: 1 + li * 12, levelMax: 12 + li * 12, island: true, name: `${pick(DEF[biome].names)} Isle` });
-    k++;
+  } else {
+    // five continents on a ring (level ladder 1, 13, 25, 37, 49) and a few islands
+    ORDER.forEach((biome, i) => {
+      const a = rot + (i * 2 * Math.PI) / ORDER.length + (rng() - 0.5) * 0.25;
+      const ring = mn * 0.31 * (0.95 + rng() * 0.1);
+      sites.push({
+        biome, x: w / 2 + Math.cos(a) * ring, y: h / 2 + Math.sin(a) * ring, r: mn * (0.145 + rng() * 0.015),
+        levelMin: 1 + i * 12, levelMax: 12 + i * 12, island: false, name: `${pick(DEF[biome].names)} ${DEF[biome].word}`,
+      });
+    });
+    // The middle of the ring: a temple isle for the brave.
+    sites.push({ biome: pick(ORDER), x: w / 2, y: h / 2, r: mn * 0.05, levelMin: 40, levelMax: 55, island: true, name: "The Heart Isle" });
+    for (let k = 0, tries = 0; k < 5 && tries < 200; tries++) {
+      const r = mn * (0.02 + rng() * 0.018);
+      const x = mn * 0.05 + 14 + rng() * (w - mn * 0.1 - 28), y = mn * 0.05 + 14 + rng() * (h - mn * 0.1 - 28);
+      if (sites.some((s) => Math.hypot(s.x - x, s.y - y) < s.r * 1.5 + r * 1.6 + 6)) continue;
+      const biome = pick(ORDER);
+      const li = ORDER.indexOf(pick(ORDER));
+      sites.push({ biome, x, y, r, levelMin: 1 + li * 12, levelMax: 12 + li * 12, island: true, name: `${pick(DEF[biome].names)} Isle` });
+      k++;
+    }
   }
 
   // ---- land mask ----

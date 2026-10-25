@@ -1,26 +1,26 @@
 V2TURBZ update — drag these onto your GitHub repo, keeping the folder paths.
-All paths below are relative to the repo root (V2TURBZ-main/).
 
-NEW FILES
-  public/MapAssets/NewTex/rockminer.png      in-world texture for the Rock Miner
-  public/MapAssets/NewTex/ghostmerger.png    in-world texture for the Ghost Merger
-  public/MapAssets/NewTex/gearforge.png      in-world texture for the GearSet Forge
+IMPORTANT: for the single-continent TURBZ2 world, start a NEW TURBZ2 run
+("Wake into the war"). An in-progress save that holds nations will now also
+rebuild as one continent when you continue it; a brand-new run is the clean test.
 
-CHANGED FILES
-  public/MapAssets/NewTex/power-pack.json    registers the new power-block textures
-  scripts/sprites/power-textures.py          generator for the new textures
-  src/game/engine.ts                         power-block UI crash fix, pipe-flow routing, super-ghost
-                                             rebuild + repair, near-only block labels, TURBZ2 city
-                                             drawing/map places, harvester tick routing
-  src/game/turbz-mode.ts                     TURBZ2: single-continent world, 5 witch nations + cities,
-                                             50 harvest-witches that gather to grow each nation's army
-  src/game/tex-world.ts                      single-continent (no-islands) world generator option
-  src/game/arena.ts                          World Battle Simulator (Witch Circle): single continent,
-                                             factions/objectives, squads, respawns, "Begin the war" fix
-  src/game/building.ts                       accurate build-menu preview icons
-  src/game/power-extra.ts                    pipe direction control (auto/out/in/off)
-  src/components/game-panels.tsx             PIPE FLOW control + super-ghost card
-  src/components/arena-ui.tsx                observer HUD for the battle simulator
-  src/components/hub-ui.tsx                  TURBZ2 main-menu tile
-  src/components/turbz-app.tsx               TURBZ2 screen + wiring
-  src/styles.css                             styling for the above UI
+NEW
+  public/MapAssets/NewTex/rockminer.png / ghostmerger.png / gearforge.png   power-block textures
+
+CHANGED
+  public/MapAssets/NewTex/power-pack.json   registers the new textures
+  scripts/sprites/power-textures.py         texture generator
+  src/game/engine.ts        power-UI crash fix, pipe-flow, super-ghost, near-only labels,
+                            TURBZ2 cities/map, harvester tick routing
+  src/game/turbz-mode.ts    TURBZ2 single-continent world + 50 harvest-witches, AND
+                            NEW job-switching: nations draft harvesters into fighters when their
+                            army is thin and send fighters back to the fields when the economy is
+                            starving; fighters take raid/guard duties so armies march on enemy
+                            cities instead of only defending. Resumed war saves rebuild single.
+  src/game/arena.ts         Witch Circle: single continent, squads, respawns, "Begin the war" fix,
+                            AND NEW job-switching: factions draft harvesters <-> fighters by need.
+  src/game/tex-world.ts     single-continent (no-islands) generator
+  src/game/building.ts      accurate build-menu icons
+  src/game/power-extra.ts   pipe direction control (auto/out/in/off)
+  src/components/game-panels.tsx / arena-ui.tsx / hub-ui.tsx / turbz-app.tsx   UI for the above
+  src/styles.css            styling
