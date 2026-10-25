@@ -299,7 +299,8 @@ export function installTurbz(game: any): void {
     save.turbz2 = true;
     save.nations = null; // a new TURBZ2 run builds a fresh set of nations
     this.layerNations();
-    this.say(`TURBZ2. ${NATION_COUNT} witch nations hold cities across the wild and war on each other. You cannot tell who is who out in the field — only at their cities. Watch the banners.`);
+    this.spawnNationGarrisons(3);
+    this.say(`TURBZ2. ${NATION_COUNT} witch nations hold cities across the wild and war on each other. You cannot tell who is who out in the field — only at their cities. Open the Map (M) to find the cities.`);
     this.persistTurbz();
     this.syncHud(true);
   };
@@ -332,6 +333,20 @@ export function installTurbz(game: any): void {
       for (const c of cities) { const d = Math.hypot(c.x - m.x, c.y - m.y); if (d < nd) { nd = d; nid = c.id; } }
       m.nation = nid;
       m.rv.team = nid + 1; // nations are teams 1..N; same team = allies, different = enemies
+    }
+  };
+
+  /** Garrison each nation's city with a few of its own witches, so the powers have a visible home force. */
+  game.spawnNationGarrisons = function (perCity = 3) {
+    const save = this.save;
+    if (!this.turbz2 || !save || !Array.isArray(save.nations)) return;
+    for (const c of save.nations) {
+      for (let k = 0; k < perCity; k++) {
+        const m = this.makeTwitch(950 + c.id * 10 + k, c.x, c.y, pick(WITCH_NAMES));
+        m.nation = c.id;
+        if (m.rv) { m.rv.team = c.id + 1; m.homeX = c.x; m.homeY = c.y; }
+        this.mobs.push(m);
+      }
     }
   };
 
@@ -407,7 +422,7 @@ export function installTurbz(game: any): void {
     // Resume a TURBZ2 run as a nations run (the cities are saved; witches are re-sworn to them).
     this.turbz2 = !!save.turbz2;
     this.spawnTurbzWitches(EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6));
-    if (this.turbz2) this.layerNations();
+    if (this.turbz2) { this.layerNations(); this.spawnNationGarrisons(3); }
     this.plantTurbzHunts();
     // No camp standing and none packed in this run? Pick up the one kept off-run (a camp from an older run).
     if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {

@@ -13347,14 +13347,21 @@ export class TurbzGame {
 				if (Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
 				const col = c.known ? c.color : "#9a8f80";
 				ctx.save();
-				ctx.fillStyle = "#3a332c"; ctx.fillRect(c.x - 16, c.y - 14, 32, 22);
-				ctx.fillStyle = "#4a4038"; ctx.fillRect(c.x - 16, c.y - 14, 32, 4);
-				for (let i = -16; i < 16; i += 8) { ctx.fillStyle = "#2a241e"; ctx.fillRect(c.x + i, c.y - 18, 5, 5); }
-				ctx.fillStyle = "#1a1410"; ctx.fillRect(c.x - 4, c.y - 2, 8, 10);
-				ctx.fillStyle = "#241a12"; ctx.fillRect(c.x - 1, c.y - 34, 2, 20);
-				ctx.fillStyle = col; ctx.fillRect(c.x, c.y - 34, 12, 8);
+				// A tall light beacon so a city can be spotted from across the open wild.
+				const beam = ctx.createLinearGradient(0, c.y - 300, 0, c.y);
+				beam.addColorStop(0, "rgba(0,0,0,0)");
+				beam.addColorStop(1, c.known ? `${col}66` : "rgba(200,190,170,0.33)");
+				ctx.fillStyle = beam;
+				ctx.fillRect(c.x - 7, c.y - 300, 14, 300);
+				// keep
+				ctx.fillStyle = "#3a332c"; ctx.fillRect(c.x - 18, c.y - 16, 36, 26);
+				ctx.fillStyle = "#4a4038"; ctx.fillRect(c.x - 18, c.y - 16, 36, 5);
+				for (let i = -18; i < 18; i += 9) { ctx.fillStyle = "#2a241e"; ctx.fillRect(c.x + i, c.y - 21, 6, 6); }
+				ctx.fillStyle = "#1a1410"; ctx.fillRect(c.x - 5, c.y - 2, 10, 12);
+				ctx.fillStyle = "#241a12"; ctx.fillRect(c.x - 1, c.y - 40, 2, 24);
+				ctx.fillStyle = col; ctx.fillRect(c.x, c.y - 40, 14, 9);
 				ctx.restore();
-				drawShadowName(ctx, c.known ? c.name.toUpperCase() : "CITY", c.x, c.y - 42, col);
+				drawShadowName(ctx, c.known ? c.name.toUpperCase() : "CITY", c.x, c.y - 48, col);
 			}
 		}
 		const box = save.ghostBox;
@@ -13871,6 +13878,7 @@ export class TurbzGame {
 			for (const t of TAVERNS) out.push({ name: `${t.name} board`, kind: "landmark", tx: t.boardTx, ty: t.boardTy, levels: "" });
 		}
 		for (const n of this.mapNpcs ?? []) out.push({ name: n.name, kind: "npc", tx: n.tx, ty: n.ty, levels: "" });
+		if (this.turbz2 && Array.isArray(save?.nations)) for (const c of save!.nations) out.push({ name: c.known ? `City of the ${c.name}` : "Unknown City", kind: "landmark", tx: c.x / TILE, ty: c.y / TILE, levels: "" });
 		return out;
 	}
 	/** What is under a map position (tile coords): the area, and the nearest place or person within `r` tiles. */
@@ -13963,6 +13971,17 @@ export class TurbzGame {
 			ctx.fillStyle = color; ctx.fillText(ch, x, y - 6);
 			ctx.textAlign = "left";
 		};
+		// TURBZ2: nation cities. Grey "City" until you have walked up to one; then its name and colour.
+		if (this.turbz2 && Array.isArray(save.nations)) {
+			for (const c of save.nations) {
+				const x = X(c.x / TILE), y = Y(c.y / TILE);
+				if (!inView(x, y)) continue;
+				const col = c.known ? c.color : "#b8ad9a";
+				ctx.fillStyle = col; ctx.strokeStyle = "#140e0c"; ctx.lineWidth = 2;
+				ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x + 7, y + 5); ctx.lineTo(x - 7, y + 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+				text(c.known ? c.name : "City", x, y - 10, col, 14, true, true);
+			}
+		}
 		const states = save.mapQuests ?? {};
 		// Player first so its label wins the spot.
 		const px = X(save.x / TILE), py = Y(save.y / TILE);

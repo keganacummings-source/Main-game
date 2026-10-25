@@ -813,8 +813,9 @@ export class WitchArena {
       const classes: ClassId[] = [];
       // one guaranteed ghost-caller so every faction fields ghosts
       classes.push(pick(rng, GHOST_CLASSES));
-      while (classes.length < 5) {
-        const c = pool[(f * 5 + classes.length) % pool.length]!;
+      // Walk the shuffled pool with an index that ALWAYS advances, so a duplicate can never hang this.
+      for (let idx = 0; classes.length < 5 && idx < pool.length; idx++) {
+        const c = pool[(f * 5 + idx) % pool.length]!;
         if (!classes.includes(c)) classes.push(c);
       }
       this.factions.push({ id: f, name: FACTION_NAMES[f]!, color: FACTION_COLORS[f]!, classes, alive: true });
@@ -1230,15 +1231,16 @@ export class WitchArena {
       if (!combat.length) continue;
 
       const held = new Set<string>();
-      // one defender per owned objective (keep home from falling to a lone raider)
+      // Keep only a THIN garrison per owned objective — hold just `garrisonNeed` defenders, never the
+      // whole army, so everyone else is free to march out and fight.
       const garrisonNeed = 1;
       for (const o of mine) {
         const here = combat.filter((f) => f.order === "defend" && f.target === o.id);
-        for (const f of here) held.add(f.id);
-        const need = garrisonNeed - here.length;
-        if (need > 0) {
+        let kept = 0;
+        for (const f of here) { if (kept >= garrisonNeed) break; held.add(f.id); kept++; }
+        if (kept < garrisonNeed) {
           const free = combat.filter((f) => !held.has(f.id) && (f.order !== "attack" || this.obj(f.target)?.owner === fac.id)).sort((a, b) => dist2b(a, o) - dist2b(b, o));
-          for (const f of free.slice(0, need)) { f.order = "defend"; f.target = o.id; f.squad = -1; held.add(f.id); }
+          for (const f of free.slice(0, garrisonNeed - kept)) { f.order = "defend"; f.target = o.id; f.squad = -1; held.add(f.id); kept++; }
         }
       }
 
