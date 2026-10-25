@@ -151,13 +151,21 @@ const isHeal = (m: Move) => m.effect === "mend" || moveTactic(m) === "heal";
 const isWard = (m: Move) => m.effect === "shell" || moveTactic(m) === "ward";
 const isOffense = (m: Move) => m.power > 0 && !isHeal(m) && !isWard(m) && !["roll", "dash", "surge"].includes(moveTactic(m));
 
+/** TURBZ2 nations: the witch powers that hold cities and war across the wild. */
+export const NATION_NAMES = ["Crimson Host", "Pale Court", "Ash Legion", "Tide Circle", "Green Compact", "Gold Pact", "Void Choir"];
+export const NATION_COLORS = ["#d8524a", "#c9a6e8", "#f08a24", "#5ab0e8", "#7dcea0", "#e6c15a", "#9a6ad8"];
+export const NATION_COUNT = 5;
+
 export function installTurbz(game: any): void {
   game.turbz = false;
   game.turbzEasy = false;
+  game.turbz2 = false;
   game.pools = null;
   game.orders = null;
 
   game.startTurbz = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean, easy?: boolean) {
+    // A plain TURBZ run is never a nations run (TURBZ2 turns this back on after it calls through here).
+    this.turbz2 = false;
     // Easy (TurboHunt) is remembered on the game so a rebirth, which passes no choice, stays in the same mode.
     this.turbzEasy = easy ?? !!this.turbzEasy;
     EASY = !!this.turbzEasy;
@@ -272,6 +280,71 @@ export function installTurbz(game: any): void {
       this.mobs.push(this.makeTwitch(made + 1, p.x, p.y, nm));
       made++;
     }
+    // TURBZ2: a freshly spawned batch of witches still belongs to the warring nations.
+    if (this.turbz2) this.layerNations();
+  };
+
+  /**
+   * TURBZ2 — the war world. Starts a normal TURBZ run, then layers the nations on top: each nation
+   * gets a City on the map and every rival witch is sworn to the nearest one. Witches of the same
+   * nation are allies; different nations are enemies, so the powers war across the wild around you.
+   * (Stage 1: nations, cities and allegiances. Per-nation hostility toward the player, talking and
+   * besieged cities come in the next stages.)
+   */
+  game.startTurbz2 = function (name: string, _race: string, _classId: string, traitId: string | null, female: boolean, pickClass = false, newTex?: boolean, easy?: boolean) {
+    this.startTurbz(name, _race, _classId, traitId, female, pickClass, newTex, easy);
+    const save = this.save;
+    if (!save) return;
+    this.turbz2 = true;
+    save.turbz2 = true;
+    save.nations = null; // a new TURBZ2 run builds a fresh set of nations
+    this.layerNations();
+    this.say(`TURBZ2. ${NATION_COUNT} witch nations hold cities across the wild and war on each other. You cannot tell who is who out in the field — only at their cities. Watch the banners.`);
+    this.persistTurbz();
+    this.syncHud(true);
+  };
+
+  /** Build the nations and their cities (once), then swear every rival witch to her nearest nation. */
+  game.layerNations = function () {
+    const save = this.save;
+    const world = this.turbzWorld || this.world;
+    if (!save || !world) return;
+    if (!Array.isArray(save.nations) || !save.nations.length) {
+      const cand = (lmsSpawns(world, NATION_COUNT * 6) ?? []).filter((p: any) => Math.hypot(p.x - save.x, p.y - save.y) > 760);
+      const cities: any[] = [];
+      for (let i = 0; i < NATION_COUNT && cand.length; i++) {
+        // spread the cities: pick the candidate farthest from the player and the cities chosen so far
+        let bi = 0, bd = -1;
+        cand.forEach((p: any, idx: number) => {
+          const d = cities.length ? Math.min(...cities.map((c) => Math.hypot(c.x - p.x, c.y - p.y))) : Math.hypot(p.x - save.x, p.y - save.y);
+          if (d > bd) { bd = d; bi = idx; }
+        });
+        const p = cand.splice(bi, 1)[0];
+        cities.push({ id: i, name: NATION_NAMES[i] ?? `Nation ${i + 1}`, color: NATION_COLORS[i] ?? "#f0e2c8", x: p.x, y: p.y, known: false });
+      }
+      save.nations = cities;
+    }
+    const cities = save.nations as any[];
+    if (!cities.length) return;
+    for (const m of this.mobs) {
+      if (!m.twitch || !m.rv) continue;
+      let nid = 0, nd = Infinity;
+      for (const c of cities) { const d = Math.hypot(c.x - m.x, c.y - m.y); if (d < nd) { nd = d; nid = c.id; } }
+      m.nation = nid;
+      m.rv.team = nid + 1; // nations are teams 1..N; same team = allies, different = enemies
+    }
+  };
+
+  /** How close (world px) you must be to a city to read which nation holds it. */
+  game.nationCityReveal = function () {
+    const save = this.save;
+    if (!this.turbz2 || !save || !Array.isArray(save.nations)) return;
+    for (const c of save.nations) {
+      if (!c.known && Math.hypot((save.x ?? 0) - c.x, (save.y ?? 0) - c.y) < 220) {
+        c.known = true;
+        this.say(`You reach the city of the ${c.name}.`);
+      }
+    }
   };
 
   /** Save the current TURBZ run so it can be resumed after leaving. */
@@ -331,7 +404,10 @@ export function installTurbz(game: any): void {
     if (!(save.hp > 0)) save.hp = this.maxHp();
     this.turbzRoster = [];
     this.witchGraves = [];
+    // Resume a TURBZ2 run as a nations run (the cities are saved; witches are re-sworn to them).
+    this.turbz2 = !!save.turbz2;
     this.spawnTurbzWitches(EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6));
+    if (this.turbz2) this.layerNations();
     this.plantTurbzHunts();
     // No camp standing and none packed in this run? Pick up the one kept off-run (a camp from an older run).
     if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {
@@ -1010,6 +1086,7 @@ export function installTurbz(game: any): void {
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;
     const save = this.save;
+    if (this.turbz2) this.nationCityReveal();
     // Your velocity, smoothed over about a third of a second. Witches lead their shots with it.
     if (dt > 0) {
       const last = this.turbzPVLast;
@@ -1183,6 +1260,8 @@ export function installTurbz(game: any): void {
   };
 
   game.twitchMeet = function (m: any) {
+    // TURBZ2: allegiances are fixed by nation, so witches never re-team on the field.
+    if (this.turbz2) return;
     const r: Brain = m.rv;
     for (const o of this.mobs) {
       if (!o.twitch || !o.alive || o === m) continue;

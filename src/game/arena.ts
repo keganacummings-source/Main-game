@@ -80,14 +80,18 @@ const REGION_NAMES = [
 
 // --- economy / pacing --------------------------------------------------------
 
-const RECRUIT_COST = 40;          // materials to recruit one combat witch
+const RECRUIT_COST = 30;          // materials to recruit one combat witch
 const HARVEST_PER_TRIP = 12;      // a harvester carries this much back
-const HARVEST_SECONDS = 3.2;      // time to fill a node bite
+const HARVEST_SECONDS = 2.8;      // time to fill a node bite
 const POINT_R = TILE * 4;         // objective capture/region radius (pixels)
-const CAP_RATE = 7;               // control gained per second per net attacker
-const CAP_RETAKE = 10;            // owner reclaim rate
-const UNIT_CAP = 170;             // hard cap on living units for performance
+const CAP_RATE = 8;               // control gained per second per net attacker
+const CAP_RETAKE = 9;             // owner reclaim rate
+const UNIT_CAP = 190;             // hard cap on living units for performance
 const PARTY_MAX = 10;             // biggest war party
+const ENGAGE_R = 460;             // how far a combatant will peel off to fight a foe it meets
+const SQUAD_MIN = 3;              // squads range small (skirmish) to large (siege)
+const SQUAD_MAX = 7;
+const RESPAWN_SECONDS = 300;      // every 5 minutes a fresh objective rises somewhere reachable
 
 // --- types -------------------------------------------------------------------
 
@@ -214,6 +218,7 @@ type Fighter = {
   home: number;      // objective id this unit belongs to
   order: Order;
   target: number;    // objective id the order points at
+  squad: number;     // combat: which assault squad (its target objective id), -1 = none
   carry: number;     // harvester: materials held
   node: ResNode | null; // harvester: the node it is working
   harvestT: number;
@@ -517,6 +522,9 @@ export class WitchArena {
   winner = "";
   winFaction = -1;
   commandT = 0;
+  respawnT = RESPAWN_SECONDS;
+  private squadCentroid = new Map<string, { x: number; y: number; n: number }>();
+  private nextRegionName = 0;
 
   camX = 0;
   camY = 0;
@@ -764,6 +772,7 @@ export class WitchArena {
     this.age = 0;
     this.clock = 0;
     this.commandT = 0;
+    this.respawnT = RESPAWN_SECONDS;
     this.winner = "";
     this.winFaction = -1;
 
@@ -886,8 +895,8 @@ export class WitchArena {
   private seedStartingForces(rng: Rng): void {
     for (const o of this.objectives) {
       if (o.owner < 0) continue;
-      for (let i = 0; i < 4; i++) this.recruitCombat(o, rng);
-      for (let i = 0; i < 2; i++) this.recruitHarvester(o, rng);
+      for (let i = 0; i < 7; i++) this.recruitCombat(o, rng);
+      for (let i = 0; i < 3; i++) this.recruitHarvester(o, rng);
     }
   }
 
@@ -978,7 +987,7 @@ export class WitchArena {
       alive: true, dmgMul, might: 0, ward: 0, crit: 4, swift: 0, echo: 0, double: 0,
       second: false, usedSecond: false, think: Math.random() * 0.3, stuck: 0,
       lastX: tx * TILE, lastY: ty * TILE, path: [], hair: w.hair, skin: w.skin,
-      home, order: "muster", target: home, carry: 0, node: null, harvestT: 0,
+      home, order: "muster", target: home, squad: -1, carry: 0, node: null, harvestT: 0,
     };
   }
 
@@ -997,6 +1006,21 @@ export class WitchArena {
 
     // economy: harvesters refill nodes slowly so the map never runs dry
     for (const o of this.objectives) for (const nd of o.nodes) if (nd.amount < 1) { nd.cd -= dt; if (nd.cd <= 0) { nd.amount = 1; } }
+
+    // squad centroids (so units march in a clump toward their shared target)
+    this.squadCentroid.clear();
+    for (const f of this.fighters) {
+      if (!f.alive || f.job !== "combat" || f.role === "spirit" || f.order !== "attack") continue;
+      const key = `${f.faction}:${f.squad}`;
+      const c = this.squadCentroid.get(key) ?? { x: 0, y: 0, n: 0 };
+      c.x += f.x; c.y += f.y; c.n++;
+      this.squadCentroid.set(key, c);
+    }
+    for (const c of this.squadCentroid.values()) if (c.n) { c.x /= c.n; c.y /= c.n; }
+
+    // every few minutes, a fresh neutral objective rises somewhere reachable — guarantees new battles
+    this.respawnT -= dt;
+    if (this.respawnT <= 0) { this.respawnT = RESPAWN_SECONDS; this.respawnObjective(); }
 
     // per-fighter update
     for (const f of this.fighters) {
@@ -1109,21 +1133,28 @@ export class WitchArena {
   }
 
   private thinkCombat(f: Fighter): void {
-    const foe = this.nearestEnemy(f, 300);
+    // Peel off to fight any enemy you run into — this is what makes field battles happen everywhere.
+    const foe = this.nearestEnemy(f, ENGAGE_R);
     if (foe) { this.engage(f, foe); return; }
     // No one near: move toward the order's objective.
     const o = this.obj(f.target) ?? this.obj(f.home);
     if (!o) return;
     const d = Math.hypot(f.x - o.x, f.y - o.y);
     if (f.order === "attack") {
-      if (d > POINT_R * 0.7) { this.seek(f, o.x, o.y); return; }
-      // on the point: hold / push
-      const near = this.nearestEnemy(f, 420);
-      if (near) this.engage(f, near); else { const s = this.ringSlot(f, o, POINT_R * 0.5); this.seek(f, s.x, s.y); }
+      if (d > POINT_R * 0.7) {
+        // March as a squad: steer toward a blend of the objective and the squad's centre.
+        const c = this.squadCentroid.get(`${f.faction}:${f.squad}`);
+        let gx = o.x, gy = o.y;
+        if (c && c.n > 1) { gx = o.x * 0.68 + c.x * 0.32; gy = o.y * 0.68 + c.y * 0.32; }
+        this.seek(f, gx, gy);
+        return;
+      }
+      const s = this.ringSlot(f, o, POINT_R * 0.5);
+      this.seek(f, s.x, s.y);
       return;
     }
     // defend: ring the home objective
-    const ring = POINT_R * 1.3;
+    const ring = POINT_R * 1.2;
     if (d > ring) this.seek(f, o.x, o.y);
     else { const s = this.ringSlot(f, o, ring * 0.8); if (Math.hypot(f.x - s.x, f.y - s.y) > 20) this.seek(f, s.x, s.y); else f.path = []; }
   }
@@ -1189,39 +1220,93 @@ export class WitchArena {
         this.log(`${this.factions[o.owner]!.name} musters a witch at ${o.name}.`);
       }
     }
-    // 2) per faction: assign idle combat units to defend or attack
+    // 2) per faction: a thin garrison, then throw EVERYONE else at the enemy as squads, spread across
+    //    many objectives so battles break out all over the map at once.
     for (const fac of this.factions) {
       if (!fac.alive) continue;
       const mine = this.objectives.filter((o) => o.owner === fac.id);
       if (!mine.length) { fac.alive = false; continue; }
       const combat = this.fighters.filter((f) => f.alive && f.faction === fac.id && f.job === "combat" && f.role !== "spirit");
-      // ensure each owned objective keeps a small garrison
-      const garrisonNeed = 2;
+      if (!combat.length) continue;
+
+      const held = new Set<string>();
+      // one defender per owned objective (keep home from falling to a lone raider)
+      const garrisonNeed = 1;
       for (const o of mine) {
-        const here = combat.filter((f) => f.target === o.id && f.order === "defend").length;
-        if (here < garrisonNeed) {
-          const free = combat.filter((f) => f.order === "defend" && f.target !== o.id && this.obj(f.target)?.owner === fac.id);
-          const grab = free.sort((a, b) => dist2b(a, o) - dist2b(b, o)).slice(0, garrisonNeed - here);
-          for (const g of grab) { g.order = "defend"; g.target = o.id; }
+        const here = combat.filter((f) => f.order === "defend" && f.target === o.id);
+        for (const f of here) held.add(f.id);
+        const need = garrisonNeed - here.length;
+        if (need > 0) {
+          const free = combat.filter((f) => !held.has(f.id) && (f.order !== "attack" || this.obj(f.target)?.owner === fac.id)).sort((a, b) => dist2b(a, o) - dist2b(b, o));
+          for (const f of free.slice(0, need)) { f.order = "defend"; f.target = o.id; f.squad = -1; held.add(f.id); }
         }
       }
-      // surplus → attack a nearby enemy/neutral objective
-      const surplus = combat.filter((f) => f.order === "defend").length - mine.length * garrisonNeed;
-      if (surplus >= 2) {
-        // pick a source objective with spare defenders and a target next to it
-        for (const src of mine) {
-          const spare = combat.filter((f) => f.order === "defend" && f.target === src.id);
-          if (spare.length <= garrisonNeed) continue;
-          const targetId = src.neighbors.find((nid) => this.obj(nid)?.owner !== fac.id);
-          const target = targetId != null ? this.obj(targetId) : this.weakestEnemyObjective(fac.id);
-          if (!target) continue;
-          const party = spare.slice(garrisonNeed, garrisonNeed + PARTY_MAX);
-          for (const u of party) { u.order = "attack"; u.target = target.id; }
-          if (party.length) this.log(`${fac.name} marches ${party.length} on ${target.name}.`);
-          break;
-        }
+
+      // Targets: everything this faction does not own, nearest to the faction first.
+      const targets = this.objectives.filter((o) => o.owner !== fac.id).sort((a, b) => this.distToFaction(a, fac.id) - this.distToFaction(b, fac.id));
+      if (!targets.length) continue;
+
+      // Attackers free to be (re)tasked: idle units, or attackers whose target is now ours.
+      const free = combat.filter((f) => !held.has(f.id) && (f.order !== "attack" || this.obj(f.target)?.owner === fac.id));
+      // committed attackers keep marching; only fill fresh squads from the free pool.
+      let ti = 0;
+      const pool = [...free];
+      while (pool.length && ti < targets.length * 3) {
+        const t = targets[ti % targets.length]!;
+        ti++;
+        // how many of this faction are already committed to t?
+        const onIt = combat.filter((f) => f.order === "attack" && f.target === t.id).length;
+        const size = SQUAD_MIN + ((t.id + fac.id) % (SQUAD_MAX - SQUAD_MIN + 1));
+        const want = Math.max(0, size - onIt);
+        if (want <= 0) continue;
+        const squad = pool.splice(0, want);
+        const fresh = onIt === 0 && squad.length > 0;
+        for (const f of squad) { f.order = "attack"; f.target = t.id; f.squad = t.id; }
+        if (fresh) this.log(`${fac.name} marches ${squad.length} on ${t.name}.`);
       }
+      // any leftover free units pile onto the nearest target (reinforcements → big battles)
+      if (pool.length) { const t = targets[0]!; for (const f of pool) { f.order = "attack"; f.target = t.id; f.squad = t.id; } }
     }
+  }
+
+  /** Distance from a faction's nearest owned objective to a target objective. */
+  private distToFaction(o: Objective, faction: number): number {
+    let best = 1e12;
+    for (const m of this.objectives) if (m.owner === faction) { const d = (m.tx - o.tx) ** 2 + (m.ty - o.ty) ** 2; if (d < best) best = d; }
+    return best;
+  }
+
+  /** Every few minutes a fresh neutral objective rises on open, reachable land to pull armies into a new fight. */
+  private respawnObjective(): void {
+    const rng = Math.random;
+    // find an open land tile far from existing objectives
+    let spot: { tx: number; ty: number } | null = null;
+    for (let tries = 0; tries < 400 && !spot; tries++) {
+      const tx = 6 + Math.floor(rng() * (this.gw - 12));
+      const ty = 6 + Math.floor(rng() * (this.gh - 12));
+      const i = ty * this.gw + tx;
+      if (!this.land[i] || this.grid[i] !== 0 || !this.openAround(tx, ty, 3)) continue;
+      if (this.objectives.every((o) => Math.hypot(o.tx - tx, o.ty - ty) > 16)) spot = { tx, ty };
+    }
+    if (!spot) return;
+    const cap = this.objectiveCount + 6;
+    const name = REGION_NAMES[(this.objectiveCount + this.nextRegionName++) % REGION_NAMES.length]!;
+    let o: Objective;
+    if (this.objectives.length >= cap) {
+      // relocate a neutral objective (or the least-defended one) to the fresh spot
+      const neutral = this.objectives.filter((x) => x.owner < 0);
+      o = (neutral.length ? neutral : this.objectives).sort((a, b) => a.stock - b.stock)[0]!;
+      o.tx = spot.tx; o.ty = spot.ty; o.x = spot.tx * TILE + TILE / 2; o.y = spot.ty * TILE + TILE / 2;
+      o.owner = -1; o.control = 0; o.contender = -1; o.stock = 0; o.nodes = [];
+      o.name = name;
+    } else {
+      o = { id: this.objectives.length, name, tx: spot.tx, ty: spot.ty, x: spot.tx * TILE + TILE / 2, y: spot.ty * TILE + TILE / 2, owner: -1, control: 0, contender: -1, stock: 0, nodes: [], neighbors: [] };
+      this.objectives.push(o);
+    }
+    this.makeNodes(o, mulberry32((spot.tx * 131 + spot.ty * 977) >>> 0 || 1));
+    for (const p of this.objectives) p.neighbors = this.objectives.filter((q) => q.id !== p.id).sort((a, b) => dist2(a, p) - dist2(b, p)).slice(0, 3).map((q) => q.id);
+    this.log(`A prize rises at ${o.name}. The nations turn toward it.`);
+    this.float(o.x, o.y - 40, o.name.toUpperCase(), "#ffe08a");
   }
 
   private weakestEnemyObjective(faction: number): Objective | null {

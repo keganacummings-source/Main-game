@@ -13341,6 +13341,22 @@ export class TurbzGame {
 	drawExtras(ctx, w, h) {
 		const save = this.save;
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
+		// TURBZ2: the nation cities. Their holder is a mystery (grey banner) until you walk up to one.
+		if (this.turbz2 && Array.isArray(save.nations)) {
+			for (const c of save.nations) {
+				if (Math.abs(c.x - this.cam.x) > halfW || Math.abs(c.y - this.cam.y) > halfH) continue;
+				const col = c.known ? c.color : "#9a8f80";
+				ctx.save();
+				ctx.fillStyle = "#3a332c"; ctx.fillRect(c.x - 16, c.y - 14, 32, 22);
+				ctx.fillStyle = "#4a4038"; ctx.fillRect(c.x - 16, c.y - 14, 32, 4);
+				for (let i = -16; i < 16; i += 8) { ctx.fillStyle = "#2a241e"; ctx.fillRect(c.x + i, c.y - 18, 5, 5); }
+				ctx.fillStyle = "#1a1410"; ctx.fillRect(c.x - 4, c.y - 2, 8, 10);
+				ctx.fillStyle = "#241a12"; ctx.fillRect(c.x - 1, c.y - 34, 2, 20);
+				ctx.fillStyle = col; ctx.fillRect(c.x, c.y - 34, 12, 8);
+				ctx.restore();
+				drawShadowName(ctx, c.known ? c.name.toUpperCase() : "CITY", c.x, c.y - 42, col);
+			}
+		}
 		const box = save.ghostBox;
 		if (box && box.map === save.map && Math.abs(box.tx * 32 + 16 - this.cam.x) < halfW && Math.abs(box.ty * 32 + 16 - this.cam.y) < halfH) {
 			const gx = box.tx * 32, gy = box.ty * 32;

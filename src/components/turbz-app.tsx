@@ -97,7 +97,7 @@ function veilName(user: { id: string; displayName?: string | null; primaryEmail?
   return `w${tail}`.slice(0, 16);
 }
 
-type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "turbz" | "turbzeasy" | "shinies";
+type ScreenId = "hub" | "hunt" | "circle" | "hard" | "boards" | "options" | "designer" | "lms" | "turbz" | "turbz2" | "turbzeasy" | "shinies";
 
 /** Re-renders the Shiny collection GIF and uploads it (for the Discord bot's /shiny). */
 function uploadShinies(): void {
@@ -242,6 +242,7 @@ function Hunt() {
             onCircle={() => setScreen("circle")}
             onLms={() => setScreen("lms")}
             onTurbz={() => setScreen("turbz")}
+            onTurbz2={() => setScreen("turbz2")}
             onHard={() => { g()?.swapRules("hardcore"); setScreen("hard"); }}
             onBoards={() => setScreen("boards")}
             onOptions={() => setScreen("options")}
@@ -282,9 +283,14 @@ function Hunt() {
             }}
           />
         )}
-        {(screen === "turbz" || screen === "turbzeasy") && !playing && (
-          <Screen kicker={screen === "turbzeasy" ? "TURBOHUNT · TURBZ EASY" : "TURBZ"} title={screen === "turbzeasy" ? "The TURBZ wild, made gentle." : "A hard wild. Other witches."} wide>
+        {(screen === "turbz" || screen === "turbzeasy" || screen === "turbz2") && !playing && (
+          <Screen kicker={screen === "turbzeasy" ? "TURBOHUNT · TURBZ EASY" : screen === "turbz2" ? "TURBZ2 · THE WAR WORLD" : "TURBZ"} title={screen === "turbzeasy" ? "The TURBZ wild, made gentle." : screen === "turbz2" ? "A wild at war. Nations and cities." : "A hard wild. Other witches."} wide>
             <div className="ui-stack" data-testid="turbz-screen">
+              {screen === "turbz2" && (
+                <p className="text-dim" data-testid="turbz2-blurb">
+                  TURBZ2 is the same hard wild, but the rival witches are sworn to {`${5}`} witch nations, each holding a City. Same-nation witches are allies; different nations are enemies, so the powers war on each other across the map while you play. Out in the field you cannot tell who is who — walk up to a City to learn which nation holds it. (This first version adds the nations, their cities and allegiances. Being hunted or welcomed by a nation, talking to friendly ones, and joining the siege of a city come in the next updates.)
+                </p>
+              )}
               {screen === "turbzeasy" && (
                 <p className="text-dim" data-testid="turbz-easy-blurb">
                   TurboHunt is TURBZ on easy mode: the same wild, the same camp, build mode, Storage Chest, Ghost Box, power blocks, dungeons and world bosses, so you can learn how TURBZ plays without the pressure. Only three or four calm witches wander and they only come for you when you are close. Foes have less health and hit for half. Your mana and stamina refill faster. If you fall you wake at your campfire, losing a little kyo, and you keep your level, gear, skills and camp. It keeps its own save, so it never touches a real TURBZ run. Press H at a campfire for the Camp menu and F for build mode.
@@ -304,8 +310,12 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => (g() as unknown as { startTurbz?: (...a: unknown[]) => void } | null)?.startTurbz?.(name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true, screen === "turbzeasy")}>
-                  Wake as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => {
+                  const api = g() as unknown as { startTurbz?: (...a: unknown[]) => void; startTurbz2?: (...a: unknown[]) => void } | null;
+                  const args = [name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true, screen === "turbzeasy"];
+                  if (screen === "turbz2") api?.startTurbz2?.(...args); else api?.startTurbz?.(...args);
+                }}>
+                  {screen === "turbz2" ? "Wake into the war" : "Wake"} as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
                 </button>
               </div>
             </div>

@@ -1,30 +1,32 @@
 TURBZ — updated files (drop src/, scripts/, public/ onto your repo, keeping structure)
 
-UPDATE 2 — Power-block UI crash fix + pipe direction control
-  src/game/power-extra.ts, src/game/engine.ts, src/components/game-panels.tsx
-UPDATE 3 — Missing in-world Power-block textures
-  src/game/engine.ts, scripts/sprites/power-textures.py,
-  public/MapAssets/NewTex/{rockminer,ghostmerger,gearforge}.png + power-pack.json
-UPDATE 4 — TurboCircle World Battle Simulator
-  src/game/arena.ts, src/components/arena-ui.tsx, src/styles.css,
-  src/components/hub-ui.tsx, src/components/turbz-app.tsx
-UPDATE 5 — Power-block + Super Ghost fixes (this batch)
-  src/game/building.ts     Build-menu icons corrected: Rock Miner -> rockminer.png,
-                           Ghost Merger -> ghostmerger.png, GearSet Forge -> gearforge.png
-  src/game/engine.ts       * Super Ghost crash fixed: it was built as a malformed ghost
-                             (missing species/template/look/move/slots/max), which crashed
-                             combat/draw. It is now a complete, valid Spirit and actually
-                             fights. Old saves are repaired on load (repairSuperGhost).
-                           * Super Ghost now shows in the Ghost Menu (new snapshot field +
-                             a SUPER GHOST card with HP and a Release button).
-                           * Block labels (GEN/BAT/DUP/MERGER/FORGE/CHEST/XP/etc.) now
-                             appear ONLY when you stand next to the block, so the names
-                             stop overlapping on top of the machines.
-  src/components/game-panels.tsx  SUPER GHOST card in the Spirits (Ghost) window.
+LATEST — two things:
 
-NOTE on "Block remover": the old BlockBreaker machine was renamed to Rock Miner (it no
-longer destroys tiles). The "Remove" tool (X in Build mode) still removes every placed
-block/machine, including Ghost Merger and GearSet Forge. If you want a dedicated
-block-BREAKING machine (the inverse of BlockGenerator) added back, say so and I'll add it.
+A) TurboCircle world sim: fiercer + self-renewing
+  src/game/arena.ts
+   * Thin garrisons; everyone else attacks as SQUADS hitting many objectives at once.
+   * Squad cohesion (units march in a clump) + wide engagement (460px) so field
+     battles happen all over, not just on points.
+   * Bigger starting forces, cheaper/faster recruiting = a busier war.
+   * Every 5 minutes a fresh neutral objective rises on random reachable land,
+     so the fighting never stalls.
 
-Regenerate power textures with: python3 scripts/sprites/power-textures.py
+B) TURBZ2 (Stage 1 of the staged plan): the playable war world
+  src/game/turbz-mode.ts   startTurbz2 + nations: each of 5 witch nations gets a
+                           City; every rival witch is sworn to her nearest nation.
+                           Same nation = allies, different = enemies, so the powers
+                           war on each other around you. Resume supported.
+  src/game/engine.ts       draws the nation Cities on the map. A city's banner is
+                           grey ("CITY") until you walk up to it (within ~220px),
+                           then it reveals the nation's name and colour.
+  src/components/hub-ui.tsx + turbz-app.tsx   new "TURBZ2" main-menu tile + start
+                           screen (shares the hard TURBZ save slot). Plain TURBZ is
+                           unchanged and still there.
+
+  Stage 1 = nations, cities, allegiances (and hidden identity at range). NEXT:
+  Stage 2 = per-nation hostility toward YOU (attacked on sight by hostile nations,
+            talk to friendly ones, identity hidden until you visit their city).
+  Stage 3 = nations deliberately war + besiege each other's cities; you can join.
+
+Earlier batches are included unchanged (power-extra, game-panels, building, arena-ui,
+styles, power textures + PNGs).
