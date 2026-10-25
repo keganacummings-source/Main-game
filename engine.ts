@@ -724,10 +724,10 @@ const BOARD_XP_SHARE = { easy: 0.2, normal: 0.3, hard: 0.45, elite: 0.7 };
 const OUT_MAX = 3;
 const PARTY_MAX = 6;
 const GHOST_STORE_MAX = 300;
-/** One ghost in a hundred is shiny: lava-lamp colours, livelier, and it circles you. */
-const SHINY_CHANCE = 0.01;
-/** Boss foes are luckier: one boss in fifty leaves a shiny ghost behind (every other ghost stays at one in a hundred). */
-const BOSS_SHINY_CHANCE = 1 / 50;
+/** One ghost in five hundred is shiny: lava-lamp colours, livelier, and it circles you. */
+const SHINY_CHANCE = 1 / 500;
+/** Boss foes are luckier: one boss in two hundred leaves a shiny ghost behind (every other ghost stays at one in five hundred). */
+const BOSS_SHINY_CHANCE = 1 / 200;
 /** Shiny odds are this much higher at night (Hardcore has night). */
 const NIGHT_SHINY_MULT = 1.3;
 /** A boss that does not drop a shiny still leaves an ordinary ghost this often. */
@@ -8509,6 +8509,11 @@ export class TurbzGame {
 			this.turnQ = [];
 			this.fought = false;
 			for (const s of save.spirits ?? []) if (s.hp < s.max) s.hp = Math.min(s.max, s.hp + 6 * dt);
+			// The Super Ghost lives in save.superGhost, outside save.spirits, so it was never healing out of
+			// combat — once it fell it stayed at 0 HP forever and never rejoined you. Revive it the same way,
+			// but scaled to its big HP pool so it recovers in a reasonable time rather than crawling at 6/s.
+			const sg = save.superGhost;
+			if (sg && sg.hp < sg.max) sg.hp = Math.min(sg.max, (sg.hp ?? 0) + Math.max(6, sg.max * 0.03) * dt);
 			return;
 		}
 		if (!this.fought) {
@@ -10705,17 +10710,22 @@ export class TurbzGame {
 	}
 	toggleSpiritMove(uid, moveId) {
 		const save = this.save;
-		const spirit = save?.spirits?.find((s) => s.uid === uid);
+		// The Super Ghost lives outside save.spirits, so look there too; it readies more verses than a
+		// normal spirit (it was fused from many), so it gets a higher cap.
+		const isSuper = save?.superGhost?.uid === uid;
+		const spirit = isSuper ? save.superGhost : save?.spirits?.find((s) => s.uid === uid);
 		if (!spirit || !spirit.known?.includes(moveId)) return;
+		const cap = isSuper ? GHOSTMERGER_MOVES_KNOWN_MAX : 3;
 		const slots = spirit.slots ?? [];
 		if (slots.includes(moveId)) {
 			if (slots.length <= 1) return this.say("A spirit needs at least one move readied.");
 			spirit.slots = slots.filter((id) => id !== moveId);
 		} else {
-			if (slots.length >= 3) return this.say("Only 3 moves can be readied. Unslot one first.");
+			if (slots.length >= cap) return this.say(`Only ${cap} moves can be readied. Unslot one first.`);
 			spirit.slots = [...slots, moveId];
 		}
 		spirit.move = spirit.slots[0] ?? spirit.move;
+		if (isSuper) spirit.moves = spirit.slots;
 		this.persist();
 		this.syncHud(true);
 	}
@@ -12521,7 +12531,9 @@ export class TurbzGame {
 			})),
 			spiritSlots: this.spiritCap(),
 			spiritCap: PARTY_MAX,
-			superGhost: (save.superGhost && save.superGhost.hp > 0) ? this.ghostDetail(save.superGhost, "out") : null,
+			// Always surface the Super Ghost when one exists (even downed at 0 HP) so its slot keeps showing
+			// its full details and you can watch it revive, instead of the slot blanking out when it falls.
+			superGhost: save.superGhost ? this.ghostDetail(save.superGhost, "out") : null,
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity ?? 0, shiny: !!g.shiny, tagged: !!g.tagged, palette: g.shiny ? g.palette ?? DEFAULT_PALETTE : null, abilities: (g.abilities ?? []).map((a) => GHOST_ABILITY_BY_ID[a.id]?.name ?? a.id) })),
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),

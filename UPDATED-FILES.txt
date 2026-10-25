@@ -1,26 +1,25 @@
-V2TURBZ update — drag these onto your GitHub repo, keeping the folder paths.
+V2TURBZ update — drag onto your repo, keeping folder paths. Start a NEW TURBZ2 run for the world changes.
 
-IMPORTANT: for the single-continent TURBZ2 world, start a NEW TURBZ2 run
-("Wake into the war"). An in-progress save that holds nations will now also
-rebuild as one continent when you continue it; a brand-new run is the clean test.
+THIS UPDATE:
+  SUPER GHOST
+   • Fixed: the Super Ghost never healed after falling (it lived outside the party's
+     heal loop), so once it died it was gone for good. It now revives out of combat
+     like your other ghosts — it recovers to full in ~30-60s and rejoins you. Verified.
+   • Fixed: its slot now shows FULL details when you click it (portrait, stats,
+     abilities, and a Verses tab you can re-ready, just like a normal spirit) instead
+     of a dead static card. It also stays visible while downed, showing "reviving…".
+   • You can now re-ready its verses (higher cap than a normal spirit, since it's fused).
 
-NEW
-  public/MapAssets/NewTex/rockminer.png / ghostmerger.png / gearforge.png   power-block textures
+  SHINY / BOSS ODDS
+   • Base shiny rate lowered to 1/500 (was 1/100).
+   • Boss shiny rate lowered to 1/200 (was 1/50) — still rarer-but-better than base.
+     NOTE: there is no single "boss spawn %" knob (bosses are placed by design, not a
+     per-spawn roll), so I read "boss odds 1/200" as the boss SHINY rate. If you meant
+     how OFTEN bosses appear, tell me and I'll wire that instead.
 
-CHANGED
-  public/MapAssets/NewTex/power-pack.json   registers the new textures
-  scripts/sprites/power-textures.py         texture generator
-  src/game/engine.ts        power-UI crash fix, pipe-flow, super-ghost, near-only labels,
-                            TURBZ2 cities/map, harvester tick routing
-  src/game/turbz-mode.ts    TURBZ2 single-continent world + 50 harvest-witches, AND
-                            NEW job-switching: nations draft harvesters into fighters when their
-                            army is thin and send fighters back to the fields when the economy is
-                            starving; fighters take raid/guard duties so armies march on enemy
-                            cities instead of only defending. Resumed war saves rebuild single.
-  src/game/arena.ts         Witch Circle: single continent, squads, respawns, "Begin the war" fix,
-                            AND NEW job-switching: factions draft harvesters <-> fighters by need.
-  src/game/tex-world.ts     single-continent (no-islands) generator
-  src/game/building.ts      accurate build-menu icons
-  src/game/power-extra.ts   pipe direction control (auto/out/in/off)
-  src/components/game-panels.tsx / arena-ui.tsx / hub-ui.tsx / turbz-app.tsx   UI for the above
-  src/styles.css            styling
+  (Still in place from before: TURBZ2 free-for-all no-teams battlefield; single-continent
+   world; Witch Circle factions + job-switching; power-block fixes.)
+
+FILES: src/game/engine.ts (super ghost revive + UI data + shiny odds + verse re-ready),
+       src/components/game-panels.tsx (clickable Super Ghost detail card),
+       plus the prior TURBZ2/Circle/power files.
