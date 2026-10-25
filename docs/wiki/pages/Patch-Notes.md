@@ -1,5 +1,21 @@
 # Patch Notes
 
+## Two-frame animation, Tile and Enemy editor QOL, new class skins
+
+- **Enemies animate.** Every drawn enemy is now two frames and plays both — there is no toggle, enemies simply move from here on. Enemies made before two-frame art existed, including the twenty shipped with the game, get a second frame generated for them (a one-pixel breath that keeps the top row and the bottom row exactly as drawn, so no head is clipped and no feet float), so your whole roster starts moving without being repainted. A frame 2 you paint yourself is always kept as-is.
+- **Tiles can animate.** Every tile and camp piece now has a second frame too, but a tile only loops when you turn **Animate** on — a tile drawn as a still picture stays a still picture. Loop speed is yours to set, 1 to 12 frames per second. Animated tiles are painted over the cached terrain rather than baked into it, so a loop never forces the world to redraw and costs nothing on maps that do not use one.
+- **Enemy Designer QOL:** Frame 1 / Frame 2 tabs with a separate undo history each; **Onion** skin showing the other frame faintly underneath; **Auto idle** and **Copy 1 → 2** and **Swap** for building frame 2; a **fill** tool, a colour **picker** that takes a colour off the canvas, **nudge** to shift the whole sprite a pixel in any direction, and **redo** alongside undo. The preview plays the enemy exactly as the game will.
+- **Tile Builder QOL:** the same Frame 1 / Frame 2 tabs and per-frame undo, **Copy frame 1 → 2**, **Swap frames** and **Clear frame 2**, a speed slider, and a preview that loops at the real game speed. The builder's tile palette animates too, so a live animated tile moves while you are laying out a map.
+- **New class skins** ship as the default: the painted Ruin Mage, Radiant and Gravemage skins are joined by **Crying Girl** and **Pathfinder**. A skin you painted yourself still wins over the shipped one.
+
+## Super Ghost fixes, shiny rebalance, TURBZ2 battlefield
+
+- **Super Ghost revives.** It lived outside the party's heal loop, so once it fell it stayed at 0 HP forever and never rejoined you. It now regenerates out of combat like your other ghosts, scaled to its larger health pool, and recovers to full in roughly 30-60 seconds.
+- **Super Ghost slot is fully clickable.** Its card used to be a dead static panel. Click it for the full detail view — portrait, stats, abilities and a Verses tab — the same as a normal spirit. The slot also stays visible while downed, showing "Downed — reviving out of combat…" instead of blanking out.
+- **Re-ready Super Ghost verses,** at a higher cap than a normal spirit, since it was fused from many.
+- **Shiny odds lowered.** Base shiny rate is now **1/500** (was 1/100) and the boss shiny rate is **1/200** (was 1/50) — still rarer-but-better than base.
+- **TURBZ2 is a free-for-all battlefield.** One continent, no sides: every witch fights for herself and hunts other witches as readily as she hunts you, so the wild is a constant brawl instead of everyone converging on the player. Around 60 battlefield witches are kept alive across the continent and topped up every few seconds as they cut each other down, spawned off-screen. Cities remain on the map as landmarks. A witch now only engages you at close range, as she would any other witch; hunter witches still pursue relentlessly. The old team/nation war is preserved behind the `TURBZ2_FREE_FOR_ALL` flag in `src/game/turbz-mode.ts`.
+
 ## Tile Builder rebuild, power block art, Mining XP (TURBZ, New Texture Mode)
 
 - **Mining XP.** Every block you break now trains your **Mining** skill: 16 for hell stone, 10 for other stone, 6 for sandstone, 5 for wood, 3 for dirt, plus 6 more when the block drops an ore. A "+N Mining xp" pops up with the drop.

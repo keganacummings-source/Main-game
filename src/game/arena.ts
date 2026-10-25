@@ -1,3 +1,4 @@
+import { gatherInto, pruneByLife } from "./list-util";
 import {
   MONSTERS,
   MOVE_BY_ID,
@@ -84,6 +85,9 @@ const RECRUIT_COST = 30;          // materials to recruit one combat witch
 const HARVEST_PER_TRIP = 12;      // a harvester carries this much back
 const HARVEST_SECONDS = 2.8;      // time to fill a node bite
 const POINT_R = TILE * 4;         // objective capture/region radius (pixels)
+const POINT_R_SQ = POINT_R * POINT_R;
+/** Painter's depth order: lower on the screen draws later. Hoisted out of the draw pass. */
+const byDepth = (a: { y: number }, b: { y: number }) => a.y - b.y;
 const CAP_RATE = 8;               // control gained per second per net attacker
 const CAP_RETAKE = 9;             // owner reclaim rate
 const UNIT_CAP = 190;             // hard cap on living units for performance
@@ -537,6 +541,16 @@ export class WitchArena {
   floats: Flo[] = [];
   beams: Beam[] = [];
   cfx = new CombatFx();
+  /** Scratch array for the draw order, reused every frame so the visible set costs no allocation. */
+  private drawOrder: Fighter[] = [];
+  /** The visible half-extents the draw pass is currently using, read by `isVisibleFighter`. */
+  private visibleHalfW = 0;
+  private visibleHalfH = 0;
+  /** Bound once, so the per-frame gather does not build a new closure. */
+  private isVisibleFighter = (f: Fighter): boolean =>
+    f.alive && Math.abs(f.x - this.camX) < this.visibleHalfW && Math.abs(f.y - this.camY) < this.visibleHalfH;
+  /** Garrison tallies per objective, refilled once per frame instead of once per objective. */
+  private garrisonCount: number[] = [];
 
   onCloud: (save: unknown) => void = () => {};
   onGrave: (body: GraveBody) => void = () => {};
@@ -1054,9 +1068,9 @@ export class WitchArena {
 
     this.cfx.tick(dt);
     for (const b of this.beams) b.life -= dt;
-    this.beams = this.beams.filter((b) => b.life > 0);
+    pruneByLife(this.beams);
     for (const fl of this.floats) fl.life -= dt;
-    this.floats = this.floats.filter((fl) => fl.life > 0);
+    pruneByLife(this.floats);
 
     // prune dead non-spirits occasionally to keep arrays small
     if (this.fighters.length > 600) this.fighters = this.fighters.filter((f) => f.alive);
@@ -1694,7 +1708,12 @@ export class WitchArena {
     if (this.zoom > 0.45) this.drawNodes(ctx);
 
     const halfW = this.viewW / this.zoom * 0.6 + 120, halfH = this.viewH / this.zoom * 0.6 + 120;
-    const order = this.fighters.filter((f) => f.alive && Math.abs(f.x - this.camX) < halfW && Math.abs(f.y - this.camY) < halfH).sort((a, b) => a.y - b.y);
+    // Gathered into a scratch array that is reused every frame and then sorted in place. With six
+    // hundred fighters this used to allocate a fresh array of the visible ones on every frame.
+    const order = this.drawOrder;
+    this.visibleHalfW = halfW; this.visibleHalfH = halfH;
+    gatherInto(this.fighters, this.isVisibleFighter, order);
+    order.sort(byDepth);
     for (const f of order) {
       if (f.role === "spirit" && f.look) {
         drawMonster(ctx, { x: f.x, y: f.y, template: f.template, type: f.type, facing: f.facing, walk: f.walk, hurt: f.hurt, boss: false, rarity: 0, ghost: true, look: f.look, time: this.clock });
@@ -1787,7 +1806,23 @@ export class WitchArena {
   }
 
   private drawObjectives(ctx: CanvasRenderingContext2D): void {
-    for (const o of this.objectives) {
+    // Tally every objective's garrison in ONE walk of the fighters. This used to re-scan all six
+    // hundred fighters (through Math.hypot) once per objective, every frame, just for the labels.
+    const counts = this.garrisonCount;
+    const objs = this.objectives;
+    for (let i = 0; i < objs.length; i++) counts[i] = 0;
+    counts.length = objs.length;
+    if (this.zoom > 0.3) for (const f of this.fighters) {
+      if (!f.alive || f.role === "spirit" || f.job !== "combat") continue;
+      for (let i = 0; i < objs.length; i++) {
+        const o = objs[i]!;
+        if (f.faction !== o.owner) continue;
+        const dx = f.x - o.x, dy = f.y - o.y;
+        if (dx * dx + dy * dy < POINT_R_SQ) { counts[i] = counts[i]! + 1; break; }
+      }
+    }
+    for (let oi = 0; oi < objs.length; oi++) {
+      const o = objs[oi]!;
       const col = o.owner >= 0 ? this.color(o.owner) : "#9a8f80";
       ctx.save();
       // ring
@@ -1804,7 +1839,7 @@ export class WitchArena {
       ctx.fillStyle = col; ctx.fillRect(o.x, o.y - 30, 14, 9);
       ctx.restore();
       if (this.zoom > 0.3) {
-        const garr = this.fighters.filter((f) => f.alive && f.role !== "spirit" && f.job === "combat" && f.faction === o.owner && Math.hypot(f.x - o.x, f.y - o.y) < POINT_R).length;
+        const garr = counts[oi] ?? 0;
         drawShadowName(ctx, o.name.toUpperCase(), o.x, o.y - POINT_R - 10, col);
         if (this.zoom > 0.5) drawShadowName(ctx, o.owner >= 0 ? `${this.factions[o.owner]!.name} · ${garr}` : "neutral", o.x, o.y - POINT_R + 4, col);
       }

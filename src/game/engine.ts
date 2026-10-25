@@ -69,12 +69,16 @@ import {
   MOVE_BY_ID,
   MOVES,
   NPCS,
+  NPC_BY_ID,
   POIS,
   NODE_RESPAWN_SECONDS,
   FISH_BITE_MIN,
   FISH_BITE_MAX,
   QUESTS,
+  qualityRank,
   RACES,
+  RACE_BY_ID,
+  raceIndex,
   SET_BY_ID,
   SETS,
   SKILLS,
@@ -215,6 +219,7 @@ import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMa
 import { CombatFx, VOLLEY_GAP } from "./combat-fx";
 import { drawFloats, drawPlates, makeFloat, TRAIT_SHORT } from "./combat-text";
 import { applyStatus, cleanseStatuses, endStatus, HARD_CC, hasStatus, IMMUNE_PREFIX, SOFT_CAP, struggle, tickStatuses } from "./status-rules";
+import { pruneByLife } from "./list-util";
 import {
 	abandonContract, acceptContract, applyBoardEvent, boardView, ensureBoard, MAX_ACTIVE, rerollBoard, rerollCost, stepLabel, TIER_XP,
 	type BoardEventDetail, type BoardKind,
@@ -244,6 +249,7 @@ import {
   dungeonExit,
   drawRift,
   paintArena,
+  drawAnimatedTiles,
   drawWorldSlice,
   paintNode,
   paintWorld,
@@ -629,6 +635,51 @@ type TurnStep = { side: "you" | "foe" | "spirit"; id: string };
 const SAVE_KEY = "turbz-v3";
 /** Seconds between autosaves while playing (on top of saving after every kill, item and change). */
 const AUTOSAVE_SECONDS = 8;
+/**
+ * How far a plain foe can be before the mob loop stops thinking about it (bosses, witches and
+ * summons are always thought about). Squared, because the loop compares squared distances.
+ */
+const FAR_MOB_CULL = 1200;
+const FAR_MOB_CULL_SQ = FAR_MOB_CULL * FAR_MOB_CULL;
+/** The worn slots the actor drawing reads, in the order it draws them. */
+const DRAW_PIECE_SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"];
+/** How many particles are kept alive at once; the oldest beyond this are dropped. */
+const MAX_PARTICLES = 240;
+/**
+ * A foe's worn gear in the shape the actor drawing wants, remembered on the foe itself.
+ *
+ * A witch's gear is rolled when she is made and then left alone, but the draw loop needs this for
+ * every witch on screen on every frame — and building it hashes each piece's uid for its FX gene.
+ * In TURBZ2, with dozens of witches visible at once, that was a steady stream of short-lived
+ * objects. The cache is dropped whenever the gear list is replaced or changes length.
+ */
+function mobDrawPieces(m) {
+	const gear = m.lootGear ?? EMPTY_PIECES;
+	const cached = m.gearDraw;
+	if (cached && cached.from === gear && cached.n === gear.length) return cached.out;
+	const out = [];
+	for (let i = 0; i < gear.length; i++) {
+		const g = gear[i];
+		out.push({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualityRank(g.quality)) });
+	}
+	m.gearDraw = { from: gear, n: gear.length, out };
+	return out;
+}
+/** Shared stand-in for a foe with no gear, so the no-gear path allocates nothing. */
+const EMPTY_PIECES = [];
+/**
+ * The first melee move of a given element, remembered after the first lookup. Party members ask for
+ * this every time they swing, and the move list never changes while the game is running.
+ */
+const MELEE_BY_TYPE = new Map();
+function meleeMoveOfType(type) {
+	let move = MELEE_BY_TYPE.get(type);
+	if (move === undefined) {
+		move = MOVES.find((m) => m.type === type && attackForm(m) === "melee") ?? null;
+		MELEE_BY_TYPE.set(type, move);
+	}
+	return move ?? undefined;
+}
 /** Chance an overworld foe rolls a random kind instead of its camp's set kind. */
 const OVERWORLD_RANDOM_FOE = 0.45;
 /** Foes never strike from further than this, however long their verse reaches. */
@@ -724,10 +775,10 @@ const BOARD_XP_SHARE = { easy: 0.2, normal: 0.3, hard: 0.45, elite: 0.7 };
 const OUT_MAX = 3;
 const PARTY_MAX = 6;
 const GHOST_STORE_MAX = 300;
-/** One ghost in a hundred is shiny: lava-lamp colours, livelier, and it circles you. */
-const SHINY_CHANCE = 0.01;
-/** Boss foes are luckier: one boss in fifty leaves a shiny ghost behind (every other ghost stays at one in a hundred). */
-const BOSS_SHINY_CHANCE = 1 / 50;
+/** One ghost in five hundred is shiny: lava-lamp colours, livelier, and it circles you. */
+const SHINY_CHANCE = 1 / 500;
+/** Boss foes are luckier: one boss in two hundred leaves a shiny ghost behind (every other ghost stays at one in five hundred). */
+const BOSS_SHINY_CHANCE = 1 / 200;
 /** Shiny odds are this much higher at night (Hardcore has night). */
 const NIGHT_SHINY_MULT = 1.3;
 /** A boss that does not drop a shiny still leaves an ordinary ghost this often. */
@@ -982,7 +1033,7 @@ function loadAudioPrefs(): AudioPrefs {
 }
 
 /** The background songs, played in rotation. Add a file to public/music and list it here. */
-const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg", "Track4.ogg", "WINGRIDDENTURBZ.ogg"];
+const MUSIC_TRACKS = ["Background.ogg", "Background2.ogg", "Track4.ogg", "WINGRIDDENTURBZ.ogg", "WINGRIDDENTURBZ2.ogg"];
 /**
  * A new song starts every 10 minutes, counted from when the last one started. A song is never cut
  * short: if one runs longer than this, the next starts right after it ends.
@@ -1075,6 +1126,8 @@ export class TurbzGame {
 		this.netAcc = 0;
 		this.mobAcc = 0;
 		this.setProc = 0;
+		// Cache behind drawPieces(): the worn gear in drawing shape, rebuilt only when gear changes.
+		this.gearDraw = { slots: [], out: [] };
 		this.zoom = 2.35;
 	}
 	start() {
@@ -7707,22 +7760,42 @@ export class TurbzGame {
 		}
 		this.mobs = live;
 	}
+	/**
+	 * A living foe by id. Walked by index rather than `.find()` with a closure, because the mob loop
+	 * asks this for every summoned ghost on every frame.
+	 */
+	mobById(id) {
+		const mobs = this.mobs;
+		if (id == null || !mobs) return undefined;
+		for (let i = 0; i < mobs.length; i++) {
+			const m = mobs[i];
+			if (m.id === id && m.alive) return m;
+		}
+		return undefined;
+	}
 	tickMobs(dt) {
 		const save = this.save;
 		this.refreshPower(dt);
 		this.tickWanted(dt);
 		this.tickDormancy(dt);
+		// Night is the same for every foe this frame, so settle it once instead of per foe.
+		const night = this.isNightNow();
 		for (const m of this.mobs) {
 			m.hurt = Math.max(0, m.hurt - dt * 3);
 			m.walk += dt * 4;
 			// Foes keep pace with the hunter as the game goes, not just when they respawn.
 			if (m.alive) {
 				m.scaleT = (m.scaleT ?? 0) - dt;
-				if (m.scaleT <= 0 || m.nightScaled !== this.isNightNow()) {
-					m.scaleT = .25;
+				if (m.scaleT <= 0 || m.nightScaled !== night) {
+					// Spread the next rescale over the quarter-second instead of parking every foe on
+					// the same deadline. Rescaling is not cheap, and a roster that was spawned together
+					// used to come due together, so the whole camp re-scaled on one frame and dropped it.
+					m.scaleT = .2 + Math.random() * .1;
 					this.scaleMob(m);
 				}
-				for (const id of Object.keys(m.kcd ?? {})) m.kcd[id] = Math.max(0, m.kcd[id] - dt);
+				// `for..in` over the cooldown table instead of Object.keys(): the same walk without
+				// building a throwaway key array for every foe on every frame.
+				if (m.kcd) for (const id in m.kcd) m.kcd[id] = Math.max(0, m.kcd[id] - dt);
 				m.thornT = Math.max(0, (m.thornT ?? 0) - dt);
 				if (m.wardT > 0) m.wardT = Math.max(0, m.wardT - dt);
 				if (m.enchants?.includes("regenerating") && m.hp < m.max) m.hp = Math.min(m.max, m.hp + m.max * .004 * dt);
@@ -7741,8 +7814,13 @@ export class TurbzGame {
 				}
 				continue;
 			}
-			if (!m.boss && !m.witch && !m.master && Math.hypot(m.x - save.x, m.y - save.y) > 1200) continue;
-			if (m.status.some((s) => s.id === "burn")) m.hp -= Math.max(6, m.max * .01) * dt;
+			// Distance cull. Compared squared, so the whole roster is not run through Math.hypot
+			// (which guards against overflow we cannot hit) every frame just to be thrown away.
+			if (!m.boss && !m.witch && !m.master) {
+				const ox = m.x - save.x, oy = m.y - save.y;
+				if (ox * ox + oy * oy > FAR_MOB_CULL_SQ) continue;
+			}
+			if (hasStatus(m.status, "burn")) m.hp -= Math.max(6, m.max * .01) * dt;
 			if (m.hp <= 0) {
 				this.killMob(m);
 				continue;
@@ -7750,12 +7828,12 @@ export class TurbzGame {
 			if (m.rival) { this.tickRival(m, dt); continue; }
 			if (m.harvester) { this.tickHarvester?.(m, dt); continue; }
 			if (m.twitch) { this.tickTwitch?.(m, dt); continue; }
-			if (m.status.some((s) => s.id === "sleep")) continue;
+			if (hasStatus(m.status, "sleep")) continue;
 			const dx = save.x - m.x;
 			const dy = save.y - m.y;
 			const d = Math.hypot(dx, dy);
 			this.tickMobAttack(m, d, dt);
-			const rooted = m.status.some((s) => s.id === "root");
+			const rooted = hasStatus(m.status, "root");
 			if ((m.animal && m.species !== "wolf" && m.species !== "boar") || m.flee) {
 				if (!rooted && d < 120 && d > 1) {
 					this.moveMob(m, -dx / d * 70 * dt, -dy / d * 70 * dt);
@@ -7777,7 +7855,7 @@ export class TurbzGame {
 				continue;
 			}
 			if (m.enemyGhost) {
-				const lead = this.mobs.find((x) => x.id === m.master && x.alive);
+				const lead = this.mobById(m.master);
 				if (!lead) {
 					// Her ghosts fade with her.
 					m.alive = false;
@@ -7787,7 +7865,7 @@ export class TurbzGame {
 				}
 				else {
 					this.tickEnemyGhostAid(m, dt);
-					if (!this.wantsFight(m, d) && !m.status.some((st) => st.id === "root")) { this.orbitMaster(m, lead, dt); continue; }
+					if (!this.wantsFight(m, d) && !hasStatus(m.status, "root")) { this.orbitMaster(m, lead, dt); continue; }
 				}
 			}
 			if (m.foeRival && this.lms && this.mobVsRival(m, dt, d)) continue;
@@ -7799,7 +7877,7 @@ export class TurbzGame {
 			const move = MOVE_BY_ID[m.move] ?? MOVES[0];
 			const reach = attackRange(move);
 			if (aggro && d > Math.min(reach * .72, 120) && !rooted && d > 1) {
-				const sp = (m.boss ? 46 : m.look?.aggression === "hunt" ? 70 : 58) * (m.status.some((s) => s.id === "soak") ? .7 : 1);
+				const sp = (m.boss ? 46 : m.look?.aggression === "hunt" ? 70 : 58) * (hasStatus(m.status, "soak") ? .7 : 1);
 				this.moveMob(m, dx / d * sp * dt, dy / d * sp * dt);
 				if (dx < 0) m.facing = -1;
 				else m.facing = 1;
@@ -7853,7 +7931,7 @@ export class TurbzGame {
 			m.seen = true;
 			this.say(`${m.name} knows you are here.`);
 		}
-		const rooted = m.status.some((s) => s.id === "root");
+		const rooted = hasStatus(m.status, "root");
 		m.cd -= dt;
 		const engage = hunting || m.seen;
 		const agility = m.classId && CLASS_BY_ID[m.classId] ? 1 + Math.max(-.25, (CLASS_BY_ID[m.classId].stats.speed ?? 0) / 180) : 1;
@@ -8509,6 +8587,11 @@ export class TurbzGame {
 			this.turnQ = [];
 			this.fought = false;
 			for (const s of save.spirits ?? []) if (s.hp < s.max) s.hp = Math.min(s.max, s.hp + 6 * dt);
+			// The Super Ghost lives in save.superGhost, outside save.spirits, so it was never healing out of
+			// combat — once it fell it stayed at 0 HP forever and never rejoined you. Revive it the same way,
+			// but scaled to its big HP pool so it recovers in a reasonable time rather than crawling at 6/s.
+			const sg = save.superGhost;
+			if (sg && sg.hp < sg.max) sg.hp = Math.min(sg.max, (sg.hp ?? 0) + Math.max(6, sg.max * 0.03) * dt);
 			return;
 		}
 		if (!this.fought) {
@@ -9000,7 +9083,7 @@ export class TurbzGame {
 		} else this.float(save.x, save.y - 48 * WITCH_SIZE, move.name, TYPES[move.type].color);
 	}
 	foeTurn(m: Mob) {
-		if (m.status.some((s) => s.id === "sleep")) return;
+		if (hasStatus(m.status, "sleep")) return;
 		this.mobAttack(m, this.pickFoeMove(m));
 	}
 	/**
@@ -9184,7 +9267,7 @@ export class TurbzGame {
 			}
 			return at;
 		});
-		for (const id of Object.keys(this.mateBy)) if (!live.has(id)) delete this.mateBy[id];
+		for (const id in this.mateBy) if (!live.has(id)) delete this.mateBy[id];
 		list.forEach((spirit, i) => {
 			const at = this.mates[i]!;
 			at.swing = Math.max(0, at.swing - step * 3);
@@ -9213,7 +9296,7 @@ export class TurbzGame {
 		if (this.role === "guest") return;
 		save.party = save.party ?? [];
 		save.party.forEach((id, i) => {
-			const npc = NPCS.find((n) => n.id === id);
+			const npc = NPC_BY_ID[id];
 			if (!npc) return;
 			const key = `mate-${id}`;
 			this.mateCd[key] = (this.mateCd[key] ?? 0) - dt;
@@ -9242,7 +9325,7 @@ export class TurbzGame {
 			const reach = dist > 70 ? 150 : 56;
 			if (Math.hypot(foe.x - (this.mateCd[`${key}x`] ?? 0), foe.y - (this.mateCd[`${key}y`] ?? 0)) > reach) return;
 			this.mateCd[key] = dist > 70 ? 1.35 : .9;
-			const move = dist > 70 ? huntMove(npc.shrine ?? "normal") : MOVES.find((m) => m.type === (npc.shrine ?? "normal") && attackForm(m) === "melee") ?? huntMove(npc.shrine ?? "normal");
+			const move = dist > 70 ? huntMove(npc.shrine ?? "normal") : meleeMoveOfType(npc.shrine ?? "normal") ?? huntMove(npc.shrine ?? "normal");
 			const mateDmg = (dist > 70 ? 6 : 9) + save.level * 1.4;
 			const mateDelay = this.playMoveFx(move, this.mateCd[`${key}x`] ?? save.x, (this.mateCd[`${key}y`] ?? save.y) - 20, foe.x, foe.y - 12, { follow: () => (foe.alive ? [foe.x, foe.y - 12] : null) });
 			this.later(mateDelay, () => { if (foe.alive) this.damageMob(foe, mateDmg, false, attackForm(move), true); });
@@ -9255,16 +9338,18 @@ export class TurbzGame {
 			p.y += p.vy * dt;
 			p.vy += (p.kind === "rain" ? 40 : 0) * dt;
 		}
-		this.parts = this.parts.filter((p) => p.life > 0).slice(-240);
+		// Compact the particles in place and keep the newest MAX_PARTICLES. This used to build two
+		// new arrays (a filter then a slice) every frame, for up to 240 particles.
+		pruneByLife(this.parts, MAX_PARTICLES);
 		this.cfx?.tick(dt);
 		if (this.cfx?.kick) {
 			this.shake = Math.max(this.shake, this.cfx.kick);
 			this.cfx.kick = 0;
 		}
 		for (const f of this.floats) f.life -= dt;
-		this.floats = this.floats.filter((f) => f.life > 0);
+		pruneByLife(this.floats);
 		this.shake = Math.max(0, this.shake - dt * 18);
-		for (const id of Object.keys(this.nodeCd)) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
+		for (const id in this.nodeCd) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
 	}
 	procSet(fx, variant = 0) {
 		const save = this.save;
@@ -10705,17 +10790,22 @@ export class TurbzGame {
 	}
 	toggleSpiritMove(uid, moveId) {
 		const save = this.save;
-		const spirit = save?.spirits?.find((s) => s.uid === uid);
+		// The Super Ghost lives outside save.spirits, so look there too; it readies more verses than a
+		// normal spirit (it was fused from many), so it gets a higher cap.
+		const isSuper = save?.superGhost?.uid === uid;
+		const spirit = isSuper ? save.superGhost : save?.spirits?.find((s) => s.uid === uid);
 		if (!spirit || !spirit.known?.includes(moveId)) return;
+		const cap = isSuper ? GHOSTMERGER_MOVES_KNOWN_MAX : 3;
 		const slots = spirit.slots ?? [];
 		if (slots.includes(moveId)) {
 			if (slots.length <= 1) return this.say("A spirit needs at least one move readied.");
 			spirit.slots = slots.filter((id) => id !== moveId);
 		} else {
-			if (slots.length >= 3) return this.say("Only 3 moves can be readied. Unslot one first.");
+			if (slots.length >= cap) return this.say(`Only ${cap} moves can be readied. Unslot one first.`);
 			spirit.slots = [...slots, moveId];
 		}
 		spirit.move = spirit.slots[0] ?? spirit.move;
+		if (isSuper) spirit.moves = spirit.slots;
 		this.persist();
 		this.syncHud(true);
 	}
@@ -11199,7 +11289,7 @@ export class TurbzGame {
 		m.aidCd = (m.aidCd ?? 3) - dt;
 		if (m.aidCd > 0) return;
 		m.aidCd = 3.5 + Math.random() * 2;
-		const lead = this.mobs.find((x) => x.id === m.master && x.alive);
+		const lead = this.mobById(m.master);
 		if (!lead || Math.hypot(lead.x - m.x, lead.y - m.y) > 260) return;
 		const moves = m.aid.map((id) => MOVE_BY_ID[id]).filter(Boolean);
 		let move = null;
@@ -11235,19 +11325,19 @@ export class TurbzGame {
 		const save = this.save;
 		if (!save) return;
 		m.moving = false;
-		const lead = this.mobs.find((x) => x.id === m.master && x.alive) ?? (this.contract ?? []).find((x) => x.id === m.master && x.alive);
+		const lead = this.mobById(m.master) ?? (this.contract ?? []).find((x) => x.id === m.master && x.alive);
 		if (!lead) {
 			m.alive = false;
 			m.hp = 0;
 			return;
 		}
-		if (m.status.some((s) => s.id === "sleep")) return;
+		if (hasStatus(m.status, "sleep")) return;
 		const dx = save.x - m.x;
 		const dy = save.y - m.y;
 		const d = Math.hypot(dx, dy) || 1;
 		const hunting = !!lead.enraged;
 		const engage = hunting || lead.seen || m.hurt > 0;
-		const rooted = m.status.some((s) => s.id === "root");
+		const rooted = hasStatus(m.status, "root");
 		if (!rooted) {
 			if (engage && d > 64) {
 				const sp = hunting ? 176 : 72;
@@ -11777,6 +11867,35 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 		return true;
+	}
+	/**
+	 * The hunter's worn gear in the shape the actor drawing wants. The draw loop needs this every
+	 * frame but gear only changes when you equip something, so the array is built once and handed
+	 * back until one of the drawn fields actually differs. (It used to rebuild four arrays and hash
+	 * every piece's uid on every frame.) The fields are compared rather than just the object
+	 * identity, so a piece changed in place still refreshes.
+	 */
+	drawPieces() {
+		const cache = (this.gearDraw ??= { slots: [], out: [] });
+		const slots = cache.slots;
+		let same = true;
+		for (let i = 0; i < DRAW_PIECE_SLOTS.length; i++) {
+			const g = this.piece(DRAW_PIECE_SLOTS[i]) ?? null;
+			const was = slots[i];
+			if (!was || was.g !== g || (g && (was.style !== g.style || was.type !== g.type || was.fxSeed !== g.fxSeed || was.quality !== g.quality || was.fxGene !== g.fxGene || was.uid !== g.uid))) {
+				same = false;
+				slots[i] = g ? { g, style: g.style, type: g.type, fxSeed: g.fxSeed, quality: g.quality, fxGene: g.fxGene, uid: g.uid } : { g: null };
+			}
+		}
+		if (same) return cache.out;
+		const out = [];
+		for (let i = 0; i < DRAW_PIECE_SLOTS.length; i++) {
+			const g = slots[i]?.g;
+			if (!g) continue;
+			out.push({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: qualityRank(g.quality) });
+		}
+		cache.out = out;
+		return out;
 	}
 	setInfo() {
 		const ids = [
@@ -12521,7 +12640,9 @@ export class TurbzGame {
 			})),
 			spiritSlots: this.spiritCap(),
 			spiritCap: PARTY_MAX,
-			superGhost: (save.superGhost && save.superGhost.hp > 0) ? this.ghostDetail(save.superGhost, "out") : null,
+			// Always surface the Super Ghost when one exists (even downed at 0 HP) so its slot keeps showing
+			// its full details and you can watch it revive, instead of the slot blanking out when it falls.
+			superGhost: save.superGhost ? this.ghostDetail(save.superGhost, "out") : null,
 			ghostStore: !slow ? snap.ghostStore : (save.ghostStore ?? []).map((g) => ({ uid: g.uid, name: g.name, type: g.type, level: g.level, rarity: g.rarity ?? 0, shiny: !!g.shiny, tagged: !!g.tagged, palette: g.shiny ? g.palette ?? DEFAULT_PALETTE : null, abilities: (g.abilities ?? []).map((a) => GHOST_ABILITY_BY_ID[a.id]?.name ?? a.id) })),
 			ghostInspect: !slow ? snap.ghostInspect : (() => { const g = this.inspectUid ? (save.ghostStore ?? []).find((x) => x.uid === this.inspectUid) : null; return g ? this.ghostDetail(g, g.tagged ? "tagged" : "box") : null; })(),
 			ghostBonus: !slow ? snap.ghostBonus : this.ghostBonusView(),
@@ -12751,6 +12872,9 @@ export class TurbzGame {
 		ctx.imageSmoothingEnabled = false;
 		if (this.world.cache) ctx.drawImage(this.world.cache, 0, 0);
 		else drawWorldSlice(ctx, this.world, this.cam.x, this.cam.y, w, h, this.zoom);
+		// Animated tiles live on top of the baked terrain, which holds frame 1. Costs nothing
+		// when no live tile animates, which is the normal case.
+		drawAnimatedTiles(ctx, this.world, this.cam.x, this.cam.y, w, h, this.zoom, this.clock);
 		const save = this.save;
 		this.gim?.drawUnder(ctx, this.clock);
 		if (save.map === "world") for (const p of POIS) {
@@ -12764,7 +12888,8 @@ export class TurbzGame {
 				else { drawRift(ctx, at.tx * 32 + 16, at.ty * 32 + 28); drawShadowName(ctx, p.name.toUpperCase(), at.tx * 32 + 16, at.ty * 32 - 100, "#e7d9ff"); }
 			}
 			if (p.kind === "npc") {
-				const npc = NPCS.find((n) => n.id === p.id);
+				const npc = NPC_BY_ID[p.id];
+				if (!npc) continue;
 				drawActor(ctx, {
 					x: pos.x,
 					y: pos.y,
@@ -12836,8 +12961,7 @@ export class TurbzGame {
 				// class actor model and wear their own gear.
 				const cls = m.classId ? CLASS_BY_ID[m.classId] : null;
 				const raceId = m.race ?? (cls ? CLASS_RACE[cls.id] : null) ?? "vesper";
-				const rr = RACES.find((r) => r.id === raceId) ?? RACES[0];
-				const qualities = ["worn", "common", "fine", "rare", "epic", "legendary"];
+				const rr = RACE_BY_ID[raceId] ?? RACES[0];
 				const spectral = !!(m.ghost || m.enemyGhost || m.bountySpirit);
 				const wgfx = spectral ? { x: m.x, y: m.y, type: m.type, rarity: m.rarity ?? 0, level: m.level, speed: m.speed, max: m.max, shiny: !!m.shiny, seed: m.id, palette: m.palette } : null;
 				if (wgfx) drawGhostFx(ctx, wgfx, this.clock, "back");
@@ -12847,7 +12971,7 @@ export class TurbzGame {
 					female: m.female !== false, hair: rr?.hair ?? 0, skin: 2,
 					facing: m.facing, walk: m.walk, attack: m.swing > 0 ? .4 : 0, hurt: m.hurt,
 					tall: rr?.tall ?? 1, time: this.clock,
-					pieces: (m.lootGear ?? []).map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) })),
+					pieces: mobDrawPieces(m),
 					setFx: null, setOn: false,
 				});
 				if (wgfx) drawGhostFx(ctx, wgfx, this.clock, "front");
@@ -12896,30 +13020,9 @@ export class TurbzGame {
 			ctx.fillRect(x - 5, y - 16, 10, 8);
 			drawShadowName(ctx, "BOARD", x, y - 28, "#e6c15a");
 		}
-		const race = RACES.find((r) => r.id === save.race);
+		const race = RACE_BY_ID[save.race];
 		const set = this.setInfo();
-		const pieces = [
-			"weapon",
-			"head",
-			"chest",
-			"legs",
-			"feet",
-			"relic"
-		].map((slot) => this.piece(slot)).filter((g) => !!g).map((g) => ({
-			slot: g.slot,
-			style: g.style,
-			type: g.type,
-			fxSeed: g.fxSeed,
-			gene: geneSeedOf(g),
-			quality: [
-				"worn",
-				"common",
-				"fine",
-				"rare",
-				"epic",
-				"legendary"
-			].indexOf(g.quality)
-		}));
+		const pieces = this.drawPieces();
 		const homeAway = this.holdActive() && !this.holdHere();
 		if (!homeAway) this.activeSpirits().forEach((spirit, i) => {
 			const at = this.mates[i];
@@ -12931,7 +13034,7 @@ export class TurbzGame {
 			drawShadowName(ctx, spirit.shiny ? `✦ ${spirit.name}` : spirit.name, at.x, at.y - ghostNameLift(spirit), spirit.shiny ? (shinyPalette(spirit.palette).kind === "rainbow" ? `hsl(${(this.clock * 120) % 360},90%,70%)` : shinyPalette(spirit.palette).badge) : TYPES[spirit.type].color);
 		});
 		if (!homeAway) for (const id of save.party ?? []) {
-			const npc = NPCS.find((n) => n.id === id);
+			const npc = NPC_BY_ID[id];
 			if (!npc) continue;
 			const px = this.mateCd[`mate-${id}x`] ?? save.x + 20;
 			const py = this.mateCd[`mate-${id}y`] ?? save.y + 8;
@@ -12980,7 +13083,7 @@ export class TurbzGame {
 		}
 		for (const r of this.remotes.values()) {
 			if (r.map !== save.map) continue;
-			const rr = RACES.find((x) => x.id === r.race);
+			const rr = RACE_BY_ID[r.race];
 			drawActor(ctx, {
 				x: r.x,
 				y: r.y,
@@ -13022,7 +13125,7 @@ export class TurbzGame {
 			moving: this.moving && !this.dead && snap.panel !== "pause",
 			female: save.female !== false,
 			hair: race.hair,
-			skin: RACES.findIndex((r) => r.id === save.race),
+			skin: raceIndex(save.race),
 			facing: this.facing,
 			walk: this.walk,
 			attack: this.attackT,
@@ -13529,11 +13632,15 @@ export class TurbzGame {
 		const sv = save.survival;
 		if (!sv) return;
 		const halfW = w / this.zoom * 0.6 + 64, halfH = h / this.zoom * 0.6 + 64;
-		// Draw floors first so walls/doors sit on top of them.
-		const logsHere = sv.logs.filter((l) => l.map === save.map);
-		const floors = logsHere.filter((l) => l.kind && FLOOR_KINDS.has(l.kind));
-		const solids = logsHere.filter((l) => !l.kind || !FLOOR_KINDS.has(l.kind));
-		for (const l of [...floors, ...solids]) {
+		// Draw floors first so walls/doors sit on top of them. Two passes over the logs rather than
+		// splitting them into three arrays and concatenating two of them — a big camp holds thousands
+		// of logs and this runs every frame while building.
+		const logs = sv.logs;
+		for (let pass = 0; pass < 2; pass++) for (let i = 0; i < logs.length; i++) {
+			const l = logs[i];
+			if (l.map !== save.map) continue;
+			const isFloor = !!(l.kind && FLOOR_KINDS.has(l.kind));
+			if (isFloor !== (pass === 0)) continue;
 			const x = l.tx * 32, y = l.ty * 32;
 			if (Math.abs(x + 16 - this.cam.x) > halfW || Math.abs(y + 16 - this.cam.y) > halfH) continue;
 			if (texModeOn()) {
@@ -14455,7 +14562,7 @@ export class TurbzGame {
 			.map((g) => ({ slot: g.slot, style: g.style, type: g.type, fxSeed: g.fxSeed, gene: geneSeedOf(g), quality: Math.max(0, qualities.indexOf(g.quality)) }));
 		return {
 			race: save.race, classId: save.classId, female: save.female !== false, hair: race?.hair ?? 0,
-			skin: Math.max(0, RACES.findIndex((r) => r.id === save.race)), tall: race?.tall ?? 1, pieces,
+			skin: Math.max(0, raceIndex(save.race)), tall: race?.tall ?? 1, pieces,
 			setFx: set.fx ?? null, setOn: !!set.on, setVariant: set.variant ?? 0, scale: 1, direction: "down",
 		};
 	}
@@ -14523,7 +14630,7 @@ export class TurbzGame {
 	tickParties(dt) {
 		const save = this.save;
 		if (!save || save.map !== "world" || this.dead || this.duel) return;
-		if (this.mobs.some((m) => m.alive && m.party)) return;
+		for (let i = 0; i < this.mobs.length; i++) { const m = this.mobs[i]; if (m.alive && m.party) return; }
 		this.partyIn = (this.partyIn ?? 22) - dt;
 		if (this.partyIn > 0) return;
 		this.partyIn = 46 + Math.random() * 30;

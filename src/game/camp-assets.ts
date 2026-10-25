@@ -6,7 +6,7 @@
  * Tile assets can also carry gameplay properties so unique tiles can be built and placed
  * to populate the world (hold items, spawn rules, deco flag, walk-on effects).
  */
-import { setTileOverrides, NEWTEX_DIR } from "./tile-atlas";
+import { setTileOverrides, NEWTEX_DIR, type TileOverride } from "./tile-atlas";
 
 export const CAMP_CATEGORIES = [
   "walls", "floors", "chest", "ghostbox", "campfire", "doors", "beds",
@@ -34,6 +34,20 @@ export const TILE_CATEGORIES = [
 
 export type AssetGroup = "camp" | "tile" | "power";
 export type AssetSize = 16 | 32 | 64;
+
+/**
+ * Two-frame animation.
+ *
+ * Every piece now has room for a second frame. A tile only plays it when `animated` is on, so a
+ * tile you drew as a still picture stays a still picture; turn the toggle on and it loops. Frame 2
+ * starts as a copy of frame 1, so turning animation on never changes what a tile looks like until
+ * you actually paint the second frame.
+ */
+export const ANIM_FRAMES = 2;
+/** Default loop speed. Slow on purpose: terrain that flickers is worse than terrain that sits still. */
+export const ANIM_FPS_DEFAULT = 4;
+export const ANIM_FPS_MIN = 1;
+export const ANIM_FPS_MAX = 12;
 
 /** In-game blocks the Camp & Tile builder can paint. Category id is the build-piece id. */
 export const POWER_TEXTURES = [
@@ -66,8 +80,14 @@ export type Asset = {
   /** Camp pieces (old packs have no group: they are camp pieces) or map tiles. */
   group?: AssetGroup;
   category: string;
-  /** PNG data URL, transparent where unpainted. */
+  /** PNG data URL, transparent where unpainted. Frame 1 of the animation. */
   pixels: string;
+  /** Frame 2, as a PNG data URL. Absent on pieces drawn before two-frame art existed. */
+  pixels2?: string;
+  /** Tiles: play frame 1 and frame 2 in game. Off unless you turn it on. */
+  animated?: boolean;
+  /** Loop speed in frames per second (ANIM_FPS_MIN..ANIM_FPS_MAX); ANIM_FPS_DEFAULT when unset. */
+  animFps?: number;
   size: AssetSize;
   created: number;
   /** Map tiles: path of the pack tile this replaces, e.g. /MapAssets/03_Water_and_Liquid_Tiles/deep_water.png */
@@ -92,6 +112,23 @@ export type Asset = {
 
 export const ASSET_KEY = "turbz-camp-assets-v1";
 
+/** Frame 2 if the piece has one, otherwise frame 1 — so a one-frame piece reads as a still loop. */
+export function frameTwo(a: Pick<Asset, "pixels" | "pixels2">): string {
+  return a.pixels2 && a.pixels2.startsWith("data:image/") ? a.pixels2 : a.pixels;
+}
+
+/** This piece's loop speed, clamped into range. */
+export function animFpsOf(a: Pick<Asset, "animFps">): number {
+  const fps = a.animFps;
+  if (typeof fps !== "number" || !Number.isFinite(fps)) return ANIM_FPS_DEFAULT;
+  return Math.min(ANIM_FPS_MAX, Math.max(ANIM_FPS_MIN, fps));
+}
+
+/** True when this piece should actually play in game: animation turned on and a real second frame drawn. */
+export function playsAnimation(a: Pick<Asset, "animated" | "pixels" | "pixels2">): boolean {
+  return !!a.animated && !!a.pixels2 && a.pixels2.startsWith("data:image/") && a.pixels2 !== a.pixels;
+}
+
 export function groupOf(a: Pick<Asset, "group" | "category">): AssetGroup {
   if (a.group === "power" || a.group === "camp" || a.group === "tile") return a.group;
   if ((POWER_TEXTURES as readonly { id: string }[]).some((c) => c.id === a.category)) return "power";
@@ -111,6 +148,10 @@ export function validAsset(a: any): a is Asset {
   if (a.spawnIn !== undefined && !Array.isArray(a.spawnIn)) return false;
   if (a.isDeco !== undefined && typeof a.isDeco !== "boolean") return false;
   if (a.walkEffects !== undefined && !Array.isArray(a.walkEffects)) return false;
+  // Two-frame art: a bad second frame drops back to a one-frame piece rather than failing the whole piece.
+  if (a.pixels2 !== undefined && (typeof a.pixels2 !== "string" || !a.pixels2.startsWith("data:image/"))) delete a.pixels2;
+  if (a.animated !== undefined && typeof a.animated !== "boolean") return false;
+  if (a.animFps !== undefined && (typeof a.animFps !== "number" || !Number.isFinite(a.animFps))) return false;
   return true;
 }
 
@@ -150,10 +191,20 @@ export function powerTexture(slot: string): string | null {
   return powerTexCache[slot] ?? null;
 }
 
-/** Point the game's tile loader at every live replacement in the pack. */
+/**
+ * Point the game's tile loader at every live replacement in the pack.
+ *
+ * A tile with animation on hands over both frames and its speed; everything else hands over one
+ * frame, which the loader treats exactly as it always did.
+ */
 export function syncTileOverrides(assets: Asset[] = loadPack()): void {
-  const map: Record<string, string> = {};
-  for (const a of assets) if (groupOf(a) === "tile" && a.live && a.replaces) map[a.replaces] = a.pixels;
+  const map: Record<string, TileOverride> = {};
+  for (const a of assets) {
+    if (groupOf(a) !== "tile" || !a.live || !a.replaces) continue;
+    map[a.replaces] = playsAnimation(a)
+      ? { a: a.pixels, b: frameTwo(a), fps: animFpsOf(a) }
+      : a.pixels;
+  }
   setTileOverrides(map);
 }
 

@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   CAMP_CATEGORIES, TILE_CATEGORIES, POWER_TEXTURES, SPAWN_LOCATIONS, WALK_EFFECTS,
   loadPack, savePack, groupOf, parsePack, mergePack, packBytes, customPowerSlots, powerDefaultArt, powerTexture, POWER_PACK_URL,
+  frameTwo, animFpsOf, playsAnimation, ANIM_FPS_DEFAULT, ANIM_FPS_MIN, ANIM_FPS_MAX,
   type Asset, type AssetGroup, type AssetSize,
 } from "@/game/camp-assets";
 import { NEWTEX_DIR, loadTileCatalog } from "@/game/tile-atlas";
 import { isBlank } from "@/game/pixel-edit";
 import { Section, Tabs, Empty, ConfirmButton } from "./ui-kit";
 import { PixelStudio, decodeToPix, pixToDataUrl } from "./pixel-studio";
+import { TwoFramePreview } from "./anim-preview";
 
 // ─── small helpers ────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -108,6 +110,8 @@ type Filter = "all" | AssetGroup;
 export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
   const [assets, setAssets] = useState<Asset[]>(() => loadPack());
   const [editing, setEditing] = useState<Asset | null>(null);
+  /** Which animation frame the canvas is painting, 0 or 1. */
+  const [frame, setFrame] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
@@ -280,6 +284,30 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
   const bytes = useMemo(() => packBytes(assets), [assets]);
   const usedPct = Math.min(100, Math.round((bytes / (4.5 * 1024 * 1024)) * 100));
 
+  // ─── two-frame animation ────────────────────────────────────────────────────────────────────────
+  /** A real second frame has been painted (not just a copy of frame 1 and not missing). */
+  const hasFrameTwo = !!editing?.pixels2 && editing.pixels2.startsWith("data:image/");
+  const framesMatch = hasFrameTwo && editing!.pixels2 === editing!.pixels;
+  // The preview draws images, so both frames are decoded once per change instead of per tick.
+  const frameOneImg = useRef<HTMLImageElement | null>(null);
+  const frameTwoImg = useRef<HTMLImageElement | null>(null);
+  const frameOneSrc = editing?.pixels ?? "";
+  const frameTwoSrc = editing ? frameTwo(editing) : "";
+  useEffect(() => {
+    if (!frameOneSrc) { frameOneImg.current = null; return; }
+    const img = new Image();
+    img.src = frameOneSrc;
+    frameOneImg.current = img;
+  }, [frameOneSrc]);
+  useEffect(() => {
+    if (!frameTwoSrc) { frameTwoImg.current = null; return; }
+    const img = new Image();
+    img.src = frameTwoSrc;
+    frameTwoImg.current = img;
+  }, [frameTwoSrc]);
+  // Leaving a piece goes back to frame 1, so the canvas never opens on a frame you forgot about.
+  useEffect(() => { setFrame(0); }, [editing?.id]);
+
   const editingGroup: AssetGroup | null = editing ? groupOf(editing) : null;
   const categories = editingGroup === "camp"
     ? CAMP_CATEGORIES.map((id) => ({ id: id as string, label: id as string }))
@@ -317,10 +345,16 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
         <div className="ca-editor">
           <div className="ca-canvas-col">
             <PixelStudio
+              // Remounted per frame so the canvas, undo stack and tools belong to the frame you
+              // are painting; undoing on frame 2 must never reach back into frame 1.
+              key={`${editing.id}:${frame}`}
               size={editing.size}
-              pixels={editing.pixels}
+              pixels={frame === 0 ? editing.pixels : frameTwo(editing)}
               tileMode={g === "tile"}
-              onChange={(pixels) => { setEditing((e) => (e ? { ...e, pixels } : e)); setDirty(true); }}
+              onChange={(pixels) => {
+                setEditing((e) => (e ? (frame === 0 ? { ...e, pixels } : { ...e, pixels2: pixels }) : e));
+                setDirty(true);
+              }}
             />
           </div>
 
@@ -361,6 +395,86 @@ export function CampAssetBuilder({ onBack }: { onBack: () => void }) {
                 </div>
                 <input ref={fileRef} type="file" accept="image/png,image/gif,image/webp,image/jpeg" hidden onChange={(e) => onImagePicked(e.target.files?.[0])} />
               </FieldRow>
+            </Section>
+
+            <Section title="Animation">
+              <FieldRow label="Frame" hint="Every piece has two frames. Paint frame 2 to make it move.">
+                <Tabs
+                  value={frame === 0 ? "f1" : "f2"}
+                  onChange={(id) => setFrame(id === "f1" ? 0 : 1)}
+                  tabs={[{ id: "f1", label: "Frame 1" }, { id: "f2", label: hasFrameTwo ? "Frame 2" : "Frame 2 (empty)" }]}
+                />
+              </FieldRow>
+              <Check checked={!!editing.animated} onChange={(v) => patch({ animated: v, animFps: editing.animFps ?? ANIM_FPS_DEFAULT })}>
+                Animate: play both frames in game
+              </Check>
+              <p className="ui-field-hint">
+                {editing.animated
+                  ? (framesMatch
+                      ? "Animation is on, but both frames look the same, so it will sit still. Paint frame 2 to see it move."
+                      : `Looping both frames at ${animFpsOf(editing)} per second.`)
+                  : "Off: the game draws frame 1 as a still tile, exactly as before."}
+              </p>
+              {editing.animated && (
+                <FieldRow label="Speed" hint="Frames per second. Slow reads better than fast for terrain.">
+                  <div className="ps-row">
+                    <input
+                      type="range"
+                      min={ANIM_FPS_MIN}
+                      max={ANIM_FPS_MAX}
+                      step={1}
+                      value={animFpsOf(editing)}
+                      aria-label="Animation speed in frames per second"
+                      onChange={(e) => patch({ animFps: Number(e.target.value) })}
+                    />
+                    <span className="text-dim" style={{ fontSize: 10 }}>{animFpsOf(editing)} fps</span>
+                  </div>
+                </FieldRow>
+              )}
+              <FieldRow label="Frame 2 shortcuts">
+                <div className="ps-row">
+                  <button
+                    type="button"
+                    className="px-btn ui-btn-sm"
+                    disabled={!editing.pixels}
+                    title="Start frame 2 from a copy of frame 1, then change just the part that moves"
+                    onClick={() => { patch({ pixels2: editing.pixels }); setFrame(1); say("info", "Frame 2 now matches frame 1. Edit it to make the piece move."); }}
+                  >Copy frame 1 → 2</button>
+                  <button
+                    type="button"
+                    className="px-btn ui-btn-sm"
+                    disabled={!hasFrameTwo}
+                    title="Swap the two frames"
+                    onClick={() => patch({ pixels: frameTwo(editing), pixels2: editing.pixels })}
+                  >Swap frames</button>
+                  <ConfirmButton
+                    plain
+                    className="ui-btn-sm"
+                    label="Clear frame 2"
+                    confirm="Tap again"
+                    onConfirm={() => { patch({ pixels2: undefined, animated: false }); setFrame(0); say("info", "Frame 2 cleared; this is a still piece again."); }}
+                  />
+                </div>
+              </FieldRow>
+              {hasFrameTwo && (
+                <FieldRow label="Preview" hint="Playing at the speed the game will use.">
+                  <div className="ps-row">
+                    <TwoFramePreview
+                      width={editing.size}
+                      height={editing.size}
+                      scale={Math.max(1, Math.round(64 / editing.size))}
+                      fps={animFpsOf(editing)}
+                      playing={!!editing.animated}
+                      label="Tile animation preview"
+                      draw={(ctx, f) => {
+                        const img = f === 0 ? frameOneImg.current : frameTwoImg.current;
+                        if (img && img.complete && img.naturalWidth > 0) ctx.drawImage(img, 0, 0, editing.size, editing.size);
+                      }}
+                    />
+                    <span className="text-dim" style={{ fontSize: 10 }}>{editing.animated ? "Looping" : "Paused (animation off)"}</span>
+                  </div>
+                </FieldRow>
+              )}
             </Section>
 
             {g === "power" && (

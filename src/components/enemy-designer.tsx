@@ -4,7 +4,7 @@ import { MOB_ENCHANTS, MOB_ENCHANT_IDS, enemyTargets, type EnemyStats, type MobE
 import { drawCreatureSprite } from "@/game/creature-sprites";
 import { BIOME_LABEL } from "@/game/world";
 import {
-  BIOME_IDS, SHEET_COLS, SHEET_ROWS, allEnemyDesigns, designFromBuiltin, installEnemyDesigns, localEnemyDesigns, newEnemyDesign, parseEnemyDesign, registerSprite, saveLocalEnemyDesigns, autoPickMoves, autoPickStats, STAT_OPTIONS,
+  BIOME_IDS, SHEET_COLS, SHEET_ROWS, SPRITE_CELLS, SPRITE_SIDE, allEnemyDesigns, designFromBuiltin, framesDiffer, idleFrame, installEnemyDesigns, localEnemyDesigns, newEnemyDesign, parseEnemyDesign, registerSprite, saveLocalEnemyDesigns, autoPickMoves, autoPickStats, STAT_OPTIONS,
   type EnemyBehaviour, type EnemyDesign, type EnemyFlags, type StatOption,
 } from "@/game/enemy-design";
 import { Chips, ConfirmButton, Empty, Field, Section, Tabs } from "./ui-kit";
@@ -64,56 +64,137 @@ function SheetPicker({ cell, onPick }: { cell: [number, number] | null; onPick: 
   );
 }
 
-function PixelEditor({ pixels, onChange }: { pixels: (string | null)[]; onChange: (p: (string | null)[]) => void }) {
+const CELL = 16;
+const SIDE = SPRITE_SIDE;
+const CANVAS_PX = SIDE * CELL;
+type PixelTool = "pencil" | "eraser" | "fill" | "pick";
+
+/** Flood-fills from (x, y) across every touching cell of the same colour. */
+function floodFill(pixels: (string | null)[], x: number, y: number, to: string | null): (string | null)[] {
+  const from = pixels[y * SIDE + x] ?? null;
+  if (from === to) return pixels;
+  const out = pixels.slice();
+  const stack = [[x, y] as const];
+  while (stack.length) {
+    const [cx, cy] = stack.pop()!;
+    if (cx < 0 || cy < 0 || cx >= SIDE || cy >= SIDE) continue;
+    const i = cy * SIDE + cx;
+    if ((out[i] ?? null) !== from) continue;
+    out[i] = to;
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
+  return out;
+}
+
+/** Moves the whole sprite by one cell; anything pushed off the edge is dropped. */
+function shiftPixels(pixels: (string | null)[], dx: number, dy: number): (string | null)[] {
+  const out: (string | null)[] = Array(SPRITE_CELLS).fill(null);
+  for (let y = 0; y < SIDE; y++) {
+    for (let x = 0; x < SIDE; x++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= SIDE || ny >= SIDE) continue;
+      out[ny * SIDE + nx] = pixels[y * SIDE + x] ?? null;
+    }
+  }
+  return out;
+}
+
+function PixelEditor({ pixels, other, onChange }: {
+  pixels: (string | null)[];
+  /** The frame not being edited, shown faintly underneath so the two line up. */
+  other?: (string | null)[];
+  onChange: (p: (string | null)[]) => void;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [color, setColor] = useState("#e6c15a");
-  const [erase, setErase] = useState(false);
+  const [tool, setTool] = useState<PixelTool>("pencil");
   const [mirror, setMirror] = useState(true);
+  const [onion, setOnion] = useState(true);
   const [history, setHistory] = useState<(string | null)[][]>([]);
+  const [future, setFuture] = useState<(string | null)[][]>([]);
   const drawing = useRef(false);
   const live = useRef(pixels);
   live.current = pixels;
+
+  /** Remember the art before a change so Undo has somewhere to go, and drop any redo branch. */
+  const mark = () => { setHistory((h) => [...h.slice(-39), live.current]); setFuture([]); };
+  const apply = (next: (string | null)[]) => onChange(next);
+  const edit = (fn: (p: (string | null)[]) => (string | null)[]) => { mark(); apply(fn(live.current)); };
+
   useEffect(() => {
     const ctx = ref.current?.getContext("2d");
     if (!ctx) return;
-    pixels.forEach((p, i) => {
-      const x = i % 16, y = Math.floor(i / 16);
+    ctx.clearRect(0, 0, CANVAS_PX, CANVAS_PX);
+    for (let i = 0; i < SPRITE_CELLS; i++) {
+      const x = i % SIDE, y = Math.floor(i / SIDE);
       ctx.fillStyle = (x + y) % 2 ? "#2a2220" : "#3a3029";
-      ctx.fillRect(x * 16, y * 16, 16, 16);
-      if (p) {
-        ctx.fillStyle = p;
-        ctx.fillRect(x * 16, y * 16, 16, 16);
-      }
-    });
-    ctx.strokeStyle = "#ffffff14";
-    for (let i = 0; i <= 16; i++) {
-      ctx.beginPath(); ctx.moveTo(i * 16, 0); ctx.lineTo(i * 16, 256); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, i * 16); ctx.lineTo(256, i * 16); ctx.stroke();
+      ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
     }
-  }, [pixels]);
-  const paint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    // Onion skin: the other frame, ghosted, so you can see exactly how far things move.
+    if (onion && other) {
+      ctx.globalAlpha = 0.28;
+      for (let i = 0; i < SPRITE_CELLS; i++) {
+        const p = other[i];
+        if (!p) continue;
+        ctx.fillStyle = p;
+        ctx.fillRect((i % SIDE) * CELL, Math.floor(i / SIDE) * CELL, CELL, CELL);
+      }
+      ctx.globalAlpha = 1;
+    }
+    for (let i = 0; i < SPRITE_CELLS; i++) {
+      const p = pixels[i];
+      if (!p) continue;
+      ctx.fillStyle = p;
+      ctx.fillRect((i % SIDE) * CELL, Math.floor(i / SIDE) * CELL, CELL, CELL);
+    }
+    ctx.strokeStyle = "#ffffff14";
+    for (let i = 0; i <= SIDE; i++) {
+      ctx.beginPath(); ctx.moveTo(i * CELL, 0); ctx.lineTo(i * CELL, CANVAS_PX); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, i * CELL); ctx.lineTo(CANVAS_PX, i * CELL); ctx.stroke();
+    }
+  }, [pixels, other, onion]);
+
+  const cellAt = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    const x = Math.floor(((e.clientX - r.left) / r.width) * 16);
-    const y = Math.floor(((e.clientY - r.top) / r.height) * 16);
-    if (x < 0 || y < 0 || x > 15 || y > 15) return;
-    const next = [...live.current];
-    const v = erase ? null : color;
-    next[y * 16 + x] = v;
-    if (mirror) next[y * 16 + (15 - x)] = v;
-    onChange(next);
+    const x = Math.floor(((e.clientX - r.left) / r.width) * SIDE);
+    const y = Math.floor(((e.clientY - r.top) / r.height) * SIDE);
+    return x < 0 || y < 0 || x >= SIDE || y >= SIDE ? null : { x, y };
   };
+
+  const paint = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const at = cellAt(e);
+    if (!at) return;
+    const { x, y } = at;
+    if (tool === "pick") {
+      const picked = live.current[y * SIDE + x];
+      if (picked) { setColor(picked); setTool("pencil"); }
+      return;
+    }
+    if (tool === "fill") { apply(floodFill(live.current, x, y, color)); return; }
+    const next = [...live.current];
+    const v = tool === "eraser" ? null : color;
+    next[y * SIDE + x] = v;
+    if (mirror) next[y * SIDE + (SIDE - 1 - x)] = v;
+    apply(next);
+  };
+
+  const toolBtn = (id: PixelTool, label: string, title: string) => (
+    <button key={id} type="button" className={`px-btn ui-btn-sm ${tool === id ? "px-btn-kyo" : ""}`} title={title} onClick={() => setTool(id)}>{label}</button>
+  );
+
   return (
     <div className="ui-stack-sm">
       <canvas
         ref={ref}
-        width={256}
-        height={256}
+        width={CANVAS_PX}
+        height={CANVAS_PX}
         className="weapon-pixel-canvas"
         aria-label="Enemy pixel canvas"
         onPointerDown={(e) => {
-          setHistory((h) => [...h.slice(-29), live.current]);
-          drawing.current = true;
-          e.currentTarget.setPointerCapture(e.pointerId);
+          // A fill or a pick is one action, not a drag, so only strokes capture the pointer.
+          if (tool !== "pick") mark();
+          drawing.current = tool === "pencil" || tool === "eraser";
+          if (drawing.current) e.currentTarget.setPointerCapture(e.pointerId);
           paint(e);
         }}
         onPointerMove={(e) => { if (drawing.current) paint(e); }}
@@ -122,15 +203,41 @@ function PixelEditor({ pixels, onChange }: { pixels: (string | null)[]; onChange
       />
       <div className="palette">
         {PALETTE.map((c) => (
-          <button key={c} type="button" className={`swatch ${color === c && !erase ? "swatch-on" : ""}`} style={{ background: c }} aria-label={`Colour ${c}`} onClick={() => { setColor(c); setErase(false); }} />
+          <button key={c} type="button" className={`swatch ${color === c && tool !== "eraser" ? "swatch-on" : ""}`} style={{ background: c }} aria-label={`Colour ${c}`} onClick={() => { setColor(c); if (tool === "eraser") setTool("pencil"); }} />
         ))}
-        <input type="color" aria-label="Custom colour" value={color} onChange={(e) => { setColor(e.target.value); setErase(false); }} />
+        <input type="color" aria-label="Custom colour" value={color} onChange={(e) => { setColor(e.target.value); if (tool === "eraser") setTool("pencil"); }} />
       </div>
       <div className="ui-row-gap">
-        <button type="button" className={`px-btn ui-btn-sm ${erase ? "px-btn-kyo" : ""}`} onClick={() => setErase(!erase)}>{erase ? "Eraser on" : "Eraser"}</button>
-        <button type="button" className={`px-btn ui-btn-sm ${mirror ? "px-btn-kyo" : ""}`} onClick={() => setMirror(!mirror)}>Mirror {mirror ? "on" : "off"}</button>
-        <button type="button" className="px-btn ui-btn-sm" disabled={!history.length} onClick={() => { onChange(history.at(-1)!); setHistory(history.slice(0, -1)); }}>Undo</button>
-        <ConfirmButton plain className="ui-btn-sm" label="Clear" confirm="Tap again" onConfirm={() => { setHistory((h) => [...h, live.current]); onChange(Array(256).fill(null)); }} />
+        {toolBtn("pencil", "Pencil", "Draw single pixels")}
+        {toolBtn("eraser", "Eraser", "Clear single pixels")}
+        {toolBtn("fill", "Fill", "Flood-fill a touching area of one colour")}
+        {toolBtn("pick", "Pick", "Take a colour from the canvas")}
+      </div>
+      <div className="ui-row-gap">
+        <button type="button" className={`px-btn ui-btn-sm ${mirror ? "px-btn-kyo" : ""}`} title="Draw both sides at once" onClick={() => setMirror(!mirror)}>Mirror {mirror ? "on" : "off"}</button>
+        {other && (
+          <button type="button" className={`px-btn ui-btn-sm ${onion ? "px-btn-kyo" : ""}`} title="Show the other frame faintly underneath" onClick={() => setOnion(!onion)}>Onion {onion ? "on" : "off"}</button>
+        )}
+        <button
+          type="button"
+          className="px-btn ui-btn-sm"
+          disabled={!history.length}
+          onClick={() => { const prev = history.at(-1)!; setFuture((f) => [...f, live.current]); setHistory(history.slice(0, -1)); apply(prev); }}
+        >Undo</button>
+        <button
+          type="button"
+          className="px-btn ui-btn-sm"
+          disabled={!future.length}
+          onClick={() => { const nxt = future.at(-1)!; setHistory((h) => [...h, live.current]); setFuture(future.slice(0, -1)); apply(nxt); }}
+        >Redo</button>
+      </div>
+      <div className="ui-row-gap">
+        <span className="text-dim" style={{ fontSize: 10 }}>Nudge</span>
+        <button type="button" className="px-btn ui-btn-sm" title="Move the art left" onClick={() => edit((p) => shiftPixels(p, -1, 0))}>←</button>
+        <button type="button" className="px-btn ui-btn-sm" title="Move the art right" onClick={() => edit((p) => shiftPixels(p, 1, 0))}>→</button>
+        <button type="button" className="px-btn ui-btn-sm" title="Move the art up" onClick={() => edit((p) => shiftPixels(p, 0, -1))}>↑</button>
+        <button type="button" className="px-btn ui-btn-sm" title="Move the art down" onClick={() => edit((p) => shiftPixels(p, 0, 1))}>↓</button>
+        <ConfirmButton plain className="ui-btn-sm" label="Clear" confirm="Tap again" onConfirm={() => { mark(); apply(Array(SPRITE_CELLS).fill(null)); }} />
       </div>
     </div>
   );
@@ -178,6 +285,8 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
   const [shippedIds] = useState(() => new Set(allEnemyDesigns().map((x) => x.id).filter((id) => !localEnemyDesigns().some((l) => l.id === id))));
   const [status, setStatus] = useState("Make a new enemy, or start from a built-in one to replace it.");
   const [spriteTab, setSpriteTab] = useState<"sheet" | "pixels">(d.sprite.kind);
+  /** Which animation frame the pixel canvas is painting, 0 or 1. */
+  const [frame, setFrame] = useState(0);
   const [moveFilter, setMoveFilter] = useState("");
   const [onlyType, setOnlyType] = useState(true);
   const [tab, setTab] = useState<"identity" | "combat" | "spawn">("identity");
@@ -287,9 +396,52 @@ export function EnemyDesigner({ onBack }: { onBack: () => void }) {
             <p><span className="text-kyo">Standard</span> · ≈{std.hits.toFixed(1)} of your hits · {std.pct.toFixed(1)}% of your HP a hit · +{std.lv} lv</p>
             <p><span className="text-blood">Hardcore</span> · ≈{hc.hits.toFixed(1)} of your hits · {hc.pct.toFixed(1)}% of your HP a hit · +{hc.lv} lv</p>
           </div>
-          <Tabs value={spriteTab} onChange={(t) => { setSpriteTab(t); if (t === "pixels" && d.sprite.kind !== "pixels") set({ sprite: { kind: "pixels", pixels: Array(256).fill(null) } }); if (t === "sheet" && d.sprite.kind !== "sheet") set({ sprite: { kind: "sheet", cell: [0, 0] } }); }} tabs={[{ id: "sheet", label: "From sprite sheet" }, { id: "pixels", label: "Draw pixels" }]} />
+          <Tabs value={spriteTab} onChange={(t) => { setSpriteTab(t); if (t === "pixels" && d.sprite.kind !== "pixels") set({ sprite: { kind: "pixels", pixels: Array(SPRITE_CELLS).fill(null), pixels2: Array(SPRITE_CELLS).fill(null) } }); if (t === "sheet" && d.sprite.kind !== "sheet") set({ sprite: { kind: "sheet", cell: [0, 0] } }); }} tabs={[{ id: "sheet", label: "From sprite sheet" }, { id: "pixels", label: "Draw pixels" }]} />
           {spriteTab === "sheet" && d.sprite.kind === "sheet" && <SheetPicker cell={d.sprite.cell} onPick={(cell) => set({ sprite: { kind: "sheet", cell } })} />}
-          {spriteTab === "pixels" && d.sprite.kind === "pixels" && <PixelEditor pixels={d.sprite.pixels} onChange={(pixels) => set({ sprite: { kind: "pixels", pixels } })} />}
+          {spriteTab === "pixels" && d.sprite.kind === "pixels" && (() => {
+            const sprite = d.sprite;
+            const f1 = sprite.pixels;
+            const f2 = sprite.pixels2 ?? idleFrame(f1);
+            const editingF2 = frame === 1;
+            const moves = framesDiffer(f1, f2);
+            const setFrames = (a: (string | null)[], b: (string | null)[]) => set({ sprite: { kind: "pixels", pixels: a, pixels2: b } });
+            return (
+              <div className="ui-stack-sm">
+                <Tabs
+                  value={editingF2 ? "f2" : "f1"}
+                  onChange={(id) => setFrame(id === "f2" ? 1 : 0)}
+                  tabs={[{ id: "f1", label: "Frame 1" }, { id: "f2", label: "Frame 2" }]}
+                />
+                <p className="ui-field-hint">
+                  {moves
+                    ? "Both frames are drawn, so this enemy animates in game. Every enemy animates — there is no toggle."
+                    : "Frame 2 matches frame 1, so this enemy will hold still. Nudge or repaint frame 2 to give it life."}
+                </p>
+                <PixelEditor
+                  // One undo stack per frame: undoing on frame 2 must not reach into frame 1.
+                  key={editingF2 ? "f2" : "f1"}
+                  pixels={editingF2 ? f2 : f1}
+                  other={editingF2 ? f1 : f2}
+                  onChange={(p) => (editingF2 ? setFrames(f1, p) : setFrames(p, f2))}
+                />
+                <div className="ui-row-gap">
+                  <button
+                    type="button"
+                    className="px-btn ui-btn-sm"
+                    title="Build frame 2 from frame 1 as a one-pixel breath"
+                    onClick={() => { setFrames(f1, idleFrame(f1)); setFrame(1); }}
+                  >Auto idle</button>
+                  <button
+                    type="button"
+                    className="px-btn ui-btn-sm"
+                    title="Make frame 2 an exact copy of frame 1, to edit by hand"
+                    onClick={() => { setFrames(f1, f1.slice()); setFrame(1); }}
+                  >Copy 1 → 2</button>
+                  <button type="button" className="px-btn ui-btn-sm" title="Swap the two frames" onClick={() => setFrames(f2, f1)}>Swap</button>
+                </div>
+              </div>
+            );
+          })()}
           <Slider label="Size" value={d.scale} min={0.5} max={6} step={0.25} onChange={(v) => set({ scale: v })} fmt={overFmt(3, (v) => `${v}×`)} />
         </div>
 

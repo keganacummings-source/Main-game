@@ -24,12 +24,23 @@ export const IMMUNE_PREFIX = "immune:";
 export const immuneId = (id: string) => `${IMMUNE_PREFIX}${id}`;
 export const isImmuneEntry = (s: Status) => s.id.startsWith(IMMUNE_PREFIX);
 
+// `hasStatus` and `isImmune` are asked several times per actor per frame by the mob and combat
+// loops, so they walk the list by index: same answer as `.some()`, without allocating a closure.
 export function hasStatus(list: Status[], id: string): boolean {
-  return list.some((s) => s.id === id && s.t > 0);
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]!;
+    if (s.id === id && s.t > 0) return true;
+  }
+  return false;
 }
 
 export function isImmune(list: Status[], id: string): boolean {
-  return list.some((s) => s.id === immuneId(id) && s.t > 0);
+  const want = immuneId(id);
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]!;
+    if (s.id === want && s.t > 0) return true;
+  }
+  return false;
 }
 
 function grantImmunity(list: Status[], id: string, tough = false): void {
@@ -86,10 +97,18 @@ export function cleanseStatuses(list: Status[], keep: Set<string>): Status[] {
 /** Counts every effect down; hard control that runs out leaves its immunity window. */
 export function tickStatuses(list: Status[], dt: number, tough = false): Status[] {
   let expired: string[] | null = null;
-  for (const s of list) {
+  let anyExpired = false;
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i]!;
     s.t -= dt;
-    if (s.t <= 0 && HARD_CC[s.id]) (expired ??= []).push(s.id);
+    if (s.t <= 0) {
+      anyExpired = true;
+      if (HARD_CC[s.id]) (expired ??= []).push(s.id);
+    }
   }
+  // Nothing ran out this frame (the common case), so hand back the same list rather than
+  // allocating a copy of it for every actor on every frame.
+  if (!anyExpired) return list;
   const out = list.filter((s) => s.t > 0);
   if (expired) for (const id of expired) grantImmunity(out, id, tough);
   return out;

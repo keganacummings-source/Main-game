@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { tileImage, setTileOverrides, type AtlasTile } from "@/game/tile-atlas";
-import { loadPack, groupOf, TILE_CATEGORIES, type Asset } from "@/game/camp-assets";
+import { tileImage, setTileOverrides, type AtlasTile, type TileOverride } from "@/game/tile-atlas";
+import { loadPack, groupOf, TILE_CATEGORIES, playsAnimation, frameTwo, animFpsOf, type Asset } from "@/game/camp-assets";
 
 export type Brush =
   | { mode: "sprite"; tile: AtlasTile; liquid: boolean };
@@ -224,9 +224,10 @@ function CampSection({ brush, onBrush }: { brush: Brush; onBrush: (b: Brush) => 
     const pack = loadPack();
     const tiles = pack.filter((a) => groupOf(a) === "tile");
     setCampAssets(tiles);
-    // Register data URLs so tileImage(campPath(a)) resolves
-    const overrides: Record<string, string> = {};
-    for (const a of tiles) overrides[campPath(a)] = a.pixels;
+    // Register data URLs so tileImage(campPath(a)) resolves. An animated tile registers both
+    // frames, so it loops here in the builder exactly as it will in game.
+    const overrides: Record<string, TileOverride> = {};
+    for (const a of tiles) overrides[campPath(a)] = playsAnimation(a) ? { a: a.pixels, b: frameTwo(a), fps: animFpsOf(a) } : a.pixels;
     setTileOverrides(overrides);
   }, []);
 

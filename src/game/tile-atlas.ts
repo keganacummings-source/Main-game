@@ -53,29 +53,98 @@ export function getTileCatalogSync(): TileCatalog | null {
   return catalog;
 }
 
-/** Tiles drawn from a designer-made image (a data URL) instead of the pack file at that path. */
-let tileOverrides: Record<string, string> = {};
+/**
+ * A designer-made tile standing in for the pack file at a path: either one still frame (a data
+ * URL) or a two-frame loop with its speed.
+ */
+export type TileOverride = string | { a: string; b: string; fps: number };
+
+const stillFrame = (o: TileOverride): string => (typeof o === "string" ? o : o.a);
+const sameOverride = (x: TileOverride | undefined, y: TileOverride | undefined): boolean => {
+  if (x === y) return true;
+  if (x === undefined || y === undefined) return false;
+  if (typeof x === "string" || typeof y === "string") return x === y;
+  return x.a === y.a && x.b === y.b && x.fps === y.fps;
+};
+
+/** Tiles drawn from a designer-made image instead of the pack file at that path. */
+let tileOverrides: Record<string, TileOverride> = {};
+/** Just the paths that animate, so the draw path can skip all of this when nothing does. */
+let animatedPaths: string[] = [];
+let animatedRevision = 0;
 
 /** Swap in designer-made tiles for pack tiles. Cached images for any path that changed are dropped and the terrain repaints. */
-export function setTileOverrides(next: Record<string, string>): void {
+export function setTileOverrides(next: Record<string, TileOverride>): void {
   const changed = new Set<string>();
-  for (const k of Object.keys(tileOverrides)) if (tileOverrides[k] !== next[k]) changed.add(k);
-  for (const k of Object.keys(next)) if (tileOverrides[k] !== next[k]) changed.add(k);
+  for (const k of Object.keys(tileOverrides)) if (!sameOverride(tileOverrides[k], next[k])) changed.add(k);
+  for (const k of Object.keys(next)) if (!sameOverride(tileOverrides[k], next[k])) changed.add(k);
   tileOverrides = { ...next };
-  for (const k of changed) imgCache.delete(k);
-  if (changed.size) imageRevision++;
+  animatedPaths = Object.keys(tileOverrides).filter((k) => typeof tileOverrides[k] !== "string");
+  for (const k of changed) { imgCache.delete(k); imgCacheB.delete(k); }
+  if (changed.size) { imageRevision++; animatedRevision++; }
 }
 
+/** The tile paths that currently play a two-frame loop. Empty for almost every player. */
+export function animatedTilePaths(): readonly string[] {
+  return animatedPaths;
+}
+
+/** Bumped whenever the set of animated tiles changes, so callers can rebuild their own indexes. */
+export function animatedTileRevision(): number {
+  return animatedRevision;
+}
+
+export function isAnimatedTile(path: string): boolean {
+  return typeof tileOverrides[path] === "object";
+}
+
+/**
+ * Which frame of `path` is showing at `clock` seconds: 0 or 1. Always 0 for a tile that does not
+ * animate, so the terrain bake can ask without caring.
+ */
+export function tileFrameAt(path: string, clock: number): 0 | 1 {
+  const o = tileOverrides[path];
+  if (typeof o !== "object") return 0;
+  return (Math.floor(clock * o.fps) & 1) as 0 | 1;
+}
+
+/**
+ * The image for a tile path: the designer's still frame (or frame 1 of a loop) if one is live,
+ * otherwise the pack file. The terrain bake uses this, so a baked tile is always frame 1 and the
+ * bake does not have to be thrown away to animate.
+ */
 export function tileImage(path: string): HTMLImageElement {
   let img = imgCache.get(path);
   if (!img) {
     img = new Image();
     img.decoding = "async";
     img.onload = img.onerror = () => { imageRevision++; };
-    img.src = tileOverrides[path] ?? path;
+    const o = tileOverrides[path];
+    img.src = o !== undefined ? stillFrame(o) : path;
     imgCache.set(path, img);
   }
   return img;
+}
+
+/** Frame 2 images, kept apart from the frame-1 cache so a bake never picks one up by accident. */
+const imgCacheB = new Map<string, HTMLImageElement>();
+
+/**
+ * Frame 2 of an animated tile, or null when `path` does not animate. Loading frame 2 deliberately
+ * does NOT bump `imageRevision`: the terrain bake holds frame 1, and re-baking the whole window
+ * every time a loop ticked would cost far more than the animation is worth.
+ */
+export function tileImageFrameB(path: string): HTMLImageElement | null {
+  const o = tileOverrides[path];
+  if (typeof o !== "object") return null;
+  let img = imgCacheB.get(path);
+  if (!img) {
+    img = new Image();
+    img.decoding = "async";
+    img.src = o.b;
+    imgCacheB.set(path, img);
+  }
+  return img.complete && img.naturalWidth > 0 ? img : null;
 }
 
 export function preloadCategory(cat: AtlasCategory): void {

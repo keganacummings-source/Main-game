@@ -1,4 +1,8 @@
 import type { Move, TypeId } from "./content";
+import { pruneByLife, pruneInPlace } from "./list-util";
+
+/** An effect is still running while it has not reached its duration. Hoisted so the per-frame prune does not build a closure. */
+const fxStillRunning = (f: { t: number; dur: number }) => f.t < f.dur;
 
 /** Pixel FX that match the 2x Antifarea sprites: 2-unit pixels, hard edges, 4-shade palettes. */
 export const P = 2;
@@ -492,7 +496,7 @@ export class CombatFx {
       this.list.push(f.impact);
       if (f.impact.burst) this.kick = Math.max(this.kick, 4);
     }
-    this.list = this.list.filter((f) => f.t < f.dur);
+    pruneInPlace(this.list, fxStillRunning);
     for (const m of this.motes) {
       m.life -= dt;
       m.x += m.vx * dt;
@@ -501,7 +505,7 @@ export class CombatFx {
       m.vx *= m.drag;
       if (m.k === "flake") m.x += Math.sin(m.life * 9) * 0.4;
     }
-    this.motes = this.motes.filter((m) => m.life > 0);
+    pruneByLife(this.motes);
   }
 
   draw(ctx: C, clock: number) {

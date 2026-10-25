@@ -708,6 +708,15 @@ export const RACES: {
   { id: "rime", name: "Rime", type: "ice", blurb: "March glass. Crystal bob, a cold priority, sleeps that stick.", hair: 4, tall: 1 },
 ];
 
+/** Races by id. The draw loop looks a race up for every actor on screen, every frame, so it must not scan. */
+export const RACE_BY_ID: Record<string, (typeof RACES)[number]> = Object.fromEntries(RACES.map((r) => [r.id, r]));
+/** A race's position in `RACES`, which the actor drawing uses as the skin index. -1 when unknown, as `findIndex` gave. */
+export const RACE_INDEX: Record<string, number> = Object.fromEntries(RACES.map((r, i) => [r.id, i]));
+/** The skin index for a race id: its place in `RACES`, or -1 (matches the old `findIndex`). */
+export function raceIndex(id: string | null | undefined): number {
+  return id != null && id in RACE_INDEX ? RACE_INDEX[id]! : -1;
+}
+
 export type SetDef = { id: string; race: RaceId; name: string; style: number; fx: FxId; bonus: string };
 
 const SET_ROWS: Record<RaceId, [string, FxId, string][]> = {
@@ -1006,6 +1015,18 @@ export const QUALITIES: { id: QualityId; name: string; mult: number }[] = [
   { id: "legendary", name: "Legendary", mult: 3 },
 ];
 
+/**
+ * A quality's rank, 0 (worn) to 5 (legendary). The draw and combat paths used to rebuild a
+ * six-string array and `indexOf` it for every piece of gear on every actor, every frame; this is
+ * the same ranking as a lookup. Unknown qualities give -1, so callers that want a floor of 0
+ * should still clamp, exactly as `indexOf` required.
+ */
+export const QUALITY_INDEX: Record<string, number> = Object.fromEntries(QUALITIES.map((q, i) => [q.id, i]));
+/** The rank of a quality, 0..5, or -1 when it is not a known quality (matches the old `indexOf`). */
+export function qualityRank(quality: string | null | undefined): number {
+  return quality != null && quality in QUALITY_INDEX ? QUALITY_INDEX[quality]! : -1;
+}
+
 export type EnchantRoll = { id: string; power: number };
 /** What a piece of gear is for. Combat and defense pieces win fights; the rest make farming, fishing, ghost hunting, travel and trade better. */
 export type GearPurpose = EnchantCat;
@@ -1183,14 +1204,6 @@ export function dropGearLevel(playerLevel: number, quality: QualityId, bonusPct 
   const q = QUALITY_LEVEL[quality] ?? QUALITY_LEVEL.common;
   const luckPct = Math.min(0.05, Math.max(0, luck) / 1000);
   return clampGearLevel(Math.round(base * (1 + q.pct + Math.max(-0.2, bonusPct) + luckPct) + q.flat));
-}
-
-/** Legacy rule (pre balance patch): multiplied the source level by up to 2.35x. Kept for old callers; rollGear no longer uses it. */
-export function stretchGearLevel(sourceLevel: number, quality: QualityId, luck = 0): number {
-  const q = Math.max(0, QUALITIES.findIndex((x) => x.id === quality));
-  const stretch = 1 + (q / 5) * 1.35;
-  const luckBump = Math.min(40, Math.floor(Math.max(0, luck) / 10));
-  return clampGearLevel(Math.round(Math.max(1, sourceLevel) * stretch) + luckBump);
 }
 
 /** Level contributes 0–12. Rarity contributes 0–8. Together they fill 0–20, with a little jitter. */
@@ -1674,6 +1687,9 @@ export const NPCS: NpcDef[] = [
   { id: "sleet", name: "Warden Sleet", role: "Frost shrine", female: true, outfit: 6, hair: 4, map: "world", tx: 66, ty: 12, shrine: "ice", lines: ["THE MARCH SHRINE DOES NOT MELT FOR PLEADING.", "WHITEOUT IS A KINDNESS COMPARED TO THE BOSS OUT THERE."] },
   { id: "cinderkin", name: "Ash Cantor Vesper", role: "Kiln shrine", female: true, outfit: 4, hair: 1, map: "world", tx: 16, ty: 52, shrine: "fire", lines: ["FIRE SHRINE. YOU WILL LEAVE WITH A BURN OR A RELIC.", "THE ASH REGENT SLEEPS IN THE KILN, NOT IN THIS RING."] },
 ];
+
+/** NPCs by id. The draw loop resolves an NPC for every town POI and party member, every frame. */
+export const NPC_BY_ID: Record<string, NpcDef> = Object.fromEntries(NPCS.map((n) => [n.id, n]));
 
 export type Poi =
   | { kind: "npc"; id: string }

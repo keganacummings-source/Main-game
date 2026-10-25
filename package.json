@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "map:audit": "node scripts/map-gen-audit.mjs",
     "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
-    "test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs scripts/sfx-bank.test.mjs scripts/dungeon-gen.test.mjs scripts/tex-world.test.mjs && node --experimental-strip-types --test scripts/mining.test.mjs && node --import ./scripts/wiki/register.mjs --experimental-strip-types --test scripts/tile-builder.test.mjs && node --experimental-strip-types --test worker/account-store.test.ts worker/discord.test.ts && npm run wiki:check",
+    "test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs scripts/sfx-bank.test.mjs scripts/dungeon-gen.test.mjs scripts/tex-world.test.mjs scripts/perf-helpers.test.mjs scripts/animation.test.mjs && node --experimental-strip-types --test scripts/mining.test.mjs && node --import ./scripts/wiki/register.mjs --experimental-strip-types --test scripts/tile-builder.test.mjs && node --experimental-strip-types --test worker/account-store.test.ts worker/discord.test.ts && npm run wiki:check",
     "deploy": "npm run build && wrangler deploy",
     "dev:worker": "npm run build && wrangler dev",
     "cf:types": "wrangler types",

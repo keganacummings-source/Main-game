@@ -400,7 +400,7 @@ export function installLms(game: any): void {
     r.dodgeCd = Math.max(0, r.dodgeCd - dt);
     r.potionCd = Math.max(0, r.potionCd - dt);
     r.foeT = Math.max(0, r.foeT - dt);
-    for (const k of Object.keys(r.castCd)) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
+    for (const k in r.castCd) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
     r.food = Math.max(0, r.food - dt * (100 / 1500));
     if (r.food <= 0) { m.hp -= m.max * 0.004 * dt; if (m.hp <= 0) return this.lmsEliminate(m, "hunger"); }
     if (m.hurt > 0 && Math.hypot(m.x - save.x, m.y - save.y) < 420 && !this.dead) { r.foe = "player"; r.foeT = 8; }

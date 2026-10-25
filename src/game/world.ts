@@ -1,4 +1,4 @@
-import { drawAtlasTile, drawTallArt, isTallArt, NEWTEX_DIR, texModeOn, tileImage, tileImageRevision } from "./tile-atlas";
+import { animatedTilePaths, animatedTileRevision, drawAtlasTile, drawTallArt, isTallArt, NEWTEX_DIR, texModeOn, tileFrameAt, tileImage, tileImageFrameB, tileImageRevision } from "./tile-atlas";
 import {
   ANIMAL_BIOME,
   ANIMAL_BY_ID,
@@ -656,6 +656,8 @@ const terrainWindows = new WeakMap<WorldData, TerrainWindow>();
 /** Forget the cached terrain bitmap for a world. Call after changing its tiles in place (camp clearing). */
 export function invalidateTerrain(world: WorldData): void {
   terrainWindows.delete(world);
+  // Tiles changed in place keep the same array, so where the animated ones are must be found again.
+  animIndexes.delete(world);
 }
 
 /** Reuse static terrain until the camera approaches its edge or new art loads. */
@@ -703,6 +705,81 @@ export function drawWorldSlice(
     terrainWindows.set(world, cached);
   }
   ctx.drawImage(cached.canvas, cached.left, cached.top);
+}
+
+/**
+ * Where a world's animated tiles are.
+ *
+ * The terrain is baked into a bitmap and reused for many frames, which is what keeps the world
+ * cheap to draw. Animated tiles cannot live in that bake — re-baking a multi-megabyte window every
+ * time a two-frame loop ticked would cost far more than the animation is worth. So the bake holds
+ * frame 1 and `drawAnimatedTiles` paints frame 2 over the few tiles that need it.
+ *
+ * Finding those tiles means walking the whole map, so the positions are found once and kept until
+ * the map or the set of animated tiles changes. Worlds with no animated tiles (almost everyone)
+ * store an empty list and cost nothing per frame.
+ */
+type AnimIndex = { revision: number; tiles: Tile[]; spots: { x: number; y: number; path: string }[] };
+const animIndexes = new WeakMap<WorldData, AnimIndex>();
+
+function animatedSpots(world: WorldData): { x: number; y: number; path: string }[] {
+  const revision = animatedTileRevision();
+  const have = animIndexes.get(world);
+  if (have && have.revision === revision && have.tiles === world.tiles) return have.spots;
+  const spots: { x: number; y: number; path: string }[] = [];
+  // No animated tiles at all: record the empty answer so later frames skip the walk too.
+  if (animatedTilePaths().length) {
+    const animated = new Set(animatedTilePaths());
+    for (let y = 0; y < world.h; y++) {
+      for (let x = 0; x < world.w; x++) {
+        const t = world.tiles[idx(x, y, world.w)];
+        if (!t) continue;
+        if (t.sprite && animated.has(t.sprite)) spots.push({ x, y, path: t.sprite });
+        if (t.layers) for (const l of t.layers) if (animated.has(l)) spots.push({ x, y, path: l });
+      }
+    }
+  }
+  animIndexes.set(world, { revision, tiles: world.tiles, spots });
+  return spots;
+}
+
+/** Forget where a world's animated tiles are (after its tiles change in place). */
+export function invalidateAnimatedTiles(world: WorldData): void {
+  animIndexes.delete(world);
+}
+
+/**
+ * Paints frame 2 over any animated tile currently on the second half of its loop. Call straight
+ * after the terrain is drawn, in world space. Returns at once when nothing animates.
+ */
+export function drawAnimatedTiles(
+  ctx: CanvasRenderingContext2D,
+  world: WorldData,
+  camX: number,
+  camY: number,
+  viewW: number,
+  viewH: number,
+  zoom: number,
+  clock: number,
+): void {
+  if (!animatedTilePaths().length) return;
+  const spots = animatedSpots(world);
+  if (!spots.length) return;
+  const z = Math.max(0.2, zoom);
+  const halfW = viewW / (2 * z) + TILE, halfH = viewH / (2 * z) + TILE;
+  const smoothing = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = false;
+  for (let i = 0; i < spots.length; i++) {
+    const s = spots[i]!;
+    const px = s.x * TILE, py = s.y * TILE;
+    if (Math.abs(px + TILE / 2 - camX) > halfW || Math.abs(py + TILE / 2 - camY) > halfH) continue;
+    if (tileFrameAt(s.path, clock) === 0) continue;
+    const img = tileImageFrameB(s.path);
+    if (!img) continue;
+    if (isTallArt(s.path)) ctx.drawImage(img, px, py - TILE, TILE * 2, TILE * 2);
+    else ctx.drawImage(img, px, py, TILE, TILE);
+  }
+  ctx.imageSmoothingEnabled = smoothing;
 }
 
 function paintFallbackWall(ctx: CanvasRenderingContext2D, x: number, y: number): void {
