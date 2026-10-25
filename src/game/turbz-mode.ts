@@ -32,6 +32,7 @@ import { generateWorld } from "./map-gen";
 import { generateTexWorld, retextureDungeon } from "./tex-world";
 import { setTexMode } from "./tile-atlas";
 import { lmsSpawns } from "./lms";
+import { hasStatus } from "./status-rules";
 import { blocked } from "./world";
 import { DAY_SECONDS } from "./daynight";
 import { nearestShore } from "./survival";
@@ -164,6 +165,15 @@ const HARVEST_RECRUIT = 30;        // materials a nation spends to raise one com
 const HARVEST_SPEED = 64;          // harvester walk speed (px/s)
 const NATION_COMBAT_CAP = 14;      // most combat witches a nation grows to (performance guard)
 const TURBZ2_MOB_CAP = 170;        // global living-mob cap for TURBZ2
+// TURBZ2 is a no-sides battlefield: every witch fights every other witch (and the player), so the
+// wild is a constant brawl and the aggression is spread out instead of everyone hunting you.
+const TURBZ2_FREE_FOR_ALL = true;  // set false to restore the old team/nation war
+const TURBZ2_FIGHTERS = 60;        // battlefield witches kept alive across the continent
+const TURBZ2_FILL_EVERY = 6;       // seconds between population top-ups
+/** Witches level-checked per frame. The rotating cursor covers the whole pool over several frames. */
+const TURBZ2_LEVEL_SLICE = 6;
+/** Seconds a battlefield witch keeps the rival she picked before looking for a nearer one. */
+const TURBZ2_TARGET_HOLD = 1.5;
 // Nations re-assign jobs on the fly so they never get stuck as all-harvesters or all-defenders:
 const NATION_COMBAT_MIN = 5;       // a nation drafts harvesters into fighters below this army size
 const NATION_HARVEST_MIN = 6;      // a nation demobilizes fighters into harvesters below this many
@@ -313,11 +323,16 @@ export function installTurbz(game: any): void {
     if (!save) return;
     this.turbz2 = true;
     save.turbz2 = true;
-    save.nations = null; // a new TURBZ2 run builds a fresh set of nations
+    save.nations = null; // a new TURBZ2 run builds a fresh set of city landmarks
     this.layerNations();
-    this.spawnNationGarrisons(3);
-    this.spawnNationHarvesters(HARVEST_START);
-    this.say(`TURBZ2. ${NATION_COUNT} witch nations hold cities on one continent and war on each other. Their harvest-witches gather the land to grow their armies. You cannot tell who is who in the field — only at their cities. Open the Map (M) to find them.`);
+    if (TURBZ2_FREE_FOR_ALL) {
+      this.spawnBattlefield(TURBZ2_FIGHTERS);
+      this.say(`TURBZ2. One continent, no sides. Every witch fights for herself — they hunt each other as readily as they hunt you, so the wild is a constant battlefield. Cities dot the map as landmarks. Open the Map (M).`);
+    } else {
+      this.spawnNationGarrisons(3);
+      this.spawnNationHarvesters(HARVEST_START);
+      this.say(`TURBZ2. ${NATION_COUNT} witch nations hold cities on one continent and war on each other. Their harvest-witches gather the land to grow their armies. You cannot tell who is who in the field — only at their cities. Open the Map (M) to find them.`);
+    }
     this.persistTurbz();
     this.syncHud(true);
   };
@@ -349,7 +364,63 @@ export function installTurbz(game: any): void {
       let nid = 0, nd = Infinity;
       for (const c of cities) { const d = Math.hypot(c.x - m.x, c.y - m.y); if (d < nd) { nd = d; nid = c.id; } }
       m.nation = nid;
-      m.rv.team = nid + 1; // nations are teams 1..N; same team = allies, different = enemies
+      // Free-for-all: no team, so she treats every other witch as a foe. (Team war uses nid+1.)
+      m.rv.team = TURBZ2_FREE_FOR_ALL ? 0 : nid + 1;
+    }
+  };
+
+  /** A lone battlefield witch: no team, hostile to everyone, dropped onto open land to go brawl. */
+  game.makeBattlefieldWitch = function (i: number, x: number, y: number) {
+    const m = this.makeTwitch(4000 + i, x, y, pick(WITCH_NAMES));
+    m.harvester = false;
+    m.aggro = true;
+    if (m.rv) { m.rv.team = 0; m.rv.foe = ""; m.rv.foeT = 0; m.rv.state = "hunt"; }
+    return m;
+  };
+
+  /** Seed the continent with `total` free-for-all witches, spread out so fights break out all over. */
+  game.spawnBattlefield = function (total = TURBZ2_FIGHTERS) {
+    const save = this.save;
+    const world = this.turbzWorld || this.world;
+    if (!save || !world) return;
+    const spots = (lmsSpawns(world, total * 2) ?? []).filter((p: any) => Math.hypot(p.x - save.x, p.y - save.y) > 560);
+    // Count the living once and then keep the tally as we push, instead of re-filtering the whole
+    // mob list on every one of the sixty spawns — that made starting a TURBZ2 run hitch.
+    const mobs = (this.mobs ??= []);
+    let alive = 0;
+    for (let i = 0; i < mobs.length; i++) if (mobs[i]?.alive) alive++;
+    for (let i = 0; i < total; i++) {
+      if (alive >= TURBZ2_MOB_CAP) break;
+      const p = spots.length ? spots[i % spots.length] : { x: save.x + (rand() * 2400 - 1200), y: save.y + (rand() * 2400 - 1200) };
+      mobs.push(this.makeBattlefieldWitch(i, p.x, p.y));
+      alive++;
+    }
+  };
+
+  /** Keep the battlefield lively: top the witch population back up as they cut each other down. */
+  game.battlefieldMaintain = function (dt: number) {
+    const save = this.save;
+    if (!this.turbz2 || !save) return;
+    this.bfT = (this.bfT ?? 0) - dt;
+    if (this.bfT > 0) return;
+    this.bfT = TURBZ2_FILL_EVERY;
+    // One walk for both tallies, rather than two throwaway arrays.
+    const mobs = this.mobs ?? [];
+    let alive = 0, total = 0;
+    for (let i = 0; i < mobs.length; i++) {
+      const m = mobs[i];
+      if (!m?.alive) continue;
+      total++;
+      if (m.twitch) alive++;
+    }
+    if (alive >= TURBZ2_FIGHTERS || total >= TURBZ2_MOB_CAP) return;
+    // refill a few at a time, spawned off-screen so witches appear from the wild, not on top of you
+    const world = this.turbzWorld || this.world;
+    const spots = (lmsSpawns(world, 40) ?? []).filter((p: any) => Math.hypot(p.x - save.x, p.y - save.y) > 1500);
+    const want = Math.min(TURBZ2_FIGHTERS - alive, 4, TURBZ2_MOB_CAP - total);
+    for (let i = 0; i < want; i++) {
+      const p = spots.length ? spots[(Math.random() * spots.length) | 0] : { x: save.x + (rand() * 3000 - 1500), y: save.y + (rand() * 3000 - 1500) };
+      this.mobs.push(this.makeBattlefieldWitch(5000 + ((Math.random() * 1e6) | 0), p.x, p.y));
     }
   };
 
@@ -641,7 +712,11 @@ export function installTurbz(game: any): void {
     // Resume a TURBZ2 run as a nations run (the cities are saved; witches are re-sworn to them).
     this.turbz2 = !!save.turbz2;
     this.spawnTurbzWitches(EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6));
-    if (this.turbz2) { this.layerNations(); this.spawnNationGarrisons(3); this.spawnNationHarvesters(HARVEST_START); }
+    if (this.turbz2) {
+      this.layerNations();
+      if (TURBZ2_FREE_FOR_ALL) this.spawnBattlefield(TURBZ2_FIGHTERS);
+      else { this.spawnNationGarrisons(3); this.spawnNationHarvesters(HARVEST_START); }
+    }
     this.plantTurbzHunts();
     // No camp standing and none packed in this run? Pick up the one kept off-run (a camp from an older run).
     if (save.survival && !this.turbzCampBlueprint() && !save.turbzCamp) {
@@ -1320,7 +1395,7 @@ export function installTurbz(game: any): void {
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;
     const save = this.save;
-    if (this.turbz2) { this.nationCityReveal(); this.nationCommand(dt); }
+    if (this.turbz2) { this.nationCityReveal(); if (TURBZ2_FREE_FOR_ALL) this.battlefieldMaintain(dt); else this.nationCommand(dt); }
     // Your velocity, smoothed over about a third of a second. Witches lead their shots with it.
     if (dt > 0) {
       const last = this.turbzPVLast;
@@ -1338,12 +1413,23 @@ export function installTurbz(game: any): void {
     this.witchGraves = graves;
     const onMap = save.map === TURBZ_MAP;
     const pool = onMap ? this.mobs : (this.turbzRoster ?? []);
-    let aliveN = pool.filter((m: any) => m.twitch && m.alive).length;
-    // Keep every witch leveled to you. Throttled: a few per frame is plenty and costs nothing.
-    this.twitchLevelCursor = ((this.twitchLevelCursor ?? 0) + 1) % Math.max(1, pool.length);
-    for (let k = 0; k < pool.length; k++) {
-      const m = pool[(this.twitchLevelCursor + k) % pool.length];
-      if (m?.twitch && !m.harvester && m.alive && (m.rv?.level ?? 1) < save.level) this.autoLevelTwitch(m);
+    // Counted by hand: the battlefield pool can run to a couple of hundred, and this used to build
+    // and throw away an array of them on every frame.
+    let aliveN = 0;
+    for (let i = 0; i < pool.length; i++) { const m = pool[i]; if (m?.twitch && m.alive) aliveN++; }
+    // Keep every witch leveled to you. This is meant to be throttled to a few per frame, and the
+    // rotating cursor exists for exactly that — but the loop ran the whole pool anyway, so every
+    // witch was level-checked on every frame. Walk only a slice, and let the cursor carry the rest
+    // into the next frames: across TURBZ2_LEVEL_SLICE frames the whole pool is still covered.
+    const span = pool.length;
+    if (span) {
+      const start = (this.twitchLevelCursor ?? 0) % span;
+      const take = Math.min(span, TURBZ2_LEVEL_SLICE);
+      for (let k = 0; k < take; k++) {
+        const m = pool[(start + k) % span];
+        if (m?.twitch && !m.harvester && m.alive && (m.rv?.level ?? 1) < save.level) this.autoLevelTwitch(m);
+      }
+      this.twitchLevelCursor = (start + take) % span;
     }
     while (graves.length && (graves[0] ?? 1) <= 0) {
       if (aliveN >= (EASY ? EASY_TUNE.witchCap : 15)) break;
@@ -1473,7 +1559,7 @@ export function installTurbz(game: any): void {
     // Hunter witches never forget the player — keep the foe lock permanently refreshed.
     if (m.turbzHunter) { r.foe = "player"; r.foeT = 9999; }
     else r.foeT = Math.max(0, r.foeT - dt);
-    for (const k of Object.keys(r.castCd)) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
+    for (const k in r.castCd) r.castCd[k] = Math.max(0, r.castCd[k]! - dt);
     const near = Math.hypot(m.x - save.x, m.y - save.y) < NEAR;
     if (!near) return this.simTwitch(m, dt);
     this.twitchEscort(m, dt);
@@ -1523,7 +1609,10 @@ export function installTurbz(game: any): void {
     const save = this.save;
     const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
     // Scent range: a witch who catches your trail turns hunter and heads your way from off-screen.
-    if (pd < (EASY ? EASY_TUNE.witchHunt : 3600) && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
+    // In the free-for-all she has no special grudge against you — she'll only come if you are close,
+    // the same as she'd turn on any witch nearby — so the whole wild doesn't converge on the player.
+    const scent = TURBZ2_FREE_FOR_ALL && this.turbz2 ? 460 : (EASY ? EASY_TUNE.witchHunt : 3600);
+    if (pd < scent && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
     this.witchPlay(m, true);
   };
 
@@ -1574,15 +1663,48 @@ export function installTurbz(game: any): void {
       foes, nodes, shore, rift, exit: null, bed: null,
       wander: ((Math.floor((r.age + (m.x | 0)) / 6) * 13) % 628) / 100,
     });
-    // TURBZ2 war duties: unless she is fighting or fleeing, a raider marches on the enemy city she
-    // was sent to, and a strayed guard heads home — so nation armies actually move and clash instead
-    // of idling at their own gates. Combat always takes priority (foes above override this).
+    // TURBZ2 movement intent: unless she is fighting or fleeing, give her somewhere to go so the
+    // wild actually churns instead of everyone idling. Combat always takes priority (foes override).
     if (this.turbz2 && !m.harvester && decision?.kind !== "fight" && decision?.kind !== "flee") {
-      if (m.duty === "raid" && m.raidTarget) {
-        return { kind: "wander", x: m.raidTarget.x + (rand() * 160 - 80), y: m.raidTarget.y + (rand() * 160 - 80) };
-      }
-      if (m.duty === "guard" && m.homeX != null && Math.hypot(m.x - m.homeX, m.y - m.homeY) > 520) {
-        return { kind: "wander", x: m.homeX + (rand() * 120 - 60), y: m.homeY + (rand() * 120 - 60) };
+      if (TURBZ2_FREE_FOR_ALL) {
+        // Free-for-all: head for the nearest OTHER witch to pick a fight, so battles break out all
+        // over the map and nobody is singling the player out.
+        //
+        // Finding her by sweeping the whole roster is O(n) per witch, and with sixty-odd witches all
+        // doing it every frame that was thousands of distance checks a frame — the single biggest
+        // cost in TURBZ2. She now keeps the rival she picked for a moment and re-picks on a stagger,
+        // which is also truer to the fiction: she commits to a fight instead of re-deciding
+        // every sixtieth of a second.
+        const now = this.clock ?? 0;
+        const held = m.bfFoe;
+        if (held && held.alive && held !== m && now < (m.bfHoldUntil ?? 0)) {
+          return { kind: "wander", x: held.x + (rand() * 140 - 70), y: held.y + (rand() * 140 - 70) };
+        }
+        let near: any = null, bd = Infinity;
+        const mobs = this.mobs;
+        for (let i = 0; i < mobs.length; i++) {
+          const o = mobs[i];
+          if (!o.twitch || !o.alive || o === m) continue;
+          const ox = o.x - m.x, oy = o.y - m.y;
+          const d = ox * ox + oy * oy;
+          if (d < bd) { bd = d; near = o; }
+        }
+        if (near) {
+          m.bfFoe = near;
+          // Stagger the holds so the re-picks do not all land on one frame.
+          m.bfHoldUntil = now + TURBZ2_TARGET_HOLD * (0.7 + Math.random() * 0.6);
+          return { kind: "wander", x: near.x + (rand() * 140 - 70), y: near.y + (rand() * 140 - 70) };
+        }
+        m.bfFoe = null;
+        m.bfHoldUntil = 0;
+      } else {
+        // Team war: raiders march on an enemy city; strayed guards head home.
+        if (m.duty === "raid" && m.raidTarget) {
+          return { kind: "wander", x: m.raidTarget.x + (rand() * 160 - 80), y: m.raidTarget.y + (rand() * 160 - 80) };
+        }
+        if (m.duty === "guard" && m.homeX != null && Math.hypot(m.x - m.homeX, m.y - m.homeY) > 520) {
+          return { kind: "wander", x: m.homeX + (rand() * 120 - 60), y: m.homeY + (rand() * 120 - 60) };
+        }
       }
     }
     return decision;
@@ -1595,7 +1717,10 @@ export function installTurbz(game: any): void {
     // already locked onto you), she drops crafting/gathering and comes straight for you.
     const pd = save && !this.dead ? Math.hypot(save.x - m.x, save.y - m.y) : Infinity;
     const lockable = m.hp > m.max * 0.25 || m.turbzHunter;
-    const huntR = EASY ? EASY_TUNE.witchHunt : TWITCH_HUNT, chaseR = EASY ? EASY_TUNE.witchChase : TWITCH_CHASE;
+    // In the free-for-all she engages the player only at close range, like she would any other witch,
+    // so she isn't drawn across the map to you. Hunter witches (m.turbzHunter) still hunt relentlessly.
+    const ffa = TURBZ2_FREE_FOR_ALL && this.turbz2 && !m.turbzHunter;
+    const huntR = ffa ? 420 : (EASY ? EASY_TUNE.witchHunt : TWITCH_HUNT), chaseR = ffa ? 760 : (EASY ? EASY_TUNE.witchChase : TWITCH_CHASE);
     if (lockable && (pd < huntR || m.turbzHunter || (r.foe === "player" && pd < chaseR))) {
       r.foe = "player";
       r.foeT = Math.max(r.foeT, 8);
@@ -2133,14 +2258,14 @@ export function installTurbz(game: any): void {
    * you from the side she is not on when she is fighting you, and fights whatever else she is fighting.
    */
   game.tickTwitchGhost = function (m: any, d: number, dt: number) {
-    const lead = this.mobs.find((x: any) => x.id === m.master && x.alive);
+    const lead = this.mobById(m.master);
     if (!lead) {
       m.alive = false; m.hp = 0;
       this.float(m.x, m.y - 30, "FADES", "#c9a6e8");
       return;
     }
     this.tickEnemyGhostAid?.(m, dt);
-    if ((m.status ?? []).some((s: any) => s.id === "root" || s.id === "sleep")) return;
+    if (hasStatus(m.status ?? [], "root") || hasStatus(m.status ?? [], "sleep")) return;
     const save = this.save;
     const ld = Math.hypot(lead.x - m.x, lead.y - m.y);
     if (ld > 420) {

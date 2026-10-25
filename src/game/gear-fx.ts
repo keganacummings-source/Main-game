@@ -1056,11 +1056,14 @@ export function drawGearFx(ctx: C, a: Actor, t: number, s: number, layer: Layer)
   ctx.translate(a.x, a.y);
   const flip = a.facing < 0 ? -1 : 1;
   const k = s;
-  const lead = a.pieces.reduce((best, p) => (p.quality > best.quality ? p : best), a.pieces[0]!);
+  // Walked by index: this runs for every actor wearing gear, on every frame, and the old version
+  // built a closure for the reduce and then a whole array (plus a spread) just to take a maximum.
+  let lead = a.pieces[0]!;
+  for (let i = 1; i < a.pieces.length; i++) if (a.pieces[i]!.quality > lead.quality) lead = a.pieces[i]!;
   const leadSeed = seedOf(lead);
   const leadGene = fxGene(leadSeed, lead.type, lead.quality);
   const leadPal = PAL[lead.type] ?? PAL.normal;
-  const top = Math.max(...a.pieces.map((p) => p.quality));
+  const top = lead.quality;
 
   if (!front && top >= 3) drawRings(ctx, t, k, a.pieces, lead, leadGene, leadPal);
 

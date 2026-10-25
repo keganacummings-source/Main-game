@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Super Ghost fixes, shiny rebalance, TURBZ2 battlefield
+
+- **Super Ghost revives.** It lived outside the party's heal loop, so once it fell it stayed at 0 HP forever and never rejoined you. It now regenerates out of combat like your other ghosts, scaled to its larger health pool, and recovers to full in roughly 30-60 seconds.
+- **Super Ghost slot is fully clickable.** Its card used to be a dead static panel. Click it for the full detail view — portrait, stats, abilities and a Verses tab — the same as a normal spirit. The slot also stays visible while downed, showing "Downed — reviving out of combat…" instead of blanking out.
+- **Re-ready Super Ghost verses,** at a higher cap than a normal spirit, since it was fused from many.
+- **Shiny odds lowered.** Base shiny rate is now **1/500** (was 1/100) and the boss shiny rate is **1/200** (was 1/50) — still rarer-but-better than base.
+- **TURBZ2 is a free-for-all battlefield.** One continent, no sides: every witch fights for herself and hunts other witches as readily as she hunts you, so the wild is a constant brawl instead of everyone converging on the player. Around 60 battlefield witches are kept alive across the continent and topped up every few seconds as they cut each other down, spawned off-screen. Cities remain on the map as landmarks. A witch now only engages you at close range, as she would any other witch; hunter witches still pursue relentlessly. The old team/nation war is preserved behind the `TURBZ2_FREE_FOR_ALL` flag in `src/game/turbz-mode.ts`.
+
 ## Tile Builder rebuild, power block art, Mining XP (TURBZ, New Texture Mode)
 
 - **Mining XP.** Every block you break now trains your **Mining** skill: 16 for hell stone, 10 for other stone, 6 for sandstone, 5 for wood, 3 for dirt, plus 6 more when the block drops an ore. A "+N Mining xp" pops up with the drop.

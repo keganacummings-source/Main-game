@@ -779,6 +779,8 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
   const [filter, setFilter] = useState<"all" | "tagged" | "shiny">("all");
   const following = s.spirits.filter((x) => x.active).length;
   const sel = s.spirits.find((x) => x.uid === open) ?? null;
+  const superG = s.superGhost;
+  const selSuper = !!superG && open === superG.uid;
   const hc = s.rules === "hardcore";
   const TASKS = [["fish", "Go Fishing"], ["chop", "Go Chopping"], ["level", "Go Leveling"]] as const;
   const taskName = (t: string | null) => TASKS.find(([id]) => id === t)?.[1] ?? "";
@@ -790,7 +792,7 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
   const party = ghostSort(s.spirits.filter(ghostMatch));
   const inspect = s.ghostInspect;
   const inspectRow = inspect ? s.ghostStore.find((g) => g.uid === inspect.uid) ?? null : null;
-  useEffect(() => { if (open && !sel) setOpen(null); }, [open, sel]);
+  useEffect(() => { if (open && !sel && !selSuper) setOpen(null); }, [open, sel, selSuper]);
   const tasks = hc && sel ? (
     <div className="ui-stack-sm" data-testid="ghost-tasks">
       <p className="text-dim">
@@ -832,14 +834,21 @@ export const SpiritsPanel = memo(function SpiritsPanel({ game }: GameProp) {
 
       {tab === "party" && (
         <div className="ui-stack" data-testid="spirit-party">
-          {s.superGhost && (
-            <Section title="SUPER GHOST" right={<span className="text-dim">Lv {s.superGhost.level}</span>}>
-              <div className="ui-card" data-testid="super-ghost-card" style={{ borderColor: "#c9a6e8" }}>
-                <span className="ui-row"><span className="text-kyo">★ {s.superGhost.name}</span><span className="text-dim">{s.superGhost.type} · {s.superGhost.types?.length ?? 1} types</span></span>
-                <Meter kind="good" label="HP" value={Math.max(0, Math.floor(s.superGhost.hp))} max={Math.max(1, s.superGhost.max)} detail={`${Math.floor(s.superGhost.hp)}/${s.superGhost.max}`} />
-                <p className="text-dim">Your fused Super Ghost. It walks with you on top of your party and never rides in the Ghost Box. {s.superGhost.abilities.length} abilities · {s.superGhost.moves.length} active verses.</p>
-                <ConfirmButton plain label="Release Super Ghost" confirm="Tap again" onConfirm={() => game?.releaseSuperGhost?.()} />
-              </div>
+          {superG && (
+            <Section title="SUPER GHOST" right={<span className="text-dim">Lv {superG.level}</span>}>
+              <GhostCard g={superG} on={superG.hp > 0} selected={selSuper} testid="super-ghost-card" onClick={() => setOpen(selSuper ? null : superG.uid)}>
+                <Meter value={Math.max(0, Math.floor(superG.hp))} max={Math.max(1, superG.max)} small kind={superG.hp / superG.max < 0.3 ? "bad" : "good"} />
+                <span className="text-dim">{superG.hp <= 0 ? "Downed — reviving out of combat…" : "Walks with you (on top of your party)"} · {superG.moves.length} verses · {superG.abilities.length} abilit{superG.abilities.length === 1 ? "y" : "ies"}</span>
+              </GhostCard>
+              {selSuper && (
+                <GhostDetailCard g={superG} onClose={() => setOpen(null)} onToggleMove={(id) => game?.toggleSpiritMove(superG.uid, id)}
+                  actions={
+                    <div className="gear-actions">
+                      <ConfirmButton plain label="Release Super Ghost" confirm="Tap again" onConfirm={() => { game?.releaseSuperGhost?.(); setOpen(null); }} />
+                    </div>
+                  }
+                />
+              )}
             </Section>
           )}
           <p className="text-dim">Up to {s.spiritSlots} ghosts go out with you and {s.spiritCap} ride in your party. Ghosts out with you fight, earn XP from every kill, and their abilities and aid verses work: heals, wards, regen, barriers, a last-light save and more.</p>
