@@ -67,18 +67,28 @@ export const AutoplayPanel = memo(function AutoplayPanel({ game }: GameProp) {
 
           <ul className="hud-auto-list" data-testid="autoplay-tasks">
             {auto.tasks.map((t, i) => (
-              <li key={t.id} className={`hud-auto-task ${t.active ? "hud-auto-task-on" : ""}`} data-testid={`autoplay-task-${t.id}`}>
-                <span className="hud-auto-rank text-dim" aria-hidden="true">{i + 1}</span>
+              <li
+                key={t.id}
+                className={`hud-auto-task ${t.active ? "hud-auto-task-on" : ""} ${t.on ? "" : "hud-auto-task-off"}`}
+                data-testid={`autoplay-task-${t.id}`}
+                data-on={t.on ? "1" : "0"}
+              >
+                <span className="hud-auto-rank text-dim" aria-hidden="true">{t.on ? i + 1 : "—"}</span>
+                {/* The switch has to read as a switch. An off task is struck through, greyed and
+                    badged OFF, so it is obvious at a glance which ones autoplay is ignoring. */}
                 <button
                   type="button"
-                  className={`px-btn ui-btn-sm hud-auto-name ${t.on ? "px-btn-kyo" : ""}`}
-                  title={t.about}
+                  className={`px-btn ui-btn-sm hud-auto-name ${t.on ? "px-btn-kyo" : "hud-auto-name-off"}`}
+                  title={t.on ? `${t.about}\n\nTap to switch off.` : `${t.about}\n\nSwitched off — tap to switch on.`}
                   aria-pressed={t.on}
                   onClick={() => game?.setOrder?.(t.id)}
                 >
-                  {t.label}
+                  <span aria-hidden="true" className="hud-auto-tick">{t.on ? "✓" : "✕"}</span>
+                  <span className="hud-auto-label">{t.label}</span>
                 </button>
-                <span className="hud-auto-state text-dim">{t.active ? "doing this" : t.on ? "" : "off"}</span>
+                <span className={`hud-auto-state ${t.on ? "text-dim" : "hud-auto-badge"}`}>
+                  {t.active ? "doing this" : t.on ? "" : "OFF"}
+                </span>
                 <span className="hud-auto-move">
                   <button
                     type="button"

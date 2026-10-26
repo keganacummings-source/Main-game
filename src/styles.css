@@ -1116,6 +1116,16 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 /* The task being worked right now gets the marker, so you can see it at a glance. */
 .hud-auto-task-on .hud-auto-state { color: var(--color-kyo); }
 .hud-auto-task-on { outline: 1px solid color-mix(in srgb, var(--color-kyo) 45%, transparent); outline-offset: 1px; }
+/* An off task must read as off at a glance: struck through, greyed, and badged. */
+.hud-auto-name { display: flex; align-items: center; gap: 5px; }
+.hud-auto-tick { font-size: 14px; opacity: 0.9; }
+.hud-auto-label { line-height: 1; }
+.hud-auto-name-off { opacity: 0.5; border-style: dashed; }
+.hud-auto-name-off .hud-auto-label { text-decoration: line-through; }
+.hud-auto-task-off .hud-auto-rank { opacity: 0.4; }
+.hud-auto-badge { font-size: 13px; letter-spacing: 0.08em; color: var(--color-blood); border: 1px solid currentColor; padding: 0 3px; line-height: 1.25; }
+/* An off task is not in the running order, so it does not get the outline even while hovered. */
+.hud-auto-task-off { opacity: 0.85; }
 .hud-dock { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 13; display: grid; gap: 6px; justify-items: center; max-width: calc(100vw - 16px); pointer-events: none; }
 .hud-dock > * { pointer-events: auto; }
 .hud-menu { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }

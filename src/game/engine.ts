@@ -45,6 +45,7 @@ import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, 
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
 import { ALL_ORDERS, thinkLikePlayer, type PlayOrders } from "./player-brain";
 import { AUTO_TASKS, AUTO_TASK_BY_ID, AUTO_TASK_IDS, TASKLESS_AIMS, allTasksOn, movePriority, normalizePriority, taskOfSkill } from "./autoplay";
+import { WEATHER_BY_ID, startWeather, tickWeather, weatherBlind, weatherConfuses, weatherDamage, weatherDef } from "./weather";
 import { dungeonSeed, generateDungeon } from "./map-gen";
 import {
   CLASS_BY_ID,
@@ -80,6 +81,7 @@ import {
   RACES,
   RACE_BY_ID,
   raceIndex,
+  SECOND_HIT_SHARE,
   SET_BY_ID,
   SETS,
   SKILLS,
@@ -675,6 +677,8 @@ const AUTO_RETRY_GAP = 0.05;
 const AUTO_TASK_DWELL = 14;
 /** How far, in tiles, autoplay looks for a block worth mining. A screen or so. */
 const MINE_SCAN_TILES = 10;
+/** How far a battlefield condition reaches from the witch. Roughly the fight you are actually in. */
+const WEATHER_RANGE = 620;
 
 /** How often the world is stepped while the tab is in the background, in milliseconds. */
 const BACKGROUND_TICK_MS = 200;
@@ -1192,6 +1196,8 @@ export class TurbzGame {
 		this.priorityKey = undefined;
 		this.priorityCache = null;
 		this.waitToldT = 0;
+		// The battlefield condition holding right now (weather.ts), or null for clear skies.
+		this.weather = null;
 		// Audio: effects and music meet only at the master ceiling (see buildBus).
 		this.musicIn = null;
 		this.sfxLevel = null;
@@ -2477,6 +2483,7 @@ export class TurbzGame {
 		this.tickChests(dt);
 		this.tickWildGhosts(dt);
 		this.tickLater(dt);
+		this.tickWeather(dt);
 		this.tickFx(dt);
 		this.syncHud(false);
 	}
@@ -5909,11 +5916,23 @@ export class TurbzGame {
 	 */
 	autoLevelVerses(only) {
 		const save = this.save;
-		if (!save || this.dead) return 0;
+		if (!save) return 0;
+		if (this.dead) { this.say("Not while you are down."); return 0; }
 		this.syncArsenal(save);
-		const pick = only && only.length ? only.filter((id) => MOVE_BY_ID[id]) : Object.keys(save.abilityRanks ?? {}).filter((id) => MOVE_BY_ID[id]);
-		if (!pick.length) { this.say("No verses to rank up yet."); return 0; }
+		// Saves come back from storage in all sorts of states. Make the two things this needs real
+		// before touching them, rather than throwing half way through and looking like a dead button.
+		save.abilityRanks = save.abilityRanks ?? {};
+		save.loadout = Array.isArray(save.loadout) ? save.loadout : [];
+		const points = Math.floor(Number(save.skillPoints) || 0);
+		save.skillPoints = points;
+		if (points < 1) { this.say("No skill points to spend."); return 0; }
+
+		const wanted = only && only.length ? only : Object.keys(save.abilityRanks);
+		const pick = wanted.filter((id) => MOVE_BY_ID[id]);
+		if (!pick.length) { this.say("No verses to rank up yet. Learn one from the Library first."); return 0; }
+
 		let spent = 0;
+		let capped = 0;
 		// One point at a time onto whichever verse is furthest behind: that is what keeps it even.
 		while ((save.skillPoints ?? 0) > 0) {
 			let low = null, lowRank = Infinity;
@@ -5922,18 +5941,22 @@ export class TurbzGame {
 				if (rank >= RANK_MAX) continue;
 				if (rank < lowRank) { lowRank = rank; low = id; }
 			}
-			if (!low) break;                                  // everything is capped
+			if (!low) { capped = pick.length; break; }         // every one of them is at the top
 			const first = !save.abilityRanks[low];
-			if (!spendAbilityPoint(save, low)) break;
+			if (!spendAbilityPoint(save, low)) break;          // refused: stop rather than spin
 			if (first && save.loadout.length < MAX_EQUIPPED) save.loadout.push(low);
 			spent++;
 		}
 		this.syncArsenal(save);
 		if (!spent) {
-			this.say((save.skillPoints ?? 0) > 0 ? `Every verse is at the top rank (${RANK_MAX}).` : "No skill points to spend.");
+			this.say(capped
+				? `Every verse you have is already at the top rank (${RANK_MAX}). Learn a new one to spend these.`
+				: "Could not spend those points. Try upgrading one verse by hand and tell me what it says.");
+			this.syncHud(true);
 			return 0;
 		}
-		this.say(`Spent ${spent} point${spent === 1 ? "" : "s"} evenly across ${pick.length} verse${pick.length === 1 ? "" : "s"}.`);
+		const left = save.skillPoints ?? 0;
+		this.say(`Spent ${spent} point${spent === 1 ? "" : "s"} across ${pick.length} verse${pick.length === 1 ? "" : "s"}.${left ? ` ${left} left: the rest are at the top rank.` : ""}`);
 		this.persist();
 		this.syncHud(true);
 		return spent;
@@ -6087,7 +6110,8 @@ export class TurbzGame {
 		if (kind === "rush") return this.castRush(move, prefer);
 		if (kind === "orbit") return this.castOrbit(move, prefer);
 		if (kind === "slam") return this.castSlam(move, prefer);
-		const selfCast = tactic === "heal" || tactic === "ward" || tactic === "roll" || tactic === "dash" || tactic === "surge" || move.effect === "mend" || move.effect === "shell";
+		// A weather verse with no power needs no target: it is cast at the sky.
+		const selfCast = tactic === "heal" || tactic === "ward" || tactic === "roll" || tactic === "dash" || tactic === "surge" || move.effect === "mend" || move.effect === "shell" || (!!move.weather && move.power <= 0);
 		const reach = this.playerReach(move);
 		// Melee is strictly within 2 tiles: no padding. Ranged verses keep a little slack.
 		const pad = attackForm(move) === "melee" ? 0 : tactic === "blink" || tactic === "lunge" ? 8 : 4;
@@ -6115,6 +6139,14 @@ export class TurbzGame {
 		this.gainSkill(masteryOf(move.type), 3);
 		if (target && target.x < save.x) this.facing = -1;
 		else if (target) this.facing = 1;
+		// A weather verse turns the field. It does this before anything else the verse does, so a
+		// verse can both call the rain and swing, and the swing already counts as being in it.
+		if (move.weather) {
+			this.summonWeather(move.weather);
+			this.playMoveFx(move, save.x, save.y - 24 * WITCH_SIZE, save.x, save.y - 40 * WITCH_SIZE);
+			// Nothing else to do unless it also hits something.
+			if (move.power <= 0) return true;
+		}
 		if (tactic === "ward") {
 			this.wardT = 3;
 			this.shield = Math.max(this.shield, shieldAmount(move.power, abilityMultiplier(save, move.id), this.maxHp()));
@@ -6610,7 +6642,9 @@ export class TurbzGame {
 		// Class passives (class-gimmicks.ts): Perfect Aim never misses and can't be dodged; Hybrid Arrows is half magic.
 		const trueAim = !fromPet && !!this.gim?.trueAim?.();
 		const hybrid = !fromPet && !!this.gim?.hybrid?.();
-		if (!trueAim && (opts.missed ?? Math.random() * 100 > move.accuracy)) {
+		// A sandstorm or a blackout spoils every aim on the field, yours included.
+		const aim = Math.max(5, move.accuracy - weatherBlind(this.weather));
+		if (!trueAim && (opts.missed ?? Math.random() * 100 > aim)) {
 			this.float(mob.x, mob.y - 36, "MISS", "#e8dcc4");
 			return;
 		}
@@ -6618,6 +6652,8 @@ export class TurbzGame {
 		if (!trueAim && mob.twitch && this.twitchDodge?.(mob, move)) return;
 		const pure = form === "spell";
 		const tm = pure ? 1 : typeChartMulti(move.type, mob.types, mob.type);
+		// The weather is worth something to the element that called it, and costs the one it smothers.
+		mult *= weatherDamage(this.weather, move.type);
 		// Hybrid Arrows: an element immunity only stops the physical half.
 		if (!pure && tm === 0 && !hybrid) {
 			this.float(mob.x, mob.y - 36, "IMMUNE", "#e7d9ff");
@@ -6658,6 +6694,14 @@ export class TurbzGame {
 		// Extra strikes (double strike, volleys) land one after another instead of all at once.
 		for (let i = 1; i < hits; i++) this.later(i * (opts.stagger || .1), () => { if (mob.alive) this.damageMob(mob, dmg, false, form, fromPet, move.id); });
 		this.applyEffect(move, mob, true);
+		// Dual-element verses follow through with a second, lighter hit of another element. It is
+		// read against the foe's resistances on its own, so opening with fire and finishing with ice
+		// genuinely beats something that only shrugs off one of them. `child` keeps it from
+		// re-triggering chains, splashes and depth bookkeeping.
+		if (move.second && !opts.child && mob.alive) {
+			const follow = { ...move, type: move.second, second: undefined, effect: "none", fx: undefined };
+			this.resolveHit(follow, mob, fromPet, mult * (move.secondMult ?? SECOND_HIT_SHARE), { ...opts, child: true });
+		}
 		if (!fromPet && mob.alive && this.chan("ghost_burn") > 0 && Math.random() * 100 < this.chan("ghost_burn")) this.applyMobStatus(mob, "burn", 4);
 		if (!fromPet && this.mod("leech") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.mod("leech") / 100);
 		if (!fromPet && this.chan("leech_edge") > 0) save.hp = Math.min(this.maxHp(), save.hp + dmg * this.chan("leech_edge") / 100);
@@ -12476,6 +12520,64 @@ export class TurbzGame {
 	}
 	armorType() {
 		return (this.piece("chest") ?? this.piece("weapon"))?.type ?? "normal";
+	}
+	/**
+	 * Call a condition down onto the field. A new one replaces whatever was holding, so a fight can
+	 * turn more than once.
+	 */
+	summonWeather(id) {
+		const def = WEATHER_BY_ID[id];
+		if (!def) return false;
+		const was = this.weather?.id;
+		this.weather = startWeather(id);
+		this.say(was && was !== id ? `${def.arrives} It drives off the ${WEATHER_BY_ID[was]?.name.toLowerCase() ?? "last"}.` : def.arrives);
+		this.shake = Math.max(this.shake, 6);
+		this.cue("sparkle", { rate: 0.7, len: 1.4, vol: 0.4 }, [320, .3, "sine"]);
+		this.syncHud(true);
+		return true;
+	}
+
+	/**
+	 * Moves the weather on: presses its status onto everything caught in it, chips at them, and
+	 * clears when it has blown itself out.
+	 *
+	 * What it lays touches you too wherever the condition says so. Calling rain to feed your tide
+	 * verses soaks you as surely as it soaks them, which is the price of turning the field.
+	 */
+	tickWeather(dt) {
+		const w = this.weather;
+		if (!w) return;
+		const def = WEATHER_BY_ID[w.id];
+		if (!def) { this.weather = null; return; }
+		const { lay, ended } = tickWeather(w, dt);
+		if (ended) {
+			this.weather = null;
+			this.say(`The ${def.name.toLowerCase()} passes.`);
+			this.syncHud(true);
+			return;
+		}
+		const save = this.save;
+		if (!save) return;
+		// Only what is actually on the field with you, not the whole map.
+		const caught = this.foesNear(save.x, save.y, WEATHER_RANGE);
+		if (lay && def.lay) {
+			for (const m of caught) if (m.alive) this.applyMobStatus(m, def.lay.status, def.lay.t);
+			if (def.lay.witchToo && !this.dead) this.addStatus(def.lay.status, def.lay.t);
+		}
+		if (def.chip) {
+			for (const m of caught) {
+				if (!m.alive) continue;
+				m.hp -= Math.max(1, m.max * def.chip) * dt;
+				if (m.hp <= 0) this.killMob(m);
+			}
+		}
+	}
+
+	/** The condition holding right now, for the HUD. */
+	weatherView() {
+		const def = weatherDef(this.weather);
+		if (!def || !this.weather) return null;
+		return { id: def.id, name: def.name, about: def.about, left: Math.ceil(this.weather.t), colour: def.colour };
 	}
 	applyEffect(move, mob, onMob) {
 		if (move.effect === "none" || move.effect === "leech" || move.effect === "mend" || move.effect === "shell") return;
