@@ -641,6 +641,12 @@ const AUTOSAVE_SECONDS = 8;
  */
 const FAR_MOB_CULL = 1200;
 const FAR_MOB_CULL_SQ = FAR_MOB_CULL * FAR_MOB_CULL;
+/**
+ * How far a TURBZ night-siege foe will keep coming for you. They rose out of the dark looking for
+ * you, so unlike an ordinary foe they are not waiting to be walked into and they do not give up.
+ * Lives here because the engine is what reads it; the siege itself is built in turbz-mode.ts.
+ */
+const SIEGE_HUNT = 1600;
 /** The worn slots the actor drawing reads, in the order it draws them. */
 const DRAW_PIECE_SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"];
 /** How many particles are kept alive at once; the oldest beyond this are dropped. */
@@ -1128,6 +1134,8 @@ export class TurbzGame {
 		this.setProc = 0;
 		// Cache behind drawPieces(): the worn gear in drawing shape, rebuilt only when gear changes.
 		this.gearDraw = { slots: [], out: [] };
+		// Ghost uids already announced to Discord, so a shiny is never posted twice.
+		this.shinyTold = new Set();
 		this.zoom = 2.35;
 	}
 	start() {
@@ -6552,16 +6560,21 @@ export class TurbzGame {
 	}
 	lingerGhost(mob, spirit) {
 		const save = this.save;
+		// A shiny drop is announced once, here, before we work out where the ghost ends up. It used
+		// to be announced inside the auto-keep branch AND again at the bottom — and auto-keep only
+		// returns early when the ghost is actually taken, so a player whose party was full with no
+		// Ghost Box (or a full one) had the drop posted to Discord twice.
+		if (spirit.shiny) { this.announceShiny(spirit); this.recordShiny(spirit); }
 		// Auto-keep: straight into the party (or the Ghost Box when the party is full), no walking back.
 		if (this.autoKeeps(spirit)) {
-			if (spirit.shiny) { this.announceShiny(spirit); this.recordShiny(spirit); }
 			if (this.adoptSpirit(spirit, `${spirit.name}'s ghost would have joined`)) { this.creditCatch(mob.type); this.gainSkill("ghostkeeping", 2); return; }
 		}
 		save.wildGhosts = save.wildGhosts ?? [];
 		const g = { id: `wg-${nextUid()}`, map: save.map, x: mob.x + 18, y: mob.y - 4, t: WILD_GHOST_LIFE, spirit, catchType: mob.type };
 		save.wildGhosts.push(g);
 		if (save.wildGhosts.length > 30) save.wildGhosts.splice(0, save.wildGhosts.length - 30);
-		if (spirit.shiny) { this.float(g.x, g.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.cue("sparkle", { rate: 1.9, len: 1.6, vol: 0.4 }, [980, .25, "triangle"]); this.announceShiny(spirit); this.recordShiny(spirit); }
+		// The ghost is staying on the ground: show and sound it where it fell.
+		if (spirit.shiny) { this.float(g.x, g.y - 70, "✦ SHINY GHOST ✦", "#ff7ae0"); this.cue("sparkle", { rate: 1.9, len: 1.6, vol: 0.4 }, [980, .25, "triangle"]); }
 		this.float(g.x, g.y - 50, spirit.rarity >= 4 ? `A ${rarityName(spirit.rarity).toUpperCase()} GHOST` : "A GHOST LINGERS", spirit.rarity >= 4 ? (spirit.rarity >= 5 ? "#ff4d8a" : "#ffb341") : "#c9a6e8");
 		this.say(`${spirit.name}'s ${rarityName(spirit.rarity)} ghost lingers${spirit.shiny ? ` ✦ SHINY · ${shinyPalette(spirit.palette).name} ✦` : ""}. Press E or click it to look (5 min).`);
 		this.tone(660, .12, "sine");
@@ -6855,9 +6868,25 @@ export class TurbzGame {
 		});
 		if (added) { this.say(`✦ ${spirit.name} joins your Shiny collection.`); this.shinyFn?.(); }
 	}
-	/** A shiny just dropped in the world for this player: the app posts a "Shiny Ghost Seen" GIF to Discord. */
+	/**
+	 * A shiny just dropped in the world for this player: the app posts a "Shiny Ghost Seen" GIF to
+	 * Discord.
+	 *
+	 * Announced at most once per ghost. The post goes out to every Discord channel the bot is set up
+	 * in, so a second call would be a second card in everyone's feed — and the drop paths below call
+	 * through here from more than one place. The guard is on the ghost's uid, which is unique per
+	 * drop, so two separate shinies of the same species still both get posted.
+	 */
 	announceShiny(spirit) {
 		if (!spirit?.shiny || this.lms || !this.save) return;
+		const uid = String(spirit.uid ?? "");
+		const told = (this.shinyTold ??= new Set());
+		if (uid && told.has(uid)) return;
+		if (uid) {
+			told.add(uid);
+			// Bounded: a long run drops a lot of ghosts, and this only exists to stop repeats.
+			if (told.size > 400) for (const old of told) { told.delete(old); if (told.size <= 300) break; }
+		}
 		// Big on-screen "SHINY DROPPED" pop-up (see ShinyDropAlert in turbz-app.tsx).
 		publish({ shinyAlert: getSnap().shinyAlert + 1 });
 		this.shinySeenFn?.({
@@ -7679,6 +7708,9 @@ export class TurbzGame {
 	 * Hardcore overworld foes, bosses included, always take two minutes.
 	 */
 	respawnSecondsFor(m) {
+		// A night-siege foe is one of a wave, not part of the map's population: when it falls it
+		// stays down and the night sends another. (turbz-mode drops it from the list.)
+		if (m?.siege) return null;
 		const special = !!(m?.witch || m?.bounty || m?.bountySpirit || m?.enemyGhost || m?.hunter || m?.dungeonBoss || String(m?.id ?? "").startsWith("shrine"));
 		return respawnSeconds({
 			hardcore: this.rules === "hardcore",
@@ -7816,7 +7848,9 @@ export class TurbzGame {
 			}
 			// Distance cull. Compared squared, so the whole roster is not run through Math.hypot
 			// (which guards against overflow we cannot hit) every frame just to be thrown away.
-			if (!m.boss && !m.witch && !m.master) {
+			// Siege foes are exempt: they are capped and few, and they are meant to be closing on
+			// you from off-screen, which they cannot do if they stop thinking out there.
+			if (!m.boss && !m.witch && !m.master && !m.siege) {
 				const ox = m.x - save.x, oy = m.y - save.y;
 				if (ox * ox + oy * oy > FAR_MOB_CULL_SQ) continue;
 			}
@@ -7895,6 +7929,9 @@ export class TurbzGame {
 			return false;
 		}
 		if (m.flee) return false;
+		// A night-siege foe rose out of the dark looking for you, so it comes from across the field
+		// rather than waiting to be walked into. It does not lose interest.
+		if (m.siege) return d < SIEGE_HUNT;
 		// Already hurt / aggro'd — keep fighting even through walls (they know where you are).
 		if (m.hurt > 0 || m.aggro || m.hp < m.max) return d < (m.boss ? 280 : 240);
 		if ((m.drift || m.look?.aggression === "drift") && !m.boss && !m.witch) return false;

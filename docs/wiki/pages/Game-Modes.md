@@ -27,12 +27,34 @@ TurboHunt and Hardcore keep **separate saves**. Your account-wide progress (skil
 - **Winning:** be the last witch standing. A typical match runs 30–40 minutes.
 - **Map:** always Veilreach. In the Map Builder, **Use for my next life** can queue a custom world for your next LMS run instead.
 
+## TURBZ nights
+
+Night on the TURBZ wild is a siege, not just a difficulty band. Alongside the usual night rules
+(double foe health and damage, triple experience), the dark **sends foes after you**:
+
+- Hostile foes rise in a ring **340–620 px** around you, in waves every few seconds, for as long as
+  the night lasts.
+- They **hunt from up to 1600 px** — far further than an ordinary foe, which only reacts inside
+  about 240 px — so they close on you instead of waiting to be found, and they do not lose interest.
+- Up to **12 are alive at once**, and **every night survived** raises both that cap (to 22) and the
+  number per wave. TurboHunt gets the same siege at roughly half strength.
+- Beasts never take part: an animal's instinct is to run from you, which would make for a siege that
+  flees. These are monsters.
+- A siege foe that falls **stays down** — nothing respawns it — and the night sends another.
+- At **dawn** the waves stop and any siege foe you never met melts away, but only if it is
+  off-screen, unhurt and not fighting you. The sun never ends a fight you are already in, and
+  nothing carries over to pile up night after night.
+
+Sieges are the TURBZ wild only: dungeons have their own foes, and TURBZ2's continent is already a
+witch battlefield. The numbers live near the top of `src/game/turbz-mode.ts`.
+
 ## TurboHunt (TURBZ easy)
 
 TurboHunt now launches the TURBZ ruleset with an `easy` flag. Every number lives in `EASY_TUNE` in `src/game/turbz-mode.ts`.
 
 - **Camp:** press H at a campfire for the Camp menu and F for build mode: walls, floors, beds, Storage Chest, Ghost Box and power blocks, exactly as in TURBZ. Pack up camp moves it.
 - **Witches:** 3 to 4 rivals (TURBZ: 10 to 15). They only go for you inside 520 px and give up past 1100 px. No secret hunter witches at level milestones.
+- **Night siege:** yes, but gentler — 5 foes at once rising to 9 over the nights, one per wave, every 5.5 seconds (TURBZ: 12 rising to 22, two per wave, every 3.4 seconds).
 - **Damage and health:** you take 50% damage, foes have 80% health, world bosses notice you from 900 px.
 - **Mana and stamina:** refill 1.6× faster.
 - **Death:** you wake at your campfire with 60% health and lose 10% of your kyo. Level, gear, skills, ghosts and camp are kept.
