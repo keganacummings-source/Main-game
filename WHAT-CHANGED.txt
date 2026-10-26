@@ -1,55 +1,48 @@
-TURBZ update — verse coverage, auto-level, ghost hoarding, autoplay, SFX, travellers
-====================================================================================
-Unzip over your repo root, keeping folder paths. Everything is at the path it
-belongs at. Replaces the previous turbz-update.zip.
+TURBZ update — Auto-level fix, autoplay OFF state, weather + dual-element verses
+=================================================================================
+Unzip over your repo root, keeping folder paths. Replaces the previous zip.
 
-ONE NEW FILE
-  scripts/verses.test.mjs     the verse coverage contract (see below)
+NEW FILES
+  src/game/weather.ts                battlefield conditions
+  scripts/verses.test.mjs            verse coverage contract
+  scripts/verse-levelling.test.mjs   Auto-level regression tests
+  (plus src/components/autoplay-panel.tsx and src/game/autoplay.ts if you have
+   not taken the earlier autoplay rebuild yet)
 
-EVERYTHING ELSE IS AN EDIT to files you already have.
+THE TWO BUGS YOU REPORTED
+  * Auto-level did nothing with 200 points. The loop was fine; the save shape
+    broke it. On a save with no `loadout` array, the first never-before-ranked
+    verse hit `save.loadout.length` and threw part way through — so the button
+    did nothing AND said nothing. It now repairs what it needs first, and when
+    it genuinely cannot spend it tells you which case it is (no points, no
+    verses, or everything at the top rank — and in that case the points are left
+    for you rather than eaten). The old code claimed "every verse is at the top
+    rank" whenever it bailed for any reason, which would have been a lie here.
+  * The autoplay OFF state was not readable. An off task was just an
+    un-highlighted button, which reads as "not selected" rather than "off".
+    Off tasks now show ✕ instead of ✓, are struck through and greyed, lose their
+    place number (they are not in the running order) and are badged OFF in red.
 
-THIS ROUND
-  * Fire can leech. So can every element. Measured first: SEVEN of eleven
-    elements had no leech at all (fire, earth, air, electric, ice, void, light),
-    TEN of eleven had no cleanse (only Light), and Electric could not mend.
-    The "Wellspring batch" fills exactly those holes — 7 drains, 10 cleanses,
-    1 mend — written per element, not recoloured from one template: the Fire
-    drain is close work, the Air drain reaches across the field, and the
-    cleanses differ in what they cost you.
-  * Nobody is stuck standing still. Eight elements had no way to close a gap or
-    break off; 11 movement verses fix that (Earth scree slide, Electric arc step
-    and earthing roll, Ice glacier step, Light ducking its own glare, Spirit
-    step, Normal sidestep, ghoul lurch and playing dead).
-  * Control effects deliberately stay signature. Root is Earth's, Sleep Ice's,
-    Gloom the Void's and the dead's. Spreading every control across every
-    element would make them all feel the same — the opposite of the point — so
-    the test asserts BOTH that everyone can look after themselves AND that no
-    control has crept onto nearly every element.
-  * Verses: an "Auto-level" button. Spends every point you have, always topping
-    up whichever verse is furthest behind so the set comes up evenly. Loadout
-    tab spends across your bar; Library across everything you know. Capped
-    verses are skipped; if all are capped the points stay in your pocket.
-  * Autoplay stops filling your Ghost Box. tryRecruit and bossGhost both had an
-    autoplay branch that adopted every ghost, bypassing your keep setting — so a
-    long unattended run came back with hundreds of ordinary ghosts. It keeps
-    shinies only now; your own setting still applies when you are playing.
+NEW: WEATHER AND DUAL-ELEMENT VERSES
+  * Conditions a verse can call down: Summon Rain (soaks everything, feeds water,
+    smothers fire), Sandstorm (scours, spoils every aim), Void Blackout (glooms
+    and gnaws), Bewilder (foes swing at nothing), Heatwave, Call the Gale.
+    One holds at a time. Each feeds its own element and damps the opposite, and
+    most of them touch YOU as well — calling rain to feed your tide verses soaks
+    you too. Three more call a condition AND land in the same motion.
+  * Dual-element verses: a verse can follow through with a second element as a
+    lighter second hit, read against the foe's resistances on its own. So fire
+    into ice genuinely beats something that only shrugs off one of them.
+  * 23 of the duplicate verses now carry a second element, each different from
+    its neighbours, so they are no longer interchangeable.
 
-STILL OPEN — NEEDS YOUR CALL
-  The same audit found 172 of 462 verses (37%) are near-identical to another
-  verse of the same element, effect, tactic and form, within 10% power and the
-  same reach band: ten Light expose-strikes, nine Fire burn-strikes, eight Light
-  shell-wards, seven Earth root-heavies, seven Water soak-strikes, seven Spirit
-  gloom-strikes... That is the "make each move truly unique" half, and it is a
-  design decision across 172 moves rather than a mechanical fix, so it has NOT
-  been guessed at. Say which way you want it and it is a straightforward pass.
-
-ALSO INCLUDED (earlier in this branch, if you have not taken it yet)
-  autoplay dungeons/quests/mining, TURBZ travellers for Social, the SFX/music
-  bus split, and the background-tab effect fix.
+STILL TO DO
+  ~61 more duplicates live in class-kits.ts behind a builder function rather than
+  as plain literals, so they need a different edit. Next pass.
 
 BEFORE YOU TRUST IT
-  `npm run build` has never run (the sandbox cannot reach the npm registry) and
-  none of it has been seen or heard. Typecheck clean, 132 tests pass. Check:
-    1. the new verses read well in the Library, and Auto-level spends sensibly
-    2. autoplay no longer stuffing the Ghost Box
-    3. sound balance — SFX_GLUE, SFX_LEVEL, MUSIC_LEVEL near the top of engine.ts
+  `npm run build` has never run here and none of it has been seen or heard.
+  142 tests pass, typecheck clean. Please check:
+    1. Auto-level now spends your 200 points (and says what it did)
+    2. off tasks in the autoplay panel are obvious at a glance
+    3. Summon Rain actually turns the field and the HUD/log says so
