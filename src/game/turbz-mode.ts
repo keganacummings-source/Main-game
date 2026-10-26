@@ -39,6 +39,7 @@ import { DAY_SECONDS } from "./daynight";
 import { nearestShore } from "./survival";
 import { combatRate } from "./pools";
 import { ALL_ORDERS, thinkLikePlayer, typeEdge } from "./player-brain";
+import { allTasksOn } from "./autoplay";
 
 export const TURBZ_MAP = "custom-turbz";
 /** Remembers the New Texture Mode choice made on the TURBZ screen (the run itself keeps its own on `save.turbzNewTex`). */
@@ -100,17 +101,6 @@ export const EASY_TUNE = {
 export function hasTurbzSave(easy = false): boolean {
   try { return !!localStorage.getItem(easy ? TURBZ_EASY_SAVE_KEY : TURBZ_SAVE_KEY); } catch { return false; }
 }
-export const TURBZ_ORDERS = [
-  { id: "combat", label: "Fight" },
-  { id: "mining", label: "Mine ore" },
-  { id: "woodcutting", label: "Chop wood" },
-  { id: "fishing", label: "Fish" },
-  { id: "shroom", label: "Forage" },
-  { id: "crafting", label: "Craft" },
-  { id: "spirits", label: "Seek spirits" },
-  { id: "dungeon", label: "Dungeons" },
-] as const;
-
 const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
 /** Within this range a witch runs full live AI and hunts you relentlessly. */
 const NEAR = 1900;
@@ -221,7 +211,7 @@ export function installTurbz(game: any): void {
     const useNewTex = true; // NewTex is permanent in TURBZ.
     // Parameter kept in the signature for back-compat but ignored.
     void newTex;
-    this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
+    this.orders = allTasksOn();
     this.teamSeq = 1;
     // swapRules clears the turbz flag; set it true again afterwards, before begin, so the run is TURBZ.
     this.swapRules("hardcore");
@@ -694,7 +684,7 @@ export function installTurbz(game: any): void {
     let raw: any = null;
     try { raw = JSON.parse(localStorage.getItem(saveKey()) ?? "null"); } catch { raw = null; }
     if (!raw || !raw.name) return false;
-    this.orders = Object.fromEntries(TURBZ_ORDERS.map((o) => [o.id, true]));
+    this.orders = allTasksOn();
     this.teamSeq = 1;
     // swapRules clears the turbz flag; set it true again afterwards so the resumed run is TURBZ.
     this.swapRules("hardcore");
@@ -1408,13 +1398,9 @@ export function installTurbz(game: any): void {
     this.gainSkill(skill, 2);
   };
 
-  game.setOrder = function (id: string) {
-    if (!this.orders || !(id in this.orders)) return;
-    this.orders[id] = !this.orders[id];
-    this.autoPlan = 0;
-    this.say(`${TURBZ_ORDERS.find((o) => o.id === id)?.label ?? id} ${this.orders[id] ? "on" : "off"} for autoplay.`);
-    this.syncHud(true);
-  };
+  // setOrder is NOT overridden here any more. TURBZ used to carry its own copy with its own
+  // eight-item table, and it ignored any task that table did not list -- so tasks added later were
+  // dead buttons in the mode most people play. The engine's one handles every task.
 
   game.tickTurbz = function (dt: number) {
     if (!this.turbz || !this.save) return;

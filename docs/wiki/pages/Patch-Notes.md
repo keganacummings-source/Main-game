@@ -1,5 +1,15 @@
 # Patch Notes
 
+## Autoplay rebuilt, its own panel, faster auto-attacks, and the game keeps playing in the background
+
+- **Autoplay's switches actually work now.** Every skill in the game belongs to exactly one task. That sounds like bookkeeping, but it was the bug: only a handful of skills were mapped before, and everything unmapped — Magic, Evasion, Looting, Skinning, every element mastery — fell through to "walk at the nearest foe and hit it". So turning **Fight** off barely changed anything; autoplay just trained one of those instead and fought anyway. **Trade** and **Talk** had no switch at all. Both fixed.
+- **Fight off now means off.** With it off, autoplay used to keep circling and kiting a foe it was never going to swing at. It leaves instead.
+- **Tasks have an order.** Autoplay works down your list and takes the first task it can do right now, instead of always grinding whichever skill happened to be the lowest level. Move a task up to prefer it.
+- **It stops dithering.** The old planner re-sorted every skill every 1.8 seconds and took the lowest, so the moment the skill it was training ticked over it wandered off to something else — away from a half-mined node to go and fish. It now commits to a task until it finishes, becomes impossible, or you change your mind.
+- **Autoplay has its own panel**, under the tracker: a switch, the task list, and a line saying what it is doing *and why*. It used to be a row of unlabelled buttons wedged into TRACKING between a ghost-jar timer and a witch count, with "Autoplay · looking" underneath that told you nothing. The tracker keeps the world and quest information.
+- **Auto-attacks are as fast as your cooldowns allow.** They were capped at roughly three a second by a flat wait after every action, however fast your verses recharged. Your cooldowns and the cast animation decide the pace now.
+- **The game keeps playing when the tab is in the background.** It used to freeze the moment you looked at something else, which is awkward for the feature whose whole point is running while you do something else.
+
 ## TURBZ nights send foes after you, duplicate shiny posts fixed
 
 - **The TURBZ night is dangerous now.** Night used to only make the foes already on the map hit harder. From this update the dark brings its own: hostile foes rise in a ring around you and come straight for you, in waves, for as long as the night lasts. They hunt from much further off than an ordinary foe, so they will find you rather than wait to be walked into.

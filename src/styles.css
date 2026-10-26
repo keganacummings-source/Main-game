@@ -1091,10 +1091,30 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 .hud-target-tag { font-family: var(--font-display); font-size: 7px; color: var(--color-ink); background: var(--color-blood); padding: 3px 4px; }
 .hud-target-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 16px; }
 .hud-target-ench { font-size: 15px; color: #c9a6e8; line-height: 1.05; }
-.hud-tracker { position: absolute; top: 52px; right: 8px; z-index: 11; width: min(290px, calc(100vw - 16px)); padding: 4px 8px 6px; pointer-events: auto; }
+.hud-right-col { position: absolute; top: 52px; right: 8px; z-index: 11; width: min(290px, calc(100vw - 16px)); display: grid; gap: 4px; align-content: start; max-height: calc(100vh - 300px); overflow-y: auto; pointer-events: none; }
+.hud-right-col > * { pointer-events: auto; }
+.hud-tracker { padding: 4px 8px 6px; }
 .hud-tracker-head { display: flex; justify-content: space-between; align-items: center; width: 100%; background: none; border: 0; color: var(--color-bone); font: inherit; padding: 2px 0; cursor: pointer; }
 .hud-tracker-body { display: grid; gap: 4px; font-size: 18px; line-height: 1.12; margin-top: 4px; }
 .hud-surv { display: grid; gap: 3px; }
+
+/* ── Autoplay panel ──────────────────────────────────────────────────────────────────────────
+   Sits under the tracking panel, same frame and fold behaviour, so the two read as one column
+   rather than two unrelated boxes. */
+.hud-auto { padding: 4px 8px 6px; }
+.hud-auto-doing { font-size: 17px; line-height: 1.15; margin: 2px 0 0; }
+.hud-auto-head { margin-top: 6px; }
+.hud-auto-list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+/* rank · name (grows) · state · the two move buttons */
+.hud-auto-task { display: grid; grid-template-columns: 14px 1fr auto auto; align-items: center; gap: 4px; }
+.hud-auto-rank { font-size: 15px; text-align: right; }
+.hud-auto-name { justify-self: stretch; text-align: left; }
+.hud-auto-state { font-size: 15px; white-space: nowrap; }
+.hud-auto-move { display: flex; gap: 2px; }
+.hud-auto-move .px-btn { padding: 0 6px; }
+/* The task being worked right now gets the marker, so you can see it at a glance. */
+.hud-auto-task-on .hud-auto-state { color: var(--color-kyo); }
+.hud-auto-task-on { outline: 1px solid color-mix(in srgb, var(--color-kyo) 45%, transparent); outline-offset: 1px; }
 .hud-dock { position: absolute; left: 50%; bottom: 8px; transform: translateX(-50%); z-index: 13; display: grid; gap: 6px; justify-items: center; max-width: calc(100vw - 16px); pointer-events: none; }
 .hud-dock > * { pointer-events: auto; }
 .hud-menu { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
@@ -1116,7 +1136,7 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 @media (width <= 760px) {
   .hud-vitals { width: calc(100vw - 16px); }
   .hud-target { top: auto; bottom: 176px; width: calc(100vw - 16px); min-width: 0; }
-  .hud-tracker { top: auto; bottom: 236px; }
+  .hud-right-col { top: auto; bottom: 236px; max-height: calc(100vh - 420px); }
   .hud-fabs { bottom: 150px; }
   .hud-menu-btn { height: 30px; padding: 0 6px; }
 }
