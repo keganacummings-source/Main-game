@@ -442,10 +442,68 @@ export const MOVES: Move[] = [
   { id: "crashdown", name: "Crash Down", type: "earth", power: 72, accuracy: 82, crit: 10, priority: 1, effect: "root", anim: ["burst", "slash", "pulse"], range: 160, about: "Sprint at them and land like a stone dropped from height. The ground cracks.", tactic: "lunge", form: "melee", react: "move", fail: 18 },
   { id: "stormcleave", name: "Storm Cleave", type: "electric", power: 66, accuracy: 84, crit: 14, priority: 1, effect: "spark", anim: ["spark", "slash", "burst"], range: 165, about: "Close the gap in a bolt and cleave on arrival. The charge sparks everything near the landing.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 44, mult: 0.4 } },
   { id: "tidecrasher", name: "Tide Crasher", type: "water", power: 68, accuracy: 82, crit: 10, priority: 1, effect: "soak", anim: ["rain", "slash", "burst"], range: 155, about: "Ride a wave of water at the target and break over them like a shore.", tactic: "lunge", form: "melee", react: "move", fail: 20, splash: { radius: 48, mult: 0.45 } },
+
+  // ── The Wellspring batch ───────────────────────────────────────────────────────────────────
+  // Coverage, not power. Every element could already hit; what several could not do was drink
+  // life back, mend, or pull a hex off you — Fire had no leech at all, and only Light had a
+  // cleanse. Each of these is written for its own element rather than recoloured from one
+  // template: the drains differ in reach and form, and the cleanses differ in what they cost.
+  // Movement verses fill the last holes so no element is stuck without a way to close or break off.
+
+  // Drains: one per element that had none.
+  { id: "embertithe", name: "Ember Tithe", type: "fire", power: 44, accuracy: 92, crit: 10, priority: 1, effect: "leech", anim: ["burst", "orbit"], range: 56, about: "Takes the warmth out of them and puts it in you. Close work: you have to be near enough to feel it.", form: "melee" },
+  { id: "roottithe", name: "Root Tithe", type: "earth", power: 50, accuracy: 90, crit: 6, priority: 0, effect: "leech", anim: ["spiral", "orbit"], range: 72, about: "Fine roots find a vein and drink slowly. Heavy and unhurried, like everything the ground does." },
+  { id: "thinair", name: "Thin the Air", type: "air", power: 32, accuracy: 96, crit: 12, priority: 2, effect: "leech", anim: ["spiral", "orbit"], range: 150, about: "Takes the breath out of them from across the field and gives you theirs. Quick, light, and it reaches." },
+  { id: "statictithe", name: "Static Draw", type: "electric", power: 38, accuracy: 94, crit: 14, priority: 2, effect: "leech", anim: ["spark", "orbit"], range: 120, about: "Earths them through you. What they were holding, you are holding now." },
+  { id: "frosttithe", name: "Frost Tithe", type: "ice", power: 40, accuracy: 93, crit: 8, priority: 1, effect: "leech", anim: ["shield", "orbit"], range: 96, about: "Cold does not take heat so much as borrow it. It gives none of it back to them." },
+  { id: "hollowtithe", name: "Hollow Tithe", type: "void", power: 46, accuracy: 89, crit: 16, priority: 1, effect: "leech", anim: ["beam", "orbit"], range: 110, about: "The hole in it has to be filled with something, and it is not fussy whose." },
+  { id: "noontithe", name: "Tithe of Noon", type: "light", power: 42, accuracy: 95, crit: 10, priority: 1, effect: "leech", anim: ["prism", "orbit"], range: 130, about: "Light gives freely and takes the same way. What it draws out of them it carries straight back." },
+
+  // Cleanses: pulling an affliction off yourself, in each element's own manner.
+  { id: "burnitout", name: "Burn It Out", type: "fire", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["burst", "shield"], range: 36, about: "Hold the flame to it until there is nothing left to be wrong. Unpleasant and quick.", tactic: "heal", target: "player" },
+  { id: "rinse", name: "Rinse", type: "water", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["rain", "shield"], range: 36, about: "Water does not argue with what is on you. It simply carries it off.", tactic: "heal", target: "player" },
+  { id: "settle", name: "Settle", type: "earth", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["spiral", "shield"], range: 36, about: "Stand still, let it run down into the ground, and let the ground keep it.", tactic: "heal", target: "player" },
+  { id: "airitout", name: "Air It Out", type: "air", power: 0, accuracy: 100, crit: 0, priority: 4, effect: "cleanse", anim: ["spiral", "shield"], range: 36, about: "One hard gust through you and whatever was clinging on is somewhere downwind.", tactic: "heal", target: "player" },
+  { id: "discharge", name: "Discharge", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 4, effect: "cleanse", anim: ["spark", "shield"], range: 36, about: "Dump the whole charge at once. Everything riding on it goes with it.", tactic: "heal", target: "player" },
+  { id: "numbit", name: "Numb It", type: "ice", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["shield", "pulse"], range: 36, about: "Cold enough and it stops mattering. Not a cure so much as a refusal.", tactic: "heal", target: "player" },
+  { id: "unmake", name: "Unmake", type: "void", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["beam", "shield"], range: 36, about: "Take the part of you it was holding on to out of the world for a moment. It does not come back with it.", tactic: "heal", target: "player" },
+  { id: "absolve", name: "Absolve", type: "spirit", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["orbit", "shield"], range: 36, about: "The dead have heard worse. They take it off you without comment.", tactic: "heal", target: "player" },
+  { id: "shakeitoff", name: "Shake It Off", type: "normal", power: 0, accuracy: 100, crit: 0, priority: 4, effect: "cleanse", anim: ["pulse", "shield"], range: 36, about: "No element to it. You just decide you are done carrying it.", tactic: "heal", target: "player" },
+  { id: "purgerot", name: "Purge", type: "ghoul", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "cleanse", anim: ["burst", "shield"], range: 36, about: "Bring it up, be rid of it, carry on. The ghoul way is not a dignified one.", tactic: "heal", target: "player" },
+
+  // Electric was the one element that could not mend at all.
+  { id: "pulsemend", name: "Pulse Mend", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 3, effect: "mend", anim: ["spark", "pulse"], range: 36, about: "Restart the heart of it. A shock given deliberately, for once.", tactic: "heal", target: "player" },
+
+  // Movement: the last holes, so no element is stuck without a way to close or break off.
+  { id: "springtide", name: "Spring Tide", type: "water", power: 0, accuracy: 100, crit: 0, priority: 4, effect: "none", anim: ["rain", "pulse"], range: 36, about: "The tide comes in behind you and you go with it. Everything is suddenly faster.", tactic: "surge", target: "player" },
+  { id: "landslide", name: "Landslide", type: "earth", power: 0, accuracy: 100, crit: 0, priority: 4, effect: "none", anim: ["spiral", "pulse"], range: 36, about: "Let the hill take you downhill for a while. There is no stopping politely.", tactic: "surge", target: "player" },
+  { id: "screeslide", name: "Scree Slide", type: "earth", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["spiral", "burst"], range: 150, about: "Ride the loose stone sideways. Ugly, fast, and hard to follow.", tactic: "dash", fail: 14 },
+  { id: "arcstep", name: "Arc Step", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["spark", "burst"], range: 160, about: "Jump the gap the way a spark does: along the shortest path, whether or not it is dignified.", tactic: "dash", fail: 12 },
+  { id: "earthing", name: "Earthing Roll", type: "electric", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["spark", "shield"], range: 36, about: "Go to ground before it reaches you, and let the ground have it instead.", tactic: "roll", fail: 16 },
+  { id: "glacierstep", name: "Glacier Step", type: "ice", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["shield", "burst"], range: 155, about: "Put ice under your feet and stop steering. You arrive whether you meant to or not.", tactic: "dash", fail: 14 },
+  { id: "duckthelight", name: "Duck the Light", type: "light", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["prism", "shield"], range: 36, about: "Everything is lit, including you. Get under it.", tactic: "roll", fail: 15 },
+  { id: "spiritstep", name: "Spirit Step", type: "spirit", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["orbit", "burst"], range: 165, about: "Something that is already gone gives you a shove. You cover the ground quickly.", tactic: "dash", fail: 12 },
+  { id: "sidestep", name: "Sidestep", type: "normal", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["pulse", "burst"], range: 120, about: "No element, no trick. You were there and now you are not.", tactic: "blink", fail: 10 },
+  { id: "gravelurch", name: "Grave Lurch", type: "ghoul", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["burst", "orbit"], range: 150, about: "Not running. Closer to falling forward, repeatedly, in the right direction.", tactic: "dash", fail: 18 },
+  { id: "playdead", name: "Play Dead", type: "ghoul", power: 0, accuracy: 100, crit: 0, priority: 5, effect: "none", anim: ["orbit", "shield"], range: 36, about: "Drop. Be uninteresting. It works more often than it has any right to.", tactic: "roll", fail: 14 },
+
   ...KIT_MOVES as Move[],
 ];
 /** The Reaver batch: 30 melee verses (strikes, heavies and lunges across every element). */
 export const REAVER_BATCH: string[] = ["boneclub", "coffinnail", "gravedigger", "ribrush", "embercleave", "ashmaul", "coalrush", "tidebreaker", "saltgash", "barrowmaul", "rootcleave", "stonefist", "reedslash", "windscythe", "gullrush", "sparkjab", "archook", "rimeedge", "iciclethrust", "hollowcut", "nullcleave", "umbralunge", "dawnblade", "censerswing", "smitingrod", "wraithclaw", "veilrend", "ghoulmaw", "carrionrend", "doublerake"];
+/**
+ * The Wellspring batch: the verses that close the coverage holes.
+ *
+ * Seven elements had no way to drink life back at all (Fire among them), ten had no cleanse, and
+ * Electric could not mend. Several elements also had no way to close a gap or break off. These are
+ * those gaps, filled one element at a time rather than from a template.
+ */
+export const WELLSPRING_BATCH: string[] = [
+  "embertithe", "roottithe", "thinair", "statictithe", "frosttithe", "hollowtithe", "noontithe",
+  "burnitout", "rinse", "settle", "airitout", "discharge", "numbit", "unmake", "absolve", "shakeitoff", "purgerot",
+  "pulsemend",
+  "springtide", "landslide", "screeslide", "arcstep", "earthing", "glacierstep", "duckthelight", "spiritstep", "sidestep", "gravelurch", "playdead",
+];
 /** The Treatment batch: 9 movement-melee verses. Tri-Lunges, Orbit Strikes, and Slam-Dashes. */
 export const TREATMENT_BATCH: string[] = ["triblitz", "voidprowl", "bloodbound", "orbitstrike", "gravecircle", "emberspin", "crashdown", "stormcleave", "tidecrasher"];
 /** The Starfall batch: verses with animations of their own. */

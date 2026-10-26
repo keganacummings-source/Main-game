@@ -1,52 +1,55 @@
-TURBZ — autoplay mines/quests/delves, SFX bus split, travellers on the wild
-===========================================================================
-Unzip over your repo root, keeping folder paths. Every file is already at the
-path it belongs at.
+TURBZ update — verse coverage, auto-level, ghost hoarding, autoplay, SFX, travellers
+====================================================================================
+Unzip over your repo root, keeping folder paths. Everything is at the path it
+belongs at. Replaces the previous turbz-update.zip.
 
-This builds ON TOP of the autoplay rebuild you already merged (PR #13), so you
-need that in place first — it is, if your main is current. There are NO new
-files this time; all seven already exist in your repo and are being replaced.
+ONE NEW FILE
+  scripts/verses.test.mjs     the verse coverage contract (see below)
 
-FILES (7, all edits)
-  src/game/engine.ts            autoplay aims for dungeons, quests and mining;
-                                "Talk" seeks travellers; the SFX/music bus split;
-                                traveller drawing and E-to-talk
-  src/game/turbz-mode.ts        the travellers themselves
-  src/game/autoplay.ts          adds the Quests task + taskless aims
-  scripts/autoplay.test.mjs     cover for the Quests task
-  docs/wiki/pages/Controls-and-Interface.md   autoplay task table updated
-  docs/wiki/pages/Game-Modes.md               travellers section
-  docs/wiki/pages/Patch-Notes.md              the entry
+EVERYTHING ELSE IS AN EDIT to files you already have.
 
-WHAT IT DOES
-  * Autoplay enters dungeons. It used to walk to the FURTHEST dungeon marker on
-    the map, award itself a flat 12 Adventuring, and stand there — it never went
-    in. It now takes the nearest uncleared rift, walks to the door, goes
-    through, clears it, and leaves.
-  * Autoplay does quests. New "Quests" task: goes where the current step points,
-    talks to who needs talking to, hands in when ready. Kill-N / gather-N steps
-    have nowhere to walk to, so they are left to the tasks already feeding them.
-  * Autoplay mines in TURBZ. "Mine ore" only knew about ore nodes, so in New
-    Texture Mode — where ore comes from breaking rock — it did nothing at all.
-    It now finds the nearest mineable block, gets in range and works it.
-  * Travellers cross the TURBZ wild. The mode has no towns, so Social was the
-    one skill with nothing training it. Up to three are out at a time; press E
-    to talk. Each has one thing worth hearing, so Social comes from meeting
-    people over a run rather than mashing a key at one person. Autoplay's
-    "Talk" task seeks them out too.
-  * Sound effects and music no longer share a compressor. Everything ran through
-    one chain (ratio 8, 1.7x makeup), so every swing pumped the music and the
-    music held the effects down. Now: effects get a glue compressor set for
-    cohesion rather than loudness — soft knee, modest ratio, attack slow enough
-    to keep the front of a hit — with NO makeup boost, then sit lower. Music
-    runs straight past it. A transparent ceiling still catches peaks.
+THIS ROUND
+  * Fire can leech. So can every element. Measured first: SEVEN of eleven
+    elements had no leech at all (fire, earth, air, electric, ice, void, light),
+    TEN of eleven had no cleanse (only Light), and Electric could not mend.
+    The "Wellspring batch" fills exactly those holes — 7 drains, 10 cleanses,
+    1 mend — written per element, not recoloured from one template: the Fire
+    drain is close work, the Air drain reaches across the field, and the
+    cleanses differ in what they cost you.
+  * Nobody is stuck standing still. Eight elements had no way to close a gap or
+    break off; 11 movement verses fix that (Earth scree slide, Electric arc step
+    and earthing roll, Ice glacier step, Light ducking its own glare, Spirit
+    step, Normal sidestep, ghoul lurch and playing dead).
+  * Control effects deliberately stay signature. Root is Earth's, Sleep Ice's,
+    Gloom the Void's and the dead's. Spreading every control across every
+    element would make them all feel the same — the opposite of the point — so
+    the test asserts BOTH that everyone can look after themselves AND that no
+    control has crept onto nearly every element.
+  * Verses: an "Auto-level" button. Spends every point you have, always topping
+    up whichever verse is furthest behind so the set comes up evenly. Loadout
+    tab spends across your bar; Library across everything you know. Capped
+    verses are skipped; if all are capped the points stay in your pocket.
+  * Autoplay stops filling your Ghost Box. tryRecruit and bossGhost both had an
+    autoplay branch that adopted every ghost, bypassing your keep setting — so a
+    long unattended run came back with hundreds of ordinary ghosts. It keeps
+    shinies only now; your own setting still applies when you are playing.
+
+STILL OPEN — NEEDS YOUR CALL
+  The same audit found 172 of 462 verses (37%) are near-identical to another
+  verse of the same element, effect, tactic and form, within 10% power and the
+  same reach band: ten Light expose-strikes, nine Fire burn-strikes, eight Light
+  shell-wards, seven Earth root-heavies, seven Water soak-strikes, seven Spirit
+  gloom-strikes... That is the "make each move truly unique" half, and it is a
+  design decision across 172 moves rather than a mechanical fix, so it has NOT
+  been guessed at. Say which way you want it and it is a straightforward pass.
+
+ALSO INCLUDED (earlier in this branch, if you have not taken it yet)
+  autoplay dungeons/quests/mining, TURBZ travellers for Social, the SFX/music
+  bus split, and the background-tab effect fix.
 
 BEFORE YOU TRUST IT
-  `npm run build` has never run on this (the sandbox cannot reach the npm
-  registry) and none of it has been seen or heard. Typecheck is clean and 124
-  tests pass. Worth checking in play:
-    1. autoplay actually entering a rift and coming back out
-    2. mining swinging at rock in New Texture Mode
-    3. a traveller turning up, and E talking to them
-    4. the sound balance — SFX_GLUE, SFX_LEVEL and MUSIC_LEVEL near the top of
-       src/game/engine.ts are the three numbers to turn if it is not right
+  `npm run build` has never run (the sandbox cannot reach the npm registry) and
+  none of it has been seen or heard. Typecheck clean, 132 tests pass. Check:
+    1. the new verses read well in the Library, and Auto-level spends sensibly
+    2. autoplay no longer stuffing the Ghost Box
+    3. sound balance — SFX_GLUE, SFX_LEVEL, MUSIC_LEVEL near the top of engine.ts

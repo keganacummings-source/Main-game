@@ -1220,6 +1220,7 @@ export class TurbzGame {
 		// exactly the thing you leave running while you do. This timer keeps it going. Background
 		// timers are throttled to roughly once a second, so each call catches up the real time that
 		// passed; `advance` is what bounds how much of it is simulated at once.
+		window.clearInterval(this.bgTimer);   // never leave a second one running
 		this.bgTimer = window.setInterval(() => {
 			if (!this.running || !document.hidden) return;
 			this.advance(performance.now(), false);
@@ -1277,7 +1278,30 @@ export class TurbzGame {
 			this.acc -= 1 / 60;
 		}
 		// Nothing to draw to when the tab is hidden, and drawing there is wasted work.
-		if (drawing && !hidden) this.draw();
+		if (hidden) this.dropUnseenFx();
+		else if (drawing) this.draw();
+	}
+	/**
+	 * Throw away the frame's cosmetic effects while the tab is in the background.
+	 *
+	 * Hits, sparks, floating numbers and screen shake are all there to be looked at. With nothing
+	 * on screen they were piling up instead — a background wake catches up a second or more of
+	 * combat in one go, and none of it was being drawn away — so coming back showed the whole
+	 * backlog landing at once, which read as the effects firing twice over.
+	 *
+	 * Only the cosmetic lists are swept. Damage, experience and everything else the world did
+	 * while you were away has already happened and stays.
+	 */
+	dropUnseenFx() {
+		if (this.parts) this.parts.length = 0;
+		if (this.floats) this.floats.length = 0;
+		this.shake = 0;
+		const cfx = this.cfx;
+		if (cfx) {
+			if (cfx.list) cfx.list.length = 0;
+			if (cfx.motes) cfx.motes.length = 0;
+			cfx.kick = 0;
+		}
 	}
 	setStick(x, y) {
 		this.stick.x = x;
@@ -1607,8 +1631,20 @@ export class TurbzGame {
 	 * colour that fit the moment. `type` picks the colour the old synth wave had (sine soft, triangle
 	 * mellow, square plain, sawtooth gritty). Falls back to the plain synth until the bank is ready.
 	 */
+	/**
+	 * Should sound effects be heard right now?
+	 *
+	 * No, when the tab is in the background. The world keeps turning there, so combat keeps
+	 * happening — and a background timer wakes about once a second and catches up a second or
+	 * more of it in one go. Every hit in that burst used to fire its cue at almost the same
+	 * moment, so you heard a pile of overlapping swings from a tab you were not even looking at.
+	 * Music is left alone: it is an <audio> element and playing on in the background is the point.
+	 */
+	audible() {
+		return !(typeof document !== "undefined" && document.hidden);
+	}
 	tone(freq, dur, type = "square") {
-		if (!this.audio) return;
+		if (!this.audio || !this.audible()) return;
 		if (!this.sfxLoading) this.loadSfx();
 		if (this.sfxBufs?.blip) return this.playSample(freq, dur, type);
 		this.synth(freq, dur, type);
@@ -1658,7 +1694,7 @@ export class TurbzGame {
 	 * gathering pulse when a channel ends early).
 	 */
 	cue(name, opts: { rate?: number; vol?: number; len?: number } = {}, fb?: [number, number, string?]) {
-		if (!this.audio) return () => {};
+		if (!this.audio || !this.audible()) return () => {};
 		const c = CUES[name];
 		const buf = c && this.sfxBufs?.[c.sound];
 		if (!c || !buf) { if (!this.sfxLoading) this.loadSfx(); if (fb) this.tone(fb[0], fb[1], fb[2] ?? "square"); return () => {}; }
@@ -5860,6 +5896,48 @@ export class TurbzGame {
 		const set = new Set(save.loadout ?? []);
 		return Object.keys(save.abilityRanks ?? {}).filter(id => MOVE_BY_ID[id] && (save.loadout ? set.has(id) : true)).sort((a, b) => (save.loadout ? save.loadout.indexOf(a) - save.loadout.indexOf(b) : 0)).map(id => MOVE_BY_ID[id]);
 	}
+	/**
+	 * Spend every skill point you have across your verses, evenly.
+	 *
+	 * Always tops up the lowest-ranked verse first, so the points level the set out rather than
+	 * pouring into whichever one happens to be listed first. Verses already at the top rank are
+	 * passed over, and if every one of them is capped the points are left for you to spend
+	 * elsewhere rather than silently thrown away.
+	 *
+	 * `only` narrows it to a set of ids (the Loadout tab passes the bar), otherwise it is every
+	 * verse you know.
+	 */
+	autoLevelVerses(only) {
+		const save = this.save;
+		if (!save || this.dead) return 0;
+		this.syncArsenal(save);
+		const pick = only && only.length ? only.filter((id) => MOVE_BY_ID[id]) : Object.keys(save.abilityRanks ?? {}).filter((id) => MOVE_BY_ID[id]);
+		if (!pick.length) { this.say("No verses to rank up yet."); return 0; }
+		let spent = 0;
+		// One point at a time onto whichever verse is furthest behind: that is what keeps it even.
+		while ((save.skillPoints ?? 0) > 0) {
+			let low = null, lowRank = Infinity;
+			for (const id of pick) {
+				const rank = save.abilityRanks[id] ?? 0;
+				if (rank >= RANK_MAX) continue;
+				if (rank < lowRank) { lowRank = rank; low = id; }
+			}
+			if (!low) break;                                  // everything is capped
+			const first = !save.abilityRanks[low];
+			if (!spendAbilityPoint(save, low)) break;
+			if (first && save.loadout.length < MAX_EQUIPPED) save.loadout.push(low);
+			spent++;
+		}
+		this.syncArsenal(save);
+		if (!spent) {
+			this.say((save.skillPoints ?? 0) > 0 ? `Every verse is at the top rank (${RANK_MAX}).` : "No skill points to spend.");
+			return 0;
+		}
+		this.say(`Spent ${spent} point${spent === 1 ? "" : "s"} evenly across ${pick.length} verse${pick.length === 1 ? "" : "s"}.`);
+		this.persist();
+		this.syncHud(true);
+		return spent;
+	}
 	spendAbility(id) {
 		if (!this.save || this.dead) return false;
 		this.syncArsenal(this.save);
@@ -6839,9 +6917,11 @@ export class TurbzGame {
 		const spirit = this.spiritFrom(mob, { shiny, boss: true });
 		spirit.max = Math.max(18, Math.floor(spirit.max / (mob.dungeonBoss ? 3 : 6.5)));
 		spirit.hp = spirit.max;
-		if (this.autoplay) {
-			if (spirit.shiny) this.announceShiny(spirit);
-			this.adoptSpirit(spirit, `${mob.name}'s ${spirit.shiny ? "shiny " : ""}ghost`);
+		// Autoplay keeps a shiny and lets everything else go. It used to take every ghost a boss
+		// left, which is how an unattended run came back with a Ghost Box full of ordinary ones.
+		if (this.autoplay && spirit.shiny) {
+			this.announceShiny(spirit);
+			this.adoptSpirit(spirit, `${mob.name}'s shiny ghost`);
 			return;
 		}
 		this.lingerGhost(mob, spirit);
@@ -6859,9 +6939,10 @@ export class TurbzGame {
 			spirit.max = Math.floor(spirit.max * (1 + over * 0.25));
 			spirit.hp = spirit.max;
 		}
-		// Autoplay keeps the old behaviour: the ghost joins on the spot.
-		if (this.autoplay) {
-			if (spirit.shiny) this.announceShiny(spirit);
+		// Autoplay takes a shiny on the spot and leaves the rest where they fall. Catching still
+		// trains, and an ordinary ghost lingers for you to decide on if you come back to the wheel.
+		if (this.autoplay && spirit.shiny) {
+			this.announceShiny(spirit);
 			if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
 			this.creditCatch(mob.type);
 			return;
@@ -6879,6 +6960,10 @@ export class TurbzGame {
 	/** The ghost of a fallen foe stands where it fell for 5 minutes, until you look at it and decide. */
 	/** Ghost QOL: does this caught ghost match the "auto-keep" setting? */
 	autoKeeps(spirit) {
+		// While autoplay has the wheel it keeps shinies and nothing else, whatever your own
+		// auto-keep is set to. Left alone on "Keep all" it would quietly fill the Ghost Box with
+		// three hundred ordinary ghosts; your setting is still yours when you are playing.
+		if (this.autoplay) return !!spirit.shiny;
 		const mode = this.save?.ghostAuto ?? "off";
 		if (mode === "off") return false;
 		if (mode === "all") return true;
