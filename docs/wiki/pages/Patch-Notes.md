@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Every element can drain, mend and cleanse; auto-level verses; autoplay stops hoarding ghosts
+
+- **Fire can leech now — and so can everything else.** Seven of the eleven elements had no way to drink life back at all, **ten of eleven had no cleanse**, and Electric could not mend. The Wellspring batch closes those holes: a drain, a cleanse and a mend for every element that lacked one, each written for its own element rather than recoloured from one template — the drains differ in reach and form, the cleanses differ in what they cost you.
+- **Nobody is stuck standing still.** Every element now has at least one way to close a gap or break off: Earth gets a scree slide, Electric an arc step and an earthing roll, Ice a glacier step, Light a way to duck out of its own glare, Spirit a step, Normal a plain sidestep, and the ghouls get a lurch and the good sense to play dead.
+- **Control effects stay signature.** Root is still Earth's, Sleep still Ice's, Gloom still belongs to the Void and the dead. Handing every control to every element would flatten them into each other, so it is deliberately not done — and there is now a test that fails if it ever starts happening.
+- **Verses: an Auto-level button.** Spends every skill point you have across your verses, always topping up whichever is furthest behind so the set levels out instead of one running away with it. On the Loadout tab it spends across your bar; on the Library tab, across every verse you know. Verses at the top rank are passed over.
+- **Autoplay stops filling your Ghost Box.** It kept *every* ghost it caught — a long unattended run came back with three hundred ordinary ones. It keeps shinies only now, whatever your own auto-keep is set to; your setting is still yours when you are playing. Ordinary ghosts linger where they fall for you to decide on.
+
 ## Autoplay mines, quests and delves; quieter glued sound effects; travellers on the TURBZ wild
 
 - **Autoplay goes into dungeons now.** It used to walk to the *furthest* shrine or dungeon marker on the map, award itself a flat 12 Adventuring and stand there — it never went in. It now finds the nearest rift that is still uncleared, walks to the door, steps through, clears what is inside and comes back out.

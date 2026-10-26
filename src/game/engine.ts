@@ -5896,6 +5896,48 @@ export class TurbzGame {
 		const set = new Set(save.loadout ?? []);
 		return Object.keys(save.abilityRanks ?? {}).filter(id => MOVE_BY_ID[id] && (save.loadout ? set.has(id) : true)).sort((a, b) => (save.loadout ? save.loadout.indexOf(a) - save.loadout.indexOf(b) : 0)).map(id => MOVE_BY_ID[id]);
 	}
+	/**
+	 * Spend every skill point you have across your verses, evenly.
+	 *
+	 * Always tops up the lowest-ranked verse first, so the points level the set out rather than
+	 * pouring into whichever one happens to be listed first. Verses already at the top rank are
+	 * passed over, and if every one of them is capped the points are left for you to spend
+	 * elsewhere rather than silently thrown away.
+	 *
+	 * `only` narrows it to a set of ids (the Loadout tab passes the bar), otherwise it is every
+	 * verse you know.
+	 */
+	autoLevelVerses(only) {
+		const save = this.save;
+		if (!save || this.dead) return 0;
+		this.syncArsenal(save);
+		const pick = only && only.length ? only.filter((id) => MOVE_BY_ID[id]) : Object.keys(save.abilityRanks ?? {}).filter((id) => MOVE_BY_ID[id]);
+		if (!pick.length) { this.say("No verses to rank up yet."); return 0; }
+		let spent = 0;
+		// One point at a time onto whichever verse is furthest behind: that is what keeps it even.
+		while ((save.skillPoints ?? 0) > 0) {
+			let low = null, lowRank = Infinity;
+			for (const id of pick) {
+				const rank = save.abilityRanks[id] ?? 0;
+				if (rank >= RANK_MAX) continue;
+				if (rank < lowRank) { lowRank = rank; low = id; }
+			}
+			if (!low) break;                                  // everything is capped
+			const first = !save.abilityRanks[low];
+			if (!spendAbilityPoint(save, low)) break;
+			if (first && save.loadout.length < MAX_EQUIPPED) save.loadout.push(low);
+			spent++;
+		}
+		this.syncArsenal(save);
+		if (!spent) {
+			this.say((save.skillPoints ?? 0) > 0 ? `Every verse is at the top rank (${RANK_MAX}).` : "No skill points to spend.");
+			return 0;
+		}
+		this.say(`Spent ${spent} point${spent === 1 ? "" : "s"} evenly across ${pick.length} verse${pick.length === 1 ? "" : "s"}.`);
+		this.persist();
+		this.syncHud(true);
+		return spent;
+	}
 	spendAbility(id) {
 		if (!this.save || this.dead) return false;
 		this.syncArsenal(this.save);
@@ -6875,9 +6917,11 @@ export class TurbzGame {
 		const spirit = this.spiritFrom(mob, { shiny, boss: true });
 		spirit.max = Math.max(18, Math.floor(spirit.max / (mob.dungeonBoss ? 3 : 6.5)));
 		spirit.hp = spirit.max;
-		if (this.autoplay) {
-			if (spirit.shiny) this.announceShiny(spirit);
-			this.adoptSpirit(spirit, `${mob.name}'s ${spirit.shiny ? "shiny " : ""}ghost`);
+		// Autoplay keeps a shiny and lets everything else go. It used to take every ghost a boss
+		// left, which is how an unattended run came back with a Ghost Box full of ordinary ones.
+		if (this.autoplay && spirit.shiny) {
+			this.announceShiny(spirit);
+			this.adoptSpirit(spirit, `${mob.name}'s shiny ghost`);
 			return;
 		}
 		this.lingerGhost(mob, spirit);
@@ -6895,9 +6939,10 @@ export class TurbzGame {
 			spirit.max = Math.floor(spirit.max * (1 + over * 0.25));
 			spirit.hp = spirit.max;
 		}
-		// Autoplay keeps the old behaviour: the ghost joins on the spot.
-		if (this.autoplay) {
-			if (spirit.shiny) this.announceShiny(spirit);
+		// Autoplay takes a shiny on the spot and leaves the rest where they fall. Catching still
+		// trains, and an ordinary ghost lingers for you to decide on if you come back to the wheel.
+		if (this.autoplay && spirit.shiny) {
+			this.announceShiny(spirit);
 			if (!this.adoptSpirit(spirit, `${mob.name} almost stayed`)) return;
 			this.creditCatch(mob.type);
 			return;
@@ -6915,6 +6960,10 @@ export class TurbzGame {
 	/** The ghost of a fallen foe stands where it fell for 5 minutes, until you look at it and decide. */
 	/** Ghost QOL: does this caught ghost match the "auto-keep" setting? */
 	autoKeeps(spirit) {
+		// While autoplay has the wheel it keeps shinies and nothing else, whatever your own
+		// auto-keep is set to. Left alone on "Keep all" it would quietly fill the Ghost Box with
+		// three hundred ordinary ghosts; your setting is still yours when you are playing.
+		if (this.autoplay) return !!spirit.shiny;
 		const mode = this.save?.ghostAuto ?? "off";
 		if (mode === "off") return false;
 		if (mode === "all") return true;

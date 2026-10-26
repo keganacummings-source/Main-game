@@ -210,6 +210,27 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
   return (
     <div className="ui-stack">
       <Tabs value={tab} onChange={setTab} tabs={[{ id: "loadout", label: `Loadout · ${s.bar.length}/${MAX_BAR}` }, { id: "library", label: `Library · ${s.skillPoints} pts` }]} />
+      {/* Spends the lot without making you click one verse at a time. Always tops up whichever
+          verse is furthest behind, so the set levels out rather than one running away with it. */}
+      <div className="ui-row-gap verse-autolevel">
+        <button
+          type="button"
+          className="px-btn px-btn-kyo ui-btn-sm"
+          data-testid="verse-autolevel-btn"
+          disabled={s.skillPoints < 1}
+          title={tab === "loadout"
+            ? "Spend every point evenly across the verses on your bar"
+            : "Spend every point evenly across every verse you know"}
+          onClick={() => game?.autoLevelVerses?.(tab === "loadout" ? s.bar.map((m) => m.id) : null)}
+        >
+          Auto-level · {s.skillPoints} pt{s.skillPoints === 1 ? "" : "s"}
+        </button>
+        <span className="text-dim" style={{ fontSize: 15 }}>
+          {s.skillPoints < 1
+            ? "No points to spend."
+            : tab === "loadout" ? "Evenly across your bar." : "Evenly across every verse you know."}
+        </span>
+      </div>
       {tab === "loadout" && (
         <>
           <Section title={moving !== null ? "MOVE · TAP THE SLOT (KEY) TO PUT IT ON" : "EQUIPPED · TAP A VERSE FOR OPTIONS · DRAG TO REORDER"}>

@@ -1097,6 +1097,7 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 .hud-tracker-head { display: flex; justify-content: space-between; align-items: center; width: 100%; background: none; border: 0; color: var(--color-bone); font: inherit; padding: 2px 0; cursor: pointer; }
 .hud-tracker-body { display: grid; gap: 4px; font-size: 18px; line-height: 1.12; margin-top: 4px; }
 .hud-surv { display: grid; gap: 3px; }
+.verse-autolevel { align-items: center; margin: 2px 0 4px; flex-wrap: wrap; }
 
 /* ── Autoplay panel ──────────────────────────────────────────────────────────────────────────
    Sits under the tracking panel, same frame and fold behaviour, so the two read as one column

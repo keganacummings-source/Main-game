@@ -100,6 +100,29 @@ The verse's card in the Loadout shows the exact area numbers. Ghosts that know t
 
 <!-- gen:verse-batch -->
 
+## Coverage: what every element can do
+
+However you build, your element can look after itself. Every one of the eleven has at least one
+verse that **drains** (takes life back off what it hits), one that **mends**, one that **wards**,
+one that **cleanses** an affliction off you, and at least one way to **close a gap or break off**.
+
+That was not always true. Fire had no drain at all, ten of the eleven elements had no cleanse, and
+Electric could not mend — the **Wellspring batch** fills those holes, one element at a time rather
+than from a template, so a Fire drain is close work and an Air drain reaches across the field.
+
+What is deliberately **not** spread evenly is control. **Root** is Earth's, **Sleep** is Ice's,
+**Gloom** belongs to the Void and the dead, **Burn** to Fire, **Soak** to Water, **Spark** to
+Electric. Giving every element every control would make them all the same, so those stay signature
+— it is the reason to pick one element over another.
+
+## Verse ranks and spending points
+
+Points go in one at a time from the Verses window (V), or use **Auto-level** to spend the lot at
+once. It always tops up whichever verse is furthest behind, so the set comes up evenly instead of
+one verse running away with every point. On the **Loadout** tab it spends across the verses on your
+bar; on **Library**, across every verse you know. Anything already at the top rank is skipped, and
+if everything is capped the points stay in your pocket.
+
 ## All verses
 
 <!-- gen:verses -->
