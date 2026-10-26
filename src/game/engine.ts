@@ -1220,6 +1220,7 @@ export class TurbzGame {
 		// exactly the thing you leave running while you do. This timer keeps it going. Background
 		// timers are throttled to roughly once a second, so each call catches up the real time that
 		// passed; `advance` is what bounds how much of it is simulated at once.
+		window.clearInterval(this.bgTimer);   // never leave a second one running
 		this.bgTimer = window.setInterval(() => {
 			if (!this.running || !document.hidden) return;
 			this.advance(performance.now(), false);
@@ -1277,7 +1278,30 @@ export class TurbzGame {
 			this.acc -= 1 / 60;
 		}
 		// Nothing to draw to when the tab is hidden, and drawing there is wasted work.
-		if (drawing && !hidden) this.draw();
+		if (hidden) this.dropUnseenFx();
+		else if (drawing) this.draw();
+	}
+	/**
+	 * Throw away the frame's cosmetic effects while the tab is in the background.
+	 *
+	 * Hits, sparks, floating numbers and screen shake are all there to be looked at. With nothing
+	 * on screen they were piling up instead — a background wake catches up a second or more of
+	 * combat in one go, and none of it was being drawn away — so coming back showed the whole
+	 * backlog landing at once, which read as the effects firing twice over.
+	 *
+	 * Only the cosmetic lists are swept. Damage, experience and everything else the world did
+	 * while you were away has already happened and stays.
+	 */
+	dropUnseenFx() {
+		if (this.parts) this.parts.length = 0;
+		if (this.floats) this.floats.length = 0;
+		this.shake = 0;
+		const cfx = this.cfx;
+		if (cfx) {
+			if (cfx.list) cfx.list.length = 0;
+			if (cfx.motes) cfx.motes.length = 0;
+			cfx.kick = 0;
+		}
 	}
 	setStick(x, y) {
 		this.stick.x = x;
@@ -1607,8 +1631,20 @@ export class TurbzGame {
 	 * colour that fit the moment. `type` picks the colour the old synth wave had (sine soft, triangle
 	 * mellow, square plain, sawtooth gritty). Falls back to the plain synth until the bank is ready.
 	 */
+	/**
+	 * Should sound effects be heard right now?
+	 *
+	 * No, when the tab is in the background. The world keeps turning there, so combat keeps
+	 * happening — and a background timer wakes about once a second and catches up a second or
+	 * more of it in one go. Every hit in that burst used to fire its cue at almost the same
+	 * moment, so you heard a pile of overlapping swings from a tab you were not even looking at.
+	 * Music is left alone: it is an <audio> element and playing on in the background is the point.
+	 */
+	audible() {
+		return !(typeof document !== "undefined" && document.hidden);
+	}
 	tone(freq, dur, type = "square") {
-		if (!this.audio) return;
+		if (!this.audio || !this.audible()) return;
 		if (!this.sfxLoading) this.loadSfx();
 		if (this.sfxBufs?.blip) return this.playSample(freq, dur, type);
 		this.synth(freq, dur, type);
@@ -1658,7 +1694,7 @@ export class TurbzGame {
 	 * gathering pulse when a channel ends early).
 	 */
 	cue(name, opts: { rate?: number; vol?: number; len?: number } = {}, fb?: [number, number, string?]) {
-		if (!this.audio) return () => {};
+		if (!this.audio || !this.audible()) return () => {};
 		const c = CUES[name];
 		const buf = c && this.sfxBufs?.[c.sound];
 		if (!c || !buf) { if (!this.sfxLoading) this.loadSfx(); if (fb) this.tone(fb[0], fb[1], fb[2] ?? "square"); return () => {}; }
