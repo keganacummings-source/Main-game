@@ -55,12 +55,13 @@ finishes what it started instead of walking away from a half-worked node.
 | Task | What it covers |
 | --- | --- |
 | **Fight** | Hunting foes, and everything trained by fighting: weapons, magic, evasion, looting, skinning and the element masteries |
-| **Dungeons** | Travelling to shrines and dungeon doors |
+| **Quests** | Follows the open quests: walks where the current step points, talks to whoever needs talking to, and hands in when one is ready |
+| **Dungeons** | Goes *into* rifts, clears what is inside, and comes back out |
 | **Seek spirits** | Catching ghosts and ghostkeeping |
-| **Mine ore / Chop wood / Forage / Fish** | The gathering nodes and shores |
+| **Mine ore / Chop wood / Forage / Fish** | The gathering nodes and shores. In TURBZ's New Texture Mode, Mine ore also breaks the rock itself, which is where ore actually comes from there |
 | **Craft** | Brewing and cooking |
 | **Trade** | Selling gathered materials |
-| **Talk** | Visiting townsfolk |
+| **Talk** | Visiting townsfolk, and the travellers crossing the TURBZ wild |
 
 Every skill in the game belongs to exactly one task. That matters: **Fight** used to leave several
 skills unaccounted for, so switching it off still left autoplay hunting in order to train them.

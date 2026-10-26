@@ -14,7 +14,7 @@
  */
 
 export type AutoTaskId =
-  | "combat" | "dungeon" | "spirits" | "mining" | "woodcutting"
+  | "combat" | "quest" | "dungeon" | "spirits" | "mining" | "woodcutting"
   | "shroom" | "fishing" | "crafting" | "trading" | "social";
 
 export type AutoTask = { id: AutoTaskId; label: string; about: string };
@@ -22,7 +22,8 @@ export type AutoTask = { id: AutoTaskId; label: string; about: string };
 /** Every task, in the order a fresh character prefers them. */
 export const AUTO_TASKS: readonly AutoTask[] = [
   { id: "combat", label: "Fight", about: "Hunt foes. Trains weapons, magic, evasion, looting and the element masteries." },
-  { id: "dungeon", label: "Dungeons", about: "Travel to shrines and dungeon doors." },
+  { id: "quest", label: "Quests", about: "Follow the open quests: go where they point, talk and hand in." },
+  { id: "dungeon", label: "Dungeons", about: "Go into rifts and dungeons, clear them, and come back out." },
   { id: "spirits", label: "Seek spirits", about: "Catch ghosts and keep the party." },
   { id: "mining", label: "Mine ore", about: "Work ore nodes." },
   { id: "woodcutting", label: "Chop wood", about: "Work trees." },
@@ -55,6 +56,12 @@ const SKILL_TASK: Record<string, AutoTaskId> = {
   trading: "trading",
   social: "social",
 };
+
+/**
+ * Tasks that are not trained through a skill at all, and so need their own entry in the planner.
+ * "quest" is one: following a quest is not a skill you level, it is a thing to go and do.
+ */
+export const TASKLESS_AIMS: Partial<Record<AutoTaskId, string[]>> = { quest: ["quest"] };
 
 /** The task that trains this skill. Unmapped skills are trained by fighting. */
 export function taskOfSkill(skillId: string): AutoTaskId {

@@ -1,5 +1,13 @@
 # Patch Notes
 
+## Autoplay mines, quests and delves; quieter glued sound effects; travellers on the TURBZ wild
+
+- **Autoplay goes into dungeons now.** It used to walk to the *furthest* shrine or dungeon marker on the map, award itself a flat 12 Adventuring and stand there — it never went in. It now finds the nearest rift that is still uncleared, walks to the door, steps through, clears what is inside and comes back out.
+- **Autoplay does quests.** A new **Quests** task follows the open ones: walks where the current step points, talks to whoever needs talking to, and hands in when a quest is ready. Steps satisfied by living (kill so many, gather so many) are left to the tasks that already feed them.
+- **Autoplay mines properly in TURBZ.** "Mine ore" only knew about ore nodes, so in New Texture Mode — where ore comes out of the rock you break — it did nothing. It now finds the nearest block worth breaking, gets in range and works it.
+- **Travellers cross the TURBZ wild.** TURBZ has no towns, which left **Social** the one skill with nothing in the mode that trained it. Up to three people are now out there on their own business — a pedlar, a map-maker, a pilgrim. Walk up, press **E**, and hear what they have to say; each has one thing worth hearing, so Social is trained by meeting people over a run rather than by standing next to one and mashing a key. Autoplay's **Talk** task seeks them out too.
+- **Sound effects sit together, and sit lower.** Effects and music shared one compressor, so every sword swing pumped the soundtrack and the soundtrack held the effects down in return. They are separate paths now: effects go through a glue compressor set for cohesion rather than loudness — soft knee, modest ratio, and an attack slow enough to keep the front of a hit — with **no makeup boost**, and the whole effects path then sits lower than it did. Music runs straight past it, untouched. A transparent ceiling before the speakers still catches peaks when a lot lands at once.
+
 ## Autoplay rebuilt, its own panel, faster auto-attacks, and the game keeps playing in the background
 
 - **Autoplay's switches actually work now.** Every skill in the game belongs to exactly one task. That sounds like bookkeeping, but it was the bug: only a handful of skills were mapped before, and everything unmapped — Magic, Evasion, Looting, Skinning, every element mastery — fell through to "walk at the nearest foe and hit it". So turning **Fight** off barely changed anything; autoplay just trained one of those instead and fought anyway. **Trade** and **Talk** had no switch at all. Both fixed.

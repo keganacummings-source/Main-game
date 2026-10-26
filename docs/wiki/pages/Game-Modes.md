@@ -27,6 +27,18 @@ TurboHunt and Hardcore keep **separate saves**. Your account-wide progress (skil
 - **Winning:** be the last witch standing. A typical match runs 30–40 minutes.
 - **Map:** always Veilreach. In the Map Builder, **Use for my next life** can queue a custom world for your next LMS run instead.
 
+## Travellers on the TURBZ wild
+
+TURBZ has no towns and no townsfolk, which left **Social** the one skill with nothing in the mode
+that trained it. So people cross the wild on their own business: a pedlar, a map-maker, a pilgrim.
+
+- Up to three are out at a time. They arrive on their own and move on after a while, and they only
+  slip away out of sight.
+- Walk up and press **E** to pass the time. Each has one thing worth hearing, and hearing it trains
+  Social — so the skill is trained by meeting new people over a run, not by standing next to one
+  and mashing a key.
+- Autoplay's **Talk** task seeks them out the same way you would.
+
 ## TURBZ nights
 
 Night on the TURBZ wild is a siege, not just a difficulty band. Alongside the usual night rules
