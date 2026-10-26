@@ -82,6 +82,11 @@ export const TESLA_POWER = 4;
 
 export const CAP_MAX = 500;
 export const BAT_MAX = 100;
+/**
+ * The largest multiplier any class applies to the grid (the Engineer's doubling, doubled again by
+ * her Overclock). Storage is sanitised against this, so a loaded save never loses Power it held.
+ */
+export const MAX_MACHINE_MULT = 4;
 
 export const PIPE_SECONDS = 0.75;
 /** Max ore/fuel a generator will accept from a pipe before it stops taking more. */
@@ -129,7 +134,9 @@ export function sanitizePowerExtra(raw: unknown): PowerExtra[] {
     }
     if (o.kind === "tesla") o.on = o.on !== false;
     if (o.kind === "logburner") o.fuel = Math.max(0, Math.min(LOGBURN_FUEL_MAX, Math.floor(Number(o.fuel) || 0)));
-    if (o.kind === "capacitor") o.power = Math.max(0, Math.min(CAP_MAX, Math.floor(Number(o.power) || 0)));
+    // The ceiling here is the most ANY class can store, not the base one: the Engineer's grid holds
+    // several times a capacitor's nominal 500, and clamping to 500 on load would quietly empty it.
+    if (o.kind === "capacitor") o.power = Math.max(0, Math.min(CAP_MAX * MAX_MACHINE_MULT, Math.floor(Number(o.power) || 0)));
     if (o.buf && typeof o.buf === "object") {
       const clean: Record<string, number> = {};
       let total = 0;

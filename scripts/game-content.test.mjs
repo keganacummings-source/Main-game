@@ -32,7 +32,10 @@ test("every sheet class is playable with a full moveset, traits and distinct spr
   const sprites = [];
   for (const c of content.CLASSES) {
     assert.ok(content.RACES.some((r) => r.id === content.CLASS_RACE[c.id]));
-    assert.ok(c.starterMoves.length >= 5, `${c.id}: needs a full moveset`);
+    // V4: every class starts with exactly four verses — a main hit, a second trick, a ward or a
+    // mend, and a way to move. It used to be five listed plus two appended automatically.
+    assert.equal(c.starterMoves.length, 4, `${c.id}: should start with exactly four verses`);
+    assert.equal(new Set(c.starterMoves).size, 4, `${c.id}: a starter verse is listed twice`);
     assert.ok(c.starterMoves.includes(c.signature));
     for (const id of c.starterMoves) assert.ok(content.MOVE_BY_ID[id], `${c.id}: missing ${id}`);
     assert.ok(c.starterMoves.some((id) => ["blink", "lunge", "roll", "dash", "surge"].includes(content.moveTactic(content.MOVE_BY_ID[id]))), `${c.id}: needs a movement verse`);

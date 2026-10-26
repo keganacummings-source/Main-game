@@ -83,7 +83,9 @@ export const AutoplayPanel = memo(function AutoplayPanel({ game }: GameProp) {
                   aria-pressed={t.on}
                   onClick={() => game?.setOrder?.(t.id)}
                 >
-                  <span aria-hidden="true" className="hud-auto-tick">{t.on ? "✓" : "✕"}</span>
+                  {/* On means a tick. Off means an empty box — nothing in it at all, so the switch
+                      reads as unchecked rather than as a second kind of mark. */}
+                  <span aria-hidden="true" className="hud-auto-tick">{t.on ? "✓" : ""}</span>
                   <span className="hud-auto-label">{t.label}</span>
                 </button>
                 <span className={`hud-auto-state ${t.on ? "text-dim" : "hud-auto-badge"}`}>

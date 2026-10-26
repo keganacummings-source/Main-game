@@ -1118,7 +1118,8 @@ button.verse-slot:hover { border-color: var(--color-blood); }
 .hud-auto-task-on { outline: 1px solid color-mix(in srgb, var(--color-kyo) 45%, transparent); outline-offset: 1px; }
 /* An off task must read as off at a glance: struck through, greyed, and badged. */
 .hud-auto-name { display: flex; align-items: center; gap: 5px; }
-.hud-auto-tick { font-size: 14px; opacity: 0.9; }
+/* The box keeps its width when empty so switching a task off does not shuffle the label sideways. */
+.hud-auto-tick { font-size: 14px; opacity: 0.9; display: inline-block; min-width: 0.9em; text-align: center; }
 .hud-auto-label { line-height: 1; }
 .hud-auto-name-off { opacity: 0.5; border-style: dashed; }
 .hud-auto-name-off .hud-auto-label { text-decoration: line-through; }

@@ -1,48 +1,155 @@
-TURBZ update — Auto-level fix, autoplay OFF state, weather + dual-element verses
-=================================================================================
-Unzip over your repo root, keeping folder paths. Replaces the previous zip.
+TURBZ — Class Update (V4 kits) + two autoplay UI fixes
+======================================================
 
-NEW FILES
-  src/game/weather.ts                battlefield conditions
-  scripts/verses.test.mjs            verse coverage contract
-  scripts/verse-levelling.test.mjs   Auto-level regression tests
-  (plus src/components/autoplay-panel.tsx and src/game/autoplay.ts if you have
-   not taken the earlier autoplay rebuild yet)
+Drop these over the repo root; every path below is already repo-relative.
 
-THE TWO BUGS YOU REPORTED
-  * Auto-level did nothing with 200 points. The loop was fine; the save shape
-    broke it. On a save with no `loadout` array, the first never-before-ranked
-    verse hit `save.loadout.length` and threw part way through — so the button
-    did nothing AND said nothing. It now repairs what it needs first, and when
-    it genuinely cannot spend it tells you which case it is (no points, no
-    verses, or everything at the top rank — and in that case the points are left
-    for you rather than eaten). The old code claimed "every verse is at the top
-    rank" whenever it bailed for any reason, which would have been a lie here.
-  * The autoplay OFF state was not readable. An off task was just an
-    un-highlighted button, which reads as "not selected" rather than "off".
-    Off tasks now show ✕ instead of ✓, are struck through and greyed, lose their
-    place number (they are not in the running order) and are badged OFF in red.
 
-NEW: WEATHER AND DUAL-ELEMENT VERSES
-  * Conditions a verse can call down: Summon Rain (soaks everything, feeds water,
-    smothers fire), Sandstorm (scours, spoils every aim), Void Blackout (glooms
-    and gnaws), Bewilder (foes swing at nothing), Heatwave, Call the Gale.
-    One holds at a time. Each feeds its own element and damps the opposite, and
-    most of them touch YOU as well — calling rain to feed your tide verses soaks
-    you too. Three more call a condition AND land in the same motion.
-  * Dual-element verses: a verse can follow through with a second element as a
-    lighter second hit, read against the foe's resistances on its own. So fire
-    into ice genuinely beats something that only shrugs off one of them.
-  * 23 of the duplicate verses now carry a second element, each different from
-    its neighbours, so they are no longer interchangeable.
+WHAT YOU ASKED FOR
+------------------
 
-STILL TO DO
-  ~61 more duplicates live in class-kits.ts behind a builder function rather than
-  as plain literals, so they need a different edit. Next pass.
+1. REMIXED CLASS KITS — four starting verses, not seven.
 
-BEFORE YOU TRUST IT
-  `npm run build` has never run here and none of it has been seen or heard.
-  142 tests pass, typecheck clean. Please check:
-    1. Auto-level now spends your 200 points (and says what it did)
-    2. off tasks in the autoplay panel are obvious at a glance
-    3. Summon Rain actually turns the field and the HUD/log says so
+   Every class now starts with exactly four: a main hit, a second trick, a ward
+   or a mend, and a way to move. That was always the shape the kits were
+   designed around (it is written at the top of class-kits.ts); five were listed
+   and two more were appended automatically from the bonus "sx_" verses, which
+   is how a starting loadout nobody chose ended up nearly filling the nine equip
+   slots. That auto-append is gone.
+
+   The bonus verses were NOT deleted. They are still in the game and still
+   learnable at a shrine of their element — they are just no longer handed over
+   on the first morning.
+
+   Old saves: the kit version went 3 -> 4, so an existing hunter is handed any
+   of her new four she is missing on next load. Nothing is ever taken away, so a
+   loadout built up over a life survives the change.
+
+2. 50/50 MELEE AND RANGED — 20 and 20.
+
+   It was 12 melee / 24 "mixed" / 4 ranged. "Mixed" is gone from the fixed
+   roster. Seven classes moved to close quarters because that is what they
+   always sounded like and never played like:
+
+     Nightlord    a Bruiser that only ever cast
+     Outrider     a skirmisher with four melee verses already in its pool
+     Vigilant     the night watch, now swinging the lantern it carries
+     Hexbinder    pacts cut into them rather than drawn in the air
+     Sovereign    the scepter turns out not to be ceremonial
+     Seraph       it already had the wings, the dive and the blink
+     Moonhopper   five of its seven verses were melee to begin with
+
+   Those five that had no close-range verses got new ones written for them (17
+   new kit verses in total, including the Engineer's). Their signature verse
+   moved with them, so each still leads with its own move.
+
+   The Crying Girl is deliberately excluded from the split — her fight style is
+   whatever you build.
+
+   This is enforced now: a melee class's attacking starters must land within
+   melee reach, a ranged class's must not. See scripts/class-update.test.mjs.
+
+3. STATS AND GRINDS.
+
+   Every class now has TWO aptitudes — its main accelerated grind plus a second
+   one it is also good at (Bulwark: Mining and Building; Corsair: Fishing and
+   Trading; Arcanist: Magic and Mana). The "Grinds X" line on the character
+   screen names both.
+
+   Stat lines were revamped only for the seven classes that changed hands — a
+   melee class with "-25 Might" on it was a bug, not a trade-off. Each one was
+   rebalanced at EXACTLY its old stat budget, so nothing got stronger:
+
+     stormrider 25 -> 25   vigilant 32 -> 32   hexbinder 9 -> 9
+     nightlord  12 -> 12   seraph   27 -> 26   moonhopper 20 -> 20
+     sovereign  47 -> 47
+
+   Nothing else about any class moved. The field-level diff is: aptitudes,
+   fightStyle, signature, specialty, starterMoves, stats — and nothing else.
+
+4. THE ENGINEER.
+
+   New class, 41st on the roster. Electric, Bruiser, melee, immune to Spark.
+   Focus: Powered Machines. Grinds Building and Mining.
+
+   Every machine she wires runs DOUBLED:
+     - batteries and capacitors hold twice as much
+     - HellStone generators, log burners and solar panels give twice as much
+     - duplicators turn out two copies per cycle instead of one
+     - the XP Producer pays double
+     - Tesla coils bite twice as hard
+
+   And the work those machines do feeds her directly: every few finished cycles
+   — a copy made, a block laid, a lump of Power generated — hands her a little
+   experience, so a well-laid camp levels her while she is standing in it.
+   Nobody else gains anything from this.
+
+   Her R is OVERCLOCK: for 10s the whole grid runs doubled AGAIN on top of her
+   own doubling (so x4), and the air around her arcs into anything close.
+
+   Her kit: Wrench Swing, Piston Punch, Coolant Ward, Jet Boot.
+   Her perks: Surge Tap, Grounded Boots.
+   Her sprite is painted into the last free block on the warrior sheet by
+   scripts/sprites/engineer-class.py (idempotent — rerun it any time).
+
+   One thing worth knowing: stored Power is now sanitised against the largest
+   multiplier any class can apply, not the base one. Without that, loading an
+   Engineer's save would have quietly emptied her capacitors down to 500.
+
+5. AUTOPLAY UI — the two things you flagged.
+
+   - The tick no longer turns into a cross when a task is switched off. The box
+     is simply empty, so the switch reads as unchecked. The box keeps its width
+     so the label does not shuffle sideways.
+   - (The "clear push when something is disabled" and the Auto-level fix from
+     the last drop are included here too, since those files are in this zip.)
+
+
+FILES
+-----
+
+  src/game/classes.ts               the roster: styles, aptitudes, specialties,
+                                    the seven rebalanced stat lines, the
+                                    Engineer, her perks, the Overclock gimmick
+  src/game/class-kits.ts            17 new verses, all 41 kits cut to four,
+                                    the auto-append loop removed
+  src/game/engine.ts                machineMult() / batCapFor() / machineWorkXp()
+                                    and every machine that reads them;
+                                    kit version 3 -> 4
+  src/game/class-gimmicks.ts        Overclock: the arc, the ring, autoplay-safe
+  src/game/power-extra.ts           MAX_MACHINE_MULT, so stored Power survives
+                                    a reload at the Engineer's capacity
+  src/game/actor-sheets.config.ts   the Engineer's sprite block
+  public/sprites/class_warriors.png the Engineer painted into it
+  scripts/sprites/engineer-class.py the script that paints her (new)
+  src/components/autoplay-panel.tsx the tick fix
+  src/styles.css                    the tick box keeps its width
+  scripts/class-update.test.mjs     7 new tests pinning the whole contract (new)
+  scripts/game-content.test.mjs     the moveset assertion is now "exactly 4"
+  package.json                      runs the new test file
+
+
+BEFORE YOU PLAY IT
+------------------
+
+I still cannot run npm here (the registry is blocked in this environment), so
+no build has been run against these files. Please run:
+
+    npm install && npm test && npm run typecheck && npm run build
+
+What I COULD verify here:
+
+  typecheck    2 errors, same 2 as baseline (both are "cannot find type
+               definition file" for node / vite/client, caused only by
+               node_modules being absent). No new type errors.
+  tests        149 pass / 5 fail. The 5 are the same pre-existing failures as
+               before this change: survival-night, three in tex-world, and a
+               teardown warning in game-content (all 5 of its subtests pass).
+               tile-builder has 1 pre-existing failure about power-pack.json
+               that nothing here touches.
+  new tests    7/7 pass.
+  map audit    0 problems.
+  wiki check   OK, 31 pages.
+
+Worth play-testing specifically: the seven classes that moved to melee (do they
+feel right at close range?), and an Engineer camp with a generator, a battery
+and a duplicator wired up.

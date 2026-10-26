@@ -203,6 +203,15 @@ const SET_FX_CHAN: Record<string, Record<string, number>> = {
 /** Helpful effects a Cleanse keeps. */
 const GOOD_STATUS = new Set(["swift", "shell"]);
 const MAX_EQUIPPED = 9;
+/**
+ * The Engineer's grip on the Power grid. Batteries hold this many times as much, generators give
+ * this much more, duplicators turn out this many copies a cycle and the XP Producer pays this much
+ * over. Overclock (her R) doubles it again while it holds.
+ */
+const ENGINEER_MACHINE_MULT = 2;
+/** Machine work cycles per XP payout to the Engineer, and what each payout is worth in kills. */
+const MACHINE_XP_EVERY = 4;
+const MACHINE_XP_SHARE = 0.5;
 /** Burning lasts this long and takes this share of max health each second. */
 const BURN_SECONDS = 15;
 const BURN_PCT_PER_SECOND = 0.05;
@@ -1839,7 +1848,7 @@ export class TurbzGame {
 			classId,
 			traitId: traitId && TRAIT_BY_ID[traitId] ? traitId : null,
 			female: female !== false,
-			classMovesV: 3,
+			classMovesV: 4,
 			seed,
 			x: home.x,
 			y: home.y,
@@ -3201,13 +3210,41 @@ export class TurbzGame {
 		for (const n of world.spawns) if (n.kind === "node" && Math.hypot(n.x - cx, n.y - cy) < 26) return false;
 		return true;
 	}
+	/**
+	 * How hard every powered machine runs for the hunter standing in this camp.
+	 *
+	 * One for everybody, two for the Engineer, four while her Overclock holds. Everything on the
+	 * grid reads this: battery and capacitor capacity, what generators give, how many copies a
+	 * Duplicator turns out, what the XP Producer pays and how hard a Tesla Coil bites.
+	 */
+	machineMult() {
+		if (this.save?.classId !== "engineer") return 1;
+		return this.gim?.active("overclock") ? ENGINEER_MACHINE_MULT * 2 : ENGINEER_MACHINE_MULT;
+	}
+	/** A battery's capacity for whoever owns it. */
+	batCapFor(b) {
+		return batteryCap(b) * this.machineMult();
+	}
+	/**
+	 * The Engineer learns from the work her machines do. Every few finished cycles — a copy made, a
+	 * block laid, a lump of Power generated — hands her a little experience, so a well-laid camp
+	 * levels her while she is standing in it. Nobody else gains anything from this.
+	 */
+	machineWorkXp(cycles = 1) {
+		const save = this.save;
+		if (!save || save.classId !== "engineer") return;
+		this.machXp = (this.machXp ?? 0) + cycles;
+		if (this.machXp < MACHINE_XP_EVERY) return;
+		this.machXp -= MACHINE_XP_EVERY;
+		this.gainXp(Math.max(1, Math.floor(killXpAmount(save.level) * MACHINE_XP_SHARE)));
+	}
 	/** Add Power to the Batteries and Capacitors on a block's wire network. Returns how much was stored. */
 	addNetworkPower(node, amount) {
 		const bats = this.powerNetwork(node).filter((w) => w.kind === "bat").map((w) => w.n);
 		let left = amount;
 		for (const b of bats) {
 			if (left <= 0) break;
-			const room = Math.max(0, batteryCap(b) - (b.power ?? 0));
+			const room = Math.max(0, this.batCapFor(b) - (b.power ?? 0));
 			const add = Math.min(room, left);
 			b.power = (b.power ?? 0) + add;
 			left -= add;
@@ -3233,6 +3270,7 @@ export class TurbzGame {
 		world.solids = world.solids ?? new Set();
 		world.solids.add(ty * world.w + tx);
 		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: kind === "stone" ? 0.8 : 1 }, [kind === "stone" ? 150 : 190, .04, "square"]);
+		this.machineWorkXp();
 		this.powerDirty = true;
 		return true;
 	}
@@ -3259,6 +3297,7 @@ export class TurbzGame {
 		e.buf[id] = (e.buf[id] ?? 0) + 1;
 		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: 0.5 }, [100, .04, "square"]);
 		this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a");
+		this.machineWorkXp();
 		this.powerDirty = true;
 		return true;
 	}
@@ -3276,14 +3315,16 @@ export class TurbzGame {
 				if (e.t < LOGBURN_SECONDS) continue;
 				e.t -= LOGBURN_SECONDS;
 				e.fuel -= 1;
-				const stored = this.addNetworkPower(e, LOGBURN_POWER);
+				const stored = this.addNetworkPower(e, LOGBURN_POWER * this.machineMult());
+				this.machineWorkXp();
 				this.float(cx, e.ty * 32 - 8, stored > 0 ? `+${stored} Power` : "Power fades", stored > 0 ? "#ffb870" : "#9aa0a6");
 			} else if (e.kind === "solar") {
 				if (this.isNightNow()) { e.t = 0; continue; }
 				e.t = (e.t ?? 0) + dt;
 				if (e.t < SOLAR_SECONDS) continue;
 				e.t -= SOLAR_SECONDS;
-				const stored = this.addNetworkPower(e, SOLAR_POWER);
+				const stored = this.addNetworkPower(e, SOLAR_POWER * this.machineMult());
+				this.machineWorkXp();
 				if (stored > 0) this.float(cx, e.ty * 32 - 8, `+${stored} Power`, "#ffe27a");
 			} else if (e.kind === "blockgen") {
 				if (e.on === false) continue;
@@ -3309,7 +3350,8 @@ export class TurbzGame {
 				}
 				if (!best || !this.spendNetworkPower(e, TESLA_POWER)) { e.t = TESLA_SECONDS - 0.3; continue; }
 				e.t = 0;
-				this.damageMob(best, Math.round(12 + (save.level ?? 1) * 5), false);
+				this.damageMob(best, Math.round((12 + (save.level ?? 1) * 5) * this.machineMult()), false);
+				this.machineWorkXp();
 				(this.teslaZaps = this.teslaZaps ?? new Map()).set(`${e.tx},${e.ty}`, { x: best.x, y: best.y, at: this.clock });
 				this.float(best.x, best.y - 26, "ZAP", "#9fe8ff");
 				this.cue("click", { rate: 1.6 }, [900, .05, "sawtooth"]);
@@ -3571,7 +3613,8 @@ export class TurbzGame {
 			if (g.t < 5) continue;
 			g.t -= 5;
 			g.ore = Math.max(0, g.ore - 1);
-			const stored = this.addNetworkPower(g, 10);
+			const stored = this.addNetworkPower(g, 10 * this.machineMult());
+			this.machineWorkXp();
 			if (stored > 0) this.float(g.tx * 32 + 16, g.ty * 32 - 8, `+${stored} Power`, "#8fd0ff");
 			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
 		}
@@ -3609,9 +3652,12 @@ export class TurbzGame {
 			if (d.t < DUP_SECONDS) continue;
 			d.t -= DUP_SECONDS;
 			if (!this.spendNetworkPower(d, DUP_POWER_COST)) continue;
-			d.stored = (d.stored ?? 0) + 1;
+			// The Engineer's duplicators turn out a copy per multiplier, not one, and never past the cap.
+			const copies = Math.max(1, Math.min(this.machineMult(), DUP_STORE_MAX - (d.stored ?? 0)));
+			d.stored = (d.stored ?? 0) + copies;
+			this.machineWorkXp();
 			const name = ITEM_BY_ID[d.item]?.name ?? d.item;
-			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+1 ${name}`, "#7dffb3");
+			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+${copies} ${name}`, "#7dffb3");
 		}
 	}
 	// ---------- Ghost Merger ----------
@@ -3957,7 +4003,7 @@ export class TurbzGame {
 			dir: ex?.dir ?? 2,
 			dirName: DIR_NAME[ex?.dir ?? 2],
 			on: ex ? ex.on !== false : true,
-			cap: open.kind === "capacitor" ? CAP_MAX : BAT_MAX,
+			cap: (open.kind === "capacitor" ? CAP_MAX : BAT_MAX) * this.machineMult(),
 			fuel: ex?.kind === "logburner" ? (ex.fuel ?? 0) : 0,
 			fuelNext: ex?.kind === "logburner" && (ex.fuel ?? 0) > 0 ? Math.max(0, LOGBURN_SECONDS - (ex.t ?? 0)) : -1,
 			mat: ex?.mat === "stone" ? "stone" : "wood",
@@ -4130,7 +4176,7 @@ export class TurbzGame {
 			need -= take;
 		}
 		const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
-		const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
+		const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult * this.machineMult()));
 		this.gainXp(gain);
 		this.float(save.x, save.y - 60 * WITCH_SIZE, `+${gain} xp`, "#c8beff");
 		this.say(`XP Producer spent 200 Power. +${gain} XP (about 50 kills at your level).`);
@@ -8816,7 +8862,7 @@ export class TurbzGame {
 			}
 		}
 		save.female = female !== false;
-		save.classMovesV = 3;
+		save.classMovesV = 4;
 		for (const id of CLASS_BY_ID[classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks?.[id]) {
 			save.abilityRanks = save.abilityRanks ?? {};
 			save.abilityRanks[id] = 1;
@@ -12256,9 +12302,11 @@ export class TurbzGame {
 		normalizeAbilities(save);
 		if (save.traitId && !TRAIT_BY_ID[save.traitId]) save.traitId = null;
 		if (save.female === undefined) save.female = true;
-		if (save.classMovesV !== 3) {
+		// V4 remixed every kit down to four verses. Hand an existing hunter the ones she is missing;
+		// nothing is ever taken away, so a loadout built up over a life survives the change.
+		if (save.classMovesV !== 4) {
 			for (const id of CLASS_BY_ID[save.classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks[id]) save.abilityRanks[id] = 1;
-			save.classMovesV = 3;
+			save.classMovesV = 4;
 		}
 		save.dungeons = normalizeDungeonState(save.dungeons);
 		if (this.rules === "hardcore") save.dayNight = normalizeDayNight(save.dayNight);

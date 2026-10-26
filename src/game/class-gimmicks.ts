@@ -14,7 +14,7 @@ export type GimmickView = {
 };
 
 const FORM_KINDS = new Set(["cat", "rabbit", "bossform", "phase", "flight"]);
-const AUTO_OK = new Set(["bastion", "overload", "spiritlead", "volley", "flurry", "bossform", "tether", "trail", "pyre", "pool", "cyclone", "beam", "halo", "totem", "rain", "banner", "bloodmoon", "tempo", "oath", "blades", "decree", "tearstorm", "leap", "iaido", "loop", "surge", "throne", "crown", "shatter", "luminary", "hunger", "font", "cataclysm", "resonance"]);
+const AUTO_OK = new Set(["bastion", "overload", "spiritlead", "volley", "flurry", "bossform", "tether", "trail", "pyre", "pool", "cyclone", "beam", "halo", "totem", "rain", "banner", "bloodmoon", "tempo", "oath", "blades", "decree", "tearstorm", "leap", "iaido", "loop", "surge", "throne", "crown", "shatter", "luminary", "hunger", "font", "cataclysm", "resonance", "overclock"]);
 const CURSES = ["gloom", "burn", "soak", "expose", "spark", "leech", "root"];
 
 let catImg: HTMLImageElement | null = null;
@@ -347,6 +347,9 @@ export class Gimmicks {
       if (heal && hit.length) save.hp = Math.min(this.g.maxHp(), save.hp + this.g.maxHp() * heal * hit.length);
     };
     if (id === "pyre") aura(84, 20, "fire", "burn", 0.5);
+    // Overclock: the grid runs hot and so does the air around her. The machine side of this lives
+    // in the engine (machineMult reads this gimmick); here it is just the arc that comes off her.
+    if (id === "overclock") aura(96, 22, "electric", "spark", 0.45);
     if (id === "tearstorm") aura(110, 16, "water", "soak", 0.6, 0.01);
     if (id === "bloodmoon") aura(70, 12, "ghoul", "leech", 0.7);
     if (id === "cyclone") aura(42, 16, "air", "none", 0.25);
@@ -830,6 +833,7 @@ export class Gimmicks {
     if (id === "banner") { this.ring(ctx, this.data.at.x, this.data.at.y, 130, "rgba(220,60,50,.55)"); ctx.fillStyle = "#3a2a1a"; ctx.fillRect(this.data.at.x - 1, this.data.at.y - 40, 2, 40); ctx.fillStyle = "#c4302a"; ctx.fillRect(this.data.at.x + 1, this.data.at.y - 40, 14, 9); }
     if (id === "rain") this.ring(ctx, this.data.at.x, this.data.at.y, 84, "rgba(230,193,90,.6)");
     if (id === "pyre") this.ring(ctx, me.x, me.y, 84 * pulse, "rgba(255,120,40,.6)");
+    if (id === "overclock") this.ring(ctx, me.x, me.y, 96 * pulse, "rgba(120,230,255,.6)");
     if (id === "tearstorm") this.ring(ctx, me.x, me.y, 110 * pulse, "rgba(120,190,255,.55)");
     if (id === "bloodmoon") this.ring(ctx, me.x, me.y, 70 * pulse, "rgba(170,20,40,.6)");
     if (id === "tempo") this.ring(ctx, me.x, me.y, 220, "rgba(180,220,255,.35)");
