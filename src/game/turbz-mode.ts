@@ -7,6 +7,7 @@ import {
   CLASSES,
   CLASS_BY_ID,
   CLASS_RACE,
+  MONSTERS,
   MOVE_BY_ID,
   MOVES,
   SKILLS,
@@ -172,6 +173,29 @@ const TURBZ2_FIGHTERS = 60;        // battlefield witches kept alive across the 
 const TURBZ2_FILL_EVERY = 6;       // seconds between population top-ups
 /** Witches level-checked per frame. The rotating cursor covers the whole pool over several frames. */
 const TURBZ2_LEVEL_SLICE = 6;
+
+/**
+ * The night siege.
+ *
+ * TURBZ nights used to only make the foes already on the map hit harder. Now the dark brings its
+ * own: hostile foes rise out of the wild in a ring around you and come straight for you, in waves,
+ * for as long as the night lasts. Dawn stops the waves — see `tickNightSiege` for what happens to
+ * the ones still standing.
+ *
+ * The cap is the important number. The world already holds witches and camp foes, so the siege is
+ * deliberately a small, constant pressure rather than a horde: a dozen foes that all actually reach
+ * you is far more dangerous, and far cheaper to run, than fifty wandering about.
+ */
+const SIEGE_CAP = 12;            // most siege foes alive at once
+const SIEGE_EVERY = 3.4;         // seconds between waves
+const SIEGE_PER_WAVE = 2;        // foes per wave (before the per-night ramp)
+const SIEGE_RING_MIN = 340;      // closest a foe rises, in pixels: outside arm's reach
+const SIEGE_RING_MAX = 620;      // furthest: close enough to find you, far enough to see coming
+/** Each night survived adds this to the cap and to the wave size, so later nights press harder. */
+const SIEGE_NIGHT_RAMP = 2;
+const SIEGE_CAP_MAX = 22;
+/** Easy mode still gets a night siege, just a gentler one. */
+const SIEGE_EASY = { cap: 5, every: 5.5, perWave: 1, ramp: 1, capMax: 9 };
 /** Seconds a battlefield witch keeps the rival she picked before looking for a nearer one. */
 const TURBZ2_TARGET_HOLD = 1.5;
 // Nations re-assign jobs on the fly so they never get stuck as all-harvesters or all-defenders:
@@ -1396,6 +1420,8 @@ export function installTurbz(game: any): void {
     if (!this.turbz || !this.save) return;
     const save = this.save;
     if (this.turbz2) { this.nationCityReveal(); if (TURBZ2_FREE_FOR_ALL) this.battlefieldMaintain(dt); else this.nationCommand(dt); }
+    // Night sends foes after you on the TURBZ wild.
+    this.tickNightSiege(dt);
     // Your velocity, smoothed over about a third of a second. Witches lead their shots with it.
     if (dt > 0) {
       const last = this.turbzPVLast;
@@ -1442,6 +1468,136 @@ export function installTurbz(game: any): void {
       save.turbzHuntMark = huntMark;
       if (!EASY) this.spawnTurbzHunterWitch(); // easy mode: no secret hunter witches
     }
+  };
+
+  /** The siege's limits right now: harder every night you live through, gentler in easy mode. */
+  game.siegeTuning = function () {
+    const nights = Math.max(0, Math.floor(this.save?.dayNight?.nights ?? 0));
+    const t = EASY ? SIEGE_EASY : { cap: SIEGE_CAP, every: SIEGE_EVERY, perWave: SIEGE_PER_WAVE, ramp: SIEGE_NIGHT_RAMP, capMax: SIEGE_CAP_MAX };
+    return {
+      cap: Math.min(t.capMax, t.cap + nights * t.ramp),
+      every: t.every,
+      // One extra foe a wave for every few nights survived.
+      perWave: t.perWave + Math.floor(nights / 3),
+    };
+  };
+
+  /**
+   * Night in TURBZ: the wild sends foes after you.
+   *
+   * While it is dark, waves rise in a ring around you and hunt you down; `siege` marks them so the
+   * engine lets them come from further off than an ordinary foe would, and so they are never put
+   * back to sleep or respawned.
+   *
+   * At dawn the waves stop and any siege foe you have not met melts away — but only the ones that
+   * are off-screen and not already fighting you. Anything standing in front of you stays, so a
+   * fight is never pulled out from under you at sunrise, and the population never piles up night
+   * after night.
+   */
+  game.tickNightSiege = function (dt: number) {
+    const save = this.save;
+    if (!this.turbz || !save) return;
+    const mobs = this.mobs;
+    if (!mobs) return;
+
+    const night = !!this.isNightNow?.();
+    const wasNight = !!this.siegeWasNight;
+    this.siegeWasNight = night;
+    // Nothing to do and nothing left over: a day with no siege foes costs one boolean a frame.
+    if (!night && !wasNight && !this.siegeAny) return;
+
+    // Dead siege foes are dropped here: nothing respawns them, and they are not camp spawns, so
+    // without this they would sit in the list forever. Only walked while a siege is in play.
+    let living = 0;
+    for (let i = mobs.length - 1; i >= 0; i--) {
+      const m = mobs[i];
+      if (!m?.siege) continue;
+      if (m.alive) living++;
+      else mobs.splice(i, 1);
+    }
+    this.siegeAny = living > 0;
+
+    // The siege belongs to the TURBZ overworld at night. Dungeons have their own foes, and the
+    // battlefield mode already fills the map with witches.
+    const onWild = save.map === TURBZ_MAP;
+    // step() already returns before this when a panel (pause, loot, death) has the world stopped.
+    if (!night || !onWild || this.turbz2 || this.dead) {
+      // Only at the moment the sun comes up, not on every daylight frame.
+      if (wasNight && !night) this.dawnClearSiege();
+      this.siegeT = 0;
+      return;
+    }
+
+    const tune = this.siegeTuning();
+    if (living >= tune.cap) return;
+    const alive = living;
+
+    this.siegeT = (this.siegeT ?? 0) - dt;
+    if (this.siegeT > 0) return;
+    this.siegeT = tune.every;
+
+    const want = Math.min(tune.perWave, tune.cap - alive);
+    let made = 0;
+    for (let i = 0; i < want; i++) if (this.spawnSiegeFoe()) made++;
+    // Said once a night, the first time something actually rises, so the player knows why.
+    if (made && !this.siegeToldNight) {
+      this.siegeToldNight = true;
+      this.say("Something is moving in the dark. They know where you are.");
+    }
+  };
+
+  /** Dawn: quietly take back the siege foes you never met. */
+  game.dawnClearSiege = function () {
+    const save = this.save;
+    const mobs = this.mobs;
+    if (!save || !mobs) return;
+    this.siegeToldNight = false;
+    let left = 0;
+    for (let i = mobs.length - 1; i >= 0; i--) {
+      const m = mobs[i];
+      if (!m?.siege) continue;
+      // Leave anything close by, hurt, or in a fight: the sun does not end a fight you are in.
+      const far = Math.hypot(m.x - save.x, m.y - save.y) > 900;
+      if (!m.alive || (far && m.hurt <= 0 && m.hp >= m.max)) { mobs.splice(i, 1); continue; }
+      left++;
+    }
+    // Anything that survived dawn (because you were standing next to it) keeps the siege bookkeeping
+    // alive until it is dealt with.
+    this.siegeAny = left > 0;
+  };
+
+  /**
+   * Raises one hostile foe on open ground in a ring around the player.
+   *
+   * Beasts are skipped on purpose: an animal's instinct in the mob loop is to run from you, which
+   * would make for a siege that flees. These are monsters, and they come.
+   */
+  game.spawnSiegeFoe = function (): boolean {
+    const save = this.save;
+    if (!save) return false;
+    let sx = 0, sy = 0, found = false;
+    for (let i = 0; i < 40; i++) {
+      const ang = rand() * Math.PI * 2;
+      const dist = SIEGE_RING_MIN + rand() * (SIEGE_RING_MAX - SIEGE_RING_MIN);
+      const x = save.x + Math.cos(ang) * dist;
+      const y = save.y + Math.sin(ang) * dist;
+      if (this.witchLand(x, y)) { sx = x; sy = y; found = true; break; }
+    }
+    if (!found) return false;
+    const pool = MONSTERS.filter((d: any) => !d.animal && !d.boss);
+    const species = (pool.length ? pick(pool) : MONSTERS[0])?.id;
+    if (!species) return false;
+    const mob = this.makeMob({ id: `siege-${nextUid()}`, kind: "mob", species, x: sx, y: sy, level: save.level });
+    if (!mob) return false;
+    mob.siege = true;      // hunts from further off, never sleeps, never respawns
+    mob.aggro = true;      // it rose looking for you
+    mob.seen = true;
+    mob.drift = false;
+    mob.flee = false;
+    mob.huntIn = 0;    // no grace period before it notices you
+    this.mobs.push(mob);
+    this.siegeAny = true;
+    return true;
   };
 
   /**

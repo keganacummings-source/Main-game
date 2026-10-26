@@ -1,5 +1,13 @@
 # Patch Notes
 
+## TURBZ nights send foes after you, duplicate shiny posts fixed
+
+- **The TURBZ night is dangerous now.** Night used to only make the foes already on the map hit harder. From this update the dark brings its own: hostile foes rise in a ring around you and come straight for you, in waves, for as long as the night lasts. They hunt from much further off than an ordinary foe, so they will find you rather than wait to be walked into.
+- **It gets worse the longer you live.** Every night you survive raises both the cap and the size of each wave. Easy mode gets a siege too, a gentler one. The siege is capped on purpose — a dozen foes that all actually reach you is more dangerous, and far kinder to the frame rate, than a horde milling about.
+- **Dawn calls them off.** Any siege foe you never met melts away at sunrise, but only if it is off-screen, unhurt and not already fighting you — the sun never pulls a fight out from under you. Nothing carries over to pile up night after night.
+- Siege foes do not respawn where they fell: when one goes down it stays down, and the night sends another. They are the TURBZ wild only, not dungeons (which have their own foes) and not TURBZ2 (whose continent is already a witch battlefield).
+- **Fixed: the Discord bot posted shiny drops twice.** If you had auto-keep on for shinies and your party was full with no Ghost Box built (or a full one), the drop was announced once on the way in and again when the ghost was turned away, so everyone in the channel saw the same shiny card twice. The drop is now announced once, and a shiny can only ever be posted once per ghost regardless of how it is caught. Your Shiny collection was never affected — it already ignored repeats.
+
 ## Two-frame animation, Tile and Enemy editor QOL, new class skins
 
 - **Enemies animate.** Every drawn enemy is now two frames and plays both — there is no toggle, enemies simply move from here on. Enemies made before two-frame art existed, including the twenty shipped with the game, get a second frame generated for them (a one-pixel breath that keeps the top row and the bottom row exactly as drawn, so no head is clipped and no feet float), so your whole roster starts moving without being repainted. A frame 2 you paint yourself is always kept as-is.
