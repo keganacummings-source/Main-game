@@ -40,6 +40,7 @@ import { nearestShore } from "./survival";
 import { combatRate } from "./pools";
 import { ALL_ORDERS, thinkLikePlayer, typeEdge } from "./player-brain";
 import { allTasksOn } from "./autoplay";
+import { drawActor, drawShadowName } from "./sprites";
 
 export const TURBZ_MAP = "custom-turbz";
 /** Remembers the New Texture Mode choice made on the TURBZ screen (the run itself keeps its own on `save.turbzNewTex`). */
@@ -186,6 +187,28 @@ const SIEGE_NIGHT_RAMP = 2;
 const SIEGE_CAP_MAX = 22;
 /** Easy mode still gets a night siege, just a gentler one. */
 const SIEGE_EASY = { cap: 5, every: 5.5, perWave: 1, ramp: 1, capMax: 9 };
+/** Travellers crossing the TURBZ wild: the mode has no towns, so Social needs someone to meet. */
+const WANDER_MAX = 3;          // out at once
+const WANDER_FIRST = 25;       // seconds before the first one shows up in a run
+const WANDER_EVERY = 95;       // roughly how long between arrivals
+const WANDER_STAY_MIN = 240;   // how long one keeps to the area before moving on
+const WANDER_STAY_MAX = 460;
+const WANDER_SPEED = 38;       // px/s: an amble, slower than a witch
+const WANDER_REACH = 74;       // how close you must be to speak
+const WANDER_SOCIAL_XP = 12;
+const WANDERER_NAMES = ["Hald", "Mirren", "Ossa", "Pell", "Tove", "Ingra", "Caul", "Resh", "Vanya", "Orrin", "Sabel", "Dunn"];
+const WANDERER_ROLES = ["a pedlar", "a map-maker", "a salt carrier", "a pilgrim", "a bone-setter", "a tinker", "a seed trader", "a message runner"];
+const WANDERER_LINES = [
+  "The witches out here do not ask who you are before they decide.",
+  "I walk by day and sit very still by night. It has worked so far.",
+  "Ore runs deeper where the rock has gone black. Mind the roof.",
+  "If a door hums, it is open. If it sings, something came through it.",
+  "I have seen a ghost take a shine to someone. Rare. Worth the walk.",
+  "Everything out here grows back. That is the trouble with it.",
+  "Keep a shore at your back and you will never go hungry.",
+  "The quiet ones in the dark are the ones already looking at you.",
+];
+
 /** Seconds a battlefield witch keeps the rival she picked before looking for a nearer one. */
 const TURBZ2_TARGET_HOLD = 1.5;
 // Nations re-assign jobs on the fly so they never get stuck as all-harvesters or all-defenders:
@@ -1408,6 +1431,8 @@ export function installTurbz(game: any): void {
     if (this.turbz2) { this.nationCityReveal(); if (TURBZ2_FREE_FOR_ALL) this.battlefieldMaintain(dt); else this.nationCommand(dt); }
     // Night sends foes after you on the TURBZ wild.
     this.tickNightSiege(dt);
+    // Travellers crossing the wild, so Social has someone to meet.
+    this.tickWanderers(dt);
     // Your velocity, smoothed over about a third of a second. Witches lead their shots with it.
     if (dt > 0) {
       const last = this.turbzPVLast;
@@ -1466,6 +1491,133 @@ export function installTurbz(game: any): void {
       // One extra foe a wave for every few nights survived.
       perWave: t.perWave + Math.floor(nights / 3),
     };
+  };
+
+  // ─── Travellers on the wild ──────────────────────────────────────────────────────────────────
+  /**
+   * TURBZ has no towns and no townsfolk, which left Social the one skill with nothing in the mode
+   * that trains it. So the wild has travellers: people crossing it on their own business, who will
+   * stop and talk if you walk up to them.
+   *
+   * They arrive and leave on their own, and each has something to say once — so Social is trained
+   * by actually meeting new people over a run, rather than by standing next to one and mashing a
+   * key. Autoplay's "Talk" task seeks them out the same way you would.
+   */
+  game.tickWanderers = function (dt: number) {
+    const save = this.save;
+    if (!this.turbz || !save || this.dead) return;
+    // They walk the open wild only; dungeons are no place for a pedlar.
+    if (save.map !== TURBZ_MAP) return;
+    const list = (save.wanderers ??= []);
+
+    for (let i = list.length - 1; i >= 0; i--) {
+      const w = list[i];
+      w.t = (w.t ?? 0) - dt;
+      // Their road takes them on. They only slip away out of sight, never in front of you.
+      if (w.t <= 0 && Math.hypot(w.x - save.x, w.y - save.y) > 760) { list.splice(i, 1); continue; }
+      // Amble toward a spot, pick a new one when they arrive or give up on it.
+      w.goalT = (w.goalT ?? 0) - dt;
+      const dx = (w.gx ?? w.x) - w.x, dy = (w.gy ?? w.y) - w.y;
+      const d = Math.hypot(dx, dy);
+      if (w.goalT <= 0 || d < 12) {
+        w.goalT = 4 + rand() * 6;
+        const ang = rand() * Math.PI * 2;
+        const far = 90 + rand() * 170;
+        const gx = w.x + Math.cos(ang) * far, gy = w.y + Math.sin(ang) * far;
+        if (this.witchLand(gx, gy)) { w.gx = gx; w.gy = gy; }
+      } else if (d > 1) {
+        const step = WANDER_SPEED * dt;
+        const nx = w.x + (dx / d) * step, ny = w.y + (dy / d) * step;
+        if (this.witchLand(nx, ny)) { w.x = nx; w.y = ny; w.facing = dx < 0 ? -1 : 1; }
+        else w.goalT = 0;   // walked into something: choose somewhere else
+        w.walk = (w.walk ?? 0) + dt * 4;
+      }
+    }
+
+    this.wanderT = (this.wanderT ?? WANDER_FIRST) - dt;
+    if (this.wanderT > 0 || list.length >= WANDER_MAX) return;
+    this.wanderT = WANDER_EVERY * (0.7 + rand() * 0.6);
+    const spot = this.wanderSpot();
+    if (!spot) return;
+    const name = pick(WANDERER_NAMES);
+    list.push({
+      id: `wd-${nextUid()}`,
+      name,
+      role: pick(WANDERER_ROLES),
+      line: pick(WANDERER_LINES),
+      x: spot.x, y: spot.y, gx: spot.x, gy: spot.y,
+      facing: 1, walk: 0, goalT: 0,
+      t: WANDER_STAY_MIN + rand() * (WANDER_STAY_MAX - WANDER_STAY_MIN),
+      said: false,
+    });
+  };
+
+  /** Somewhere to arrive from: walkable, off-screen-ish, but not so far you will never meet them. */
+  game.wanderSpot = function () {
+    const save = this.save;
+    if (!save) return null;
+    for (let i = 0; i < 40; i++) {
+      const ang = rand() * Math.PI * 2;
+      const dist = 420 + rand() * 420;
+      const x = save.x + Math.cos(ang) * dist;
+      const y = save.y + Math.sin(ang) * dist;
+      if (this.witchLand(x, y)) return { x, y };
+    }
+    return null;
+  };
+
+  /** The nearest traveller within `reach`, or null. */
+  game.nearestWanderer = function (reach = WANDER_REACH) {
+    const save = this.save;
+    if (!save || save.map !== TURBZ_MAP) return null;
+    let best: any = null, bd = reach;
+    for (const w of save.wanderers ?? []) {
+      const d = Math.hypot(w.x - save.x, w.y - save.y);
+      if (d <= bd) { bd = d; best = w; }
+    }
+    return best;
+  };
+
+  /**
+   * Pass the time with a traveller. Each has one thing worth hearing, so Social is trained by
+   * meeting people rather than by talking at the same one over and over.
+   */
+  game.talkWanderer = function (w: any) {
+    const save = this.save;
+    if (!save || !w) return false;
+    if (w.said) {
+      this.say(`${w.name} has told you all they know.`);
+      return false;
+    }
+    w.said = true;
+    // Having spoken, they are in no hurry to leave: you get a moment with them.
+    w.t = Math.max(w.t ?? 0, 40);
+    this.say(`${w.name}, ${w.role}: "${w.line}"`);
+    this.float(w.x, w.y - 52, `+${WANDER_SOCIAL_XP} Social`, "#9ad8c8");
+    this.gainSkill("social", WANDER_SOCIAL_XP);
+    this.cue("click", { rate: 1.1 }, [520, .06, "sine"]);
+    this.syncHud(true);
+    return true;
+  };
+
+  /** Travellers are drawn like any other person on the map. */
+  game.drawWanderers = function (ctx: any) {
+    const save = this.save;
+    if (!save || save.map !== TURBZ_MAP) return;
+    for (const w of save.wanderers ?? []) {
+      if (Math.abs(w.x - save.x) > 1200 || Math.abs(w.y - save.y) > 1200) continue;
+      drawActor(ctx, {
+        x: w.x, y: w.y, race: "vesper", female: true, hair: 2, skin: 2,
+        facing: w.facing ?? 1, walk: w.walk ?? 0, attack: 0, hurt: 0,
+        pieces: [
+          { slot: "chest", style: 6, type: "normal", fxSeed: 0, quality: 1 },
+          { slot: "legs", style: 6, type: "normal", fxSeed: 1, quality: 0 },
+          { slot: "feet", style: 6, type: "normal", fxSeed: 2, quality: 0 },
+        ],
+        setFx: null, setOn: false, time: this.clock,
+      });
+      drawShadowName(ctx, w.said ? w.name : `${w.name} ·`, w.x, w.y - 44, w.said ? "#c8c0b0" : "#9ad8c8");
+    }
   };
 
   /**

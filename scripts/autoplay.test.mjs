@@ -56,6 +56,20 @@ test("trading and talking are switchable at all, which they were not before", ()
   assert.ok(auto.AUTO_TASK_IDS.includes("social"));
 });
 
+test("quests are a task even though no skill trains them", () => {
+  assert.ok(auto.AUTO_TASK_IDS.includes("quest"), "there is a Quests task to switch on and off");
+  // Nothing in SKILLS maps to it, which is exactly why it needs its own entry in the planner.
+  assert.ok(content.SKILLS.every((sk) => auto.taskOfSkill(sk.id) !== "quest"));
+  assert.deepEqual(auto.TASKLESS_AIMS.quest, ["quest"]);
+});
+
+test("every taskless aim belongs to a real task, or the planner would chase a ghost", () => {
+  for (const [task, aims] of Object.entries(auto.TASKLESS_AIMS)) {
+    assert.ok(auto.AUTO_TASK_BY_ID[task], `${task} is not a real task`);
+    assert.ok(Array.isArray(aims) && aims.length, `${task} needs at least one aim`);
+  }
+});
+
 test("a fresh character has every task switched on", () => {
   const on = auto.allTasksOn();
   assert.equal(Object.keys(on).length, auto.AUTO_TASK_IDS.length);

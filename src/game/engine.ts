@@ -44,7 +44,7 @@ import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, wate
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, healAmount, shieldAmount, RANK_MAX, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
 import { ALL_ORDERS, thinkLikePlayer, type PlayOrders } from "./player-brain";
-import { AUTO_TASKS, AUTO_TASK_BY_ID, AUTO_TASK_IDS, allTasksOn, movePriority, normalizePriority, taskOfSkill } from "./autoplay";
+import { AUTO_TASKS, AUTO_TASK_BY_ID, AUTO_TASK_IDS, TASKLESS_AIMS, allTasksOn, movePriority, normalizePriority, taskOfSkill } from "./autoplay";
 import { dungeonSeed, generateDungeon } from "./map-gen";
 import {
   CLASS_BY_ID,
@@ -673,6 +673,8 @@ const AUTO_RETRY_GAP = 0.05;
  * impossible, which is what stops the wandering-about feel.
  */
 const AUTO_TASK_DWELL = 14;
+/** How far, in tiles, autoplay looks for a block worth mining. A screen or so. */
+const MINE_SCAN_TILES = 10;
 
 /** How often the world is stepped while the tab is in the background, in milliseconds. */
 const BACKGROUND_TICK_MS = 200;
@@ -784,11 +786,24 @@ const CUES: Record<string, { sound: SfxName; vol: number; len?: number; rate?: n
 };
 const SFX_VOL: Record<string, number> = { square: 0.36, sawtooth: 0.34, triangle: 0.34, sine: 0.3 };
 /**
- * Master bus: everything (effects, music and the You Died sting) runs through an FET-style compressor
- * (1176-ish: very fast attack, quick release, high ratio, hard knee), then gentle tape-style saturation,
- * makeup gain and a brickwall-ish limiter so nothing ever clips and loud and quiet sounds sit together.
+ * Sound runs on two paths that only meet at the speakers.
+ *
+ * Effects go through a glue compressor, a little saturation and a safety limiter, so a quiet step
+ * and a boss landing on you sit in the same picture instead of one disappearing under the other.
+ * Music does NOT: it is already mixed, and feeding it through the same compressor meant every
+ * sword swing pumped the soundtrack, and the soundtrack held the effects down in return.
+ *
+ * The compressor is set for cohesion rather than loudness — a soft knee, a modest ratio and an
+ * attack slow enough to let the front of a hit through, so effects keep their punch. Makeup gain
+ * is deliberately 1 (no boost), and the whole effects path then sits below the music.
  */
-const FET = { threshold: -20, knee: 2, ratio: 8, attack: 0.0008, release: 0.09, makeup: 1.7, drive: 1.25 };
+const SFX_GLUE = { threshold: -18, knee: 6, ratio: 3.5, attack: 0.004, release: 0.14, makeup: 1, drive: 0.8 };
+/** Where the effects path sits. Below 1 on purpose: effects were louder than the game needed. */
+const SFX_LEVEL = 0.62;
+/** Music sits here, untouched by the effects compressor. */
+const MUSIC_LEVEL = 0.9;
+/** Last thing before the speakers: catches peaks when a lot lands at once. Transparent otherwise. */
+const MASTER_CEILING = { threshold: -1.5, knee: 0, ratio: 20, attack: 0.001, release: 0.06 };
 function satCurve(drive: number): Float32Array {
 	const n = 2048, c = new Float32Array(n), k = Math.tanh(drive);
 	for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; c[i] = Math.tanh(x * drive) / k; }
@@ -1177,6 +1192,9 @@ export class TurbzGame {
 		this.priorityKey = undefined;
 		this.priorityCache = null;
 		this.waitToldT = 0;
+		// Audio: effects and music meet only at the master ceiling (see buildBus).
+		this.musicIn = null;
+		this.sfxLevel = null;
 		this.zoom = 2.35;
 	}
 	start() {
@@ -1490,33 +1508,58 @@ export class TurbzGame {
 		} catch {}
 	}
 	/**
-	 * Builds the master bus once: sfx + music → FET compressor → saturation → makeup → limiter → speakers.
-	 * `this.sfxIn` is where every effect connects; nothing connects straight to the destination.
+	 * Builds the two paths once.
+	 *   effects → glue compressor → saturation → level → master ceiling → speakers
+	 *   music   ──────────────────────────────────────→ master ceiling → speakers
+	 * `this.sfxIn` is where every effect connects and `this.musicIn` is where music does; nothing
+	 * connects straight to the destination, so the ceiling always has the last word.
 	 */
 	buildBus() {
 		const ac = this.audio;
 		if (!ac || this.sfxIn) return;
 		try {
-			const input = ac.createGain();
-			const comp = ac.createDynamicsCompressor();
-			comp.threshold.value = FET.threshold; comp.knee.value = FET.knee; comp.ratio.value = FET.ratio;
-			comp.attack.value = FET.attack; comp.release.value = FET.release;
-			const sat = ac.createWaveShaper();
-			sat.curve = satCurve(FET.drive);
-			sat.oversample = "2x";
-			const makeup = ac.createGain();
-			makeup.gain.value = FET.makeup;
-			const lim = ac.createDynamicsCompressor();
-			lim.threshold.value = -1.5; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.06;
+			// ── master: the only thing that reaches the speakers ─────────────────────────────────
 			const out = ac.createGain();
 			out.gain.value = 0.92 * this.audioPrefs.master;
+			const ceiling = ac.createDynamicsCompressor();
+			ceiling.threshold.value = MASTER_CEILING.threshold; ceiling.knee.value = MASTER_CEILING.knee;
+			ceiling.ratio.value = MASTER_CEILING.ratio; ceiling.attack.value = MASTER_CEILING.attack;
+			ceiling.release.value = MASTER_CEILING.release;
+			ceiling.connect(out);
+			out.connect(ac.destination);
 			this.busOut = out;
-			input.connect(comp); comp.connect(sat); sat.connect(makeup); makeup.connect(lim); lim.connect(out); out.connect(ac.destination);
+
+			// ── effects: glue compressor → saturation → level → master ───────────────────────────
+			const input = ac.createGain();
+			const comp = ac.createDynamicsCompressor();
+			comp.threshold.value = SFX_GLUE.threshold; comp.knee.value = SFX_GLUE.knee; comp.ratio.value = SFX_GLUE.ratio;
+			comp.attack.value = SFX_GLUE.attack; comp.release.value = SFX_GLUE.release;
+			const sat = ac.createWaveShaper();
+			sat.curve = satCurve(SFX_GLUE.drive);
+			sat.oversample = "2x";
+			const makeup = ac.createGain();
+			makeup.gain.value = SFX_GLUE.makeup;
+			const sfxLevel = ac.createGain();
+			sfxLevel.gain.value = SFX_LEVEL;
+			input.connect(comp); comp.connect(sat); sat.connect(makeup); makeup.connect(sfxLevel); sfxLevel.connect(ceiling);
 			this.sfxIn = input;
 			this.busComp = comp;
+			this.sfxLevel = sfxLevel;
+
+			// ── music: straight to the master, past the effects compressor ───────────────────────
+			const music = ac.createGain();
+			music.gain.value = MUSIC_LEVEL;
+			music.connect(ceiling);
+			this.musicIn = music;
 		} catch {
 			this.sfxIn = ac.destination;
+			this.musicIn = null;
 		}
+	}
+	/** Where music joins the mix: past the effects compressor, so swings never duck the soundtrack. */
+	musicBus() {
+		if (!this.sfxIn) this.buildBus();
+		return this.musicIn ?? this.bus();
 	}
 	/** The bus input (falls back to the speakers if the bus could not be built). */
 	bus() {
@@ -1530,7 +1573,9 @@ export class TurbzGame {
 			const src = this.audio.createMediaElementSource(el);
 			const g = this.audio.createGain();
 			g.gain.value = level;
-			src.connect(g); g.connect(this.bus());
+			// Music and the You Died sting are finished recordings: they take the music path, so
+			// the effects compressor never pumps them and they never hold the effects down.
+			src.connect(g); g.connect(this.musicBus());
 		} catch { /* element already routed or not allowed: it plays straight out */ }
 	}
 	/**
@@ -4776,6 +4821,10 @@ export class TurbzGame {
 		for (const list of byTask.values()) {
 			list.sort((a, b) => save.skills[a].level - save.skills[b].level || save.skills[a].xp - save.skills[b].xp);
 		}
+		// Tasks that are things to go and do rather than skills to level (quests) join the list here.
+		for (const [task, aims] of Object.entries(TASKLESS_AIMS)) {
+			if (this.taskOn(task)) byTask.set(task, [...(byTask.get(task) ?? []), ...aims]);
+		}
 
 		// Work down your priority list and take the first task that can actually be done here and
 		// now. A skill that recently gave up (no node in reach, shore unreachable) is held back for
@@ -4831,7 +4880,9 @@ export class TurbzGame {
 			return anyOn ? "Nothing to do here — looking for somewhere better." : "Every task is switched off.";
 		}
 		const task = this.autoTask ? AUTO_TASK_BY_ID[this.autoTask]?.label ?? this.autoTask : null;
-		const skill = this.grind ? (SKILLS.find((sk) => sk.id === this.grind)?.name ?? this.grind) : "";
+		// Quests are not a skill you level, so there is no "training ..." to add.
+		const skillDef = this.grind ? SKILLS.find((sk) => sk.id === this.grind) : null;
+		const skill = skillDef?.name ?? "";
 		if (!task) return skill ? `Training ${skill}.` : "Looking.";
 		return skill && skill.toLowerCase() !== task.toLowerCase() ? `${task} — training ${skill}.` : `${task}.`;
 	}
@@ -5041,6 +5092,10 @@ export class TurbzGame {
 			}
 			const node = id === "mining" ? "ore" : id === "woodcutting" ? "tree" : "shroom";
 			const live = this.nearestLiveNode(node);
+			// TURBZ (New Texture Mode) has no ore nodes to speak of: ore comes out of the rock you
+			// break. Autoplay only knew about nodes, so "Mine ore" did nothing in the mode where
+			// mining is a real job. Fall back to working the rock itself.
+			if (!live && id === "mining" && this.miningOn()) return this.aimMineBlock();
 			if (!live) return false;
 			if (Math.hypot(live.x - save.x, live.y - save.y) <= 52) {
 				this.path = [];
@@ -5087,6 +5142,18 @@ export class TurbzGame {
 			return stand ? this.walkTo(stand.x, stand.y) : this.walkTo(at.x, at.y);
 		}
 		if (id === "social") {
+			// TURBZ has no towns. It has travellers crossing the wild instead, so that is who
+			// autoplay goes to meet; the townsfolk search below is for maps that have towns.
+			const who = this.nearestWanderer?.(4000);
+			if (who) {
+				const d = Math.hypot(who.x - save.x, who.y - save.y);
+				if (d > 56) return this.walkTo(who.x, who.y);
+				this.path = [];
+				this.dest = null;
+				// Someone with nothing left to say is not worth standing next to.
+				return this.talkWanderer(who);
+			}
+			if (this.turbz) return false;
 			let best = null;
 			let bd = 1e9;
 			for (const n of NPCS) {
@@ -5113,26 +5180,8 @@ export class TurbzGame {
 			}
 			return best ? this.walkTo(best.x, best.y) : false;
 		}
-		if (id === "adventuring") {
-			let far = null;
-			let bd = 0;
-			for (const p of POIS) {
-				if (p.kind !== "shrine" && p.kind !== "dungeon") continue;
-				const pos = poiPos(p);
-				if (!pos) continue;
-				const d = Math.hypot(pos.x - save.x, pos.y - save.y);
-				if (d > bd) {
-					bd = d;
-					far = pos;
-				}
-			}
-			if (far && bd < 80) {
-				this.gainSkill("adventuring", 12);
-				this.path = [];
-				return true;
-			}
-			return far ? this.walkTo(far.x, far.y) : false;
-		}
+		if (id === "adventuring") return this.aimDungeon();
+		if (id === "quest") return this.aimQuest();
 		if (id === "catching") {
 			if ((save.jarLeft ?? 0) <= 0) {
 				if ((save.bag.ghost_jar ?? 0) > 0) {
@@ -5172,6 +5221,136 @@ export class TurbzGame {
 		}
 		return this.walkTo(foe.x, foe.y);
 	}
+	/**
+	 * Work the rock: find the nearest block worth breaking, get in range, and keep hitting it.
+	 *
+	 * Breaking takes more than one blow (`mineClick` counts them), so this is called again each
+	 * time the planner comes round and simply swings again until the block gives.
+	 */
+	aimMineBlock() {
+		const save = this.save;
+		const world = this.world;
+		if (!save || !world || !this.miningOn()) return false;
+		const at = this.nearestMineable(MINE_SCAN_TILES);
+		if (!at) return false;
+		const bx = at.tx * 32 + 16, by = at.ty * 32 + 16;
+		if (Math.hypot(bx - save.x, by - save.y) > MINE_REACH - 6) {
+			const stand = this.standNear(bx, by);
+			return stand ? this.walkTo(stand.x, stand.y) : this.walkTo(bx, by);
+		}
+		this.path = [];
+		this.dest = null;
+		// Paced, not every frame: a swing a quarter second reads as mining rather than a stutter.
+		this.mineSwingT = (this.mineSwingT ?? 0) - (1 / 60);
+		if (this.mineSwingT <= 0) {
+			this.mineSwingT = 0.25;
+			this.tryMine(bx, by);
+		}
+		return true;
+	}
+
+	/** The closest block that can actually be mined, searched outward from the hunter. */
+	nearestMineable(tiles) {
+		const save = this.save;
+		const world = this.world;
+		if (!save || !world) return null;
+		const cx = Math.floor(save.x / 32), cy = Math.floor(save.y / 32);
+		let best = null, bd = Infinity;
+		for (let ty = cy - tiles; ty <= cy + tiles; ty++) {
+			if (ty < 0 || ty >= world.h) continue;
+			for (let tx = cx - tiles; tx <= cx + tiles; tx++) {
+				if (tx < 0 || tx >= world.w) continue;
+				if (!mineInfo(world.tiles[ty * world.w + tx], tx, ty, world.w, world.h)) continue;
+				// Something standing on it keeps its normal click, so it is not minable right now.
+				if (this.nearestMob(tx * 32 + 16, ty * 32 + 16, 20)) continue;
+				const d = (tx - cx) * (tx - cx) + (ty - cy) * (ty - cy);
+				if (d < bd) { bd = d; best = { tx, ty }; }
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * Dungeons, properly.
+	 *
+	 * This used to walk to the FURTHEST shrine or dungeon marker on the map, award a flat 12
+	 * Adventuring and stand there — it never went in. Now it finds the nearest rift that is still
+	 * uncleared, walks to the door, steps through, clears what is inside, and comes back out.
+	 */
+	aimDungeon() {
+		const save = this.save;
+		if (!save) return false;
+		// Inside one already: the way on is down, and out is the way you came.
+		if (this.isDungeonMap(save.map)) {
+			// Still something alive worth killing: leave it to the fight task, which does it better.
+			if (this.autoFoe(900)) return false;
+			const ex = this.dungeonExitAt();
+			if (!ex) return false;
+			if (Math.hypot(save.x - ex.x, save.y - ex.y) < 36) {
+				this.gainSkill("adventuring", 14);
+				this.interact();   // the exit is an E away: the same door you walked in through
+				this.path = [];
+				return true;
+			}
+			return this.walkTo(ex.x, ex.y);
+		}
+		// Out in the open: the nearest door that has not been cleared yet.
+		if (save.map !== "world" && save.map !== "custom-turbz") return false;
+		let near = null, bd = Infinity;
+		for (const p of save.dungeons?.portals ?? []) {
+			if (p.cleared) continue;
+			const d = Math.hypot(p.x - save.x, p.y - save.y);
+			if (d < bd) { bd = d; near = p; }
+		}
+		if (!near) return false;
+		// enterRift wants you within 120; stop a little inside that so arriving always counts.
+		if (bd <= 110) {
+			this.path = [];
+			this.dest = null;
+			if (this.enterRift(near.id)) { this.gainSkill("adventuring", 12); return true; }
+			return false;
+		}
+		return this.walkTo(near.x, near.y);
+	}
+
+	/**
+	 * Quests, properly.
+	 *
+	 * Autoplay had no idea quests existed. It follows the open ones now: walks where the current
+	 * step points, talks to whoever needs talking to, and hands in when a quest is ready. Nothing
+	 * to do on a map without quests — the panel says so rather than looking stuck.
+	 */
+	aimQuest() {
+		const save = this.save;
+		const file = this.customFile;
+		if (!save || !file || this.lms) return false;
+		const states = save.mapQuests ?? {};
+		for (const q of openQuests(file, states)) {
+			const st = states[qkey(file.id, q.id)];
+			if (!st) continue;
+			const step = st.status === "active" ? q.steps[st.step] : null;
+			// Where this quest wants you: the hand-in, a place, or the person to speak to.
+			const goal = st.status === "ready"
+				? this.mapNpcs.find((n) => n.id === turnInOf(q))
+				: step?.type === "goto" ? { tx: step.tx, ty: step.ty }
+				: step?.type === "talk" ? this.mapNpcs.find((n) => n.id === step.npcId)
+				: step?.type === "bring" ? this.mapNpcs.find((n) => n.id === (step.npcId || turnInOf(q)))
+				: null;
+			// A step that is satisfied by living (kill so many, gather so many) has nowhere to walk
+			// to; the fight and gathering tasks feed it, so this quest is simply not the thing to do.
+			if (!goal) continue;
+			const gx = goal.tx * 32 + 16, gy = goal.ty * 32 + 20;
+			if (Math.hypot(gx - save.x, gy - save.y) > 56) return this.walkTo(gx, gy);
+			this.path = [];
+			this.dest = null;
+			// Standing on it: talking is what advances a talk step and what hands a quest in.
+			if (goal.id) this.openTalk(`cm:${goal.id}`);
+			else this.gainSkill("adventuring", 6);
+			return true;
+		}
+		return false;
+	}
+
 	/**
 	 * The foe autoplay goes after: close, worth the trip, and one it can beat. It skips bosses,
 	 * bounties, witches and hunters far above it, prefers an element its verses beat, and leaves
@@ -9680,6 +9859,11 @@ export class TurbzGame {
 			if (wild) { this.openWild(wild.id); return; }
 			if (this.rules === "hardcore" && this.bedNear()) { if (this.sleeping) this.wakeUp(); else this.goToSleep(); return; }
 		}
+		// A traveller right beside you on the TURBZ wild: pass the time with them.
+		{
+			const who = this.nearestWanderer?.();
+			if (who) { this.talkWanderer(who); return; }
+		}
 		if (this.customFile && this.interactMapPlace()) return;
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
@@ -13160,6 +13344,8 @@ export class TurbzGame {
 			}
 		}
 		if (this.customFile) this.drawMapPlaces(ctx);
+		// TURBZ travellers (turbz-mode.ts): the wild's stand-in for townsfolk.
+		this.drawWanderers?.(ctx);
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
 			drawRift(ctx, ex.x, ex.y + 8);
