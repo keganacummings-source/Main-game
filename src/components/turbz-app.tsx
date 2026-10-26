@@ -5,6 +5,7 @@ import { CLASSES, classGendered } from "@/game/classes";
 import { CharacterSheet, ClassPicker, CryingCustomizer, PerkBuilder, type Pick } from "@/components/character-ui";
 import { FloatWin, narrow, vh, vw } from "@/components/float-win";
 import { HudDock, HudFabs, HudHover, HudTarget, HudTracker, HudVitals } from "@/components/hud";
+import { AutoplayPanel } from "@/components/autoplay-panel";
 import { BuildBar } from "@/components/build-bar";
 import { isPinned, useLayout } from "@/game/ui-layout";
 import { loadCloudSave, writeCloudSave } from "@/game/cloud-client";
@@ -609,7 +610,11 @@ function Play({ game, username: _username }: { game: TurbzGame | null; username:
     <>
       <HudVitals game={game} />
       <HudTarget />
-      <HudTracker game={game} />
+      {/* One right-hand column so tracking and autoplay stack instead of sitting on top of each other. */}
+      <div className="hud-right-col">
+        <HudTracker game={game} />
+        <AutoplayPanel game={game} />
+      </div>
       <HudDock game={game} />
       <BuildBar game={game} />
       <HudFabs game={game} />

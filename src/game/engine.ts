@@ -44,6 +44,7 @@ import { normalizeSurvival, advanceSurvival, consumeMaterials, craftAtCamp, wate
 import { normalizeAbilities, spendAbilityPoint, abilityMultiplier, verseValues, healAmount, shieldAmount, RANK_MAX, POINTS_PER_LEVEL } from "./ability-progression";
 import { advanceDungeonClock, advanceDungeonDay, normalizeDungeonState, DUNGEON_INTERVAL, type DungeonPortal, type DungeonState } from "./procedural-dungeon";
 import { ALL_ORDERS, thinkLikePlayer, type PlayOrders } from "./player-brain";
+import { AUTO_TASKS, AUTO_TASK_BY_ID, AUTO_TASK_IDS, allTasksOn, movePriority, normalizePriority, taskOfSkill } from "./autoplay";
 import { dungeonSeed, generateDungeon } from "./map-gen";
 import {
   CLASS_BY_ID,
@@ -463,7 +464,15 @@ export type Snap = {
   /** TURBZ pools. Null in every other mode. */
   pools: { mana: number; maxMana: number; stam: number; maxStam: number; manaSlow: number; stamSlow: number } | null;
   /** TURBZ autoplay assignments. */
-  orders: { id: string; label: string; on: boolean }[] | null;
+  /** Everything the autoplay panel shows: the switch, what it is doing, and the tasks in your order. */
+  auto: {
+    on: boolean;
+    fight: boolean;
+    task: string | null;
+    doing: string;
+    why: string;
+    tasks: { id: string; label: string; about: string; on: boolean; active: boolean }[];
+  } | null;
   /** Other witches still grinding, in TURBZ. */
   turbz: { witches: number; back: number } | null;
   accountScore: number;
@@ -647,6 +656,32 @@ const FAR_MOB_CULL_SQ = FAR_MOB_CULL * FAR_MOB_CULL;
  * Lives here because the engine is what reads it; the siege itself is built in turbz-mode.ts.
  */
 const SIEGE_HUNT = 1600;
+/**
+ * How long auto-combat waits before looking again when it had nothing it could do.
+ *
+ * It is NOT a cap on how fast you attack: a swing that lands sets no wait at all, because your
+ * verse cooldowns and the cast animation already decide that. This only stops the "what can I
+ * cast?" decision from running on every single frame while everything is on cooldown.
+ */
+const AUTO_RETRY_GAP = 0.05;
+/**
+ * How long autoplay sticks with a task before it will look for a better one.
+ *
+ * The old planner re-sorted every skill by level every 1.8 seconds and took the lowest, so the
+ * moment the skill it was training ticked over it switched to something else — walking away from
+ * a half-mined node to go and fish. It now commits for this long unless the task becomes
+ * impossible, which is what stops the wandering-about feel.
+ */
+const AUTO_TASK_DWELL = 14;
+
+/** How often the world is stepped while the tab is in the background, in milliseconds. */
+const BACKGROUND_TICK_MS = 200;
+/**
+ * The most real time, in seconds, that one background step will catch up on. Browsers throttle
+ * background timers to about one call a second, so this has to be comfortably over a second to
+ * keep real time, while still bounding the work after a long sleep.
+ */
+const BACKGROUND_CATCHUP = 2;
 /** The worn slots the actor drawing reads, in the order it draws them. */
 const DRAW_PIECE_SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"];
 /** How many particles are kept alive at once; the oldest beyond this are dropped. */
@@ -923,7 +958,7 @@ const emptySnap = (): Snap => ({
 	gimmick: null,
 	grind: "",
 	pools: null,
-	orders: null,
+	auto: null,
 	turbz: null,
 	accountScore: 0,
 	turn: "",
@@ -1136,6 +1171,12 @@ export class TurbzGame {
 		this.gearDraw = { slots: [], out: [] };
 		// Ghost uids already announced to Discord, so a shiny is never posted twice.
 		this.shinyTold = new Set();
+		// Autoplay: the task in hand, how long it is committed for, and the cached priority order.
+		this.autoTask = null;
+		this.taskHold = 0;
+		this.priorityKey = undefined;
+		this.priorityCache = null;
+		this.waitToldT = 0;
 		this.zoom = 2.35;
 	}
 	start() {
@@ -1152,17 +1193,19 @@ export class TurbzGame {
 		this.last = performance.now();
 		const loop = (t) => {
 			if (!this.running) return;
-			const dt = Math.min(.05, (t - this.last) / 1e3);
-			this.last = t;
-			this.acc += dt;
-			while (this.acc >= 1 / 60) {
-				this.step(1 / 60);
-				this.acc -= 1 / 60;
-			}
-			this.draw();
+			this.advance(t, true);
 			this.raf = requestAnimationFrame(loop);
 		};
 		this.raf = requestAnimationFrame(loop);
+		// The browser stops calling requestAnimationFrame once the tab is in the background, so on
+		// its own the world would freeze the moment you looked at something else — and autoplay is
+		// exactly the thing you leave running while you do. This timer keeps it going. Background
+		// timers are throttled to roughly once a second, so each call catches up the real time that
+		// passed; `advance` is what bounds how much of it is simulated at once.
+		this.bgTimer = window.setInterval(() => {
+			if (!this.running || !document.hidden) return;
+			this.advance(performance.now(), false);
+		}, BACKGROUND_TICK_MS);
 		window.__turbz = this;
 		window.__controlsTest = {
 			getYaw: () => this.facing < 0 ? .4 : -.4,
@@ -1185,8 +1228,38 @@ export class TurbzGame {
 		void this.audio?.close().catch(() => {}); this.audio = null;
 		this.running = false;
 		cancelAnimationFrame(this.raf);
+		window.clearInterval(this.bgTimer);
+		this.bgTimer = undefined;
 		this.room?.close();
 		this.room = null;
+	}
+
+	/**
+	 * Move the world on to `now`, and draw if there is anybody looking.
+	 *
+	 * Shared by the animation frame and by the background timer, and both read the same clock, so
+	 * whichever fires first does the work and the other finds there is nothing left to do. That is
+	 * what stops the two of them double-stepping the world.
+	 *
+	 * How far it will catch up at once is capped. On screen that cap is small, so one slow frame
+	 * does not turn into a lurch. In the background, where the browser may only wake us once a
+	 * second, it is large enough to keep real time — but still a cap, so a tab left alone for an
+	 * hour comes back and carries on rather than trying to simulate the hour in one go.
+	 */
+	advance(now, drawing) {
+		const hidden = typeof document !== "undefined" && document.hidden;
+		const cap = hidden ? BACKGROUND_CATCHUP : 0.05;
+		const dt = Math.min(cap, Math.max(0, (now - this.last) / 1e3));
+		this.last = now;
+		this.acc += dt;
+		// Bound the work even if something hands us a huge accumulator.
+		if (this.acc > cap) this.acc = cap;
+		while (this.acc >= 1 / 60) {
+			this.step(1 / 60);
+			this.acc -= 1 / 60;
+		}
+		// Nothing to draw to when the tab is hidden, and drawing there is wasted work.
+		if (drawing && !hidden) this.draw();
 	}
 	setStick(x, y) {
 		this.stick.x = x;
@@ -2273,7 +2346,8 @@ export class TurbzGame {
 			this.vy = 0;
 			return;
 		}
-		if (document.hidden) return;
+		// The world keeps turning with the tab in the background: autoplay is the thing you leave
+		// running while you do something else, so it must not stop the moment it loses focus.
 		// Autosave every few seconds of play, so walking, gathering and skill XP are never more than that behind.
 		this.autoSaveT = (this.autoSaveT ?? AUTOSAVE_SECONDS) - dt;
 		if (this.autoSaveT <= 0) { this.autoSaveT = AUTOSAVE_SECONDS; this.persist(); }
@@ -4560,8 +4634,10 @@ export class TurbzGame {
 		if (this.dead || !this.world) return;
 		if (this.autoCare(dt)) return;
 		// Fight footwork: casters and archers hold a range and circle, melee closes in, everyone steps off a telegraphed hit.
+		// Only when Fight is on. With it off this used to keep circling and kiting a foe autoplay
+		// was never going to swing at, so you danced around enemies forever instead of leaving.
 		{
-			const foe = this.fightTarget();
+			const foe = this.taskOn("combat") ? this.fightTarget() : null;
 			if (foe && !this.channel) {
 				const d = Math.hypot(foe.x - save.x, foe.y - save.y);
 				const kit = this.arsenal(save).filter((m) => this.isOffense(m));
@@ -4640,10 +4716,13 @@ export class TurbzGame {
 			if (this.grind === "fishing") { this.skipGrind("fishing", 60); return; }
 		}
 		this.autoPlan -= dt;
+		this.taskHold = Math.max(0, (this.taskHold ?? 0) - dt);
 		let step = this.path[this.pathI];
 		if (!step && this.autoPlan <= 0) {
 			this.autoPlan = 1.8;
-			this.planGrind();
+			// Still part-way through a task it can keep doing: carry on rather than re-deciding.
+			// Only the walk to the NEXT thing is re-planned; the task itself is left alone.
+			if (!this.keepTask()) this.planGrind();
 			step = this.path[this.pathI];
 		}
 		if (!step) return;
@@ -4683,38 +4762,114 @@ export class TurbzGame {
 		if (!save) return;
 		const act = this.playThink();
 		if (act && act.kind !== "wander" && this.playAct(act)) return;
-		const order = Object.keys(save.skills).sort((a, b) => {
-			const A = save.skills[a];
-			const B = save.skills[b];
-			return A.level - B.level || A.xp - B.xp;
-		});
 		const skip = this.grindSkip ?? {};
-		const orders = this.orders;
-		const blocked = new Set();
-		if (orders) {
-			if (!orders.mining) blocked.add("mining");
-			if (!orders.woodcutting) blocked.add("woodcutting");
-			if (!orders.fishing) blocked.add("fishing");
-			if (!orders.shroom) blocked.add("shroom");
-			if (!orders.crafting) blocked.add("alchemy");
-			if (!orders.spirits) blocked.add("catching");
-			if (!orders.combat) { blocked.add("hunting"); blocked.add("physical"); blocked.add("bountyhunting"); }
-			if (!orders.dungeon) blocked.add("adventuring");
+		// Skills grouped under the task that trains them, each group lowest level first so a task
+		// still trains its weakest skill — the choice of TASK is yours, the choice within it is not.
+		const byTask = new Map();
+		for (const id of Object.keys(save.skills)) {
+			const task = taskOfSkill(id);
+			if (!this.taskOn(task)) continue;        // switched off means off, for every skill it covers
+			let list = byTask.get(task);
+			if (!list) { list = []; byTask.set(task, list); }
+			list.push(id);
 		}
-		const open = order.filter((id) => (skip[id] ?? 0) <= this.clock && !blocked.has(id));
-		// Skipped skills still run as a last resort, so autogrind never idles when they are all that is left.
-		for (const id of [...open, ...order.filter((id) => !open.includes(id) && !blocked.has(id))]) if (this.aimSkill(id)) {
-			this.grind = id;
-			return;
+		for (const list of byTask.values()) {
+			list.sort((a, b) => save.skills[a].level - save.skills[b].level || save.skills[a].xp - save.skills[b].xp);
 		}
+
+		// Work down your priority list and take the first task that can actually be done here and
+		// now. A skill that recently gave up (no node in reach, shore unreachable) is held back for
+		// a while, but still tried before giving up entirely, so autoplay never stands idle.
+		const tryTask = (task, rested) => {
+			for (const id of byTask.get(task) ?? []) {
+				if (rested && (skip[id] ?? 0) > this.clock) continue;
+				if (!this.aimSkill(id)) continue;
+				this.grind = id;
+				this.autoTask = task;
+				this.taskHold = AUTO_TASK_DWELL;
+				return true;
+			}
+			return false;
+		};
+		for (const task of this.taskPriority()) if (tryTask(task, true)) return;
+		for (const task of this.taskPriority()) if (tryTask(task, false)) return;
+
 		this.grind = "wander";
+		this.autoTask = null;
+		this.taskHold = 0;
 		const ang = Math.random() * Math.PI * 2;
 		this.walkTo(save.x + Math.cos(ang) * 180, save.y + Math.sin(ang) * 180);
 	}
+	/**
+	 * Keep going with the task already in hand.
+	 *
+	 * True when the current task is still switched on, has not run out its dwell, and can still be
+	 * aimed at something — in which case `aimSkill` has just pointed us at the next node, shore or
+	 * foe of the same kind. False means it is time to choose again.
+	 */
+	keepTask() {
+		const task = this.autoTask;
+		const grind = this.grind;
+		if (!task || !grind || (this.taskHold ?? 0) <= 0) return false;
+		if (!this.taskOn(task)) return false;
+		if ((this.grindSkip?.[grind] ?? 0) > this.clock) return false;
+		return this.aimSkill(grind);
+	}
+	/**
+	 * One line saying what autoplay is doing and why, for the autoplay panel.
+	 *
+	 * "Autoplay · looking" told you nothing when it stood still, which is most of why it felt
+	 * sloppy: you could not tell a stuck planner from one waiting on purpose.
+	 */
+	autoWhy() {
+		if (!this.autoplay) return "";
+		if (this.sleeping) return "Asleep.";
+		if (this.channel) return "Working.";
+		if (this.grind === "resting") return "Resting until health is back.";
+		if (this.grind === "wander") {
+			const anyOn = this.taskPriority().some((id) => this.taskOn(id));
+			return anyOn ? "Nothing to do here — looking for somewhere better." : "Every task is switched off.";
+		}
+		const task = this.autoTask ? AUTO_TASK_BY_ID[this.autoTask]?.label ?? this.autoTask : null;
+		const skill = this.grind ? (SKILLS.find((sk) => sk.id === this.grind)?.name ?? this.grind) : "";
+		if (!task) return skill ? `Training ${skill}.` : "Looking.";
+		return skill && skill.toLowerCase() !== task.toLowerCase() ? `${task} — training ${skill}.` : `${task}.`;
+	}
+	/** Is this autoplay task switched on? Unknown tasks are on, so a new task is not silently off. */
+	taskOn(task) {
+		this.ensureOrders();
+		return this.orders?.[task] !== false;
+	}
+	/** Your task order, cleaned up. Autoplay takes the first task on it that it can do right now. */
+	taskPriority() {
+		const raw = this.save?.autoPriority;
+		if (this.priorityKey !== raw) {
+			this.priorityKey = raw;
+			this.priorityCache = normalizePriority(raw);
+		}
+		return this.priorityCache ?? AUTO_TASK_IDS;
+	}
+	/** Reorder a task and remember it on the save. */
+	moveTask(id, dir) {
+		const save = this.save;
+		if (!save) return;
+		save.autoPriority = movePriority(this.taskPriority(), id, dir < 0 ? -1 : 1);
+		this.priorityKey = save.autoPriority;
+		this.priorityCache = save.autoPriority;
+		// Re-decide at once, so moving a task to the top takes effect while you watch.
+		this.taskHold = 0;
+		this.autoPlan = 0;
+		this.syncHud(true);
+	}
 	/** Orders default to everything, so autoplay can be told to stop a task in any mode. */
 	ensureOrders() {
-		if (this.orders && typeof this.orders === "object" && !Array.isArray(this.orders)) return;
-		this.orders = { ...ALL_ORDERS };
+		if (!this.orders || typeof this.orders !== "object" || Array.isArray(this.orders)) {
+			this.orders = allTasksOn();
+			return;
+		}
+		// A save made before a task existed simply has no key for it; it starts switched on rather
+		// than silently off, which is what reading a missing key as false would have meant.
+		for (const id of AUTO_TASK_IDS) if (!(id in this.orders)) this.orders[id] = true;
 	}
 	playOrders(): PlayOrders {
 		const o = this.orders;
@@ -8610,6 +8765,18 @@ export class TurbzGame {
 		if (!save) return 8;
 		return 10 + save.level + Math.floor(this.chan("swift") / 8) + Math.min(6, (save.skills.physical?.level ?? 1) / 8);
 	}
+	/**
+	 * Auto-combat had nothing it could do this moment: wait a beat before deciding again.
+	 *
+	 * The "WAIT" float is throttled rather than shown on every look, because the look now happens
+	 * many times a second instead of three.
+	 */
+	autoWait(save) {
+		this.fightGap = AUTO_RETRY_GAP;
+		if ((this.waitToldT ?? 0) > 0) return;
+		this.waitToldT = 0.6;
+		this.float(save.x, save.y - 44 * WITCH_SIZE, "WAIT", "#c8c0b0");
+	}
 	buildTurns() {
 		const save = this.save;
 		if (!save) return;
@@ -8634,27 +8801,43 @@ export class TurbzGame {
 		if (!this.fought) {
 			this.fought = true;
 			this.buildTurns();
-			this.fightGap = 0.12;
+			this.fightGap = 0;
 		}
 		this.fightGap -= dt;
+		this.waitToldT = Math.max(0, (this.waitToldT ?? 0) - dt);
 		if (this.fightGap > 0 || this.lunge || this.castLock > 0.15) return;
 		if (this.turnQ.length === 0) this.buildTurns();
 		const step = this.turnQ.shift();
 		if (!step) return;
 		if (step.side === "you") {
 			const manual = !this.autoAttacks();
-			if (!manual && (this.status.some((s) => s.id === "sleep") || !this.autoBattle())) {
-				this.float(save.x, save.y - 44 * WITCH_SIZE, "WAIT", "#c8c0b0");
+			if (manual) {
+				// Manual play: the queue is only here to keep the fight alive between your own inputs.
+				this.fightGap = AUTO_RETRY_GAP;
+			} else if (hasStatus(this.status, "sleep")) {
+				this.autoWait(save);
+			} else if (this.autoBattle()) {
+				// It swung. Your cooldowns and the cast animation decide when the next one lands, so
+				// there is no extra wait on top: the turn is re-offered on the very next frame, and
+				// castMove turns it down until the move is actually ready. This used to sit out a
+				// flat 0.3s after every action, which capped auto-attacks at roughly three a second
+				// however fast your verses recharged.
+				this.fightGap = 0;
 				while (this.turnQ[0]?.side === "spirit") this.turnQ.shift();
+			} else {
+				// Nothing was ready (everything on cooldown, out of range, no mana). Look again soon
+				// rather than every frame — re-deciding costs more than waiting a twentieth of a second.
+				this.autoWait(save);
 			}
 		} else if (step.side === "spirit") {
 			const spirit = (save.spirits ?? []).find((s) => s.uid === step.id && s.hp > 0);
 			if (spirit) this.spiritTurn(spirit);
+			this.fightGap = AUTO_RETRY_GAP;
 		} else {
 			const mob = this.mobs.find((m) => m.id === step.id && m.alive);
 			if (mob) this.foeTurn(mob);
+			this.fightGap = AUTO_RETRY_GAP;
 		}
-		this.fightGap = step.side === "you" ? 0.3 : 0.2;
 		if (!this.inFight()) {
 			this.turnQ = [];
 			this.fought = false;
@@ -10409,8 +10592,9 @@ export class TurbzGame {
 		if (!this.orders || !(id in this.orders)) return;
 		this.orders[id] = !this.orders[id];
 		this.autoPlan = 0;
-		const labels = { combat: "Fight", mining: "Mine ore", woodcutting: "Chop wood", fishing: "Fish", shroom: "Forage", crafting: "Craft", spirits: "Seek spirits", dungeon: "Dungeons" };
-		this.say(`${labels[id] ?? id} ${this.orders[id] ? "on" : "off"} for autoplay.`);
+		this.taskHold = 0;   // re-decide now, so switching a task off stops it at once
+		const label = AUTO_TASKS.find((t) => t.id === id)?.label ?? id;
+		this.say(`${label} ${this.orders[id] ? "on" : "off"} for autoplay.`);
 		this.syncHud(true);
 	}
 	toggleAutoplay() {
@@ -12786,16 +12970,22 @@ export class TurbzGame {
 				stam: Math.ceil(this.pools.stam), maxStam: this.pools.maxStam,
 				manaSlow: Math.ceil(this.pools.manaSlow), stamSlow: Math.ceil(this.pools.stamSlow),
 			} : null,
-			orders: (this.turbz || this.autoplay) && this.orders && !Array.isArray(this.orders) ? [
-				{ id: "combat", label: "Fight", on: !!this.orders.combat },
-				{ id: "mining", label: "Mine ore", on: !!this.orders.mining },
-				{ id: "woodcutting", label: "Chop wood", on: !!this.orders.woodcutting },
-				{ id: "fishing", label: "Fish", on: !!this.orders.fishing },
-				{ id: "shroom", label: "Forage", on: !!this.orders.shroom },
-				{ id: "crafting", label: "Craft", on: !!this.orders.crafting },
-				{ id: "spirits", label: "Seek spirits", on: !!this.orders.spirits },
-				{ id: "dungeon", label: "Dungeons", on: !!this.orders.dungeon },
-			] : null,
+			// The autoplay panel's whole state: every task in YOUR order, each with whether it is
+			// on and whether it is the one being worked right now.
+			auto: (this.turbz || this.autoplay) ? {
+				on: !!this.autoplay,
+				fight: !!this.autoCombat,
+				task: this.autoplay ? (this.autoTask ?? null) : null,
+				doing: this.autoplay ? (this.grind || "looking") : "",
+				why: this.autoplay ? this.autoWhy() : "",
+				tasks: this.taskPriority().map((id) => ({
+					id,
+					label: AUTO_TASK_BY_ID[id]?.label ?? id,
+					about: AUTO_TASK_BY_ID[id]?.about ?? "",
+					on: this.taskOn(id),
+					active: this.autoplay && this.autoTask === id,
+				})),
+			} : null,
 			turbz: this.turbz ? {
 				witches: (this.save?.map === "custom-turbz" ? this.mobs : (this.turbzRoster ?? this.mobs)).filter((m) => m.twitch && m.alive).length,
 				back: Math.ceil(Math.min(...((this.witchGraves ?? []).length ? this.witchGraves : [0]))),

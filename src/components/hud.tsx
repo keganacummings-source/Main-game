@@ -141,7 +141,7 @@ const TRACK_KEY = "turbz-hud-tracker-open";
 
 /** Top-right: everything you are tracking. Folds to one line. */
 export const HudTracker = memo(function HudTracker({ game }: GameProp) {
-  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "contracts", "shrine", "jarLeft", "autoplay", "grind", "rules", "unstuck", "pools", "orders", "turbz"] as const);
+  const s = useSnapPick(["clock", "survival", "sleeping", "build", "bounties", "hunt", "contracts", "shrine", "jarLeft", "rules", "unstuck", "pools", "turbz"] as const);
   const [open, setOpen] = useState(() => {
     try {
       const saved = localStorage.getItem(TRACK_KEY);
@@ -181,14 +181,8 @@ export const HudTracker = memo(function HudTracker({ game }: GameProp) {
   if (s.jarLeft > 0) rows.push(<p key="jar" className="text-kyo">Ghost jar · {s.jarLeft}s</p>);
   if (s.turbz) rows.push(<p key="witches" className="text-kyo">Witches grinding · {s.turbz.witches}</p>);
   if (s.turbz && s.turbz.back > 0) rows.push(<p key="witchback" className="text-dim">Witch returns in {Math.floor(s.turbz.back / 60)}:{String(s.turbz.back % 60).padStart(2, "0")}</p>);
-  if (s.orders) rows.push(
-    <div key="orders" className="hud-surv" data-testid="turbz-orders">
-      {s.orders.map((o) => (
-        <button key={o.id} type="button" className={`px-btn ui-btn-sm ${o.on ? "px-btn-kyo" : ""}`} onClick={() => game?.setOrder?.(o.id)}>{o.label}</button>
-      ))}
-    </div>,
-  );
-  if (s.autoplay) rows.push(<p key="auto" className="text-kyo">Autoplay · {s.grind || "looking"}</p>);
+  // Autoplay used to live here too, as a row of unlabelled buttons wedged between a ghost-jar
+  // timer and a witch count. It has its own panel now (AutoplayPanel, below).
   if (s.unstuck) rows.push(<p key="unstuck" className="text-kyo">Unstuck in {s.unstuck}</p>);
   if (!rows.length) return null;
   return (

@@ -37,10 +37,37 @@ On phones and tablets a virtual stick appears for movement, and the HUD buttons 
 - **Top centre, target:** the foe you are fighting — level, element, HP bar with lag trail, and trait chips.
 - **Top right, tracker (foldable):** day/night clock (Hardcore), survival bars (Hardcore), live bounties and tier, Bounty Stars and Wanted level, map quest progress, lobby. Fold it with the arrow.
 - **Bottom dock:** your 9 verse slots with cooldown overlays, plus buttons for every window (keys shown on each button).
-- **Autoplay / Grind nodes:** your witch plays herself. In TurboHunt she grinds and fights; in Hardcore she gathers and fights.
+- **Autoplay panel (top right, under the tracker):** your witch plays herself. See [Autoplay](#autoplay) below.
 - **Unstuck:** if you are wedged in a wall, press it, point the cursor at open ground and after 3 seconds you land there.
 
 The engine refreshes fast HUD fields (health, target, effects) every **120 ms** and everything else only on a real change or once per second, so the page never re-renders as a whole several times a second.
+
+## Autoplay
+
+Autoplay has its own panel under the tracker: a switch, a line saying what it is doing **and why**,
+and the task list.
+
+**Tasks are worked top down.** Autoplay takes the first task on the list it can actually do right
+now — so moving a task up with ↑ means "prefer this". Tap a task's name to switch it off; off means
+off. Autoplay sticks with a task for a while rather than re-deciding every couple of seconds, so it
+finishes what it started instead of walking away from a half-worked node.
+
+| Task | What it covers |
+| --- | --- |
+| **Fight** | Hunting foes, and everything trained by fighting: weapons, magic, evasion, looting, skinning and the element masteries |
+| **Dungeons** | Travelling to shrines and dungeon doors |
+| **Seek spirits** | Catching ghosts and ghostkeeping |
+| **Mine ore / Chop wood / Forage / Fish** | The gathering nodes and shores |
+| **Craft** | Brewing and cooking |
+| **Trade** | Selling gathered materials |
+| **Talk** | Visiting townsfolk |
+
+Every skill in the game belongs to exactly one task. That matters: **Fight** used to leave several
+skills unaccounted for, so switching it off still left autoplay hunting in order to train them.
+**Trade** and **Talk** could not be switched off at all. Both are fixed.
+
+If autoplay is standing still, the panel says why — resting, working, nothing to do here, or every
+task switched off.
 
 ## Verse bar
 
