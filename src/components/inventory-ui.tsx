@@ -4,6 +4,7 @@ import { gearSellValue } from "@/game/balance";
 import { BOSS_COLOR, QUALITY_COLOR, QUALITY_ORDER as CHEST_QUALITIES, SUPPLIES_COLOR } from "@/game/chest-loot";
 import { fxGene, fxGeneLabel, fxTrait, fxTraitLabel, geneSeedOf } from "@/game/fx-gene";
 import { Chips, ConfirmButton, Section, StatusChips, Tabs, usePref } from "./ui-kit";
+import { targetProps, type MenuAction } from "./ui-overlay";
 import type { getSnap, TurbzGame } from "@/game/engine";
 
 type Snap = ReturnType<typeof getSnap>;
@@ -45,12 +46,78 @@ function Delta({ snap, g }: { snap: Snap; g: Gear }) {
   return <span className={d > 0 ? "stat-up" : "stat-down"}>{d > 0 ? "▲" : "▼"} {Math.abs(d)}</span>;
 }
 
-function GearCard({ snap, g, selected, onPick, onEquip, children }: { snap: Snap; g: Gear; selected?: boolean; onPick?: (e: React.MouseEvent) => void; onEquip?: () => void; children?: React.ReactNode }) {
+/**
+ * Everything you can do with one piece of gear, wherever it is listed.
+ *
+ * The full set of actions used to exist only on the detail pane, which meant picking a piece,
+ * reading it, then reaching for a button — three moves to sell a duplicate. They are on the piece
+ * itself now.
+ */
+function ownsGear(snap: Snap, g: Gear): boolean {
+  return snap.gear.some((x) => x.uid === g.uid);
+}
+
+function gearActions(snap: Snap, g: Gear, game: TurbzGame | null, onPick?: () => void): MenuAction[] {
+  const worn = snap.equipped.includes(g.uid);
+  const locked = snap.locked.includes(g.uid);
+  const other = wornIn(snap, g.slot);
+  const d = other && other.uid !== g.uid ? gearScore(g) - gearScore(other) : 0;
+  const out: MenuAction[] = [
+    { id: "wear", label: worn ? "Already worn" : "Wear", about: worn ? undefined : d ? `${d > 0 ? "+" : ""}${d} against what you wear` : undefined, disabled: worn, onPick: () => game?.equip(g.uid) },
+  ];
+  if (onPick) out.push({ id: "inspect", label: "Open in detail", about: "Enchantments, FX and the full comparison", onPick });
+  out.push({ id: "lock", label: locked ? "Unlock" : "Lock", about: locked ? "Allow Sell All to take it" : "Keep it safe from Sell All", onPick: () => game?.toggleLock(g.uid) });
+  out.push({
+    id: "sell", label: `Sell · ${gearSellValue(gearPrice(g), snap.sellMult).toLocaleString()} kyo`,
+    about: worn ? "Take it off first" : locked ? "Locked" : undefined,
+    disabled: worn || locked, danger: true, onPick: () => game?.sell(g.uid),
+  });
+  return out;
+}
+
+/** The hover card for a piece of gear: its own read, and how it stands against what you wear. */
+function gearHint(snap: Snap, g: Gear) {
+  const worn = snap.equipped.includes(g.uid);
+  const other = wornIn(snap, g.slot);
+  const against = other && other.uid !== g.uid ? gearScore(g) - gearScore(other) : null;
+  return {
+    wide: true,
+    title: g.name,
+    body: (
+      <>
+        <span className="text-dim">Lv {g.level} · {SLOT_LABEL[g.slot]} · {QUALITY_LABEL[g.quality]} · {TYPES[g.type]?.name ?? g.type}</span>
+        <span>{statLine(g)} · score {gearScore(g)}</span>
+        {against !== null && (
+          <span className={against > 0 ? "stat-up" : against < 0 ? "stat-down" : "text-dim"}>
+            {against > 0 ? `▲ ${against} better than ${other!.name}` : against < 0 ? `▼ ${Math.abs(against)} worse than ${other!.name}` : `Level with ${other!.name}`}
+          </span>
+        )}
+        {g.enchants.length
+          ? g.enchants.map((e) => <span key={e.id} className="text-kyo">{ENCHANT_BY_ID[e.id]?.name ?? e.id} {e.power} <span className="text-dim">· {enchantText(e)}</span></span>)
+          : <span className="text-dim">No enchantments.</span>}
+        {g.setId && SET_BY_ID[g.setId]?.bonus && <span className="text-dim">Set · {SET_BY_ID[g.setId]!.name}: {SET_BY_ID[g.setId]!.bonus}</span>}
+        <span className="text-dim">{fxLine(g)}</span>
+        {!worn && <span className="text-dim">Worth {gearSellValue(gearPrice(g), snap.sellMult).toLocaleString()} kyo</span>}
+      </>
+    ),
+    foot: "Double-click to wear · right-click for more",
+  };
+}
+
+function GearCard({ snap, g, game, selected, onPick, onEquip, children }: { snap: Snap; g: Gear; game?: TurbzGame | null; selected?: boolean; onPick?: (e: React.MouseEvent) => void; onEquip?: () => void; children?: React.ReactNode }) {
   const worn = snap.equipped.includes(g.uid);
   const locked = snap.locked.includes(g.uid);
   return (
-    <div className={`gear-card q-${g.quality} ${selected ? "gear-card-on" : ""}`}>
-      <button type="button" className="gear-card-main" onClick={onPick} onDoubleClick={onEquip} title={onEquip ? "Double-click to wear" : undefined} aria-pressed={selected}>
+    <div
+      className={`gear-card q-${g.quality} ${selected ? "gear-card-on" : ""} ${game && ownsGear(snap, g) ? "ui-has-menu" : ""}`}
+      {...targetProps(
+        game && ownsGear(snap, g)
+          ? { title: g.name, lines: [`Lv ${g.level} · ${SLOT_LABEL[g.slot]} · ${QUALITY_LABEL[g.quality]}`], actions: gearActions(snap, g, game, onPick ? () => onPick({} as React.MouseEvent) : undefined) }
+          : null,
+        gearHint(snap, g),
+      )}
+    >
+      <button type="button" className="gear-card-main" onClick={onPick} onDoubleClick={onEquip} aria-pressed={selected}>
         <span className="gear-card-name">{g.name}</span>
         <span className="gear-card-meta">
           Lv {g.level} · {SLOT_LABEL[g.slot]} · <span className={`type-${g.type}`}>{TYPES[g.type]?.name ?? g.type}</span>
@@ -90,11 +157,23 @@ function EnchantList({ g }: { g: Gear }) {
 }
 
 /** A one-line row for the list view: everything a card says, in one scan line. */
-function GearRow({ snap, g, selected, onPick, onEquip }: { snap: Snap; g: Gear; selected?: boolean; onPick?: () => void; onEquip?: () => void }) {
+function GearRow({ snap, g, game, selected, onPick, onEquip }: { snap: Snap; g: Gear; game?: TurbzGame | null; selected?: boolean; onPick?: () => void; onEquip?: () => void }) {
   const worn = snap.equipped.includes(g.uid);
   const locked = snap.locked.includes(g.uid);
   return (
-    <button type="button" className={`gear-row q-${g.quality} ${selected ? "gear-card-on" : ""}`} onClick={onPick} onDoubleClick={onEquip} aria-pressed={selected} title={onEquip ? "Double-click to wear" : undefined}>
+    <button
+      type="button"
+      className={`gear-row q-${g.quality} ${selected ? "gear-card-on" : ""} ${game && ownsGear(snap, g) ? "ui-has-menu" : ""}`}
+      onClick={onPick}
+      onDoubleClick={onEquip}
+      aria-pressed={selected}
+      {...targetProps(
+        game && ownsGear(snap, g)
+          ? { title: g.name, lines: [`Lv ${g.level} · ${SLOT_LABEL[g.slot]} · ${QUALITY_LABEL[g.quality]}`], actions: gearActions(snap, g, game, onPick) }
+          : null,
+        gearHint(snap, g),
+      )}
+    >
       <span className="gear-row-name">{g.name}{worn ? " · WORN" : ""}{locked ? " · 🔒" : ""}</span>
       <span className="text-dim">{SLOT_LABEL[g.slot]}</span>
       <span className="text-dim">Lv {g.level}</span>
@@ -212,6 +291,45 @@ function purposePower(g: Gear, p: GearPurpose): number {
 const PURPOSE_ICON: Record<GearPurpose, string> = { combat: "⚔", defense: "🛡", reach: "➶", gathering: "⛏", fortune: "✦", spirits: "👻", travel: "➹" };
 
 /** The bag: consumables, materials and crafting. Gear has its own Inventory window (I). */
+/**
+ * Everything you can do with a bag item, as one list.
+ *
+ * The card used to carry four buttons at once and the list row three, which is most of why the bag
+ * read as a wall. The common action stays on the card; the rest live on right-click, where they are
+ * out of the way until wanted.
+ */
+function itemActions(it: Snap["bag"][number], at: number, quickFull: boolean, game: TurbzGame | null): MenuAction[] {
+  const out: MenuAction[] = [];
+  if (it.quickable) {
+    out.push({ id: "use", label: "Use", about: it.useProblem ?? "Use one now", disabled: !!it.useProblem, onPick: () => game?.useBag(it.id) });
+    if (at !== 0) out.push({ id: "space", label: "Set to Space", about: "Space bar uses this first", onPick: () => game?.setQuick(it.id, "set") });
+    if (at < 0 && !quickFull) out.push({ id: "queue", label: "Queue behind Space", about: "Takes over when the first runs out", onPick: () => game?.setQuick(it.id, "queue") });
+    if (at >= 0) out.push({ id: "unqueue", label: "Take off Space", onPick: () => game?.setQuick(it.id, "remove") });
+  }
+  const each = it.sell ?? 0;
+  out.push({ id: "sell1", label: "Sell one", about: `${each.toLocaleString()} kyo`, disabled: it.count < 1, onPick: () => game?.sellItem(it.id, 1) });
+  if (it.count > 10) out.push({ id: "sell10", label: "Sell ten", about: `${(each * 10).toLocaleString()} kyo`, onPick: () => game?.sellItem(it.id, 10) });
+  out.push({ id: "sellall", label: `Sell all ${it.count}`, about: `${(each * it.count).toLocaleString()} kyo`, danger: true, onPick: () => game?.sellItem(it.id, Infinity) });
+  return out;
+}
+
+/** The hover card for a bag item: what it is, what it does, and what it is worth. */
+function itemHint(it: Snap["bag"][number], at: number) {
+  return {
+    title: `${it.name} ×${it.count}`,
+    body: (
+      <>
+        <span>{it.about}</span>
+        {it.effect && <span className="text-good">{it.effect}</span>}
+        {it.useProblem && <span className="text-blood">{it.useProblem}</span>}
+        <span className="text-dim">{(it.sell ?? 0).toLocaleString()} kyo each · {((it.sell ?? 0) * it.count).toLocaleString()} the lot</span>
+        {at >= 0 && <span className="text-good">{at === 0 ? "On the Space bar" : `Space queue ${at + 1}`}</span>}
+      </>
+    ),
+    foot: "Right-click for everything you can do with it",
+  };
+}
+
 export function Bag({ snap, game }: Props) {
   const [search, setSearch] = useState("");
   const [cat, setCat] = usePref("turbz-bag-cat", ["all", "use", "food", "material"] as const, "all");
@@ -274,11 +392,15 @@ export function Bag({ snap, game }: Props) {
       {items.length && compact === "list" ? (
         <div className="bm-list" data-testid="bag-list">
           {items.map((it) => (
-            <div key={it.id} className="bm-row" data-testid={`item-${it.id}`}>
+            <div
+              key={it.id}
+              className="bm-row ui-has-menu"
+              data-testid={`item-${it.id}`}
+              {...targetProps({ title: it.name, lines: [it.about], actions: itemActions(it, snap.quick.findIndex((q) => q.id === it.id), snap.quick.length >= 3, game) }, itemHint(it, snap.quick.findIndex((q) => q.id === it.id)))}
+            >
               <span className="bm-row-name">{it.name} <span className="text-kyo">×{it.count}</span><span className="block text-dim">{it.sell ?? 0} kyo each · {kindOf(it) === "use" ? "usable" : kindOf(it) === "food" ? "food" : "material"}</span></span>
               <span className="bm-row-actions">
-                {it.quickable && <button type="button" className="px-btn ui-btn-sm" disabled={!!it.useProblem} title={it.useProblem ?? undefined} onClick={() => game?.useBag(it.id)}>Use</button>}
-                <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.sellItem(it.id, 1)}>Sell 1</button>
+                {it.quickable && <button type="button" className="px-btn ui-btn-sm" disabled={!!it.useProblem} onClick={() => game?.useBag(it.id)}>Use</button>}
                 <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.sellItem(it.id, Infinity)}>All · {((it.sell ?? 0) * it.count).toLocaleString()}</button>
               </span>
             </div>
@@ -289,16 +411,23 @@ export function Bag({ snap, game }: Props) {
           {items.map((it) => {
             const at = snap.quick.findIndex((q) => q.id === it.id);
             return (
-              <div key={it.id} className="item-card" data-testid={`item-${it.id}`}>
+              <div
+                key={it.id}
+                className="item-card ui-has-menu"
+                data-testid={`item-${it.id}`}
+                {...targetProps({ title: it.name, lines: [it.about], actions: itemActions(it, at, snap.quick.length >= 3, game) }, itemHint(it, at))}
+              >
                 <p className="item-card-name">{it.name} <span className="text-kyo">×{it.count}</span> <span className="text-dim">· {it.sell ?? 0} kyo</span>{at >= 0 && <span className="text-good"> · {at === 0 ? "Space" : `Space queue ${at + 1}`}</span>}</p>
                 <p className="text-dim item-card-about">{it.about}</p>
                 {it.quickable && it.useProblem && <p className="item-card-problem">{it.useProblem}</p>}
                 {it.effect && <p className="item-card-effect">{it.effect}</p>}
+                {/* One action on the card. Set to Space, Queue and the smaller sales are on right-click. */}
                 <div className="item-card-actions">
-                  {it.quickable && <button type="button" className="px-btn" disabled={!!it.useProblem} onClick={() => game?.useBag(it.id)}>Use</button>}
+                  {it.quickable
+                    ? <button type="button" className="px-btn" disabled={!!it.useProblem} onClick={() => game?.useBag(it.id)}>Use</button>
+                    : <button type="button" className="px-btn" onClick={() => game?.sellItem(it.id, Infinity)}>Sell all · {((it.sell ?? 0) * it.count).toLocaleString()}</button>}
                   {it.quickable && at !== 0 && <button type="button" className="px-btn" data-testid={`set-space-${it.id}`} onClick={() => game?.setQuick(it.id, "set")}>Set to Space</button>}
                   {it.quickable && at < 0 && snap.quick.length > 0 && <button type="button" className="px-btn" data-testid={`queue-space-${it.id}`} disabled={snap.quick.length >= 3} onClick={() => game?.setQuick(it.id, "queue")}>Queue</button>}
-                  <button type="button" className="px-btn" onClick={() => game?.sellItem(it.id, Infinity)}>Sell all · {((it.sell ?? 0) * it.count).toLocaleString()}</button>
                 </div>
               </div>
             );
@@ -597,13 +726,13 @@ export function GearInventory({ snap, game }: Props) {
                     {view === "list" ? (
                       <div className="gear-list" data-testid="gear-list">
                         {grp.list.map((g) => (
-                          <GearRow key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
+                          <GearRow key={g.uid} snap={snap} g={g} game={game} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
                         ))}
                       </div>
                     ) : (
                       <div className="gear-grid">
                         {grp.list.map((g) => (
-                          <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
+                          <GearCard key={g.uid} snap={snap} g={g} game={game} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
                         ))}
                       </div>
                     )}
@@ -631,7 +760,7 @@ export function GearInventory({ snap, game }: Props) {
                   </span>
                   <div className="gear-grid">
                     {row.list.sort((a, b) => SLOTS.indexOf(a.slot) - SLOTS.indexOf(b.slot) || gearScore(b) - gearScore(a)).map((g) => (
-                      <GearCard key={g.uid} snap={snap} g={g} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
+                      <GearCard key={g.uid} snap={snap} g={g} game={game} selected={snap.selected === g.uid} onPick={() => game?.select(g.uid)} onEquip={() => { if (!snap.equipped.includes(g.uid)) game?.equip(g.uid); }} />
                     ))}
                   </div>
                   <button type="button" className="px-btn ui-btn-sm" onClick={() => wearSet(row.list)}>Wear the best piece of each slot</button>
@@ -934,7 +1063,7 @@ export function LootPicker({ snap, game }: Props) {
           {loot.gear.map((g, i) => {
             const worn = wornIn(snap, g.slot);
             return (
-              <GearCard key={g.uid} snap={snap} g={g}>
+              <GearCard key={g.uid} snap={snap} g={g} game={game}>
                 <div className="loot-card-body">
                   <p className="text-dim">{QUALITY_LABEL[g.quality]} · score {gearScore(g)}{worn ? ` · worn: Lv ${worn.level}, score ${gearScore(worn)}` : " · slot empty"}</p>
                   <EnchantList g={g} />
@@ -1026,7 +1155,7 @@ export function ChestPanel({ snap, game }: Props) {
       {chest.gear.length > 0 && (
         <div className="gear-grid">
           {chest.gear.map((g) => (
-            <GearCard key={g.uid} snap={snap} g={g} selected={gearPick?.uid === g.uid} onPick={click("gear", g.uid)} onEquip={() => { game?.equipFromChest(chest.id, g.uid); setPick(null); }} />
+            <GearCard key={g.uid} snap={snap} g={g} game={game} selected={gearPick?.uid === g.uid} onPick={click("gear", g.uid)} onEquip={() => { game?.equipFromChest(chest.id, g.uid); setPick(null); }} />
           ))}
         </div>
       )}

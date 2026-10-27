@@ -15,6 +15,7 @@ import { ClassPicker, type Pick } from "./character-ui";
 import { AccountChip } from "./hub-ui";
 import { useSnapPick } from "./use-snap";
 import { Chips, ConfirmButton, Empty, Field, Meter, Pips, Section, StatusChips, Tabs, usePref } from "./ui-kit";
+import { targetProps, type MenuAction } from "./ui-overlay";
 
 /** TurboHunt: kyo price of a Ghost Box without materials (matches the engine). */
 const GHOST_BOX_KYO = 150;
@@ -99,7 +100,35 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
           <p className="menu-count">{shown.length} of {s.perks.length} perks</p>
           <div className="ui-grid" style={{ "--min": "230px" } as React.CSSProperties}>
             {shown.map((p) => (
-              <div key={p.id} className={`ui-card perk-card ${p.power >= p.max ? "ui-card-done" : ""}`} data-testid={`perk-${p.id}`}>
+              <div
+                key={p.id}
+                className={`ui-card perk-card ui-has-menu ${p.power >= p.max ? "ui-card-done" : ""}`}
+                data-testid={`perk-${p.id}`}
+                {...targetProps({
+                  title: p.name,
+                  lines: [p.power > p.max ? `${p.power} · overmaxed` : `${p.power} of ${p.max}`],
+                  actions: [
+                    { id: "one", label: `Spend 1 point · +${p.step}`, disabled: s.perkPoints < 1, onPick: () => game?.spendPerk(p.id) },
+                    { id: "five", label: `Spend 5 points · +${p.step * 5}`, about: `${s.perkPoints} spare`, disabled: s.perkPoints < 5, onPick: () => { for (let i = 0; i < 5; i++) game?.spendPerk(p.id); } },
+                    {
+                      id: "max", label: "Take it to the cap",
+                      about: p.power >= p.max ? "Already there" : `${Math.ceil((p.max - p.power) / Math.max(1, p.step))} points`,
+                      disabled: p.power >= p.max || s.perkPoints < 1,
+                      onPick: () => { const want = Math.min(s.perkPoints, Math.ceil((p.max - p.power) / Math.max(1, p.step))); for (let i = 0; i < want; i++) game?.spendPerk(p.id); },
+                    },
+                  ],
+                }, {
+                  // The card shows only the first sentence; this is the whole of it.
+                  title: p.name,
+                  body: (
+                    <>
+                      <span>{p.about}</span>
+                      <span className="text-dim">{p.power > p.max ? `${p.power} invested · past the cap of ${p.max}` : `${p.power} of ${p.max} · each point adds ${p.step}`}</span>
+                    </>
+                  ),
+                  foot: s.perkPoints > 0 ? "Right-click to spend several at once" : "No perk points spare",
+                })}
+              >
                 <div className="ui-row">
                   <span className="text-kyo">{p.name}</span>
                   <span className="text-dim">{p.power > p.max ? `${p.power} overmax` : `${p.power}/${p.max}`}</span>
@@ -120,7 +149,21 @@ export const SkillsPanel = memo(function SkillsPanel({ game }: GameProp) {
           <p className="text-dim">Skills stay on the account and do not cap. Chance bonuses bend before they can break a fight. {s.skillPoints} skill points to spend in Verses (V).</p>
           <div className="ui-grid" style={{ "--min": "240px" } as React.CSSProperties}>
             {skills.map((sk) => (
-              <div key={sk.id} className={`ui-card skill-row skill-row-top ${best && sk.id === best.id ? "menu-pinned" : ""}`} data-testid={`skill-${sk.id}`}>
+              <div
+                key={sk.id}
+                className={`ui-card skill-row skill-row-top ${best && sk.id === best.id ? "menu-pinned" : ""}`}
+                data-testid={`skill-${sk.id}`}
+                {...targetProps(null, {
+                  title: `${sk.name} · level ${sk.level}`,
+                  body: (
+                    <>
+                      <span>{sk.line}</span>
+                      <span className="text-dim">{sk.xp.toLocaleString()} of {sk.need.toLocaleString()} toward level {sk.level + 1}</span>
+                      <span className="text-dim">Skills stay on the account and never cap.</span>
+                    </>
+                  ),
+                })}
+              >
                 <div className="ui-row">
                   <span className="text-kyo">{sk.name}</span>
                   <span>Lv {sk.level}</span>
@@ -233,7 +276,7 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
       </div>
       {tab === "loadout" && (
         <>
-          <Section title={moving !== null ? "MOVE · TAP THE SLOT (KEY) TO PUT IT ON" : "EQUIPPED · TAP A VERSE FOR OPTIONS · DRAG TO REORDER"}>
+          <Section title={moving !== null ? "MOVE · TAP THE SLOT (KEY) TO PUT IT ON" : "EQUIPPED · HOVER TO READ · RIGHT-CLICK FOR ACTIONS · DRAG TO REORDER"}>
             <div className="verse-slots">
               {Array.from({ length: MAX_BAR }, (_, i) => {
                 const m = s.bar[i];
@@ -245,9 +288,23 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
                   if (moving !== null) { game?.moveBar(moving, i); setMoving(null); setPicked(null); return; }
                   if (m) setPicked(picked === i ? null : i);
                 };
+                const info = m ? s.abilities.find((a) => a.id === m.id) : undefined;
+                // The slot used to need a click just to reveal Upgrade, Move and Unequip. They are
+                // on the slot itself now, and the numbers are on hover.
+                const slotMenu: { title: string; lines: string[]; actions: MenuAction[] } | null = m ? {
+                  title: `Key ${i + 1} · ${m.name}`,
+                  lines: info ? [info.rank > 0 ? `Rank ${info.rank}` : "Not ranked yet"] : [],
+                  actions: [
+                    { id: "upgrade", label: info && info.rank >= 5 ? "Overmax · 1 point" : "Upgrade · 1 point", about: `${s.skillPoints} point${s.skillPoints === 1 ? "" : "s"} spare`, disabled: !info || s.skillPoints < 1, onPick: () => game?.spendAbility(m.id) },
+                    { id: "move", label: "Move to another key", about: "Then tap the key to move it to", onPick: () => { setPicked(null); setMoving(i); } },
+                    { id: "detail", label: "Open options", about: "The full pane under the bar", onPick: () => setPicked(i) },
+                    { id: "unequip", label: "Unequip", danger: true, onPick: () => { game?.setBar(i, ""); setPicked(null); } },
+                  ],
+                } : null;
                 return m ? (
                   <button key={i} type="button" data-testid={`verse-slot-${i}`} draggable onDragStart={(e) => e.dataTransfer.setData("text/verse-slot", String(i))} {...drop}
-                    className={`verse-slot hot-${m.type} ${picked === i ? "verse-slot-picked" : ""} ${moving !== null && moving !== i ? "verse-slot-target" : ""}`} onClick={click} title={moving !== null ? "Put it here" : "Options"}>
+                    {...targetProps(moving === null ? slotMenu : null, verseHint(info, m.name, m.type))}
+                    className={`verse-slot hot-${m.type} ${picked === i ? "verse-slot-picked" : ""} ${moving !== null && moving !== i ? "verse-slot-target" : ""} ${moving === null ? "ui-has-menu" : ""}`} onClick={click}>
                     <span className="key-badge">{i + 1}</span>
                     <span className={`verse-slot-name ${typeClass(m.type)}`}>{m.name}</span>
                     <span className="hot-tag">{m.tag.split(" · ")[0]}</span>
@@ -278,7 +335,15 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
             {unlocked.length ? (
               <div className="ui-grid" style={{ "--min": "190px" } as React.CSSProperties}>
                 {unlocked.map((m) => (
-                  <button key={m.id} type="button" className={`ui-card verse-pick ${equipped.has(m.id) ? "ui-card-done" : ""}`} disabled={equipped.has(m.id) || s.bar.length >= MAX_BAR} onClick={() => game?.setBar(s.bar.length, m.id)}>
+                  <button key={m.id} type="button" className={`ui-card verse-pick ui-has-menu ${equipped.has(m.id) ? "ui-card-done" : ""}`} disabled={equipped.has(m.id) || s.bar.length >= MAX_BAR} onClick={() => game?.setBar(s.bar.length, m.id)}
+                    {...targetProps({
+                      title: m.name,
+                      lines: [m.rank > 0 ? `Rank ${m.rank}` : "Not ranked yet"],
+                      actions: [
+                        { id: "equip", label: equipped.has(m.id) ? "Already on the bar" : "Put on the bar", about: s.bar.length >= MAX_BAR ? "The bar is full" : undefined, disabled: equipped.has(m.id) || s.bar.length >= MAX_BAR, onPick: () => game?.setBar(s.bar.length, m.id) },
+                        { id: "upgrade", label: m.rank >= 5 ? "Overmax · 1 point" : "Upgrade · 1 point", about: `${s.skillPoints} point${s.skillPoints === 1 ? "" : "s"} spare`, disabled: s.skillPoints < 1, onPick: () => game?.spendAbility(m.id) },
+                      ],
+                    }, verseHint(m, m.name, m.type))}>
                     <span className={typeClass(m.type)}>{m.name}</span>
                     <span className="ui-row">{m.rank > 5 ? <span className="text-dim">Rank {m.rank}</span> : <Pips value={m.rank} max={5} />}<span className="text-dim">{equipped.has(m.id) ? "equipped" : m.effect}</span></span>
                   </button>
@@ -349,6 +414,33 @@ export const VersesPanel = memo(function VersesPanel({ game }: GameProp) {
 });
 
 /** A verse's numbers at its current rank, and what the next rank gives. */
+type VerseInfo = Snap["abilities"][number];
+
+/**
+ * The hover read for a verse. Everything the detail pane shows, without having to open it — which
+ * was the complaint: you could not tell what a verse did without spending a click to find out.
+ */
+function verseHint(m: VerseInfo | undefined, name: string, type: string) {
+  if (!m) return { title: name, body: <span className="text-dim">Not learned yet.</span> };
+  const main = m.now.heal ? `Heal ${m.now.heal}` : m.now.shield ? `Ward ${m.now.shield}` : `Power ${m.now.power}`;
+  return {
+    title: `${name} · ${m.rank > 0 ? `rank ${m.rank}` : "locked"}`,
+    body: (
+      <>
+        <span className={typeClass(type)}>{m.tactic} · {type}</span>
+        {m.aura
+          ? <span>Aura · {m.aura.label} · holds back {Math.round(m.aura.reserve * 100)}% of your max health while on</span>
+          : <span>{main} · Acc {m.accuracy}% · Crit {m.crit}% · Range {m.reachNow ?? m.range} · CD {m.cdNow != null ? `${m.cdNow}s` : "—"}</span>}
+        {m.effect !== "none" && <span className="text-kyo">Effect: {m.effect}</span>}
+        {verseAreaNote(m) && <span className="text-kyo">{verseAreaNote(m)}</span>}
+        {m.about && <span className="text-dim">{m.about}</span>}
+        <span className="text-dim">{m.rank > 0 ? `Next rank ${m.rank + 1}: ×${m.next.mult.toFixed(2)}` : "Costs 1 point to unlock"}</span>
+      </>
+    ),
+    foot: "Right-click for what you can do with it",
+  };
+}
+
 function VerseNums({ m, crit }: { m: Snap["abilities"][number]; crit?: boolean }) {
   const main = (v: typeof m.now) => (v.heal ? `Heal ${v.heal}` : v.shield ? `Ward ${v.shield}` : `Pow ${v.power}`);
   return (
@@ -1819,19 +1911,59 @@ export const TalkWindow = memo(function TalkWindow({ game }: GameProp) {
 // Right-click menu
 // ---------------------------------------------------------------------------
 
+/**
+ * The world's right-click menu.
+ *
+ * It used to show the same thirteen buttons wherever you clicked — the whole main menu, every
+ * time, with the one or two things you could actually do here buried among them. Now what is
+ * under the cursor is the menu, and those shortcuts sit behind "More", shut by default and
+ * remembered for the session once you open them.
+ */
 export const ContextMenu = memo(function ContextMenu({ game }: GameProp) {
   const { menu } = useSnapPick(["menu"] as const);
+  const [more, setMore] = useState(false);
+  // A menu with nothing to do here opens on the shortcuts, since that is plainly what you wanted.
+  const bare = !!menu && menu.actions.length === 0;
+  useEffect(() => { if (menu) setMore(bare); }, [menu, bare]);
   if (!menu) return null;
   const left = Math.max(8, Math.min(menu.sx, window.innerWidth - 340));
   const top = Math.max(8, Math.min(menu.sy, window.innerHeight - 280));
+  const shell = menu.shell ?? [];
   return (
-    <div className="ctx-menu px-panel" style={{ left, top }} role="menu">
+    <div className="ctx-menu px-panel" style={{ left, top }} role="menu" data-testid="ctx-menu">
       <p className="ctx-title">{menu.title}</p>
       {menu.lines.map((line) => <p key={line} className="ctx-line">{line}</p>)}
+
+      {menu.actions.length > 0 && (
+        <div className="ctx-actions" data-testid="ctx-here">
+          {menu.actions.map((a) => (
+            <button key={a.id} type="button" role="menuitem" className="px-btn ui-btn-sm px-btn-kyo" onClick={() => game?.menuAct(a.id)}>{a.label}</button>
+          ))}
+        </div>
+      )}
+
+      {shell.length > 0 && (
+        <>
+          <button
+            type="button"
+            className="px-btn ui-btn-sm ctx-more"
+            aria-expanded={more}
+            data-testid="ctx-more"
+            onClick={() => setMore(!more)}
+          >
+            {more ? "▾ More" : "▸ More"} <span className="text-dim">· {shell.length} menus</span>
+          </button>
+          {more && (
+            <div className="ctx-actions" data-testid="ctx-shell">
+              {shell.map((a) => (
+                <button key={a.id} type="button" role="menuitem" className="px-btn ui-btn-sm" onClick={() => game?.menuAct(a.id)}>{a.label}</button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
       <div className="ctx-actions">
-        {menu.actions.map((a) => (
-          <button key={a.id} type="button" role="menuitem" className="px-btn ui-btn-sm" onClick={() => game?.menuAct(a.id)}>{a.label}</button>
-        ))}
         <button type="button" className="px-btn ui-btn-sm" onClick={() => game?.clearMenu()}>Close</button>
       </div>
     </div>

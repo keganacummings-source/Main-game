@@ -25,6 +25,8 @@ import { installBlackMarket } from "@/game/black-market";
 import { installLms } from "@/game/lms";
 import { installTurbz, hasTurbzSave, TURBZ_NEWTEX_PREF } from "@/game/turbz-mode";
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
+import { UiOverlay } from "@/components/ui-overlay";
+import { FindPalette } from "@/components/find-palette";
 import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, PowerPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
@@ -558,6 +560,10 @@ const Overlays = memo(function Overlays({ game }: GameProp) {
       <SetCompleteAlert />
       {duel && <DuelBanner duel={duel} />}
       <ContextMenu game={game} />
+      {/* Hover hints and every right-click menu outside the canvas. */}
+      <UiOverlay />
+      {/* Ctrl+K: one search across every menu. */}
+      <FindPalette game={game} />
       {panel === "died" && <DiedOverlay game={game} />}
       {panel === "rebirth" && <RebirthOverlay game={game} />}
       {panel === "loot" && <LootWin game={game} />}

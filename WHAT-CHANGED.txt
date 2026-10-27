@@ -1,155 +1,184 @@
-TURBZ — Class Update (V4 kits) + two autoplay UI fixes
-======================================================
+TURBZ — UI / menu overhaul (interaction + QOL)
+==============================================
 
 Drop these over the repo root; every path below is already repo-relative.
 
+NOTE: this zip is self-contained. It also carries the class-update files from the
+last drop, at their current state, so it does not matter whether you applied that
+one first. Nothing here undoes it.
 
-WHAT YOU ASKED FOR
+
+WHAT I FOUND FIRST
 ------------------
 
-1. REMIXED CLASS KITS — four starting verses, not seven.
+Right-click already existed, but it was really a menu dump: right-clicking
+anywhere on the canvas opened the thing's description plus the SAME thirteen
+buttons every time (Bag, Skills, Quests, Map, Verses, Spirits, Crafting, Ghost
+jar, Bounty, Trade, Pause, Autoplay). It did nothing at all on bag items, gear,
+verses, spirits or perks.
 
-   Every class now starts with exactly four: a main hit, a second trick, a ward
-   or a mend, and a way to move. That was always the shape the kits were
-   designed around (it is written at the top of class-kits.ts); five were listed
-   and two more were appended automatically from the bonus "sx_" verses, which
-   is how a starting loadout nobody chose ended up nearly filling the nine equip
-   slots. That auto-append is gone.
+Hover was split in two. The canvas had a decent rich card for foes. Every panel
+in the UI fell back to the browser's own `title=` tooltip — slow to appear,
+unstyled, and truncated exactly when the text mattered.
 
-   The bonus verses were NOT deleted. They are still in the game and still
-   learnable at a shrine of their element — they are just no longer handed over
-   on the first morning.
+Worth saying plainly: the bag, verses, spirits and skills panels ALREADY had
+search, sort and filters. I did not rebuild those.
 
-   Old saves: the kit version went 3 -> 4, so an existing hunter is handed any
-   of her new four she is missing on next load. Nothing is ever taken away, so a
-   loadout built up over a life survives the change.
 
-2. 50/50 MELEE AND RANGED — 20 and 20.
+1. ONE MECHANISM FOR BOTH (src/components/ui-overlay*.ts/tsx — new)
+-------------------------------------------------------------------
 
-   It was 12 melee / 24 "mixed" / 4 ranged. "Mixed" is gone from the fixed
-   roster. Seven classes moved to close quarters because that is what they
-   always sounded like and never played like:
+   hoverProps(content)   gives any element a real hint card
+   menuProps(menu)       gives any element its own right-click menu
+   targetProps(m, h)     both at once, merged properly
+   <UiOverlay />         rendered once near the root, draws whichever is open
 
-     Nightlord    a Bruiser that only ever cast
-     Outrider     a skirmisher with four melee verses already in its pool
-     Vigilant     the night watch, now swinging the lantern it carries
-     Hexbinder    pacts cut into them rather than drawn in the air
-     Sovereign    the scepter turns out not to be ceremonial
-     Seraph       it already had the wings, the dive and the blink
-     Moonhopper   five of its seven verses were melee to begin with
+Details that matter:
 
-   Those five that had no close-range verses got new ones written for them (17
-   new kit verses in total, including the Engineer's). Their signature verse
-   moved with them, so each still leads with its own move.
+  - Hints appear after 110ms so they do not flicker as the cursor crosses a
+    list, follow the cursor once up, and never take the pointer — you can
+    always click the thing you are reading about.
+  - Cards flip to the other side of the cursor rather than running off an edge,
+    and a card bigger than the screen is pinned on rather than pushed off.
+  - A menu closes on Escape, on a click elsewhere, on scroll and on resize.
+    Arrow keys walk it, Enter picks, and the first item takes focus on open.
+  - Touch gets the menu from a long press (450ms), cancelled if the press turns
+    into a scroll. Hint cards are hidden on touch entirely — a hint you cannot
+    hover is just a card that appears when you try to tap something.
+  - Opening a menu takes any hint down, and a hint will not open over a menu.
+  - A row that HAS a menu shows a small corner mark on hover, so right-click is
+    discoverable rather than a secret.
 
-   The Crying Girl is deliberately excluded from the split — her fight style is
-   whatever you build.
+I split the store and the placement maths into a plain .ts file with no React
+import (ui-overlay-core.ts) specifically so they could be tested — see below.
 
-   This is enforced now: a melee class's attacking starters must land within
-   melee reach, a ranged class's must not. See scripts/class-update.test.mjs.
 
-3. STATS AND GRINDS.
+2. RIGHT-CLICK, EVERYWHERE
+--------------------------
 
-   Every class now has TWO aptitudes — its main accelerated grind plus a second
-   one it is also good at (Bulwark: Mining and Building; Corsair: Fishing and
-   Trading; Arcanist: Magic and Mana). The "Grinds X" line on the character
-   screen names both.
+  Bag item      Use · Set to Space · Queue · Take off Space · Sell one ·
+                Sell ten · Sell all
+  Gear          Wear (with the score difference against what you wear) ·
+                Open in detail · Lock/Unlock · Sell
+  Verse (bar)   Upgrade · Move to another key · Open options · Unequip
+  Verse (list)  Put on the bar · Upgrade
+  Perk          Spend 1 · Spend 5 · Take it to the cap
+  Canvas        the things you can actually do here (see 3)
 
-   Stat lines were revamped only for the seven classes that changed hands — a
-   melee class with "-25 Might" on it was a bug, not a trade-off. Each one was
-   rebalanced at EXACTLY its old stat budget, so nothing got stronger:
+One thing I was careful about: gear sitting in a CHEST or in a loot pick is not
+yours yet, so Wear/Lock/Sell there would be acting on something you do not own.
+Those cards get the hover read and no menu.
 
-     stormrider 25 -> 25   vigilant 32 -> 32   hexbinder 9 -> 9
-     nightlord  12 -> 12   seraph   27 -> 26   moonhopper 20 -> 20
-     sovereign  47 -> 47
+Because the actions moved onto the thing itself, the cards shed buttons — the
+bag card went from four to one or two. That is most of why the bag read as a
+wall.
 
-   Nothing else about any class moved. The field-level diff is: aptitudes,
-   fightStyle, signature, specialty, starterMoves, stats — and nothing else.
 
-4. THE ENGINEER.
+3. THE CANVAS MENU IS NOT A MENU DUMP ANY MORE
+----------------------------------------------
 
-   New class, 41st on the roster. Electric, Bruiser, melee, immune to Spark.
-   Focus: Powered Machines. Grinds Building and Mining.
+What is under the cursor is now the menu. The thirteen shortcuts are still
+there, folded behind "More", shut by default. If there is genuinely nothing to
+do where you clicked, it opens on the shortcuts, because that is plainly what
+you wanted.
 
-   Every machine she wires runs DOUBLED:
-     - batteries and capacitors hold twice as much
-     - HellStone generators, log burners and solar panels give twice as much
-     - duplicators turn out two copies per cycle instead of one
-     - the XP Producer pays double
-     - Tesla coils bite twice as hard
 
-   And the work those machines do feeds her directly: every few finished cycles
-   — a copy made, a block laid, a lump of Power generated — hands her a little
-   experience, so a well-laid camp levels her while she is standing in it.
-   Nobody else gains anything from this.
+4. HOVER READS — "can't tell what things do"
+--------------------------------------------
 
-   Her R is OVERCLOCK: for 10s the whole grid runs doubled AGAIN on top of her
-   own doubling (so x4), and the air around her arcs into anything close.
+  Bag item   what it does, its effect, why you can't use it, worth each and
+             worth the lot, and whether it is on the Space bar
+  Gear       level, slot, quality, element, score, EVERY enchantment spelled
+             out, the set bonus, the FX line, its value — and how it stands
+             against the piece you wear in that slot
+  Verse      tactic, power/heal/ward, accuracy, crit, range, cooldown, effect,
+             the area note, the description, and what the next rank is worth
+  Perk       the FULL text (the card only ever showed the first sentence) and
+             what each point adds
+  Skill      what it does for you and the XP to the next level
 
-   Her kit: Wrench Swing, Piston Punch, Coolant Ward, Jet Boot.
-   Her perks: Surge Tap, Grounded Boots.
-   Her sprite is painted into the last free block on the warrior sheet by
-   scripts/sprites/engineer-class.py (idempotent — rerun it any time).
 
-   One thing worth knowing: stored Power is now sanitised against the largest
-   multiplier any class can apply, not the base one. Without that, loading an
-   Engineer's save would have quietly emptied her capacitors down to 500.
+5. FIND ANYTHING — Ctrl+K / Cmd+K (src/components/find-palette.tsx — new)
+--------------------------------------------------------------------------
 
-5. AUTOPLAY UI — the two things you flagged.
+Every big menu already had its own search, which was the problem: to find
+something you first had to know which of five menus it lived in. Ctrl+K searches
+all of them at once — menus, bag items, gear, verses, skills, perks, spirits —
+and takes you to it. Arrow keys, Enter, Escape.
 
-   - The tick no longer turns into a cross when a task is switched off. The box
-     is simply empty, so the switch reads as unchecked. The box keeps its width
-     so the label does not shuffle sideways.
-   - (The "clear push when something is disabled" and the Auto-level fix from
-     the last drop are included here too, since those files are in this zip.)
+It only ever NAVIGATES. It opens the menu that holds what you picked and gets
+out of the way. It cannot spend a point, sell a piece or equip anything,
+because a fuzzy search box is the last place that should be able to.
+
+Performance note: it is mounted the whole session, so the shell watches only
+`mode`. The part that reads the bag, the gear and every verse is mounted only
+while the palette is open — otherwise the game would re-render against all of
+those arrays for the entire session.
+
+
+6. DENSITY
+----------
+
+Deliberately a measured loosening, not a restyle (you picked "keeps the current
+pixel look"):
+
+  .ui-card      padding 7/9 -> 9/11, gap 4 -> 5
+  .ui-card-about  17px -> 18px, tighter leading relaxed
+  .ui-grid      gap 8 -> 10
+  .ui-section   gap 8 -> 10
+  .ui-stack     gap 12 -> 14
+
+BE AWARE: I cannot run vite in this environment, so these spacing numbers are
+the one part of this drop I could not look at. They are intentionally small so
+they are easy to nudge — all five live together in src/styles.css.
 
 
 FILES
 -----
 
-  src/game/classes.ts               the roster: styles, aptitudes, specialties,
-                                    the seven rebalanced stat lines, the
-                                    Engineer, her perks, the Overclock gimmick
-  src/game/class-kits.ts            17 new verses, all 41 kits cut to four,
-                                    the auto-append loop removed
-  src/game/engine.ts                machineMult() / batCapFor() / machineWorkXp()
-                                    and every machine that reads them;
-                                    kit version 3 -> 4
-  src/game/class-gimmicks.ts        Overclock: the arc, the ring, autoplay-safe
-  src/game/power-extra.ts           MAX_MACHINE_MULT, so stored Power survives
-                                    a reload at the Engineer's capacity
-  src/game/actor-sheets.config.ts   the Engineer's sprite block
-  public/sprites/class_warriors.png the Engineer painted into it
-  scripts/sprites/engineer-class.py the script that paints her (new)
-  src/components/autoplay-panel.tsx the tick fix
-  src/styles.css                    the tick box keeps its width
-  scripts/class-update.test.mjs     7 new tests pinning the whole contract (new)
-  scripts/game-content.test.mjs     the moveset assertion is now "exactly 4"
-  package.json                      runs the new test file
+  src/components/ui-overlay-core.ts   the store + placement maths, no React (new)
+  src/components/ui-overlay.tsx       hoverProps / menuProps / targetProps and
+                                      the layer that draws them (new)
+  src/components/find-palette.tsx     Ctrl+K (new)
+  src/components/turbz-app.tsx        mounts both
+  src/components/inventory-ui.tsx     bag + gear hints and menus
+  src/components/game-panels.tsx      verses, perks, skills; the canvas menu
+                                      split into here-actions and "More"
+  src/game/engine.ts                  the canvas menu carries `shell` separately
+  src/styles.css                      hint, menu, palette and density rules
+  scripts/ui-overlay.test.mjs         8 tests for the overlay rules (new)
+  package.json                        runs them
+
+  ...plus the class-update files from the last drop, unchanged:
+  src/game/classes.ts, class-kits.ts, class-gimmicks.ts, power-extra.ts,
+  actor-sheets.config.ts, public/sprites/class_warriors.png,
+  scripts/sprites/engineer-class.py, scripts/class-update.test.mjs,
+  scripts/game-content.test.mjs
 
 
 BEFORE YOU PLAY IT
 ------------------
 
-I still cannot run npm here (the registry is blocked in this environment), so
-no build has been run against these files. Please run:
+npm still cannot reach the registry from here, so no build has been run. Please:
 
     npm install && npm test && npm run typecheck && npm run build
 
-What I COULD verify here:
+What I could verify:
 
-  typecheck    2 errors, same 2 as baseline (both are "cannot find type
-               definition file" for node / vite/client, caused only by
-               node_modules being absent). No new type errors.
-  tests        149 pass / 5 fail. The 5 are the same pre-existing failures as
-               before this change: survival-night, three in tex-world, and a
-               teardown warning in game-content (all 5 of its subtests pass).
+  typecheck    2 errors, the same 2 as baseline (both "cannot find type
+               definition file" for node / vite-client, caused only by
+               node_modules being absent). No new type errors at any point.
+  tests        157 pass / 5 fail — the same 5 pre-existing failures as before
+               this work (survival-night, three in tex-world, and a teardown
+               warning in game-content whose own 5 subtests all pass).
                tile-builder has 1 pre-existing failure about power-pack.json
                that nothing here touches.
-  new tests    7/7 pass.
-  map audit    0 problems.
-  wiki check   OK, 31 pages.
+  new tests    8/8 — edge flipping, oversized cards, hint-vs-menu precedence,
+               subscriber bookkeeping.
+  map audit    0 problems.  wiki check  OK, 31 pages.
 
-Worth play-testing specifically: the seven classes that moved to melee (do they
-feel right at close range?), and an Engineer camp with a generator, a battery
-and a duplicator wired up.
+What I could NOT verify, and you should look at first:
+
+  - The density numbers in section 6. Nothing else in this drop depends on them.
+  - That the hint card lands where you expect on a very wide screen.
+  - Long-press menus on a phone or tablet.

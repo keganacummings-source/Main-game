@@ -463,7 +463,13 @@ export type Snap = {
   /** Mouse-over card by the cursor (desktop). */
   hover: HoverCard | null;
   foe: string;
-  menu: { sx: number; sy: number; title: string; lines: string[]; actions: { id: string; label: string }[] } | null;
+  menu: {
+    sx: number; sy: number; title: string; lines: string[];
+    /** What you can do with the thing actually under the cursor. */
+    actions: { id: string; label: string }[];
+    /** The shortcuts to the rest of the game, folded away behind "More". */
+    shell: { id: string; label: string }[];
+  } | null;
   mapX: number;
   mapY: number;
   party: string[];
@@ -15085,12 +15091,24 @@ export class TurbzGame {
 				label: "Autoplay"
 			}
 		];
+		// Right-clicking a tree used to open the same thirteen buttons as right-clicking a bounty.
+		// What is under the cursor comes first now; the shortcuts to the rest of the game are still
+		// here, but folded away behind "More" so the common case is two or three real choices.
+		const here = [
+			...info?.actions ?? [],
+			...(this.rules === "hardcore"
+				? [{ id: "menu:survival", label: "Survival & Camp" }]
+				: this.save?.map === "world" && !this.lms
+					? [{ id: "ghostbox:here", label: this.save.ghostBox ? "Move Ghost Box here" : "Place Ghost Box here" }]
+					: []),
+		];
 		this.menu = {
 			sx: Math.max(8, Math.min(sx, w - 300)),
 			sy: Math.max(8, Math.min(sy, h - 280)),
 			title: info?.title ?? "Menu",
-			lines: info?.lines ?? ["Bag, skills, the board, and the rest of the veil."],
-			actions: [...info?.actions ?? [], ...(this.rules === "hardcore" ? [{ id: "menu:survival", label: "Survival & Camp" }] : this.save?.map === "world" && !this.lms ? [{ id: "ghostbox:here", label: this.save.ghostBox ? "Move Ghost Box here" : "Place Ghost Box here" }] : []), ...shell]
+			lines: info?.lines ?? ["Nothing here. The rest of the veil is under More."],
+			actions: here,
+			shell,
 		};
 		this.syncHud(true);
 	}
