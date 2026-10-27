@@ -6,6 +6,8 @@ import { CharacterSheet, ClassPicker, CryingCustomizer, PerkBuilder, type Pick }
 import { FloatWin, narrow, vh, vw } from "@/components/float-win";
 import { HudDock, HudFabs, HudHover, HudTarget, HudTracker, HudVitals } from "@/components/hud";
 import { AutoplayPanel } from "@/components/autoplay-panel";
+import { MobileHud } from "@/components/mobile-hud";
+import { useMobileUi } from "@/components/ui-kit";
 import { BuildBar } from "@/components/build-bar";
 import { isPinned, useLayout } from "@/game/ui-layout";
 import { loadCloudSave, writeCloudSave } from "@/game/cloud-client";
@@ -612,18 +614,33 @@ const LmsHud = memo(function LmsHud({ game }: GameProp) {
 });
 
 function Play({ game, username: _username }: { game: TurbzGame | null; username: string }) {
+  const mobile = useMobileUi();
+  /*
+   * Mobile mode swaps the HUD rather than adding to it. The desktop vitals panel, foe panel,
+   * tracking column, autoplay panel and eleven-button dock would cover most of a phone screen, and
+   * every one of them has a home in the mobile interface instead — the ☰ sheet, or the top strip.
+   *
+   * What stays either way: the build bar (it has its own layout), the panels themselves (they
+   * become full-screen sheets, see float-win.tsx), talk, and the overlays.
+   */
   return (
     <>
-      <HudVitals game={game} />
-      <HudTarget />
-      {/* One right-hand column so tracking and autoplay stack instead of sitting on top of each other. */}
-      <div className="hud-right-col">
-        <HudTracker game={game} />
-        <AutoplayPanel game={game} />
-      </div>
-      <HudDock game={game} />
+      {mobile ? (
+        <MobileHud game={game} />
+      ) : (
+        <>
+          <HudVitals game={game} />
+          <HudTarget />
+          {/* One right-hand column so tracking and autoplay stack instead of sitting on top of each other. */}
+          <div className="hud-right-col">
+            <HudTracker game={game} />
+            <AutoplayPanel game={game} />
+          </div>
+          <HudDock game={game} />
+          <HudFabs game={game} />
+        </>
+      )}
       <BuildBar game={game} />
-      <HudFabs game={game} />
       <Stick on={(x, y) => game?.setStick(x, y)} />
       <Windows game={game} />
       <Talk game={game} />

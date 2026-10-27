@@ -210,6 +210,9 @@ const MENUS = [
   { id: "map", label: "Map", key: "M", Icon: MapIcon, testid: "hud-map-btn" },
 ] as const;
 
+/** The same menus, for the mobile sheet (mobile-hud.tsx), which has no room for keyboard badges. */
+export const MOBILE_MENUS = MENUS;
+
 /** Bottom-centre: verses and every menu, in one place. */
 export const HudDock = memo(function HudDock({ game }: GameProp) {
   const s = useSnapPick(["bar", "abilities", "rules", "autoplay", "autoCombat", "panel", "quick", "quickCd", "gimmick", "build"] as const);

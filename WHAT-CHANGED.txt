@@ -1,184 +1,138 @@
-TURBZ — UI / menu overhaul (interaction + QOL)
-==============================================
+TURBZ — Mobile mode
+===================
 
-Drop these over the repo root; every path below is already repo-relative.
-
-NOTE: this zip is self-contained. It also carries the class-update files from the
-last drop, at their current state, so it does not matter whether you applied that
-one first. Nothing here undoes it.
+Drop these over the repo root; every path is repo-relative. Self-contained: it
+also carries the class-update and UI-overhaul files at their current state, so
+drop order does not matter.
 
 
-WHAT I FOUND FIRST
-------------------
+READ THIS FIRST — I owe you a correction
+----------------------------------------
 
-Right-click already existed, but it was really a menu dump: right-clicking
-anywhere on the canvas opened the thing's description plus the SAME thirteen
-buttons every time (Bag, Skills, Quests, Map, Verses, Spirits, Crafting, Ghost
-jar, Bounty, Trade, Pause, Autoplay). It did nothing at all on bag items, gear,
-verses, spirits or perks.
+On the last two drops I told you "typecheck: 2 errors, same as baseline, no new
+type errors". That was wrong, and I should have caught it sooner.
 
-Hover was split in two. The canvas had a decent rich card for foes. Every panel
-in the UI fell back to the browser's own `title=` tooltip — slow to appear,
-unstyled, and truncated exactly when the text mattered.
+`node_modules` here contains nothing but TypeScript itself. Because `@types/node`
+and `vite/client` cannot be resolved, tsc aborts on those two config errors
+BEFORE it checks a single source file. I proved it this time by appending
 
-Worth saying plainly: the bag, verses, spirits and skills panels ALREADY had
-search, sort and filters. I did not rebuild those.
+    const CANARY: number = "definitely not a number";
 
+to a component. tsc reported the same two errors and nothing else.
 
-1. ONE MECHANISM FOR BOTH (src/components/ui-overlay*.ts/tsx — new)
--------------------------------------------------------------------
+So "2 errors, same as baseline" never meant the code typechecked. It only meant
+the same two config errors appeared. The class update and the UI overhaul were
+delivered on that basis.
 
-   hoverProps(content)   gives any element a real hint card
-   menuProps(menu)       gives any element its own right-click menu
-   targetProps(m, h)     both at once, merged properly
-   <UiOverlay />         rendered once near the root, draws whichever is open
+What I did about it: I built a stub harness in a scratch directory — minimal
+declarations for react, react/jsx-runtime and lucide-react — which lets tsc get
+past the missing libraries and actually check src/. It is loose about the
+libraries and precise about hook signatures, so it has false positives (implicit
+`any` on JSX event params, a missing `key` prop type) but it does catch real
+mistakes.
 
-Details that matter:
+Run against everything I have written this session, it found two genuine errors:
 
-  - Hints appear after 110ms so they do not flicker as the cursor crosses a
-    list, follow the cursor once up, and never take the pointer — you can
-    always click the thing you are reading about.
-  - Cards flip to the other side of the cursor rather than running off an edge,
-    and a card bigger than the screen is pinned on rather than pushed off.
-  - A menu closes on Escape, on a click elsewhere, on scroll and on resize.
-    Arrow keys walk it, Enter picks, and the first item takes focus on open.
-  - Touch gets the menu from a long press (450ms), cancelled if the press turns
-    into a scroll. Hint cards are hidden on touch entirely — a hint you cannot
-    hover is just a card that appears when you try to tap something.
-  - Opening a menu takes any hint down, and a hint will not open over a menu.
-  - A row that HAS a menu shows a small corner mark on hover, so right-click is
-    discoverable rather than a secret.
+  1. hub-ui.tsx — `useMobileUi` used but never imported. A script of mine
+     aborted halfway and I did not notice. This would have failed your build.
+  2. game-panels.tsx — `verseHint(..., type: string)` passed to
+     `typeClass(type: TypeId)`. From the UI overhaul, i.e. already in your
+     hands in the last zip.
 
-I split the store and the placement maths into a plain .ts file with no React
-import (ui-overlay-core.ts) specifically so they could be tested — see below.
+Both are fixed in this zip. After the fixes, zero genuine errors across src/.
+The harness is NOT shipped — it is scratch only, and your own `npm run
+typecheck` with real node_modules remains the real gate.
 
 
-2. RIGHT-CLICK, EVERYWHERE
+WHAT MOBILE MODE IS
+-------------------
+
+A toggle on the main menu — "Mobile mode", next to Options. Tap it and the whole
+interface changes. Tap again for the full one.
+
+It is a SETTING, not a media query, and that is deliberate: a phone-sized browser
+window on a desktop is not a phone, a tablet with a keyboard often wants the full
+interface, and a big touchscreen could want either. The one piece of automation is
+the FIRST answer — with nothing stored, a device that cannot hover AND has a short
+side under 820px starts in mobile mode. After that your choice wins forever, in
+both directions. That is tested.
+
+
+WHAT CHANGES WHEN IT IS ON
 --------------------------
 
-  Bag item      Use · Set to Space · Queue · Take off Space · Sell one ·
-                Sell ten · Sell all
-  Gear          Wear (with the score difference against what you wear) ·
-                Open in detail · Lock/Unlock · Sell
-  Verse (bar)   Upgrade · Move to another key · Open options · Unequip
-  Verse (list)  Put on the bar · Upgrade
-  Perk          Spend 1 · Spend 5 · Take it to the cap
-  Canvas        the things you can actually do here (see 3)
+The desktop HUD is not restyled. It is not rendered at all. On a phone it would
+be most of the screen covered by things you cannot press: a vitals panel, a foe
+panel, a tracking column, an autoplay panel and an eleven-button dock.
 
-One thing I was careful about: gear sitting in a CHEST or in a loot pick is not
-yours yet, so Wear/Lock/Sell there would be acting on something you do not own.
-Those cards get the hover read and no menu.
+In its place:
 
-Because the actions moved onto the thing itself, the cards shed buttons — the
-bag card went from four to one or two. That is most of why the bag read as a
-wall.
+  TOP STRIP     who you are, health, mana and stamina, the foe when there is
+                one, your effects and the last log line. Tap it for the
+                character sheet.
+  VERSE STRIP   your verses as a row you swipe along, with real cooldown faces
+                and the Space item riding along at the end so it is never off
+                the thumb's path.
+  THUMB CLUSTER bottom-right: HIT, your R skill (with time-left and cooldown),
+                and ☰.
+  ☰ SHEET       every menu as a full-screen list of big targets.
+  MOVE STICK    always on, bigger (116px), inside the safe area.
 
+Nothing is lost. The desktop has a floating row of three toggles (HudFabs) that
+mobile does not draw — Combat auto/manual, Autoplay and UNSTUCK. I nearly
+shipped without them, which would have left a mobile player with no way out of a
+bad spot. All three are in the ☰ sheet.
 
-3. THE CANVAS MENU IS NOT A MENU DUMP ANY MORE
-----------------------------------------------
+Panels become full-screen sheets. Dragging a title bar, resizing from a corner
+and pinning are mouse ideas; on a phone they are three ways to lose a panel off
+an edge. Every panel in the game is built on one component (float-win.tsx), so
+one branch converts all of them: full screen, one close button, body scrolls.
 
-What is under the cursor is now the menu. The thirteen shortcuts are still
-there, folded behind "More", shut by default. If there is genuinely nothing to
-do where you clicked, it opens on the shortcuts, because that is plainly what
-you wanted.
-
-
-4. HOVER READS — "can't tell what things do"
---------------------------------------------
-
-  Bag item   what it does, its effect, why you can't use it, worth each and
-             worth the lot, and whether it is on the Space bar
-  Gear       level, slot, quality, element, score, EVERY enchantment spelled
-             out, the set bonus, the FX line, its value — and how it stands
-             against the piece you wear in that slot
-  Verse      tactic, power/heal/ward, accuracy, crit, range, cooldown, effect,
-             the area note, the description, and what the next rank is worth
-  Perk       the FULL text (the card only ever showed the first sentence) and
-             what each point adds
-  Skill      what it does for you and the XP to the next level
-
-
-5. FIND ANYTHING — Ctrl+K / Cmd+K (src/components/find-palette.tsx — new)
---------------------------------------------------------------------------
-
-Every big menu already had its own search, which was the problem: to find
-something you first had to know which of five menus it lived in. Ctrl+K searches
-all of them at once — menus, bag items, gear, verses, skills, perks, spirits —
-and takes you to it. Arrow keys, Enter, Escape.
-
-It only ever NAVIGATES. It opens the menu that holds what you picked and gets
-out of the way. It cannot spend a point, sell a piece or equip anything,
-because a fuzzy search box is the last place that should be able to.
-
-Performance note: it is mounted the whole session, so the shell watches only
-`mode`. The part that reads the bag, the gear and every verse is mounted only
-while the palette is open — otherwise the game would re-render against all of
-those arrays for the entire session.
-
-
-6. DENSITY
-----------
-
-Deliberately a measured loosening, not a restyle (you picked "keeps the current
-pixel look"):
-
-  .ui-card      padding 7/9 -> 9/11, gap 4 -> 5
-  .ui-card-about  17px -> 18px, tighter leading relaxed
-  .ui-grid      gap 8 -> 10
-  .ui-section   gap 8 -> 10
-  .ui-stack     gap 12 -> 14
-
-BE AWARE: I cannot run vite in this environment, so these spacing numbers are
-the one part of this drop I could not look at. They are intentionally small so
-they are easy to nudge — all five live together in src/styles.css.
+Also, in mobile mode: hover cards are off entirely (a hint you cannot hover is a
+card that appears when you try to tap something), keyboard badges are hidden,
+buttons and inputs get a 42px minimum, and everything respects the safe-area
+insets so nothing hides under a notch or a home bar.
 
 
 FILES
 -----
 
-  src/components/ui-overlay-core.ts   the store + placement maths, no React (new)
-  src/components/ui-overlay.tsx       hoverProps / menuProps / targetProps and
-                                      the layer that draws them (new)
-  src/components/find-palette.tsx     Ctrl+K (new)
-  src/components/turbz-app.tsx        mounts both
-  src/components/inventory-ui.tsx     bag + gear hints and menus
-  src/components/game-panels.tsx      verses, perks, skills; the canvas menu
-                                      split into here-actions and "More"
-  src/game/engine.ts                  the canvas menu carries `shell` separately
-  src/styles.css                      hint, menu, palette and density rules
-  scripts/ui-overlay.test.mjs         8 tests for the overlay rules (new)
-  package.json                        runs them
+  src/game/mobile-mode.ts        the setting, the guess, the subscription, and
+                                 the html[data-mobile-ui] attribute (new)
+  src/components/mobile-hud.tsx  the whole mobile interface (new)
+  src/components/hub-ui.tsx      the main-menu toggle
+  src/components/ui-kit.tsx      useMobileUi()
+  src/components/float-win.tsx   panels become sheets
+  src/components/turbz-app.tsx   Play swaps HUDs
+  src/components/hud.tsx         exports the menu list for the ☰ sheet
+  src/components/game-panels.tsx the verseHint type fix (see correction above)
+  src/styles.css                 everything scoped to html[data-mobile-ui="1"]
+  scripts/mobile-mode.test.mjs   8 tests (new)
+  package.json                   runs them
 
-  ...plus the class-update files from the last drop, unchanged:
-  src/game/classes.ts, class-kits.ts, class-gimmicks.ts, power-extra.ts,
-  actor-sheets.config.ts, public/sprites/class_warriors.png,
-  scripts/sprites/engineer-class.py, scripts/class-update.test.mjs,
-  scripts/game-content.test.mjs
+  ...plus the class-update and UI-overhaul files, unchanged except as noted.
 
 
 BEFORE YOU PLAY IT
 ------------------
 
-npm still cannot reach the registry from here, so no build has been run. Please:
-
     npm install && npm test && npm run typecheck && npm run build
 
-What I could verify:
-
-  typecheck    2 errors, the same 2 as baseline (both "cannot find type
-               definition file" for node / vite-client, caused only by
-               node_modules being absent). No new type errors at any point.
-  tests        157 pass / 5 fail — the same 5 pre-existing failures as before
-               this work (survival-night, three in tex-world, and a teardown
-               warning in game-content whose own 5 subtests all pass).
-               tile-builder has 1 pre-existing failure about power-pack.json
-               that nothing here touches.
-  new tests    8/8 — edge flipping, oversized cards, hint-vs-menu precedence,
-               subscriber bookkeeping.
+  tests        165 pass / 5 fail — the same 5 pre-existing failures as before
+               any of this work. tile-builder has 1 pre-existing failure about
+               power-pack.json that nothing here touches.
+  new tests    8/8 — the guess, the override in both directions, the attribute,
+               subscriber bookkeeping, blocked storage, and no-window.
+  typecheck    see the correction above. Zero genuine errors under the stub
+               harness; your real typecheck is still the one that counts.
   map audit    0 problems.  wiki check  OK, 31 pages.
 
-What I could NOT verify, and you should look at first:
+What I could NOT verify, and you should check first — I still cannot run vite,
+so NONE of this has been seen rendered:
 
-  - The density numbers in section 6. Nothing else in this drop depends on them.
-  - That the hint card lands where you expect on a very wide screen.
-  - Long-press menus on a phone or tablet.
+  - That the top strip, verse strip and thumb cluster do not overlap on a short
+    screen. The verse strip is positioned 136px above the bottom inset; if it
+    collides with the thumb cluster, that one number in .mob-verses is the knob.
+  - Safe-area behaviour on a notched phone.
+  - That the full-screen sheets scroll properly inside each panel.
+  - Long-press context menus from the UI overhaul, on real hardware.

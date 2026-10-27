@@ -8,7 +8,8 @@ import { initActorSprites, tryDrawActorSprite } from "@/game/actor-sprites";
 import { drawActor } from "@/game/sprites";
 import type { ActorDraw } from "@/game/sprites";
 import { installEnemySkins } from "@/game/enemy-skins";
-import { Chips, Empty, Screen, Tabs, Tile } from "./ui-kit";
+import { Chips, Empty, Screen, Tabs, Tile, useMobileUi } from "./ui-kit";
+import { toggleMobileUi } from "@/game/mobile-mode";
 import { ascensionCount, readShinies, type ShinyEntry } from "@/game/account-save";
 import { drawRecordGhost, drawShiny } from "@/game/shiny-gif";
 
@@ -208,6 +209,7 @@ export function Hub(props: {
   onShinies: () => void;
   onAscend: () => number;
 }) {
+  const mobile = useMobileUi();
   const [busy, setBusy] = useState(false);
   const [ascend, setAscend] = useState<0 | 1 | 2>(0);
   const [typed, setTyped] = useState("");
@@ -275,6 +277,17 @@ export function Hub(props: {
         <Tile title="Leaderboards" about="Searchable ranks for Hunt and Hardcore." onClick={props.onBoards} />
         <Tile title="Designer Mode" about="Map Builder, Enemy Designer, and the Camp & Tile Asset Builder." onClick={props.onDesigner} />
         <Tile title="Shinys Seen" about={shinyCount ? `Your collection: ${shinyCount} shiny ghost${shinyCount === 1 ? "" : "s"}.` : "Every shiny you pick up is kept here."} onClick={props.onShinies} testid="shinies-tile" badge={shinyCount ? `✦ ${shinyCount}` : undefined} />
+        {/* A setting, not a media query: the player decides and the choice sticks (mobile-mode.ts). */}
+        <Tile
+          title="Mobile mode"
+          about={mobile
+            ? "On. A thumb-sized bar, full-screen menus and a move stick. Tap to go back to the full interface."
+            : "Off. Tap for a phone interface: a thumb-sized bar, full-screen menus and a move stick."}
+          onClick={() => toggleMobileUi()}
+          testid="mobile-tile"
+          badge={mobile ? "ON" : undefined}
+          primary={mobile}
+        />
         <Tile title="Options" about="Account and friends." onClick={props.onOptions} />
         <Tile title="Ascension" about="Wipe all account progress and begin again. You will be warned first." onClick={() => setAscend(1)} testid="ascend-tile" badge={asc ? roman(asc) : undefined} />
       </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Pin, PinOff, X, GripVertical } from "lucide-react";
 import { setWin, useLayout, type WinRect } from "@/game/ui-layout";
+import { useMobileUi } from "./ui-kit";
 
 let zTop = 30;
 
@@ -27,6 +28,7 @@ function clamp(r: WinRect, tall = 40): WinRect {
 }
 
 export function FloatWin({ id, title, def, onClose, children, minW = 200, minH = 80, compact }: Props) {
+  const mobile = useMobileUi();
   const layout = useLayout();
   const stored = layout[id];
   const base = def();
@@ -74,6 +76,37 @@ export function FloatWin({ id, title, def, onClose, children, minW = 200, minH =
     if (live) setWin(id, clamp(live, tall), base);
     setLive(null);
   };
+
+  /*
+   * Mobile mode: a sheet, not a window.
+   *
+   * Dragging a title bar, resizing from a corner and pinning are all mouse ideas — on a phone they
+   * are three ways to lose a panel off the edge of a screen that has no room to spare. Every panel
+   * in the game is built on this component, so this one branch converts all of them: full screen,
+   * one close button, body scrolls.
+   */
+  if (mobile) {
+    return (
+      <div
+        ref={box}
+        data-win={id}
+        data-testid={`win-${id}`}
+        className="mob-sheet px-panel"
+        role="dialog"
+        aria-label={title}
+      >
+        <div className="mob-sheet-bar">
+          <span className="mob-sheet-title">{title}</span>
+          {onClose && (
+            <button type="button" className="mob-sheet-close" aria-label={`Close ${title}`} data-testid={`win-${id}-close`} onClick={onClose}>
+              <X size={20} />
+            </button>
+          )}
+        </div>
+        <div className="mob-sheet-body">{children}</div>
+      </div>
+    );
+  }
 
   return (
     <div

@@ -420,7 +420,7 @@ type VerseInfo = Snap["abilities"][number];
  * The hover read for a verse. Everything the detail pane shows, without having to open it — which
  * was the complaint: you could not tell what a verse did without spending a click to find out.
  */
-function verseHint(m: VerseInfo | undefined, name: string, type: string) {
+function verseHint(m: VerseInfo | undefined, name: string, type: TypeId) {
   if (!m) return { title: name, body: <span className="text-dim">Not learned yet.</span> };
   const main = m.now.heal ? `Heal ${m.now.heal}` : m.now.shield ? `Ward ${m.now.shield}` : `Power ${m.now.power}`;
   return {

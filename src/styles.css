@@ -1758,3 +1758,181 @@ textarea.px-input { resize: vertical; min-height: 64px; }
 .find-hit-on, .find-hit:focus-visible { border-color: var(--color-kyo); background: rgba(230, 193, 90, 0.12); outline: none; }
 .find-hit-note { color: var(--color-dim); font-size: 17px; line-height: 1.15; }
 .find-foot { color: var(--color-dim); font-size: 16px; text-align: right; }
+
+/* ===========================================================================
+ * MOBILE MODE  —  html[data-mobile-ui="1"]  (src/game/mobile-mode.ts)
+ *
+ * A setting the player turns on from the main menu, not a media query, so all
+ * of this is scoped to the attribute and nothing here can reach a desktop
+ * player on a narrow window. The desktop HUD is not restyled — it is not
+ * rendered at all (see Play in turbz-app.tsx).
+ * ======================================================================== */
+
+/* The stick is normally gated behind (pointer: coarse); mobile mode always wants it. */
+html[data-mobile-ui="1"] .stick-wrap {
+  position: absolute;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  display: block;
+  width: 116px;
+  height: 116px;
+  border: 3px solid var(--color-bone);
+  background: #140e0c8c;
+  touch-action: none;
+  z-index: 17;
+}
+
+/* Nothing hover-only survives on a device with no hover. */
+html[data-mobile-ui="1"] .ui-hint,
+html[data-mobile-ui="1"] .hover-card,
+html[data-mobile-ui="1"] .ui-has-menu::after { display: none; }
+
+/* ---- the top strip ---- */
+.mob-top {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: max(6px, env(safe-area-inset-left));
+  right: max(6px, env(safe-area-inset-right));
+  z-index: 16;
+  display: grid;
+  gap: 4px;
+  padding: 6px 8px;
+  background: #140e0ccc;
+  border: 2px solid var(--ui-line);
+  pointer-events: auto;
+}
+.mob-top-low { border-color: var(--color-blood); }
+.mob-top-id { display: flex; align-items: center; gap: 8px; background: none; border: 0; color: var(--color-bone); font: inherit; font-size: 19px; padding: 0; min-height: 34px; text-align: left; }
+.mob-top-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-top-kyo { color: var(--color-kyo); }
+.mob-pools { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.mob-foe { display: grid; gap: 2px; border-top: 2px solid var(--ui-line); padding-top: 4px; }
+.mob-foe-name { font-size: 18px; color: var(--foe, var(--color-bone)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-effects { display: flex; flex-wrap: wrap; gap: 3px; }
+.mob-log { color: var(--color-dim); font-size: 17px; line-height: 1.1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- the verse strip ---- */
+.mob-verses {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 136px);
+  z-index: 17;
+  display: flex;
+  gap: 6px;
+  padding: 0 10px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+.mob-verses::-webkit-scrollbar { display: none; }
+.mob-verse {
+  position: relative;
+  flex: 0 0 auto;
+  width: 84px;
+  min-height: 56px;
+  padding: 5px 6px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  overflow: hidden;
+  background: #140e0cdd;
+  border: 2px solid var(--ui-line);
+  color: var(--color-bone);
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.05;
+  text-align: left;
+  touch-action: manipulation;
+}
+.mob-verse-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mob-verse-tag { color: var(--color-dim); font-size: 15px; }
+.mob-verse-cd { color: var(--color-dim); }
+.mob-verse-mask { position: absolute; left: 0; right: 0; bottom: 0; background: #0b0706b0; pointer-events: none; }
+.mob-verse-num { position: absolute; right: 4px; top: 3px; color: var(--color-kyo); font-size: 17px; }
+.mob-verse-space { border-color: var(--color-kyo); }
+.mob-verse-empty { border-color: var(--ui-line); color: var(--color-dim); }
+.mob-verse-mode { flex: 0 0 auto; align-self: center; font-size: 16px; padding-right: 8px; }
+
+/* ---- the thumb cluster ---- */
+.mob-thumb {
+  position: absolute;
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 18;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 10px;
+  align-items: end;
+  justify-items: end;
+}
+.mob-fab {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 3px solid var(--color-bone);
+  background: #140e0cdd;
+  color: var(--color-bone);
+  font: inherit;
+  font-size: 17px;
+  display: grid;
+  place-content: center;
+  touch-action: manipulation;
+}
+.mob-fab-label { font-family: var(--font-display); font-size: 9px; }
+.mob-fab-num { position: absolute; right: 6px; top: 6px; color: var(--color-kyo); font-size: 17px; }
+.mob-fab-hit { border-color: var(--color-blood); grid-column: 2; }
+.mob-fab-r { border-color: var(--color-kyo); }
+.mob-fab-on { background: #3a2a0c; border-color: var(--color-kyo); }
+.mob-fab-cd { color: var(--color-dim); border-color: #5a483a; }
+.mob-fab-menu { width: 60px; height: 60px; grid-column: 1 / -1; justify-self: end; }
+
+/* ---- the menu sheet ---- */
+.mob-menu {
+  position: fixed;
+  inset: 0;
+  z-index: 75;
+  background: var(--color-ink);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: max(6px, env(safe-area-inset-top)) max(6px, env(safe-area-inset-right)) max(6px, env(safe-area-inset-bottom)) max(6px, env(safe-area-inset-left));
+}
+.mob-menu-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 4px; border-bottom: 2px solid var(--ui-line); }
+.mob-menu-grid { overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; padding: 10px 4px; align-content: start; }
+.mob-menu-item {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  min-height: 84px;
+  padding: 12px 8px;
+  background: var(--ui-card);
+  border: 2px solid var(--ui-line);
+  color: var(--color-bone);
+  font: inherit;
+  font-size: 19px;
+  touch-action: manipulation;
+}
+.mob-menu-item-on { border-color: var(--color-kyo); color: var(--color-kyo); }
+
+/* ---- panels become full-screen sheets (float-win.tsx) ---- */
+.mob-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: max(4px, env(safe-area-inset-top)) max(4px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) max(4px, env(safe-area-inset-left));
+}
+.mob-sheet-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 6px 8px; border-bottom: 2px solid var(--ui-line); }
+.mob-sheet-title { font-family: var(--font-display); font-size: 10px; color: var(--color-kyo); }
+.mob-sheet-close { min-width: 44px; min-height: 44px; display: grid; place-content: center; background: none; border: 2px solid var(--ui-line); color: var(--color-bone); }
+.mob-sheet-body { overflow: auto; -webkit-overflow-scrolling: touch; padding: 10px 6px; }
+
+/* Touch targets, everywhere inside mobile mode. */
+html[data-mobile-ui="1"] .px-btn,
+html[data-mobile-ui="1"] .chip,
+html[data-mobile-ui="1"] .ui-tab { min-height: 42px; }
+html[data-mobile-ui="1"] .px-input { min-height: 42px; font-size: 19px; }
+html[data-mobile-ui="1"] .key-badge { display: none; }      /* no keyboard to badge */
+html[data-mobile-ui="1"] .ui-grid { --min: 150px; }
