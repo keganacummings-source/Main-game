@@ -95,23 +95,23 @@ export type RegionWorld = WorldData & {
 };
 
 /**
- * Cut one region of the chart into playable terrain.
+ * Cut a rectangle of the chart into playable terrain.
  *
- * Everything is derived from the chart plus the world seed, so the same region
- * always comes back the same — it can be thrown away and re-cut whenever the
- * hunter walks away and back, which is what keeps memory flat.
+ * `buildRegion` is the grid-aligned case. The live game also asks for a window
+ * that slides with the hunter — same tiles, any origin — so the hard edge of
+ * one region is never a wall in the middle of the sea.
  */
-export function buildRegion(chart: WorldChart, rx: number, ry: number, size = REGION): RegionWorld {
-  const originX = rx * size;
-  const originY = ry * size;
-  const w = Math.min(size, chart.w - originX);
-  const h = Math.min(size, chart.h - originY);
+export function buildWindow(chart: WorldChart, originX: number, originY: number, width: number, height: number): RegionWorld {
+  const originX0 = originX | 0;
+  const originY0 = originY | 0;
+  const w = Math.max(0, Math.min(width | 0, chart.w - originX0));
+  const h = Math.max(0, Math.min(height | 0, chart.h - originY0));
   const tiles = new Array(Math.max(0, w * h));
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const cx = originX + x;
-      const cy = originY + y;
+      const cx = originX0 + x;
+      const cy = originY0 + y;
       const ci = cy * chart.w + cx;
       const b = chart.biome[ci]!;
       const look = LOOK[b] ?? LOOK[BIOME.plains]!;
@@ -151,12 +151,12 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
     }
   }
 
-  // Name the region after the land it actually holds, not after whatever is in
-  // its top-left corner — which is open water for most coastal regions.
+  // Name the ground after the land it actually holds, not after whatever is in
+  // its top-left corner — which is open water for most coastal windows.
   const counts = new Map<number, number>();
   for (let y = 0; y < h; y += 4) {
     for (let x = 0; x < w; x += 4) {
-      const id = chart.land[(originY + y) * chart.w + (originX + x)]!;
+      const id = chart.land[(originY0 + y) * chart.w + (originX0 + x)]!;
       if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
     }
   }
@@ -166,9 +166,23 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
 
   return {
     w, h, tiles: tiles as WorldData["tiles"], spawns: [], cache: null,
-    originX, originY, rx, ry,
+    originX: originX0, originY: originY0,
+    rx: Math.floor(originX0 / REGION), ry: Math.floor(originY0 / REGION),
     name: home?.name ?? "The Open Sea",
   };
+}
+
+/**
+ * Cut one region of the chart into playable terrain.
+ *
+ * Everything is derived from the chart plus the world seed, so the same region
+ * always comes back the same — it can be thrown away and re-cut whenever the
+ * hunter walks away and back, which is what keeps memory flat.
+ */
+export function buildRegion(chart: WorldChart, rx: number, ry: number, size = REGION): RegionWorld {
+  const originX = rx * size;
+  const originY = ry * size;
+  return buildWindow(chart, originX, originY, Math.min(size, chart.w - originX), Math.min(size, chart.h - originY));
 }
 
 /**

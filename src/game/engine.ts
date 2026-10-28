@@ -279,7 +279,7 @@ export type DeathReport = {
 };
 export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build" | "turbzchest" | "power";
 export type PowerView = {
-  kind: "hellgen" | "battery" | "wire" | "xpgen" | "duplicator";
+  kind: string;
   name: string;
   about: string;
   how: string[];
@@ -316,6 +316,39 @@ export type PowerView = {
   ioAbout: string;
   /** Whether this machine takes part in pipe item flow (shows the Pipe Flow control). */
   canPipe: boolean;
+  cap: number;
+  day: boolean;
+  on: boolean;
+  fuel: number;
+  fuelNext: number;
+  bagTimber: number;
+  bagRock: number;
+  dirName: string;
+  mat: "wood" | "stone";
+  buf: { id: string; name: string; count: number }[];
+  bufMax: number;
+  merger: {
+    stored: { uid: string; name: string; type: string; level: number }[];
+    storedMax: number;
+    super: { fed: number; types: string[]; abilities: number; movesKnown: number; level: number; ready: boolean } | null;
+    extractMin: number;
+    next: number;
+    party: { uid: string; name: string; type: string; level: number }[];
+    box: { uid: string; name: string; type: string; level: number }[];
+    currentSuper: { name: string; fed: number; hp: number; maxHp: number } | null;
+  } | null;
+  forge: {
+    pieces: number;
+    pileMax: number;
+    minCast: number;
+    megaAt: number;
+    bonus: number;
+    avgLevel: number;
+    types: string[];
+    enchantKinds: number;
+    castPower: number;
+    bagGear: number;
+  } | null;
 };
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
@@ -1973,12 +2006,18 @@ export class TurbzGame {
 		this.migrateMainWorld(save);
 		this.loadMap(save.map, false);
 		if (blocked(this.world, save.x, save.y)) {
-			this.loadMap("world", true);
-			const home = nearestOpen(this.world, hearthXY().x, hearthXY().y);
-			save.x = home.x;
-			save.y = home.y;
-			save.map = "world";
-			this.loadMap("world", false);
+			if (this.chartPlay && save.map === "custom-turbz") {
+				const home = nearestOpen(this.world, save.x, save.y);
+				save.x = home.x;
+				save.y = home.y;
+			} else {
+				this.loadMap("world", true);
+				const home = nearestOpen(this.world, hearthXY().x, hearthXY().y);
+				save.x = home.x;
+				save.y = home.y;
+				save.map = "world";
+				this.loadMap("world", false);
+			}
 		}
 		this.cam.x = save.x;
 		this.cam.y = save.y;
@@ -4741,6 +4780,7 @@ export class TurbzGame {
 		this.tickIncoming(dt);
 		this.evadeT = Math.max(0, (this.evadeT ?? 0) - dt);
 		this.visitRegion();
+		this.tickChartPlay?.();
 		// Nodes are gathered with E. Do not pick them up by walking into them.
 		const set = this.setInfo();
 		if (set.on && set.fx && this.combat > 0) {
@@ -11231,7 +11271,7 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	// ---------- Ghost tasks (Hardcore) ----------
-	taskOn() {
+	ghostTasksOn() {
 		return this.rules === "hardcore" && !this.lms;
 	}
 	/** Seconds between a working ghost's results: rarer ghosts are quicker, and water ghosts fish and earth ghosts chop faster. */
@@ -11246,7 +11286,7 @@ export class TurbzGame {
 		const save = this.save;
 		const spirit = save?.spirits?.find((s) => s.uid === uid);
 		if (!save || !spirit) return;
-		if (!this.taskOn()) return this.say("Ghosts only take tasks in Hardcore.");
+		if (!this.ghostTasksOn()) return this.say("Ghosts only take tasks in Hardcore.");
 		if (!task) {
 			if (!spirit.task) return;
 			spirit.task = null;
@@ -11267,7 +11307,7 @@ export class TurbzGame {
 	}
 	tickGhostTasks(dt) {
 		const save = this.save;
-		if (!save || this.dead || this.role === "guest" || !this.taskOn()) return;
+		if (!save || this.dead || this.role === "guest" || !this.ghostTasksOn()) return;
 		for (const sp of save.spirits ?? []) {
 			if (!sp.task) continue;
 			sp.taskT = (sp.taskT ?? 0) - dt;

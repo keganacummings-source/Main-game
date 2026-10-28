@@ -1252,7 +1252,7 @@ export const SurvivalPanel = memo(function SurvivalPanel({ game }: GameProp) {
         <>
           <Section title="CAMPFIRE" right={<span className={s.camp.near ? "text-kyo" : "text-dim"}>{campLine}</span>}>
             <div className="gear-actions">
-              <button type="button" className="px-btn" data-testid="build-fire-btn" disabled={s.nearCamp || count("timber") < 3 || (s.turbz && s.camp.lit)} title={s.turbz && s.camp.lit ? "You already have a camp. Pack it up first to move it." : undefined} onClick={() => game?.survivalAction("fire")}>
+              <button type="button" className="px-btn" data-testid="build-fire-btn" disabled={!!(s.nearCamp || count("timber") < 3 || (s.turbz && s.camp.lit))} title={s.turbz && s.camp.lit ? "You already have a camp. Pack it up first to move it." : undefined} onClick={() => game?.survivalAction("fire")}>
                 {s.turbz && s.camp.packed ? `Light campfire & unpack camp (${s.camp.pieces} pieces) · 3 logs` : "Build campfire · 3 logs"}
               </button>
               <button type="button" className="px-btn px-btn-blood" data-testid="pack-camp-btn" disabled={!s.camp.near} title={s.camp.near ? undefined : "Stand by your campfire"} onClick={() => game?.survivalAction("packcamp")}>
@@ -1681,7 +1681,7 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
                   {p.merger.party.map((g) => (
                     <div key={g.uid} className="ui-card">
                       <span className="ui-row"><span className="text-kyo">{g.name}</span><span className="text-dim">{g.type} · Lv {g.level}</span></span>
-                      <button type="button" className="px-btn ui-btn-sm" disabled={p.merger.stored.length >= p.merger.storedMax} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
+                      <button type="button" className="px-btn ui-btn-sm" disabled={(p.merger?.stored.length ?? 0) >= (p.merger?.storedMax ?? 0)} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
                     </div>
                   ))}
                 </div>}
@@ -1693,7 +1693,7 @@ export const PowerPanel = memo(function PowerPanel({ game }: GameProp) {
                   {p.merger.box.map((g) => (
                     <div key={g.uid} className="ui-card">
                       <span className="ui-row"><span className="text-kyo">{g.name}</span><span className="text-dim">{g.type} · Lv {g.level}</span></span>
-                      <button type="button" className="px-btn ui-btn-sm" disabled={p.merger.stored.length >= p.merger.storedMax} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
+                      <button type="button" className="px-btn ui-btn-sm" disabled={(p.merger?.stored.length ?? 0) >= (p.merger?.storedMax ?? 0)} onClick={() => game?.mergerFeedGhost(g.uid)}>Feed</button>
                     </div>
                   ))}
                 </div>}

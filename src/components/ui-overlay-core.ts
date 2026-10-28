@@ -7,9 +7,11 @@
  * off-screen simply looks like a card that never opened.
  */
 
+import type { ReactNode } from "react";
+
 export type MenuAction = {
   id: string;
-  label: unknown;
+  label: ReactNode;
   about?: string;
   onPick: () => void;
   disabled?: boolean;
@@ -17,8 +19,8 @@ export type MenuAction = {
   danger?: boolean;
 };
 
-export type UiMenu = { title: unknown; lines?: unknown[]; actions: MenuAction[] };
-export type HintContent = { title?: unknown; body: unknown; foot?: unknown; wide?: boolean };
+export type UiMenu = { title: ReactNode; lines?: ReactNode[]; actions: MenuAction[] };
+export type HintContent = { title?: ReactNode; body: ReactNode; foot?: ReactNode; wide?: boolean };
 
 export type HintState = (HintContent & { x: number; y: number }) | null;
 export type MenuState = (UiMenu & { x: number; y: number }) | null;

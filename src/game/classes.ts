@@ -497,7 +497,10 @@ export function aptitudeOf(classId: ClassId, skill: SkillId): number {
   if (listed) return listed;
   if (!c) return 1;
   if (skill === "mana" && (c.role === "Caster" || c.role === "Support")) return 2.2;
-  if (skill === "stamina" && (c.fightStyle === "melee" || c.role === "Tank" || c.role === "Bruiser")) return 2.1;
+  if (skill === "stamina") {
+    const role = c.role;
+    if (c.fightStyle === "melee" || role === "Tank" || role === "Bruiser") return 2.1;
+  }
   if (skill === "mana" && c.fightStyle !== "melee") return 1.35;
   return 1;
 }

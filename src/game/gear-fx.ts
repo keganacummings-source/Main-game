@@ -951,7 +951,7 @@ function drawTrail(c: Sig, ax: number, ay: number, key: number) {
   const { ctx, t, s, pal, alt, tr } = c;
   const keep = tr.style === 1 ? 1.6 : 0.55;
   const list = trackTrail(key, ax, ay, t, keep);
-  list.forEach((p, i) => {
+  list.forEach((p: { x: number; y: number; t: number }, i: number) => {
     const age = (t - p.t) / keep;
     if (age >= 1) return;
     const x = p.x - ax, y = p.y - ay;

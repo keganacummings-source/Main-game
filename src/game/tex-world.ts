@@ -480,7 +480,7 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
     const x = t.x + 6, y = t.y + 5, i2 = at(x, y);
     if (open(i2)) {
       tiles[i2] = { ...tiles[i2]!, layers: [TEX.portal] };
-      portals.push({ id: nid("portal"), node: "portal", tx: x, ty: y, level: sites[t.si]!.levelMin });
+      portals.push({ id: nid("portal"), node: "portal", tx: x, ty: y, level: sites[t.si]!.levelMin } as unknown as MapInteractable);
     }
   });
   cabinAt.forEach((c) => {

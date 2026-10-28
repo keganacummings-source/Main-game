@@ -37,7 +37,7 @@ export type TypeId =
 export type Slot = "weapon" | "head" | "chest" | "legs" | "feet" | "relic";
 export type QualityId = "worn" | "common" | "fine" | "rare" | "epic" | "legendary";
 export type RaceId = "vesper" | "cinder" | "tide" | "thorn" | "rime";
-export type MapId = "world" | "crypt" | "kiln" | `rift-${number}`;
+export type MapId = "world" | "crypt" | "kiln" | "custom-turbz" | `rift-${number}`;
 export type FxId =
   | "voidring"
   | "solarnova"
