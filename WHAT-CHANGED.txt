@@ -1,173 +1,192 @@
-TURBZ — every failing test and type error fixed
-===============================================
+TURBZ — the 2500 x 2500 world, and the chart menu
+=================================================
 
 Drop over the repo root. Self-contained: carries the class update, the UI
-overhaul and mobile mode at their current state, so drop order does not matter.
+overhaul, mobile mode and the bug-fix pass at their current state.
 
-    BEFORE   276 tests, 6 failing across 3 files, npm test stopped early
-    AFTER    276 tests, 0 failing, npm test runs to the end
+  308 tests, 0 failures.
+
+READ THE LAST SECTION BEFORE YOU PLAY. The world system is complete and tested,
+but it is NOT yet plugged into the engine, and I explain exactly why and what is
+left.
 
 
-THE ROOT CAUSE OF MOST OF IT
+THE WALL I HIT FIRST, AND WHAT I DID ABOUT IT
+---------------------------------------------
+
+I measured before designing. The existing generator makes one plain object per
+tile: at 450 x 450 that is 202,500 objects and 118 MB. At 2500 x 2500 it would
+be 6,250,000 objects — about 3.6 GB — which no browser tab survives.
+
+So the world is stored as typed arrays, one byte per tile per layer. The same
+6.25M tiles come to ~30 MB and build in about 6 seconds.
+
+    src/game/world-chart.ts     what the world IS
+    src/game/world-chunks.ts    playable ground, cut a region at a time
+
+Nothing in the chart is a playable tile. Terrain is materialised in 256 x 256
+regions around the hunter (~65k tiles each, a third of the OLD whole world) and
+dropped when she walks away. Regions are pure functions of the chart, so
+throwing one away costs nothing but the 30ms to cut it again.
+
+
+HOW A WORLD IS BUILT
+--------------------
+
+  1. CONTINENTS  a few big irregular landmasses plus scattered islands
+  2. ELEVATION   ridged noise in mountain BELTS
+  3. MOISTURE    its own noise, plus a bonus for being near a coast
+  4. TEMPERATURE latitude, cooled by height
+  5. BIOME       chosen from those three
+
+Biomes therefore form bands and patches WITHIN a continent rather than being
+painted on. Sixteen of them, up from six: deep ocean, ocean, lake, shore,
+plains, forest, savanna, desert, swamp, jungle, taiga, tundra, glacier,
+highland, volcanic, void.
+
+A seed rebuilds a world exactly. That is what makes the export 8.6 KB instead
+of 30 MB.
+
+Four things went wrong on the way and are worth knowing, because each is pinned
+by a test now:
+
+  - A constant sea-level shift could only ever TAKE land away, so worlds came
+    out 19% land when asked for 34%. Sea level is now a histogram cut.
+  - Height taken from the same field that decides land-or-sea peaked at every
+    continent's centre: each one charted as a ring of green around a round grey
+    core. Land-or-sea and height are now two separate fields.
+  - Height mapped straight from noise made 63% of ALL land mountain. Land
+    height is now assigned by RANK through a curve, so low ground is wide and
+    peaks are rare.
+  - Shore judged by elevation made a THIRD of all land beach. Shore is now
+    geography — land within two tiles of water. The coastline was fine all
+    along; I had two beach rules fighting.
+
+
+THE M MENU
+----------
+
+  src/components/world-chart-panel.tsx
+
+It does not draw the world. It draws what you have FOUND, and the rest stays
+black — walking somewhere new is the only way anything appears.
+
+  - fog lifts in a 26-tile radius as you travel
+  - named places appear in the list only once discovered
+  - right-click or the star marks a favourite (kept per world seed)
+  - Export chart (PNG) — a picture of what you have charted
+  - Export world (JSON) — seed, continents, biome census, discovered places
+  - zoom x1/x2/x3, biome census with colour swatches, continents by size
+
+Fog is stored per 8 x 8 CELL, not per tile. Per tile would be 780 KB raw and
+over a megabyte of text in every save; per cell a whole world's fog is ~12 KB,
+~16 KB as text. At chart scale one cell is well under a pixel.
+
+A fog that does not match the world it is loaded into is REFUSED and comes back
+blank, rather than being loaded at the wrong offset and drawing as noise.
+
+M falls back to the old local map whenever there is no chart, so no mode loses
+its map key.
+
+
+TEXTURES
+--------
+
+  scripts/sprites/world-decor.py   (idempotent, re-runnable)
+
+Four of the new biomes were sharing art with a biome they are meant to contrast
+with — savanna read as bare dirt, jungle as swamp, highland as a dungeon floor,
+tundra as glacier. So four ground tiles and three scatter overlays are derived
+from the existing set, the same way the caster sprites and the Engineer were:
+
+    grass_dry, grass_jungle, stone_highland, snow_tundra
+    decor_rocks, decor_bones, decor_shrub
+
+They are recolours and the script says so plainly — nobody should mistake them
+for hand-drawn art. My first pass produced a tundra indistinguishable from snow
+and rocks invisible against the ground they sit on; both were retuned until the
+biomes actually tell each other apart. Biomes that can honestly share art still
+do (taiga and tundra are both snow, with different amounts of tree) rather than
+inventing a second snow tile that would read as a bug.
+
+
+WHAT IS NOT DONE — READ THIS
 ----------------------------
 
-Every test here loaded TypeScript by transpiling it to a `data:` URL. A data URL
-has no directory, so the moment a source file contained `from "./something"`,
-Node could not resolve it. The tests worked around that with a hand-written map
-of specifier to URL — which meant adding one ordinary import to a source file
-silently broke a test file that had never heard of it.
+The world system is complete and tested. It is NOT wired into the engine. Open
+M today and you get the old local map, because nothing creates a chart yet.
 
-That is exactly what happened. `building.ts` grew an import of `./tile-atlas`,
-and both survival-night and game-content started throwing — ASYNCHRONOUSLY,
-after their own assertions had already passed. So the suite reported a file that
-failed while every test inside it was green, and nobody could see what broke.
+I stopped deliberately. engine.ts is 719 KB, I cannot run the game at all in
+this container, and the three places this needs to hook — world creation, the
+movement tick and the save — are the most load-bearing paths in it. Wiring that
+blind risks breaking a game that currently works, to light up a menu.
 
-Worse, it was hiding tests. Converting those two files to a loader that resolves
-relative imports itself revealed 43 tests that had not been running at all:
+Four calls are all it needs:
 
-    game-content      5 tests visible  ->  41
-    survival-night   10 tests visible  ->  17
+  1. WORLD CREATION (where a TURBZ world is rolled)
+         import { generateChart, startSpot } from "./world-chart";
+         import { setActiveChart } from "./chart-store";
+         const chart = generateChart({ seed: save.seed });
+         setActiveChart(chart, save.fog);
+         const { tx, ty } = startSpot(chart);        // the hunter's start tile
 
-One of those hidden tests immediately caught a real bug in my own Engineer
-class (below).
+  2. TERRAIN  — keep a RegionCache instead of one big world:
+         import { RegionCache } from "./world-chunks";
+         this.regions = new RegionCache(chart, 4);
+         const world = this.regions.at(chartTx, chartTy);
+     A region IS a WorldData, so collision, rendering and the builder are handed
+     exactly what they are handed today.
 
-  NEW   scripts/lib/ts-module.mjs — one loader, resolves relative imports
-        recursively, handles .json, survives cycles, still supports a deliberate
-        stub override for the few tests that genuinely want to fake a dependency.
+  3. MOVEMENT  — one line wherever the hunter's tile changes:
+         import { noteVisited } from "./chart-store";
+         if (noteVisited(chartTx, chartTy)) this.powerDirty = true;  // or mark the save dirty
+     It returns 0 when nothing new was uncovered, which is almost every step.
 
+  4. SAVE  — persist and restore the fog:
+         import { fogForSave } from "./chart-store";
+         save.fog = fogForSave();                    // on save
+         // on load it goes to setActiveChart above as the second argument
 
-REAL BUGS FIXED
----------------
-
-1. tex-world.ts — the textured world's start point had no coordinates.
-
-   `generateTexWorld` returned `spawn: {x, y}` where the map format is
-   `{tx, ty}`. main-world.ts turns that into the player's start position, so a
-   textured world was starting her at NaN, and map-format's own validation
-   rejected the file outright. Two tests and one type error, all one bug.
-
-2. tex-world.ts — unreachable pockets were "fixed" in a way that did nothing.
-
-   There was already a pass meant to keep the world one piece: it turned
-   unreachable land into a lake. But water is walkable (world.ts `blocked` lets
-   you swim), so a sealed pocket just became a sealed pond and stayed exactly as
-   cut off. It also never looked at water pockets at all, so small ponds ringed
-   by rock survived untouched — and a fishing node rolled into one was a node no
-   hunter could ever reach. Stranded ground is now made solid, which is what
-   actually keeps the world connected.
-
-3. tex-world.ts — dungeons showed old art in New Texture Mode.
-
-   `retextureDungeon` replaced a tile's `layers` only when it was a portal, so
-   every other decorated tile kept the generator's original art
-   (/MapAssets/08_Statues_and_Landmarks/...). The mode promises it uses nothing
-   but its own textures. Layers it does not own are now dropped; the layout
-   (floor, block, portal) is untouched.
-
-4. classes.ts — the Engineer had no class passive. MINE, from the class update.
-
-   Every class has exactly one entry in CLASS_PASSIVES. I added the Engineer and
-   never added hers, so she shipped with none. This is the bug the hidden tests
-   caught the moment they started running. She now has "Powered Hands".
-
-5. camp-assets.ts — two current machines could not be painted.
-
-   POWER_TEXTURES listed 11 power blocks. The Ghost Merger and the GearSet Forge
-   are current build pieces but were missing, so the Camp & Tile builder refused
-   their textures and the shipped power pack silently lost them on import.
-
-6. power-pack.json — retired content still shipping.
-
-   The pack carried a BlockBreaker entry. The BlockBreaker was retired
-   (power-extra.ts migrates old saves to the Rock Miner) and is not a build
-   piece any more, so it was dead data that could never be imported. Removed.
-
-7. enemy-design.ts — an unsound signature.
-
-   `typedSpriteCanvas` declared `type: TypeId`, but it is called through a
-   resolver with `String(m.type ?? "normal")` off live mob data, which can be
-   anything. Widened to `string` with a guard that turns unknown types away.
-
-8. map-format.ts — `seed` was written but not declared.
-
-   tex-world has always recorded the seed it built from; the type never admitted
-   it. Declared, so a generated world can be rebuilt exactly from its file.
-
-9. scripts/power-extra.test.mjs and scripts/fight-depth.test.mjs were in NO npm
-   script. Nobody ran them. power-extra had been failing silently — it could not
-   even load (direct .ts imports, same extensionless-import problem). Both are
-   fixed and both are now in `npm test`.
+Say the word and I will do the wiring as its own pass, with the engine changes
+kept small and separate so they are easy to review or back out.
 
 
-STALE TEST EXPECTATIONS CORRECTED
----------------------------------
+FILES
+-----
 
-I did not weaken anything to go green. Each of these asserted something the code
-can no longer do, and I say what it checks now:
+  src/game/world-chart.ts            the chart: continents, biomes, places (new)
+  src/game/world-chunks.ts           regions + RegionCache (new)
+  src/game/explored.ts               fog of war, packed for a save (new)
+  src/game/chart-store.ts            the active world, for the UI (new)
+  src/game/chart-export.ts           PNG pixels + JSON world file (new)
+  src/components/world-chart-panel.tsx   the M menu (new)
+  src/components/turbz-app.tsx       M routes to the chart when there is one
+  src/game/tex-world.ts              exports FL/BI, registers the new tiles
+  src/styles.css                     chart menu styles
+  scripts/sprites/world-decor.py     derives the new tiles (new)
+  public/MapAssets/NewTex/*.png      7 derived tiles (new)
+  scripts/world-chart.test.mjs       10 tests (new)
+  scripts/explored.test.mjs           7 tests (new)
+  scripts/world-chunks.test.mjs       8 tests (new)
+  scripts/chart-export.test.mjs       7 tests (new)
+  scripts/lib/ts-module.mjs          resolves a ".json" specifier properly
+  package.json                       runs the new tests
 
-  - tex-world "zones.length > 80" could never pass: the generator lays 8 zones
-    per region (3 per island) across 8-10 regions, then drops any near the edge,
-    so the real count is 54-60 on every seed. It only ever "passed" because the
-    reachability check above it failed first and the line never ran. Now checks
-    the invariant behind it — every region is seeded, and all three gathering
-    nodes exist.
-
-  - power-extra looked for a single "power" build group. That group was split
-    into power.gen / power.store / power.wiring / power.machines. Now checks the
-    piece is in one of them.
-
-  - power-extra expected an out-of-range machine facing to CLAMP (9 -> 3). The
-    code WRAPS (9 % 4 = 1), deliberately, with the idiom that also brings a
-    negative facing back into range. Corrected to the wrap, and I added the
-    negative case it was missing.
-
-  - power-extra's two BlockBreaker tests covered real behaviour — hauling into a
-    chest, and a BlockGenerator refusing the wrong material — through a piece
-    that no longer exists. Rewritten against the Rock Miner that replaced it.
-
-  - game-content's moveset assertion is the V4 "exactly four" rule from the
-    class update (already in your hands).
-
-
-ABOUT THE TYPECHECK
--------------------
-
-As I said last time, tsc here cannot check anything: node_modules holds only
-TypeScript, so it aborts on two missing type libraries before reading a source
-file. I keep a stub harness in scratch to get real checking. Against it, the
-whole of src/ is now clean — the two pre-existing errors above (7 and 8) are
-fixed, as are the two of my own from earlier drops.
-
-Your `npm run typecheck` with real node_modules is still the only real gate.
-
-
-FILES CHANGED FOR THIS PASS
----------------------------
-
-  scripts/lib/ts-module.mjs          the shared loader (new)
-  scripts/survival-night.test.mjs    converted; 10 -> 17 tests now run
-  scripts/game-content.test.mjs      converted; 5 -> 41 tests now run
-  scripts/tex-world.test.mjs         converted; zone assertion corrected
-  scripts/power-extra.test.mjs       made loadable; 4 stale expectations fixed
-  src/game/tex-world.ts              spawn coords, pocket sealing, dungeon layers
-  src/game/classes.ts                the Engineer's passive
-  src/game/camp-assets.ts            Ghost Merger + GearSet Forge paintable
-  src/game/enemy-design.ts           resolver signature
-  src/game/map-format.ts             seed declared
-  public/MapAssets/NewTex/power-pack.json   retired BlockBreaker removed
-  package.json                       the two orphaned test files wired in
-
-  ...plus everything from the three previous drops, unchanged.
+  ...plus everything from the four previous drops.
 
 
 VERIFIED HERE
 -------------
 
-  npm test        242 + 7 + 8 + 19 = 276 tests, 0 failures, runs to the end
+  npm test        274 + 7 + 8 + 19 = 308 tests, 0 failures
   map audit       0 problems
-  wiki check      OK, 31 pages
-  type harness    clean across src/
+  wiki check      OK
+  types           clean across src/ under the stub harness
 
-STILL NOT VERIFIED: I cannot run vite, so nothing is rendered. The UI overhaul
-and mobile mode have never been seen on a screen — the density numbers and the
-mobile verse-strip offset remain the things to look at first.
+  A full 2500 x 2500 world: 6,250,000 tiles, ~30 MB, 6.1s, 4 major continents,
+  97 named places, all 16 biomes present, land 34%.
+
+STILL UNSEEN: I cannot run vite, so no part of the UI has been rendered — the
+chart menu included. I did render the world itself and the fog view straight
+from the generator to check them, which is how the four generator bugs above
+were caught.

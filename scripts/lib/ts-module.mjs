@@ -30,6 +30,9 @@ function resolveDep(fromFile, spec) {
     }
   }
   // A .json import is data, not code; it is inlined below rather than resolved as a module.
+  // The specifier may already carry the extension ("./enemies/custom-enemies.json"), in which case
+  // `base` IS the file — checking only `${base}.json` looked for custom-enemies.json.json.
+  if (base.endsWith(".json") && existsSync(base)) return base;
   if (existsSync(`${base}.json`)) return `${base}.json`;
   return null;
 }
@@ -48,7 +51,7 @@ export function tsModule(file, overrides = null) {
 
   if (abs.endsWith(".json")) {
     const url = `data:text/javascript;base64,${Buffer.from(`export default ${readFileSync(abs, "utf8")};`).toString("base64")}`;
-    cache.set(abs, url);
+    if (!overrides) cache.set(abs, url);
     return url;
   }
 
