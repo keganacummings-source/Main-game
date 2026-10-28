@@ -1936,3 +1936,17 @@ html[data-mobile-ui="1"] .ui-tab { min-height: 42px; }
 html[data-mobile-ui="1"] .px-input { min-height: 42px; font-size: 19px; }
 html[data-mobile-ui="1"] .key-badge { display: none; }      /* no keyboard to badge */
 html[data-mobile-ui="1"] .ui-grid { --min: 150px; }
+
+/* The chart menu (src/components/world-chart-panel.tsx) */
+.chart-wrap { overflow: auto; border: 2px solid var(--ui-line); background: #0b0706; padding: 4px; max-height: 52dvh; }
+.chart-canvas { display: block; image-rendering: pixelated; }
+.chart-places { display: grid; gap: 2px; }
+.chart-place { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: baseline; padding: 3px 5px; border: 1px solid transparent; }
+.chart-place-on { border-color: var(--color-kyo); }
+.chart-place-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-place-where { font-size: 17px; white-space: nowrap; }
+.chart-star { background: none; border: 0; color: var(--color-dim); font: inherit; font-size: 19px; cursor: pointer; padding: 0 2px; min-width: 22px; }
+.chart-star-on { color: var(--color-kyo); }
+.chart-lands, .chart-census { display: grid; gap: 2px; }
+.chart-swatch { display: inline-block; width: 11px; height: 11px; border: 1px solid #0b0706; vertical-align: middle; margin-right: 5px; }
+@media (width <= 760px) { .chart-wrap { max-height: 40dvh; } .chart-place-where { display: none; } }

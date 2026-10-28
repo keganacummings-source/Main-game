@@ -1,24 +1,15 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
-import ts from "typescript";
+import { loadTs } from "./lib/ts-module.mjs";
 
-function moduleUrl(path, imports = {}) {
-  let source = ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  for (const [specifier, url] of Object.entries(imports)) source = source.replaceAll(`from "${specifier}"`, `from "${url}"`);
-  return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-}
-const dn = await import(moduleUrl("../src/game/daynight.ts"));
-const bld = await import(moduleUrl("../src/game/building.ts"));
-const buildingUrl = moduleUrl("../src/game/building.ts");
-const surv = await import(moduleUrl("../src/game/survival.ts", { "./building": buildingUrl }));
-const fx = await import(moduleUrl("../src/game/combat-fx.ts"));
-const kitsUrl = moduleUrl("../src/game/class-kits.ts");
-const classesUrl = moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl });
-const overmaxUrl = moduleUrl("../src/game/overmax.ts");
-const content = await import(moduleUrl("../src/game/content.ts", { "./classes": classesUrl, "./overmax": overmaxUrl, "./class-kits": kitsUrl }));
+// One loader, which follows relative imports on its own: see scripts/lib/ts-module.mjs for why the
+// hand-written import maps that used to live here were a trap.
+const load = (rel) => loadTs(import.meta.url, rel);
+const dn = await load("../src/game/daynight.ts");
+const bld = await load("../src/game/building.ts");
+const surv = await load("../src/game/survival.ts");
+const fx = await load("../src/game/combat-fx.ts");
+const content = await load("../src/game/content.ts");
 
 test("day is 10 minutes, night is 15 minutes, and standard mode never has night", () => {
   assert.equal(dn.DAY_SECONDS, 600);
@@ -170,10 +161,7 @@ test("non-attack verses land instantly", () => {
 });
 
 test("world collision includes placed logs", async () => {
-  const world = await import(moduleUrl("../src/game/world.ts", {
-    "./content": moduleUrl("../src/game/content.ts", { "./classes": moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl }), "./overmax": moduleUrl("../src/game/overmax.ts"), "./class-kits": kitsUrl }),
-    "./tile-atlas": moduleUrl("../src/game/tile-atlas.ts"),
-  }));
+  const world = await load("../src/game/world.ts");
   const w = fakeWorld();
   assert.equal(world.blocked(w, 10 * 32 + 16, 10 * 32 + 16), false);
   w.solids = new Set([10 * w.w + 10]);
@@ -212,7 +200,7 @@ test("the survival drain multiplier slows every bar, never stops them, and defau
 
 
 test("skills have no caps: past 100% turns into guaranteed extras, speed-ups never reach zero", async () => {
-  const om = await import(moduleUrl("../src/game/overmax.ts"));
+  const om = await load("../src/game/overmax.ts");
   assert.equal(om.procs(0), 0);
   assert.equal(om.procs(250, 0.4), 3, "250% with a good roll is three");
   assert.equal(om.procs(250, 0.6), 2, "250% with a bad roll is two");

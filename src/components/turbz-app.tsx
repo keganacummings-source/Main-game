@@ -29,6 +29,8 @@ import { installTurbz, hasTurbzSave, TURBZ_NEWTEX_PREF } from "@/game/turbz-mode
 import { Bag, BlackMarket, BountyBoard, ChestPanel, GearInventory, LootPicker } from "@/components/inventory-ui";
 import { UiOverlay } from "@/components/ui-overlay";
 import { FindPalette } from "@/components/find-palette";
+import { WorldChartPanel } from "@/components/world-chart-panel";
+import { activeChart } from "@/game/chart-store";
 import { ContextMenu, CraftPanel, DiedOverlay, MapPanel, PausePanel, QuestsPanel, RebirthOverlay, SkillsPanel, SpiritsPanel, SurvivalPanel, TalkWindow, TurbzChestPanel, PowerPanel, VersesPanel, WildGhostPanel } from "@/components/game-panels";
 import { useSnapPick, useSnapValue, type Snap } from "@/components/use-snap";
 import { Field, Screen, Tabs, Tile } from "@/components/ui-kit";
@@ -476,7 +478,11 @@ function PanelBody({ panel, game }: { panel: PanelId; game: TurbzGame | null }) 
     case "skills": return <SkillsPanel game={game} />;
     case "moves": return <VersesPanel game={game} />;
     case "quests": return <QuestsPanel game={game} />;
-    case "map": return <MapPanel game={game} />;
+    case "map":
+      // A charted world gets the chart menu: what you have found, and only that.
+      // Modes that never build one (arenas, dungeonless rules) keep the old
+      // local map, so nothing loses its M key.
+      return activeChart() ? <WorldChartPanel /> : <MapPanel game={game} />;
     case "ghost": return <SpiritsPanel game={game} />;
     case "craft": return <CraftPanel game={game} />;
     case "bounty": return <BountyWin game={game} />;

@@ -25,7 +25,10 @@ test("the importable power pack is valid and covers every power block", () => {
   const parsed = ca.parsePack(text);
   assert.ok(parsed);
   assert.equal(parsed.skipped, 0);
-  assert.deepEqual(parsed.assets.map((a) => a.category).sort(), ["battery", "blockbreaker", "blockgen", "capacitor", "duplicator", "hellgen", "logburner", "solar", "tesla", "wire", "xpgen"]);
+  // The pack covers every power block the builder can paint. BlockBreaker was retired (power-extra.ts
+  // migrates old saves to the Rock Miner), and the Ghost Merger and GearSet Forge are current pieces
+  // that were missing from POWER_TEXTURES, so the pack lost them on import.
+  assert.deepEqual(parsed.assets.map((a) => a.category).sort(), ["battery", "blockgen", "capacitor", "duplicator", "gearforge", "ghostmerger", "hellgen", "logburner", "rockminer", "solar", "tesla", "wire", "xpgen"]);
   for (const a of parsed.assets) { assert.equal(ca.groupOf(a), "power"); assert.equal(a.live, true); }
 });
 

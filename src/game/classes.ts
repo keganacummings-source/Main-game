@@ -555,6 +555,7 @@ export const CLASS_PASSIVES: ClassPassive[] = [
   { id: "mana_font", cls: "arcanist", name: "Mana Font", about: "Spells cool down 15% faster and cost half the mana (TURBZ)." },
   { id: "cataclysm", cls: "ruinmage", name: "Gathering Ruin", about: "Every 12s, your next spell deals triple damage." },
   { id: "resonance", cls: "veilsinger", name: "Harmonics", about: "Each spell you land cuts 0.4s off your other verses' cooldowns." },
+  { id: "powered_hands", cls: "engineer", name: "Powered Hands", about: "Every powered machine you wire runs doubled — batteries, generators, duplicators and the XP Producer — and the work they finish hands you experience." },
 ];
 export const CLASS_PASSIVE_BY_ID: Record<string, ClassPassive> = Object.fromEntries(CLASS_PASSIVES.map((p) => [p.id, p]));
 /** The passive a class plays with natively (null for the Crying Girl). */

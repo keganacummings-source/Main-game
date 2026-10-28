@@ -28,13 +28,21 @@ export const TEX = {
   voidWall: T("void_wall"), voidFloor: T("void_floor"),
   voidGrass: T("voidgrass"), voidRock: T("voidwall"), voidBrick: T("voidbrick"), voidHeart: T("voidheart"),
   portal: T("portal"), log: T("log"), chest: T("chest"), bed: T("bed"), ghostbox: T("ghostbox"),
+  // Derived for the bigger world's extra biomes (scripts/sprites/world-decor.py).
+  // Each one exists because the biome it dresses was otherwise indistinguishable
+  // from a biome it is meant to contrast with.
+  grassDry: T("grass_dry"), grassJungle: T("grass_jungle"),
+  stoneHighland: T("stone_highland"), snowTundra: T("snow_tundra"),
+  decorRocks: T("decor_rocks"), decorBones: T("decor_bones"), decorShrub: T("decor_shrub"),
 } as const;
 export const TEX_FILES: string[] = Object.values(TEX);
+/** The same list as a set, for the per-tile checks in retextureDungeon. */
+const TEX_FILE_SET = new Set<string>(TEX_FILES);
 
-/** Floor codes the engine understands. */
-const FL = { grass: 0, wall: 1, water: 2, stone: 3, dirt: 4, snow: 5, bog: 6, void: 7, bone: 8, ash: 9, sand: 10, lava: 11 } as const;
-/** Biome indices (world.ts BIOMES order). */
-const BI = { void: 0, frost: 1, verdant: 2, crown: 3, bone: 4, tide: 5, ashen: 6 } as const;
+/** Floor codes the engine understands. Shared with world-chunks.ts. */
+export const FL = { grass: 0, wall: 1, water: 2, stone: 3, dirt: 4, snow: 5, bog: 6, void: 7, bone: 8, ash: 9, sand: 10, lava: 11 } as const;
+/** Biome indices (world.ts BIOMES order). Shared with world-chunks.ts. */
+export const BI = { void: 0, frost: 1, verdant: 2, crown: 3, bone: 4, tide: 5, ashen: 6 } as const;
 
 export type TexBiome = "plains" | "desert" | "jungle" | "snow" | "hell" | "void";
 
@@ -381,9 +389,25 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
         stack.push(n);
       }
     }
-    // Any unreachable open land is turned into a lake so the world stays one piece.
-    for (let i = 0; i < N; i++) if (land[i] && !seen[i] && open(i)) {
-      tiles[i] = { floor: FL.water, biome: tiles[i]!.biome, block: 0, decor: 0, sprite: TEX.water };
+    /*
+     * Seal whatever the walk could not reach.
+     *
+     * This used to turn unreachable land into a lake "so the world stays one piece", which did not
+     * work: water is walkable (world.ts `blocked` lets you swim), so a sealed pocket turned into a
+     * sealed pond and stayed exactly as cut off as it was. It also never looked at water pockets in
+     * the first place, so small ponds ringed by rock survived untouched — and a fishing node
+     * rolled into one was a node no hunter could ever reach.
+     *
+     * Making them solid is what actually keeps the world one piece: the stranded ground stops being
+     * somewhere you could stand and becomes part of the rock around it.
+     */
+    for (let i = 0; i < N; i++) {
+      if (seen[i]) continue;
+      const t = tiles[i]!;
+      const reachableKind = open(i) || t.floor === FL.water;
+      if (!reachableKind) continue;              // already solid: nothing stranded here
+      const def = DEF[sites[owner[i]!]!.biome];
+      tiles[i] = { floor: FL.wall, biome: t.biome, block: 1, decor: 0, sprite: def.wall };
     }
   }
 
@@ -492,7 +516,11 @@ export function generateTexWorld(opts: TexWorldOptions): MapFile {
     id: opts.id ?? "custom-turbz",
     name: opts.name ?? "TURBZ Wild",
     w, h, tileSize: TILE,
-    spawn: spawnTile,
+    // The map format's start point is {tx, ty}, in tiles. `spawnTile` is already in tiles — it is
+    // only named x/y because that is how it is used locally — so this was handing every consumer a
+    // spawn with no tx or ty at all. main-world.ts turns those into the player's start position, so
+    // a textured world was starting her at NaN, and map-format's own validation rejected the file.
+    spawn: { tx: spawnTile.x, ty: spawnTile.y },
     tiles,
     interactables: [...interactables, ...portals],
     zones,
@@ -518,6 +546,24 @@ export function retextureDungeon(world: WorldData): void {
     } else {
       t.sprite = art.floor[n % art.floor.length];
     }
-    if (t.portal) t.layers = [TEX.portal];
+    /*
+     * Layers, not just the ground.
+     *
+     * This used to replace `layers` only on a portal tile, so every other decorated tile kept the
+     * art the dungeon generator gave it — statues and landmarks out of /MapAssets/08_... — and New
+     * Texture Mode quietly showed old assets inside every dungeon.
+     *
+     * A portal becomes the new portal. Anything else keeps only the layers this mode actually owns
+     * and drops the rest; there is no New Texture stand-in for a statue, and a dungeon missing a
+     * decoration is a far smaller problem than one rendering art the mode promises it never uses.
+     * The layout itself (floor, block, portal) is untouched.
+     */
+    if (t.portal) {
+      t.layers = [TEX.portal];
+    } else if (t.layers?.length) {
+      const kept = t.layers.filter((l) => TEX_FILE_SET.has(l));
+      if (kept.length) t.layers = kept;
+      else delete t.layers;
+    }
   }
 }

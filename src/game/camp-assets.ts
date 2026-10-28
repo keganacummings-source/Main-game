@@ -62,6 +62,10 @@ export const POWER_TEXTURES = [
   { id: "blockgen", label: "BlockGenerator" },
   { id: "rockminer", label: "Rock Miner" },
   { id: "tesla", label: "Tesla Coil" },
+  // Both of these are current build pieces (building.ts BUILD_PIECE_DEFS). They were missing here,
+  // so the Camp & Tile builder refused their textures and the shipped power pack lost them on import.
+  { id: "ghostmerger", label: "Ghost Merger" },
+  { id: "gearforge", label: "GearSet Forge" },
 ] as const;
 
 /** Suggested places a custom tile may spawn / appear. */

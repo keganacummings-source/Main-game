@@ -1,138 +1,118 @@
-TURBZ — Mobile mode
-===================
+TURBZ — one central continent
+=============================
 
-Drop these over the repo root; every path is repo-relative. Self-contained: it
-also carries the class-update and UI-overhaul files at their current state, so
-drop order does not matter.
+Drop over the repo root. Self-contained: carries the class update, the UI
+overhaul, mobile mode, the bug-fix pass and the whole world system.
 
-
-READ THIS FIRST — I owe you a correction
-----------------------------------------
-
-On the last two drops I told you "typecheck: 2 errors, same as baseline, no new
-type errors". That was wrong, and I should have caught it sooner.
-
-`node_modules` here contains nothing but TypeScript itself. Because `@types/node`
-and `vite/client` cannot be resolved, tsc aborts on those two config errors
-BEFORE it checks a single source file. I proved it this time by appending
-
-    const CANARY: number = "definitely not a number";
-
-to a component. tsc reported the same two errors and nothing else.
-
-So "2 errors, same as baseline" never meant the code typechecked. It only meant
-the same two config errors appeared. The class update and the UI overhaul were
-delivered on that basis.
-
-What I did about it: I built a stub harness in a scratch directory — minimal
-declarations for react, react/jsx-runtime and lucide-react — which lets tsc get
-past the missing libraries and actually check src/. It is loose about the
-libraries and precise about hook signatures, so it has false positives (implicit
-`any` on JSX event params, a missing `key` prop type) but it does catch real
-mistakes.
-
-Run against everything I have written this session, it found two genuine errors:
-
-  1. hub-ui.tsx — `useMobileUi` used but never imported. A script of mine
-     aborted halfway and I did not notice. This would have failed your build.
-  2. game-panels.tsx — `verseHint(..., type: string)` passed to
-     `typeClass(type: TypeId)`. From the UI overhaul, i.e. already in your
-     hands in the last zip.
-
-Both are fixed in this zip. After the fixes, zero genuine errors across src/.
-The harness is NOT shipped — it is scratch only, and your own `npm run
-typecheck` with real node_modules remains the real gate.
+  312 tests, 0 failures.
 
 
-WHAT MOBILE MODE IS
--------------------
+THE SHAPE OF THE WORLD
+----------------------
 
-A toggle on the main menu — "Mobile mode", next to Options. Tap it and the whole
-interface changes. Tap again for the full one.
+Was: five landmasses spaced around a wide ring, which gave a scattered,
+archipelago-ish chart with no centre to it and no sense of a homeland.
 
-It is a SETTING, not a media query, and that is deliberate: a phone-sized browser
-window on a desktop is not a phone, a tablet with a keyboard often wants the full
-interface, and a big touchscreen could want either. The one piece of automation is
-the FIRST answer — with nothing stored, a device that cannot hover AND has a short
-side under 820px starts in mobile mode. After that your choice wins forever, in
-both directions. That is tested.
+Now: ONE continent in the middle of an ocean.
 
+It is built from a broad core at the centre plus a handful of LOBES overlapping
+it. Because the lobes sit inside the core's reach they fuse with it rather than
+standing apart, and what they add is shape — headlands, bays, peninsulas, the
+occasional near-separated limb. The `continents` option is now how many lobes to
+hang off the core.
 
-WHAT CHANGES WHEN IT IS ON
---------------------------
+An edge fade keeps the sea at the margins, so the continent sits IN an ocean
+rather than running off the side of the chart.
 
-The desktop HUD is not restyled. It is not rendered at all. On a phone it would
-be most of the screen covered by things you cannot press: a vitals panel, a foe
-panel, a tracking column, an autoplay panel and an eleven-button dock.
-
-In its place:
-
-  TOP STRIP     who you are, health, mana and stamina, the foe when there is
-                one, your effects and the last log line. Tap it for the
-                character sheet.
-  VERSE STRIP   your verses as a row you swipe along, with real cooldown faces
-                and the Space item riding along at the end so it is never off
-                the thumb's path.
-  THUMB CLUSTER bottom-right: HIT, your R skill (with time-left and cooldown),
-                and ☰.
-  ☰ SHEET       every menu as a full-screen list of big targets.
-  MOVE STICK    always on, bigger (116px), inside the safe area.
-
-Nothing is lost. The desktop has a floating row of three toggles (HudFabs) that
-mobile does not draw — Combat auto/manual, Autoplay and UNSTUCK. I nearly
-shipped without them, which would have left a mobile player with no way out of a
-bad spot. All three are in the ☰ sheet.
-
-Panels become full-screen sheets. Dragging a title bar, resizing from a corner
-and pinning are mouse ideas; on a phone they are three ways to lose a panel off
-an edge. Every panel in the game is built on one component (float-win.tsx), so
-one branch converts all of them: full screen, one close button, body scrolls.
-
-Also, in mobile mode: hover cards are off entirely (a hint you cannot hover is a
-card that appears when you try to tap something), keyboard badges are hidden,
-buttons and inputs get a 42px minimum, and everything respects the safe-area
-insets so nothing hides under a notch or a home bar.
+Seed 2026: one landmass of 2,124,384 tiles, 117 named places, 34% land.
 
 
-FILES
------
+FOUR THINGS THAT HAD TO CHANGE WITH IT
+--------------------------------------
 
-  src/game/mobile-mode.ts        the setting, the guess, the subscription, and
-                                 the html[data-mobile-ui] attribute (new)
-  src/components/mobile-hud.tsx  the whole mobile interface (new)
-  src/components/hub-ui.tsx      the main-menu toggle
-  src/components/ui-kit.tsx      useMobileUi()
-  src/components/float-win.tsx   panels become sheets
-  src/components/turbz-app.tsx   Play swaps HUDs
-  src/components/hud.tsx         exports the menu list for the ☰ sheet
-  src/components/game-panels.tsx the verseHint type fix (see correction above)
-  src/styles.css                 everything scoped to html[data-mobile-ui="1"]
-  scripts/mobile-mode.test.mjs   8 tests (new)
-  package.json                   runs them
+1. CLIMATE IS MEASURED ACROSS THE LAND, NOT THE CHART.
 
-  ...plus the class-update and UI-overhaul files, unchanged except as noted.
+   With everything in the middle of the chart, the whole continent sat in the
+   tropics on chart latitude. The world came out with 22 tiles of taiga and 249
+   of glacier — the cold biomes existed only because the guarantee pass forced
+   them in. The gradient now spans the continent's own north-south reach, so it
+   has poles at its top and bottom edges and an equator across its middle.
+
+   Taiga 2.0%, glacier 1.8%, tundra 0.3% — naturally, before any guarantee.
+
+2. LAKES ARE CARVED, NOT LEFT TO CHANCE.
+
+   Lakes used to be whatever the coastline happened to strand, which on a single
+   central continent is almost nothing: a few hundred tiles in a whole world. A
+   continent this size should have real water in it, so basins are now carved
+   inland — checked against a ring of land so a "lake" cannot open onto the sea
+   and turn out to be a bay. Carved before the distance fields, so lakeshores
+   get the damp they should and the ocean flood fill still cannot reach them,
+   which is what marks them as lakes rather than sea.
+
+   15,339 lake tiles on seed 2026, up from 384.
+
+3. SETTLEMENTS SCALE WITH AREA.
+
+   The old formula was tuned when places were shared between five continents.
+   With one landmass it gave NINETEEN settlements for the entire world. One per
+   ~18,000 tiles now, with spacing that scales to match, so they sit a
+   reasonable walk apart: 117 places.
+
+4. THE SHELF IS WIDER AND THE DISTANCE FIELDS ARE ROUND.
+
+   A narrow shelf left the ocean as one flat expanse of deep blue right up to
+   the shore, so the chart had no readable edge to the land. Widened.
+
+   That exposed a second thing: the shallows gave out along an angular,
+   diamond-shaped boundary. Both distance fields were plain four-neighbour
+   chamfers, which measure Manhattan distance, and Manhattan contours ARE
+   diamonds. They now use a 3-4 chamfer — an orthogonal step counts 3, a
+   diagonal 4 — which approximates true distance closely enough for the
+   contours to come out round.
 
 
-BEFORE YOU PLAY IT
-------------------
+TESTS UPDATED
+-------------
 
-    npm install && npm test && npm run typecheck && npm run build
+Four tests asserted the old shape and now assert the new one. None was weakened
+to pass — each says what it checks and why:
 
-  tests        165 pass / 5 fail — the same 5 pre-existing failures as before
-               any of this work. tile-builder has 1 pre-existing failure about
-               power-pack.json that nothing here touches.
-  new tests    8/8 — the guess, the override in both directions, the attribute,
-               subscriber bookkeeping, blocked storage, and no-window.
-  typecheck    see the correction above. Zero genuine errors under the stub
-               harness; your real typecheck is still the one that counts.
-  map audit    0 problems.  wiki check  OK, 31 pages.
+  - "continents are real landmasses" now requires the main continent to hold
+    more than 15% of the chart, i.e. that the world really is centred on it.
+  - "a full 2500 x 2500 world" requires a central continent over a million
+    tiles rather than "more than one continent".
+  - "every real landmass carries every land biome" needs one big landmass, not
+    two.
+  - the lake test now checks a real count AND that no lake reaches the edge of
+    the chart, which is where the open sea is — a carved basin that opened onto
+    the ocean would otherwise pass as a lake.
 
-What I could NOT verify, and you should check first — I still cannot run vite,
-so NONE of this has been seen rendered:
 
-  - That the top strip, verse strip and thumb cluster do not overlap on a short
-    screen. The verse strip is positioned 136px above the bottom inset; if it
-    collides with the thumb cluster, that one number in .mob-verses is the knob.
-  - Safe-area behaviour on a notched phone.
-  - That the full-screen sheets scroll properly inside each panel.
-  - Long-press context menus from the UI overhaul, on real hardware.
+FILES CHANGED THIS ROUND
+------------------------
+
+  src/game/world-chart.ts        central layout + edge fade, climate across the
+                                 land, carved lakes, area-scaled settlements,
+                                 wider shelf, 3-4 chamfer distance fields
+  scripts/world-chart.test.mjs   four tests updated to the new shape
+
+  ...plus everything from the previous drops, unchanged.
+
+
+VERIFIED HERE
+-------------
+
+  npm test      278 + 7 + 8 + 19 = 312 tests, 0 failures
+  map audit     0 problems
+  wiki check    OK
+  types         clean across src/ under the stub harness
+  build         6.25M tiles, ~30 MB, 8.7s
+
+I rendered seeds 2026, 7 and 99 to check this by eye — the three worlds are
+clearly different in shape while all reading as one central landmass, which is
+also how the diamond-shaped shelf boundary got noticed.
+
+STILL NOT WIRED TO THE ENGINE. Nothing creates a chart yet, so M still shows the
+old local map. The four calls it needs are written out in the earlier
+WHAT-CHANGED, and I will do that pass whenever you want it.
