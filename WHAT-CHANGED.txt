@@ -1,118 +1,173 @@
-TURBZ — one central continent
-=============================
+TURBZ — every failing test and type error fixed
+===============================================
 
 Drop over the repo root. Self-contained: carries the class update, the UI
-overhaul, mobile mode, the bug-fix pass and the whole world system.
+overhaul and mobile mode at their current state, so drop order does not matter.
 
-  312 tests, 0 failures.
-
-
-THE SHAPE OF THE WORLD
-----------------------
-
-Was: five landmasses spaced around a wide ring, which gave a scattered,
-archipelago-ish chart with no centre to it and no sense of a homeland.
-
-Now: ONE continent in the middle of an ocean.
-
-It is built from a broad core at the centre plus a handful of LOBES overlapping
-it. Because the lobes sit inside the core's reach they fuse with it rather than
-standing apart, and what they add is shape — headlands, bays, peninsulas, the
-occasional near-separated limb. The `continents` option is now how many lobes to
-hang off the core.
-
-An edge fade keeps the sea at the margins, so the continent sits IN an ocean
-rather than running off the side of the chart.
-
-Seed 2026: one landmass of 2,124,384 tiles, 117 named places, 34% land.
+    BEFORE   276 tests, 6 failing across 3 files, npm test stopped early
+    AFTER    276 tests, 0 failing, npm test runs to the end
 
 
-FOUR THINGS THAT HAD TO CHANGE WITH IT
---------------------------------------
+THE ROOT CAUSE OF MOST OF IT
+----------------------------
 
-1. CLIMATE IS MEASURED ACROSS THE LAND, NOT THE CHART.
+Every test here loaded TypeScript by transpiling it to a `data:` URL. A data URL
+has no directory, so the moment a source file contained `from "./something"`,
+Node could not resolve it. The tests worked around that with a hand-written map
+of specifier to URL — which meant adding one ordinary import to a source file
+silently broke a test file that had never heard of it.
 
-   With everything in the middle of the chart, the whole continent sat in the
-   tropics on chart latitude. The world came out with 22 tiles of taiga and 249
-   of glacier — the cold biomes existed only because the guarantee pass forced
-   them in. The gradient now spans the continent's own north-south reach, so it
-   has poles at its top and bottom edges and an equator across its middle.
+That is exactly what happened. `building.ts` grew an import of `./tile-atlas`,
+and both survival-night and game-content started throwing — ASYNCHRONOUSLY,
+after their own assertions had already passed. So the suite reported a file that
+failed while every test inside it was green, and nobody could see what broke.
 
-   Taiga 2.0%, glacier 1.8%, tundra 0.3% — naturally, before any guarantee.
+Worse, it was hiding tests. Converting those two files to a loader that resolves
+relative imports itself revealed 43 tests that had not been running at all:
 
-2. LAKES ARE CARVED, NOT LEFT TO CHANCE.
+    game-content      5 tests visible  ->  41
+    survival-night   10 tests visible  ->  17
 
-   Lakes used to be whatever the coastline happened to strand, which on a single
-   central continent is almost nothing: a few hundred tiles in a whole world. A
-   continent this size should have real water in it, so basins are now carved
-   inland — checked against a ring of land so a "lake" cannot open onto the sea
-   and turn out to be a bay. Carved before the distance fields, so lakeshores
-   get the damp they should and the ocean flood fill still cannot reach them,
-   which is what marks them as lakes rather than sea.
+One of those hidden tests immediately caught a real bug in my own Engineer
+class (below).
 
-   15,339 lake tiles on seed 2026, up from 384.
-
-3. SETTLEMENTS SCALE WITH AREA.
-
-   The old formula was tuned when places were shared between five continents.
-   With one landmass it gave NINETEEN settlements for the entire world. One per
-   ~18,000 tiles now, with spacing that scales to match, so they sit a
-   reasonable walk apart: 117 places.
-
-4. THE SHELF IS WIDER AND THE DISTANCE FIELDS ARE ROUND.
-
-   A narrow shelf left the ocean as one flat expanse of deep blue right up to
-   the shore, so the chart had no readable edge to the land. Widened.
-
-   That exposed a second thing: the shallows gave out along an angular,
-   diamond-shaped boundary. Both distance fields were plain four-neighbour
-   chamfers, which measure Manhattan distance, and Manhattan contours ARE
-   diamonds. They now use a 3-4 chamfer — an orthogonal step counts 3, a
-   diagonal 4 — which approximates true distance closely enough for the
-   contours to come out round.
+  NEW   scripts/lib/ts-module.mjs — one loader, resolves relative imports
+        recursively, handles .json, survives cycles, still supports a deliberate
+        stub override for the few tests that genuinely want to fake a dependency.
 
 
-TESTS UPDATED
--------------
+REAL BUGS FIXED
+---------------
 
-Four tests asserted the old shape and now assert the new one. None was weakened
-to pass — each says what it checks and why:
+1. tex-world.ts — the textured world's start point had no coordinates.
 
-  - "continents are real landmasses" now requires the main continent to hold
-    more than 15% of the chart, i.e. that the world really is centred on it.
-  - "a full 2500 x 2500 world" requires a central continent over a million
-    tiles rather than "more than one continent".
-  - "every real landmass carries every land biome" needs one big landmass, not
-    two.
-  - the lake test now checks a real count AND that no lake reaches the edge of
-    the chart, which is where the open sea is — a carved basin that opened onto
-    the ocean would otherwise pass as a lake.
+   `generateTexWorld` returned `spawn: {x, y}` where the map format is
+   `{tx, ty}`. main-world.ts turns that into the player's start position, so a
+   textured world was starting her at NaN, and map-format's own validation
+   rejected the file outright. Two tests and one type error, all one bug.
+
+2. tex-world.ts — unreachable pockets were "fixed" in a way that did nothing.
+
+   There was already a pass meant to keep the world one piece: it turned
+   unreachable land into a lake. But water is walkable (world.ts `blocked` lets
+   you swim), so a sealed pocket just became a sealed pond and stayed exactly as
+   cut off. It also never looked at water pockets at all, so small ponds ringed
+   by rock survived untouched — and a fishing node rolled into one was a node no
+   hunter could ever reach. Stranded ground is now made solid, which is what
+   actually keeps the world connected.
+
+3. tex-world.ts — dungeons showed old art in New Texture Mode.
+
+   `retextureDungeon` replaced a tile's `layers` only when it was a portal, so
+   every other decorated tile kept the generator's original art
+   (/MapAssets/08_Statues_and_Landmarks/...). The mode promises it uses nothing
+   but its own textures. Layers it does not own are now dropped; the layout
+   (floor, block, portal) is untouched.
+
+4. classes.ts — the Engineer had no class passive. MINE, from the class update.
+
+   Every class has exactly one entry in CLASS_PASSIVES. I added the Engineer and
+   never added hers, so she shipped with none. This is the bug the hidden tests
+   caught the moment they started running. She now has "Powered Hands".
+
+5. camp-assets.ts — two current machines could not be painted.
+
+   POWER_TEXTURES listed 11 power blocks. The Ghost Merger and the GearSet Forge
+   are current build pieces but were missing, so the Camp & Tile builder refused
+   their textures and the shipped power pack silently lost them on import.
+
+6. power-pack.json — retired content still shipping.
+
+   The pack carried a BlockBreaker entry. The BlockBreaker was retired
+   (power-extra.ts migrates old saves to the Rock Miner) and is not a build
+   piece any more, so it was dead data that could never be imported. Removed.
+
+7. enemy-design.ts — an unsound signature.
+
+   `typedSpriteCanvas` declared `type: TypeId`, but it is called through a
+   resolver with `String(m.type ?? "normal")` off live mob data, which can be
+   anything. Widened to `string` with a guard that turns unknown types away.
+
+8. map-format.ts — `seed` was written but not declared.
+
+   tex-world has always recorded the seed it built from; the type never admitted
+   it. Declared, so a generated world can be rebuilt exactly from its file.
+
+9. scripts/power-extra.test.mjs and scripts/fight-depth.test.mjs were in NO npm
+   script. Nobody ran them. power-extra had been failing silently — it could not
+   even load (direct .ts imports, same extensionless-import problem). Both are
+   fixed and both are now in `npm test`.
 
 
-FILES CHANGED THIS ROUND
-------------------------
+STALE TEST EXPECTATIONS CORRECTED
+---------------------------------
 
-  src/game/world-chart.ts        central layout + edge fade, climate across the
-                                 land, carved lakes, area-scaled settlements,
-                                 wider shelf, 3-4 chamfer distance fields
-  scripts/world-chart.test.mjs   four tests updated to the new shape
+I did not weaken anything to go green. Each of these asserted something the code
+can no longer do, and I say what it checks now:
 
-  ...plus everything from the previous drops, unchanged.
+  - tex-world "zones.length > 80" could never pass: the generator lays 8 zones
+    per region (3 per island) across 8-10 regions, then drops any near the edge,
+    so the real count is 54-60 on every seed. It only ever "passed" because the
+    reachability check above it failed first and the line never ran. Now checks
+    the invariant behind it — every region is seeded, and all three gathering
+    nodes exist.
+
+  - power-extra looked for a single "power" build group. That group was split
+    into power.gen / power.store / power.wiring / power.machines. Now checks the
+    piece is in one of them.
+
+  - power-extra expected an out-of-range machine facing to CLAMP (9 -> 3). The
+    code WRAPS (9 % 4 = 1), deliberately, with the idiom that also brings a
+    negative facing back into range. Corrected to the wrap, and I added the
+    negative case it was missing.
+
+  - power-extra's two BlockBreaker tests covered real behaviour — hauling into a
+    chest, and a BlockGenerator refusing the wrong material — through a piece
+    that no longer exists. Rewritten against the Rock Miner that replaced it.
+
+  - game-content's moveset assertion is the V4 "exactly four" rule from the
+    class update (already in your hands).
+
+
+ABOUT THE TYPECHECK
+-------------------
+
+As I said last time, tsc here cannot check anything: node_modules holds only
+TypeScript, so it aborts on two missing type libraries before reading a source
+file. I keep a stub harness in scratch to get real checking. Against it, the
+whole of src/ is now clean — the two pre-existing errors above (7 and 8) are
+fixed, as are the two of my own from earlier drops.
+
+Your `npm run typecheck` with real node_modules is still the only real gate.
+
+
+FILES CHANGED FOR THIS PASS
+---------------------------
+
+  scripts/lib/ts-module.mjs          the shared loader (new)
+  scripts/survival-night.test.mjs    converted; 10 -> 17 tests now run
+  scripts/game-content.test.mjs      converted; 5 -> 41 tests now run
+  scripts/tex-world.test.mjs         converted; zone assertion corrected
+  scripts/power-extra.test.mjs       made loadable; 4 stale expectations fixed
+  src/game/tex-world.ts              spawn coords, pocket sealing, dungeon layers
+  src/game/classes.ts                the Engineer's passive
+  src/game/camp-assets.ts            Ghost Merger + GearSet Forge paintable
+  src/game/enemy-design.ts           resolver signature
+  src/game/map-format.ts             seed declared
+  public/MapAssets/NewTex/power-pack.json   retired BlockBreaker removed
+  package.json                       the two orphaned test files wired in
+
+  ...plus everything from the three previous drops, unchanged.
 
 
 VERIFIED HERE
 -------------
 
-  npm test      278 + 7 + 8 + 19 = 312 tests, 0 failures
-  map audit     0 problems
-  wiki check    OK
-  types         clean across src/ under the stub harness
-  build         6.25M tiles, ~30 MB, 8.7s
+  npm test        242 + 7 + 8 + 19 = 276 tests, 0 failures, runs to the end
+  map audit       0 problems
+  wiki check      OK, 31 pages
+  type harness    clean across src/
 
-I rendered seeds 2026, 7 and 99 to check this by eye — the three worlds are
-clearly different in shape while all reading as one central landmass, which is
-also how the diamond-shaped shelf boundary got noticed.
-
-STILL NOT WIRED TO THE ENGINE. Nothing creates a chart yet, so M still shows the
-old local map. The four calls it needs are written out in the earlier
-WHAT-CHANGED, and I will do that pass whenever you want it.
+STILL NOT VERIFIED: I cannot run vite, so nothing is rendered. The UI overhaul
+and mobile mode have never been seen on a screen — the density numbers and the
+mobile verse-strip offset remain the things to look at first.

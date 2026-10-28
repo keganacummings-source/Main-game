@@ -28,21 +28,15 @@ export const TEX = {
   voidWall: T("void_wall"), voidFloor: T("void_floor"),
   voidGrass: T("voidgrass"), voidRock: T("voidwall"), voidBrick: T("voidbrick"), voidHeart: T("voidheart"),
   portal: T("portal"), log: T("log"), chest: T("chest"), bed: T("bed"), ghostbox: T("ghostbox"),
-  // Derived for the bigger world's extra biomes (scripts/sprites/world-decor.py).
-  // Each one exists because the biome it dresses was otherwise indistinguishable
-  // from a biome it is meant to contrast with.
-  grassDry: T("grass_dry"), grassJungle: T("grass_jungle"),
-  stoneHighland: T("stone_highland"), snowTundra: T("snow_tundra"),
-  decorRocks: T("decor_rocks"), decorBones: T("decor_bones"), decorShrub: T("decor_shrub"),
 } as const;
 export const TEX_FILES: string[] = Object.values(TEX);
 /** The same list as a set, for the per-tile checks in retextureDungeon. */
 const TEX_FILE_SET = new Set<string>(TEX_FILES);
 
-/** Floor codes the engine understands. Shared with world-chunks.ts. */
-export const FL = { grass: 0, wall: 1, water: 2, stone: 3, dirt: 4, snow: 5, bog: 6, void: 7, bone: 8, ash: 9, sand: 10, lava: 11 } as const;
-/** Biome indices (world.ts BIOMES order). Shared with world-chunks.ts. */
-export const BI = { void: 0, frost: 1, verdant: 2, crown: 3, bone: 4, tide: 5, ashen: 6 } as const;
+/** Floor codes the engine understands. */
+const FL = { grass: 0, wall: 1, water: 2, stone: 3, dirt: 4, snow: 5, bog: 6, void: 7, bone: 8, ash: 9, sand: 10, lava: 11 } as const;
+/** Biome indices (world.ts BIOMES order). */
+const BI = { void: 0, frost: 1, verdant: 2, crown: 3, bone: 4, tide: 5, ashen: 6 } as const;
 
 export type TexBiome = "plains" | "desert" | "jungle" | "snow" | "hell" | "void";
 
