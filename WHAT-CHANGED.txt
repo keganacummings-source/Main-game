@@ -1,192 +1,118 @@
-TURBZ — the 2500 x 2500 world, and the chart menu
-=================================================
+TURBZ — one central continent
+=============================
 
 Drop over the repo root. Self-contained: carries the class update, the UI
-overhaul, mobile mode and the bug-fix pass at their current state.
+overhaul, mobile mode, the bug-fix pass and the whole world system.
 
-  308 tests, 0 failures.
-
-READ THE LAST SECTION BEFORE YOU PLAY. The world system is complete and tested,
-but it is NOT yet plugged into the engine, and I explain exactly why and what is
-left.
+  312 tests, 0 failures.
 
 
-THE WALL I HIT FIRST, AND WHAT I DID ABOUT IT
----------------------------------------------
+THE SHAPE OF THE WORLD
+----------------------
 
-I measured before designing. The existing generator makes one plain object per
-tile: at 450 x 450 that is 202,500 objects and 118 MB. At 2500 x 2500 it would
-be 6,250,000 objects — about 3.6 GB — which no browser tab survives.
+Was: five landmasses spaced around a wide ring, which gave a scattered,
+archipelago-ish chart with no centre to it and no sense of a homeland.
 
-So the world is stored as typed arrays, one byte per tile per layer. The same
-6.25M tiles come to ~30 MB and build in about 6 seconds.
+Now: ONE continent in the middle of an ocean.
 
-    src/game/world-chart.ts     what the world IS
-    src/game/world-chunks.ts    playable ground, cut a region at a time
+It is built from a broad core at the centre plus a handful of LOBES overlapping
+it. Because the lobes sit inside the core's reach they fuse with it rather than
+standing apart, and what they add is shape — headlands, bays, peninsulas, the
+occasional near-separated limb. The `continents` option is now how many lobes to
+hang off the core.
 
-Nothing in the chart is a playable tile. Terrain is materialised in 256 x 256
-regions around the hunter (~65k tiles each, a third of the OLD whole world) and
-dropped when she walks away. Regions are pure functions of the chart, so
-throwing one away costs nothing but the 30ms to cut it again.
+An edge fade keeps the sea at the margins, so the continent sits IN an ocean
+rather than running off the side of the chart.
 
-
-HOW A WORLD IS BUILT
---------------------
-
-  1. CONTINENTS  a few big irregular landmasses plus scattered islands
-  2. ELEVATION   ridged noise in mountain BELTS
-  3. MOISTURE    its own noise, plus a bonus for being near a coast
-  4. TEMPERATURE latitude, cooled by height
-  5. BIOME       chosen from those three
-
-Biomes therefore form bands and patches WITHIN a continent rather than being
-painted on. Sixteen of them, up from six: deep ocean, ocean, lake, shore,
-plains, forest, savanna, desert, swamp, jungle, taiga, tundra, glacier,
-highland, volcanic, void.
-
-A seed rebuilds a world exactly. That is what makes the export 8.6 KB instead
-of 30 MB.
-
-Four things went wrong on the way and are worth knowing, because each is pinned
-by a test now:
-
-  - A constant sea-level shift could only ever TAKE land away, so worlds came
-    out 19% land when asked for 34%. Sea level is now a histogram cut.
-  - Height taken from the same field that decides land-or-sea peaked at every
-    continent's centre: each one charted as a ring of green around a round grey
-    core. Land-or-sea and height are now two separate fields.
-  - Height mapped straight from noise made 63% of ALL land mountain. Land
-    height is now assigned by RANK through a curve, so low ground is wide and
-    peaks are rare.
-  - Shore judged by elevation made a THIRD of all land beach. Shore is now
-    geography — land within two tiles of water. The coastline was fine all
-    along; I had two beach rules fighting.
+Seed 2026: one landmass of 2,124,384 tiles, 117 named places, 34% land.
 
 
-THE M MENU
-----------
+FOUR THINGS THAT HAD TO CHANGE WITH IT
+--------------------------------------
 
-  src/components/world-chart-panel.tsx
+1. CLIMATE IS MEASURED ACROSS THE LAND, NOT THE CHART.
 
-It does not draw the world. It draws what you have FOUND, and the rest stays
-black — walking somewhere new is the only way anything appears.
+   With everything in the middle of the chart, the whole continent sat in the
+   tropics on chart latitude. The world came out with 22 tiles of taiga and 249
+   of glacier — the cold biomes existed only because the guarantee pass forced
+   them in. The gradient now spans the continent's own north-south reach, so it
+   has poles at its top and bottom edges and an equator across its middle.
 
-  - fog lifts in a 26-tile radius as you travel
-  - named places appear in the list only once discovered
-  - right-click or the star marks a favourite (kept per world seed)
-  - Export chart (PNG) — a picture of what you have charted
-  - Export world (JSON) — seed, continents, biome census, discovered places
-  - zoom x1/x2/x3, biome census with colour swatches, continents by size
+   Taiga 2.0%, glacier 1.8%, tundra 0.3% — naturally, before any guarantee.
 
-Fog is stored per 8 x 8 CELL, not per tile. Per tile would be 780 KB raw and
-over a megabyte of text in every save; per cell a whole world's fog is ~12 KB,
-~16 KB as text. At chart scale one cell is well under a pixel.
+2. LAKES ARE CARVED, NOT LEFT TO CHANCE.
 
-A fog that does not match the world it is loaded into is REFUSED and comes back
-blank, rather than being loaded at the wrong offset and drawing as noise.
+   Lakes used to be whatever the coastline happened to strand, which on a single
+   central continent is almost nothing: a few hundred tiles in a whole world. A
+   continent this size should have real water in it, so basins are now carved
+   inland — checked against a ring of land so a "lake" cannot open onto the sea
+   and turn out to be a bay. Carved before the distance fields, so lakeshores
+   get the damp they should and the ocean flood fill still cannot reach them,
+   which is what marks them as lakes rather than sea.
 
-M falls back to the old local map whenever there is no chart, so no mode loses
-its map key.
+   15,339 lake tiles on seed 2026, up from 384.
 
+3. SETTLEMENTS SCALE WITH AREA.
 
-TEXTURES
---------
+   The old formula was tuned when places were shared between five continents.
+   With one landmass it gave NINETEEN settlements for the entire world. One per
+   ~18,000 tiles now, with spacing that scales to match, so they sit a
+   reasonable walk apart: 117 places.
 
-  scripts/sprites/world-decor.py   (idempotent, re-runnable)
+4. THE SHELF IS WIDER AND THE DISTANCE FIELDS ARE ROUND.
 
-Four of the new biomes were sharing art with a biome they are meant to contrast
-with — savanna read as bare dirt, jungle as swamp, highland as a dungeon floor,
-tundra as glacier. So four ground tiles and three scatter overlays are derived
-from the existing set, the same way the caster sprites and the Engineer were:
+   A narrow shelf left the ocean as one flat expanse of deep blue right up to
+   the shore, so the chart had no readable edge to the land. Widened.
 
-    grass_dry, grass_jungle, stone_highland, snow_tundra
-    decor_rocks, decor_bones, decor_shrub
-
-They are recolours and the script says so plainly — nobody should mistake them
-for hand-drawn art. My first pass produced a tundra indistinguishable from snow
-and rocks invisible against the ground they sit on; both were retuned until the
-biomes actually tell each other apart. Biomes that can honestly share art still
-do (taiga and tundra are both snow, with different amounts of tree) rather than
-inventing a second snow tile that would read as a bug.
+   That exposed a second thing: the shallows gave out along an angular,
+   diamond-shaped boundary. Both distance fields were plain four-neighbour
+   chamfers, which measure Manhattan distance, and Manhattan contours ARE
+   diamonds. They now use a 3-4 chamfer — an orthogonal step counts 3, a
+   diagonal 4 — which approximates true distance closely enough for the
+   contours to come out round.
 
 
-WHAT IS NOT DONE — READ THIS
-----------------------------
+TESTS UPDATED
+-------------
 
-The world system is complete and tested. It is NOT wired into the engine. Open
-M today and you get the old local map, because nothing creates a chart yet.
+Four tests asserted the old shape and now assert the new one. None was weakened
+to pass — each says what it checks and why:
 
-I stopped deliberately. engine.ts is 719 KB, I cannot run the game at all in
-this container, and the three places this needs to hook — world creation, the
-movement tick and the save — are the most load-bearing paths in it. Wiring that
-blind risks breaking a game that currently works, to light up a menu.
-
-Four calls are all it needs:
-
-  1. WORLD CREATION (where a TURBZ world is rolled)
-         import { generateChart, startSpot } from "./world-chart";
-         import { setActiveChart } from "./chart-store";
-         const chart = generateChart({ seed: save.seed });
-         setActiveChart(chart, save.fog);
-         const { tx, ty } = startSpot(chart);        // the hunter's start tile
-
-  2. TERRAIN  — keep a RegionCache instead of one big world:
-         import { RegionCache } from "./world-chunks";
-         this.regions = new RegionCache(chart, 4);
-         const world = this.regions.at(chartTx, chartTy);
-     A region IS a WorldData, so collision, rendering and the builder are handed
-     exactly what they are handed today.
-
-  3. MOVEMENT  — one line wherever the hunter's tile changes:
-         import { noteVisited } from "./chart-store";
-         if (noteVisited(chartTx, chartTy)) this.powerDirty = true;  // or mark the save dirty
-     It returns 0 when nothing new was uncovered, which is almost every step.
-
-  4. SAVE  — persist and restore the fog:
-         import { fogForSave } from "./chart-store";
-         save.fog = fogForSave();                    // on save
-         // on load it goes to setActiveChart above as the second argument
-
-Say the word and I will do the wiring as its own pass, with the engine changes
-kept small and separate so they are easy to review or back out.
+  - "continents are real landmasses" now requires the main continent to hold
+    more than 15% of the chart, i.e. that the world really is centred on it.
+  - "a full 2500 x 2500 world" requires a central continent over a million
+    tiles rather than "more than one continent".
+  - "every real landmass carries every land biome" needs one big landmass, not
+    two.
+  - the lake test now checks a real count AND that no lake reaches the edge of
+    the chart, which is where the open sea is — a carved basin that opened onto
+    the ocean would otherwise pass as a lake.
 
 
-FILES
------
+FILES CHANGED THIS ROUND
+------------------------
 
-  src/game/world-chart.ts            the chart: continents, biomes, places (new)
-  src/game/world-chunks.ts           regions + RegionCache (new)
-  src/game/explored.ts               fog of war, packed for a save (new)
-  src/game/chart-store.ts            the active world, for the UI (new)
-  src/game/chart-export.ts           PNG pixels + JSON world file (new)
-  src/components/world-chart-panel.tsx   the M menu (new)
-  src/components/turbz-app.tsx       M routes to the chart when there is one
-  src/game/tex-world.ts              exports FL/BI, registers the new tiles
-  src/styles.css                     chart menu styles
-  scripts/sprites/world-decor.py     derives the new tiles (new)
-  public/MapAssets/NewTex/*.png      7 derived tiles (new)
-  scripts/world-chart.test.mjs       10 tests (new)
-  scripts/explored.test.mjs           7 tests (new)
-  scripts/world-chunks.test.mjs       8 tests (new)
-  scripts/chart-export.test.mjs       7 tests (new)
-  scripts/lib/ts-module.mjs          resolves a ".json" specifier properly
-  package.json                       runs the new tests
+  src/game/world-chart.ts        central layout + edge fade, climate across the
+                                 land, carved lakes, area-scaled settlements,
+                                 wider shelf, 3-4 chamfer distance fields
+  scripts/world-chart.test.mjs   four tests updated to the new shape
 
-  ...plus everything from the four previous drops.
+  ...plus everything from the previous drops, unchanged.
 
 
 VERIFIED HERE
 -------------
 
-  npm test        274 + 7 + 8 + 19 = 308 tests, 0 failures
-  map audit       0 problems
-  wiki check      OK
-  types           clean across src/ under the stub harness
+  npm test      278 + 7 + 8 + 19 = 312 tests, 0 failures
+  map audit     0 problems
+  wiki check    OK
+  types         clean across src/ under the stub harness
+  build         6.25M tiles, ~30 MB, 8.7s
 
-  A full 2500 x 2500 world: 6,250,000 tiles, ~30 MB, 6.1s, 4 major continents,
-  97 named places, all 16 biomes present, land 34%.
+I rendered seeds 2026, 7 and 99 to check this by eye — the three worlds are
+clearly different in shape while all reading as one central landmass, which is
+also how the diamond-shaped shelf boundary got noticed.
 
-STILL UNSEEN: I cannot run vite, so no part of the UI has been rendered — the
-chart menu included. I did render the world itself and the fog view straight
-from the generator to check them, which is how the four generator bugs above
-were caught.
+STILL NOT WIRED TO THE ENGINE. Nothing creates a chart yet, so M still shows the
+old local map. The four calls it needs are written out in the earlier
+WHAT-CHANGED, and I will do that pass whenever you want it.

@@ -330,32 +330,67 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
   const temp = new Uint8Array(n);
   const land = new Uint8Array(n);
 
-  // ---- 1. continent blobs --------------------------------------------------
-  const bigN = opts.continents ?? 5;
-  const smallN = opts.islands ?? 14;
+  /*
+   * ---- 1. one central continent -------------------------------------------
+   *
+   * The world is a single landmass in the middle of an ocean, not a ring of
+   * separate blobs. It used to be the latter — five masses spaced around a wide
+   * ring — which gave a scattered, archipelago-ish chart with no centre to it
+   * and no sense of a homeland.
+   *
+   * The mass is built from a big core at the middle plus a handful of LOBES
+   * overlapping it. Because the lobes sit inside the core's reach they fuse
+   * with it rather than standing apart, and what they add is shape: headlands,
+   * bays, peninsulas and the occasional near-separated limb.
+   *
+   * `continents` is how many lobes to hang off the core.
+   */
+  const lobeN = Math.max(2, opts.continents ?? 5);
+  // No scattered islets by default. They cluttered the chart, split the land
+  // into dozens of specks in the LANDS list, and gave the place namer a crowd of
+  // one-settlement "isles" to name. Ask for them explicitly if you want them.
+  const smallN = opts.islands ?? 0;
   type Blob = { x: number; y: number; r: number; id: number; island: boolean; name: string };
   const blobs: Blob[] = [];
-  const margin = Math.min(w, h) * 0.1;
-  for (let i = 0; i < bigN; i++) {
-    // Spread the big landmasses around the chart rather than letting them clump.
-    // Spaced around a wide ring and kept small enough not to merge: with bigger
-    // radii every landmass fused into one super-continent and the world had two
-    // continents instead of five.
-    const a = (i / bigN) * Math.PI * 2 + rng() * 0.45;
-    const d = (0.27 + rng() * 0.09) * Math.min(w, h);
+  const span = Math.min(w, h);
+  const margin = span * 0.1;
+
+  // The core: broad, central, and by far the largest contributor.
+  blobs.push({ x: w / 2, y: h / 2, r: span * 0.30, id: 1, island: false, name: placeName(rng) });
+
+  // Lobes: close enough in to merge with the core, uneven enough to shape it.
+  for (let i = 0; i < lobeN; i++) {
+    const a = (i / lobeN) * Math.PI * 2 + rng() * 0.8;
+    const d = (0.16 + rng() * 0.16) * span;
     blobs.push({
       x: w / 2 + Math.cos(a) * d, y: h / 2 + Math.sin(a) * d,
-      r: Math.min(w, h) * (0.085 + rng() * 0.045),
-      id: i + 1, island: false, name: placeName(rng),
+      r: span * (0.10 + rng() * 0.08),
+      id: i + 2, island: false, name: placeName(rng),
     });
   }
+
   for (let i = 0; i < smallN; i++) {
     blobs.push({
       x: margin + rng() * (w - margin * 2), y: margin + rng() * (h - margin * 2),
-      r: Math.min(w, h) * (0.012 + rng() * 0.022),
-      id: bigN + i + 1, island: true, name: placeName(rng, "isle"),
+      r: span * (0.012 + rng() * 0.022),
+      id: lobeN + i + 2, island: true, name: placeName(rng, "isle"),
     });
   }
+
+  /*
+   * How quickly land gives out toward the edge of the chart.
+   *
+   * Without this the warp and the noise can push ground right to the border, so
+   * the continent runs off the map instead of sitting in an ocean. 0 at the
+   * very edge, 1 across the middle half.
+   */
+  const edgeFade = (x: number, y: number): number => {
+    const nx = Math.abs(x / (w - 1) - 0.5) * 2;
+    const ny = Math.abs(y / (h - 1) - 0.5) * 2;
+    const d = Math.max(nx, ny);
+    if (d < 0.52) return 1;
+    return Math.max(0, 1 - (d - 0.52) / 0.40);
+  };
 
   // ---- 2. elevation --------------------------------------------------------
   // Every tile takes the strongest continent influence over it, warped by noise
@@ -382,7 +417,9 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const base = fbm(x * scale, y * scale, seed + 3, 5);
       const ridged = ridge(x * scale * 1.7, y * scale * 1.7, seed + 29, 4);
       // Continent mass decides land or sea; the ridge only sculpts what is land.
-      const massed = best * 0.78 + stretch(base) * 0.22;
+      // The fade keeps the sea at the margins, so the continent sits IN an
+      // ocean rather than running off the side of the chart.
+      const massed = (best * 0.78 + stretch(base) * 0.22) * edgeFade(x, y);
       mass[i] = Math.max(0, Math.min(65535, Math.round(massed * 65535)));
 
       // Where ranges are allowed to run at all: broad belts across the world,
@@ -504,7 +541,14 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
    * — which means `land` now names an actual landmass rather than whichever
    * blob happened to be nearest.
    */
-  const MIN_ISLAND = 90;
+  /*
+   * The smallest thing that counts as land.
+   *
+   * At 90 tiles a world came out with fifty-odd "landmasses", nearly all of
+   * them coastal crumbs a few tiles across, and every one of them took a line
+   * in the chart's LANDS list. A landmass has to be big enough to walk around.
+   */
+  const MIN_ISLAND = 400;
   const comp = new Int32Array(n).fill(-1);
   const compSize: number[] = [];
   {
@@ -539,19 +583,87 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
     }
   }
 
+  /*
+   * ---- 2d. inland water ---------------------------------------------------
+   *
+   * Lakes used to be whatever the coastline happened to strand, which on a
+   * single central continent is almost nothing — a whole world came out with a
+   * few hundred lake tiles. A continent this size should have real water in it,
+   * so a handful of basins are carved on each landmass.
+   *
+   * Carved HERE, before the distance fields, so everything downstream sees them
+   * as water: lakeshores get the damp they should, and the ocean flood fill
+   * later cannot reach them, which is what marks them as lakes rather than sea.
+   */
+  {
+    const lrng = mulberry32(seed ^ 0x3c6ef372);
+    const bySize = new Map<number, number>();
+    for (let i = 0; i < n; i++) if (land[i]) bySize.set(land[i]!, (bySize.get(land[i]!) ?? 0) + 1);
+
+    for (const [id, tiles] of bySize) {
+      if (tiles < 20000) continue;
+      const want = Math.max(2, Math.min(14, Math.round(tiles / 120000) + 2));
+      const baseR = Math.max(5, Math.sqrt(tiles) * 0.022);
+      let made = 0;
+      for (let attempt = 0; attempt < want * 400 && made < want; attempt++) {
+        const x = Math.floor(lrng() * w);
+        const y = Math.floor(lrng() * h);
+        if (land[y * w + x] !== id) continue;
+        const r = baseR * (0.7 + lrng() * 0.9);
+        // Inland only: every point on a ring well outside the basin must be land,
+        // or the "lake" opens onto the sea and is just a bay.
+        let inland = true;
+        for (let k = 0; k < 8 && inland; k++) {
+          const a = (k / 8) * Math.PI * 2;
+          const rx = Math.round(x + Math.cos(a) * r * 2.6);
+          const ry = Math.round(y + Math.sin(a) * r * 2.6);
+          if (rx < 0 || ry < 0 || rx >= w || ry >= h || land[ry * w + rx] !== id) inland = false;
+        }
+        if (!inland) continue;
+
+        for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(h - 1, Math.ceil(y + r)); yy++) {
+          for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(w - 1, Math.ceil(x + r)); xx++) {
+            const i = yy * w + xx;
+            if (land[i] !== id) continue;
+            const d = Math.hypot(xx - x, yy - y) / r;
+            if (d > 1) continue;
+            // A soft, uneven shore rather than a disc.
+            if (fbm(xx / 14, yy / 14, seed + 907 + made, 3) < 0.18 + d * 0.66) continue;
+            land[i] = 0;
+            elev[i] = SEA - 1 - Math.round((1 - d) * 18);
+          }
+        }
+        made++;
+      }
+    }
+  }
+
   // ---- 3. coast distance, moisture, temperature ---------------------------
   // One cheap two-pass chamfer gives every tile its distance from water, which
   // feeds both the moisture and where the beaches go.
+  /*
+   * Distance from every land tile to the nearest water (and, below, the mirror
+   * of it for the sea).
+   *
+   * A 3-4 chamfer, not a plain four-neighbour one: stepping only up/down/left/
+   * right measures Manhattan distance, whose contours are diamonds, and that
+   * showed on the chart as an angular edge where the shallows gave out. An
+   * orthogonal step of 3 and a diagonal of 4 approximates true distance closely
+   * enough for the contours to come out round. Divided back to tiles at the end.
+   */
   const coast = new Int32Array(n);
   const FAR = 1 << 28;
+  const ORTH = 3, DIAG = 4;
   for (let i = 0; i < n; i++) coast[i] = land[i] ? FAR : 0;
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (!coast[i]) continue;
       let best = coast[i]!;
-      if (x > 0) best = Math.min(best, coast[i - 1]! + 1);
-      if (y > 0) best = Math.min(best, coast[i - w]! + 1);
+      if (x > 0) best = Math.min(best, coast[i - 1]! + ORTH);
+      if (y > 0) best = Math.min(best, coast[i - w]! + ORTH);
+      if (x > 0 && y > 0) best = Math.min(best, coast[i - w - 1]! + DIAG);
+      if (x < w - 1 && y > 0) best = Math.min(best, coast[i - w + 1]! + DIAG);
       coast[i] = best;
     }
   }
@@ -560,15 +672,14 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const i = y * w + x;
       if (!coast[i]) continue;
       let best = coast[i]!;
-      if (x < w - 1) best = Math.min(best, coast[i + 1]! + 1);
-      if (y < h - 1) best = Math.min(best, coast[i + w]! + 1);
+      if (x < w - 1) best = Math.min(best, coast[i + 1]! + ORTH);
+      if (y < h - 1) best = Math.min(best, coast[i + w]! + ORTH);
+      if (x < w - 1 && y < h - 1) best = Math.min(best, coast[i + w + 1]! + DIAG);
+      if (x > 0 && y < h - 1) best = Math.min(best, coast[i + w - 1]! + DIAG);
       coast[i] = best;
     }
   }
-
-  // The mirror of `coast`: how far a WATER tile is from the nearest land. Ocean
-  // and deep ocean are told apart by this rather than by depth, so the shallows
-  // hug the coastlines the way they should.
+  for (let i = 0; i < n; i++) if (coast[i]! < FAR) coast[i] = Math.round(coast[i]! / ORTH);
   const sea = new Int32Array(n);
   for (let i = 0; i < n; i++) sea[i] = land[i] ? 0 : FAR;
   for (let y = 0; y < h; y++) {
@@ -576,8 +687,10 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const i = y * w + x;
       if (!sea[i]) continue;
       let best = sea[i]!;
-      if (x > 0) best = Math.min(best, sea[i - 1]! + 1);
-      if (y > 0) best = Math.min(best, sea[i - w]! + 1);
+      if (x > 0) best = Math.min(best, sea[i - 1]! + ORTH);
+      if (y > 0) best = Math.min(best, sea[i - w]! + ORTH);
+      if (x > 0 && y > 0) best = Math.min(best, sea[i - w - 1]! + DIAG);
+      if (x < w - 1 && y > 0) best = Math.min(best, sea[i - w + 1]! + DIAG);
       sea[i] = best;
     }
   }
@@ -586,16 +699,42 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const i = y * w + x;
       if (!sea[i]) continue;
       let best = sea[i]!;
-      if (x < w - 1) best = Math.min(best, sea[i + 1]! + 1);
-      if (y < h - 1) best = Math.min(best, sea[i + w]! + 1);
+      if (x < w - 1) best = Math.min(best, sea[i + 1]! + ORTH);
+      if (y < h - 1) best = Math.min(best, sea[i + w]! + ORTH);
+      if (x < w - 1 && y < h - 1) best = Math.min(best, sea[i + w + 1]! + DIAG);
+      if (x > 0 && y < h - 1) best = Math.min(best, sea[i + w - 1]! + DIAG);
       sea[i] = best;
     }
   }
+  for (let i = 0; i < n; i++) if (sea[i]! < FAR) sea[i] = Math.round(sea[i]! / ORTH);
+
+  /*
+   * Climate is measured across the LAND, not across the chart.
+   *
+   * With one central continent the land only occupies the middle band of the
+   * chart — which, on chart latitude, is all tropics. The result was a world
+   * with 22 tiles of taiga and 249 of glacier: the cold biomes existed only
+   * because the guarantee pass forced them in.
+   *
+   * Stretching the gradient over the continent's own north-south span gives it
+   * the full range instead: poles at its top and bottom edges, equator across
+   * its middle. Ocean beyond the land simply clamps to polar.
+   */
+  let landY0 = h, landY1 = 0;
+  for (let i = 0; i < n; i++) {
+    if (!land[i]) continue;
+    const y = (i / w) | 0;
+    if (y < landY0) landY0 = y;
+    if (y > landY1) landY1 = y;
+  }
+  if (landY1 < landY0) { landY0 = 0; landY1 = h - 1; }      // a world with no land at all
+  const midY = (landY0 + landY1) / 2;
+  const halfSpan = Math.max(1, (landY1 - landY0) / 2);
 
   const mScale = 1 / 150;
   for (let y = 0; y < h; y++) {
-    // Latitude: cold at both poles, hottest across the middle.
-    const lat = Math.abs(y / (h - 1) - 0.5) * 2;
+    // Cold at the continent's top and bottom, hottest across its middle.
+    const lat = Math.min(1, Math.abs(y - midY) / halfSpan);
     const warmth = (1 - lat * lat) * 255;
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
@@ -621,7 +760,14 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
    * rank-mapped land piles up just above sea level by design.
    */
   const SHORE = 2;          // land tiles this close to water are shore
-  const SHELF = 70;         // water this close to land is ocean, beyond is deep
+  /*
+   * Where the shallows end.
+   *
+   * With one continent in a wide ocean, a narrow shelf left the sea as one flat
+   * expanse of deep blue right up to the shore. A broader one gives the chart a
+   * readable edge to the land.
+   */
+  const SHELF = 150;
   for (let i = 0; i < n; i++) {
     if (!land[i]) { biome[i] = sea[i]! <= SHELF ? BIOME.ocean : BIOME.deep; continue; }
     if (coast[i]! <= SHORE) { biome[i] = BIOME.beach; continue; }
@@ -654,47 +800,183 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
   }
 
   /*
-   * ---- 4c. calderas ------------------------------------------------------
+   * ---- 4c. every land has every biome ------------------------------------
    *
-   * Volcanic ground as a pure climate rule produced 0.03% of the chart: it
-   * needs hot, dry AND high all at once, which almost nowhere is. It reads
-   * better as a place anyway — a burnt region around a caldera — so each world
-   * gets a couple, dropped on high inland ground.
+   * Climate alone leaves a continent with whatever its latitude and rainfall
+   * happen to give it. In practice that meant one landmass had seven of the
+   * thirteen land biomes and another had twelve: a hunter could spend a whole
+   * life on the wrong continent and never see a desert, and volcanic and void
+   * ground — which need hot/dry/high and nowhere respectively — barely existed
+   * at all.
+   *
+   * So after the climate has had its say, each landmass is checked and whatever
+   * it is missing is PLACED on it, at the spot whose own climate is closest to
+   * that biome's. A desert lands on that continent's driest, hottest ground and
+   * a taiga on its coldest damp ground, so the patches sit where they would
+   * have grown anyway rather than being dropped at random.
+   *
+   * Shore is not in the list: it is geography, and every landmass has a coast.
    */
   {
-    const vol = 1 + Math.floor(rng() * 2);
-    for (let k = 0; k < vol; k++) {
-      let bx = -1, by = -1;
-      for (let t = 0; t < 4000 && bx < 0; t++) {
-        const x = Math.floor(rng() * w), y = Math.floor(rng() * h);
-        const i = y * w + x;
-        if (land[i] && elev[i]! > HIGHLAND - 30 && coast[i]! > 40) { bx = x; by = y; }
-      }
-      if (bx < 0) continue;
-      const vr = Math.min(w, h) * (0.022 + rng() * 0.03);
-      for (let y = Math.max(0, Math.floor(by - vr)); y < Math.min(h, Math.ceil(by + vr)); y++) {
-        for (let x = Math.max(0, Math.floor(bx - vr)); x < Math.min(w, Math.ceil(bx + vr)); x++) {
-          const i = y * w + x;
-          if (!land[i] || biome[i] === BIOME.beach) continue;
-          const d = Math.hypot(x - bx, y - by) / vr;
-          if (d > 1) continue;
-          if (fbm(x / 28, y / 28, seed + 211 + k, 3) > 0.28 + d * 0.55) biome[i] = BIOME.volcanic;
-        }
+    /** Where each biome wants to be: elevation, warmth, wet. */
+    const IDEAL: { id: BiomeId; elev: number; temp: number; moist: number; lift?: number }[] = [
+      { id: BIOME.plains, elev: SEA + 25, temp: 140, moist: 115 },
+      { id: BIOME.forest, elev: SEA + 30, temp: 140, moist: 170 },
+      { id: BIOME.savanna, elev: SEA + 25, temp: 200, moist: 80 },
+      { id: BIOME.desert, elev: SEA + 20, temp: 215, moist: 30 },
+      { id: BIOME.swamp, elev: SEA + 10, temp: 140, moist: 225 },
+      { id: BIOME.jungle, elev: SEA + 20, temp: 210, moist: 215 },
+      { id: BIOME.taiga, elev: SEA + 40, temp: 80, moist: 160 },
+      { id: BIOME.tundra, elev: SEA + 35, temp: 45, moist: 70 },
+      { id: BIOME.glacier, elev: ALPINE + 10, temp: 25, moist: 180, lift: ALPINE + 12 },
+      { id: BIOME.highland, elev: 245, temp: 110, moist: 110, lift: HIGHLAND + 14 },
+      // These two have no climate of their own — they are scars. Put them on
+      // high, dry inland ground, which is where they read best.
+      { id: BIOME.volcanic, elev: HIGHLAND, temp: 220, moist: 40, lift: HIGHLAND - 10 },
+      { id: BIOME.void, elev: SEA + 60, temp: 120, moist: 100 },
+    ];
+
+    /*
+     * One pass to learn every landmass: how big it is, what it already has, and
+     * a sample of its tiles to choose from.
+     *
+     * The sample is the important part. Searching the whole chart for the best
+     * spot, once per landmass per missing biome, is twenty-odd landmasses times
+     * a dozen biomes times 6.25 million tiles — about 1.6 billion reads, which
+     * took the build from 8 seconds to minutes. Each landmass now carries a few
+     * thousand candidate tiles and the search only ever looks at those.
+     */
+    const SAMPLE_MAX = 4000;
+    const have = new Map<number, Set<number>>();
+    const size = new Map<number, number>();
+    const sample = new Map<number, number[]>();
+    for (let i = 0; i < n; i++) {
+      const id = land[i]!;
+      if (!id) continue;
+      size.set(id, (size.get(id) ?? 0) + 1);
+      let set = have.get(id);
+      if (!set) { set = new Set(); have.set(id, set); }
+      set.add(biome[i]!);
+    }
+    {
+      // Stride per landmass so each one contributes about SAMPLE_MAX tiles.
+      const stride = new Map<number, number>();
+      for (const [id, tiles] of size) stride.set(id, Math.max(1, Math.floor(tiles / SAMPLE_MAX)));
+      const seen = new Map<number, number>();
+      for (let i = 0; i < n; i++) {
+        const id = land[i]!;
+        if (!id || biome[i] === BIOME.beach) continue;
+        const k = (seen.get(id) ?? 0) + 1;
+        seen.set(id, k);
+        if (k % stride.get(id)!) continue;
+        let list = sample.get(id);
+        if (!list) { list = []; sample.set(id, list); }
+        list.push(i);
       }
     }
-  }
-  // One void scar per world, somewhere far from the middle: the deepest land.
-  {
-    const vx = Math.floor((0.12 + rng() * 0.76) * w);
-    const vy = Math.floor((0.12 + rng() * 0.76) * h);
-    const vr = Math.min(w, h) * (0.03 + rng() * 0.03);
-    for (let y = Math.max(0, Math.floor(vy - vr)); y < Math.min(h, Math.ceil(vy + vr)); y++) {
-      for (let x = Math.max(0, Math.floor(vx - vr)); x < Math.min(w, Math.ceil(vx + vr)); x++) {
-        const i = y * w + x;
-        if (!land[i]) continue;
-        const d = Math.hypot(x - vx, y - vy) / vr;
-        if (d > 1) continue;
-        if (fbm(x / 40, y / 40, seed + 131, 3) > 0.3 + d * 0.5) biome[i] = BIOME.void;
+
+    /*
+     * Tiles this pass has already painted.
+     *
+     * Without it a later biome's patch could land on top of an earlier one and
+     * wipe it out — which is exactly what happened: a 9,000-tile continent came
+     * out still missing savanna and swamp because the patches placed for them
+     * were overwritten by the ones placed after.
+     */
+    const placed = new Uint8Array(n);
+    for (const [id, tiles] of size) {
+      // Too small to hold thirteen biomes without becoming a patchwork.
+      if (tiles < 4000) continue;
+      const got = have.get(id)!;
+      // Patch radius scales with the landmass: a big continent gets big regions.
+      const r = Math.max(6, Math.min(Math.sqrt(tiles) * 0.17, Math.min(w, h) * 0.05));
+
+      for (const want of IDEAL) {
+        if (got.has(want.id)) continue;
+        // Find this landmass's most suitable spot, among its own sampled tiles.
+        let bestI = -1, bestScore = Infinity;
+        for (const i of sample.get(id) ?? []) {
+          const de = (elev[i]! - want.elev) / 255;
+          const dt = (temp[i]! - want.temp) / 255;
+          const dm = (moist[i]! - want.moist) / 255;
+          // Climate counts for more than height: a desert in the wrong hills is
+          // still a desert, a desert in the wrong climate is nonsense.
+          const score = dt * dt * 1.5 + dm * dm * 1.5 + de * de;
+          if (score < bestScore) { bestScore = score; bestI = i; }
+        }
+        if (bestI < 0) continue;
+
+        const bx = bestI % w, by = (bestI / w) | 0;
+        const jitter = seed + want.id * 733;
+        let painted = 0;
+        for (let y = Math.max(0, Math.floor(by - r)); y < Math.min(h, Math.ceil(by + r)); y++) {
+          for (let x = Math.max(0, Math.floor(bx - r)); x < Math.min(w, Math.ceil(bx + r)); x++) {
+            const i = y * w + x;
+            if (land[i] !== id || biome[i] === BIOME.beach) continue;
+            const d = Math.hypot(x - bx, y - by) / r;
+            if (d > 1) continue;
+            // A ragged edge, so a placed region does not read as a stamped disc.
+            if (placed[i]) continue;                  // another guaranteed biome owns this ground
+            if (fbm(x / 22, y / 22, jitter, 3) < 0.22 + d * 0.62) continue;
+            biome[i] = want.id;
+            placed[i] = 1;
+            if (want.lift && elev[i]! < want.lift) elev[i] = want.lift;
+            painted++;
+          }
+        }
+        // A ragged edge can eat the whole patch on an awkward spot; make sure the
+        // biome exists at all rather than silently skipping it.
+        if (!painted) {
+          // A small solid block, with no mask to eat it.
+          const fr = Math.max(2, Math.floor(r * 0.35));
+          for (let y = Math.max(0, by - fr); y <= Math.min(h - 1, by + fr); y++) {
+            for (let x = Math.max(0, bx - fr); x <= Math.min(w - 1, bx + fr); x++) {
+              const i = y * w + x;
+              if (land[i] !== id || biome[i] === BIOME.beach || placed[i]) continue;
+              biome[i] = want.id;
+              placed[i] = 1;
+              if (want.lift && elev[i]! < want.lift) elev[i] = want.lift;
+              painted++;
+            }
+          }
+          if (!painted) { biome[bestI] = want.id; placed[bestI] = 1; }
+        }
+        got.add(want.id);
+      }
+    }
+
+    /*
+     * Check, do not assume.
+     *
+     * Everything above is best-effort on awkward ground, so the landmasses are
+     * recounted here and anything genuinely still missing is forced. Without
+     * this the generator could quietly promise a biome it had not placed.
+     */
+    {
+      const actual = new Map<number, Set<number>>();
+      for (let i = 0; i < n; i++) {
+        const id = land[i]!;
+        if (!id) continue;
+        let set = actual.get(id);
+        if (!set) { set = new Set(); actual.set(id, set); }
+        set.add(biome[i]!);
+      }
+      for (const [id, tiles] of size) {
+        if (tiles < 4000) continue;
+        const set = actual.get(id);
+        if (!set) continue;
+        for (const want of IDEAL) {
+          if (set.has(want.id)) continue;
+          // Any inland tile of this landmass will do at this point.
+          for (const i of sample.get(id) ?? []) {
+            if (placed[i]) continue;
+            biome[i] = want.id;
+            placed[i] = 1;
+            if (want.lift && elev[i]! < want.lift) elev[i] = want.lift;
+            set.add(want.id);
+            break;
+          }
+        }
       }
     }
   }
@@ -720,7 +1002,9 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
   const crng = mulberry32(seed ^ 0x1b873593);
   const big = Math.max(...[...tally.values()].map((t) => t.tiles), 1);
   for (const [id, t] of [...tally.entries()].sort((a, b) => b[1].tiles - a[1].tiles)) {
-    const island = t.tiles < big * 0.12;
+    // Islands only exist in a world that asked for them. Calling every smaller
+    // landmass an "isle" by default named a 54,000-tile continent "Branisle".
+    const island = smallN > 0 && t.tiles < big * 0.12;
     continents.push({
       id, name: placeName(crng, island ? "isle" : undefined),
       cx: Math.round(t.sx / t.tiles), cy: Math.round(t.sy / t.tiles),
@@ -734,8 +1018,18 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
   const nrng = mulberry32(seed ^ 0x5bf03635);
   let placeN = 0;
   for (const c of continents) {
-    // Settlements scale with the size of the land, islands get one or two.
-    const want = c.island ? 1 + Math.floor(nrng() * 2) : 3 + Math.floor(Math.sqrt(c.tiles) / 90);
+    /*
+     * Settlements scale with AREA, not with its square root.
+     *
+     * The old formula was tuned when a world had five separate continents and
+     * the places were shared out between them. With one central landmass it
+     * gave nineteen settlements for the entire world — a two-million-tile
+     * continent with almost nothing on it. One per ~18,000 tiles puts them a
+     * reasonable walk apart.
+     */
+    const want = c.island
+      ? 1 + Math.floor(nrng() * 2)
+      : Math.max(4, Math.min(140, Math.round(c.tiles / 18000)));
     let tries = 0;
     let made = 0;
     while (made < want && tries < want * 220) {
@@ -747,7 +1041,10 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const b = BIOME_BY_ID[biome[i]!];
       if (!b || b.water) continue;
       // Keep them apart so the chart does not end up with a cluster of pins.
-      if (places.some((p) => Math.hypot(p.tx - x, p.ty - y) < Math.min(w, h) * 0.035)) continue;
+      // Spacing scales with how many are wanted, so a crowded continent still
+      // spreads them out instead of failing to place most of them.
+      const apart = Math.max(14, Math.min(w, h) * 0.035 * Math.sqrt(12 / Math.max(4, want)));
+      if (places.some((p) => Math.hypot(p.tx - x, p.ty - y) < apart)) continue;
       const word = b.words[Math.floor(nrng() * b.words.length)]!;
       places.push({
         id: `pl${placeN++}`, name: placeName(nrng, word.toLowerCase()), tx: x, ty: y,
