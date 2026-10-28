@@ -15,7 +15,7 @@
  * One region at the default size is about 65k tiles: a third of the old whole
  * world, and well under a tenth of the memory it took.
  */
-import { BIOME, isWater, type WorldChart } from "./world-chart";
+import { BIOME, isWater, startSpot, type WorldChart } from "./world-chart";
 import { BI, FL, TEX } from "./tex-world";
 import type { WorldData } from "./world";
 
@@ -79,6 +79,28 @@ function h2(x: number, y: number, seed: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+/**
+ * A chart tile that is solid rock the hunter can mine.
+ *
+ * Highland peaks stay walls. Everywhere else, rock comes in ridges — clumps a
+ * few tiles across — so a walk always finds a wall, and the same tile is a
+ * wall every time the window is cut. The wake clearing stays open.
+ */
+export function chartTileSolid(chart: WorldChart, cx: number, cy: number, wake?: { tx: number; ty: number } | null): boolean {
+  if (cx < 0 || cy < 0 || cx >= chart.w || cy >= chart.h) return true;
+  if (wake) {
+    const dx = cx - wake.tx, dy = cy - wake.ty;
+    if (dx * dx + dy * dy <= 64) return false;
+  }
+  const b = chart.biome[cy * chart.w + cx]!;
+  const look = LOOK[b] ?? LOOK[BIOME.plains]!;
+  if (look.liquid || isWater(b) || b === BIOME.beach) return false;
+  const ci = cy * chart.w + cx;
+  if (b === BIOME.highland && chart.elev[ci]! > 214 && h2(cx, cy, chart.seed + 23) < 0.72) return true;
+  const ridge = h2((cx / 5) | 0, (cy / 5) | 0, chart.seed + 21);
+  return ridge > 0.7 && h2(cx, cy, chart.seed + 29) < 0.82;
+}
+
 export type RegionKey = { rx: number; ry: number };
 
 /** Which region a chart tile falls in. */
@@ -107,6 +129,7 @@ export function buildWindow(chart: WorldChart, originX: number, originY: number,
   const w = Math.max(0, Math.min(width | 0, chart.w - originX0));
   const h = Math.max(0, Math.min(height | 0, chart.h - originY0));
   const tiles = new Array(Math.max(0, w * h));
+  const wake = startSpot(chart);
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -124,10 +147,7 @@ export function buildWindow(chart: WorldChart, originX: number, originY: number,
         floor = look.patchFloor ?? floor;
       }
 
-      // Highland above the treeline is solid rock, not walkable ground: that is
-      // what makes mountain ranges read as barriers rather than grey meadows.
-      const high = b === BIOME.highland && chart.elev[ci]! > 214;
-      const block = high && h2(cx, cy, chart.seed + 23) < 0.72 ? 1 : 0;
+      const block = chartTileSolid(chart, cx, cy, wake) ? 1 : 0;
 
       const tile: Record<string, unknown> = {
         floor: look.liquid ? FL.water : block ? FL.wall : floor,

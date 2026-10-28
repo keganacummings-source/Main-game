@@ -86,7 +86,7 @@ export const EASY_TUNE = {
   witchesSpread: 2,
   /** The most rivals that can be alive at once (hard mode is 15). */
   witchCap: 4,
-  /** A rival only commits to you inside this range (hard mode is 1900) and gives up past the chase range (hard is 5200). */
+  /** A rival only commits to you inside this range (hard mode is 620) and gives up past the chase range (hard is 1300). */
   witchHunt: 520,
   witchChase: 1100,
   /** World bosses only notice you inside this range (hard mode is 2400). */
@@ -106,12 +106,12 @@ export function hasTurbzSave(easy = false): boolean {
   try { return !!localStorage.getItem(easy ? TURBZ_EASY_SAVE_KEY : TURBZ_SAVE_KEY); } catch { return false; }
 }
 const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
-/** Within this range a witch runs full live AI and hunts you relentlessly. */
-const NEAR = 1900;
+/** Within this range a witch runs full live AI. */
+const NEAR = 1400;
 /** Within this range a witch commits to the player, dropping whatever she was doing. */
-const TWITCH_HUNT = 1900;
+const TWITCH_HUNT = 620;
 /** Once she has locked onto you she chases this far before giving up. */
-const TWITCH_CHASE = 5200;
+const TWITCH_CHASE = 1300;
 const SIM = 2;
 const TEAM_MAX = 3;
 const rand = Math.random;
@@ -330,7 +330,7 @@ export function installTurbz(game: any): void {
     let made = 0;
     for (const p of places) {
       if (made >= n) break;
-      if (Math.hypot(p.x - save.x, p.y - save.y) < 520) continue;
+      if (Math.hypot(p.x - save.x, p.y - save.y) < 980) continue;
       let nm = pick(WITCH_NAMES);
       for (let k = 0; k < 12 && used.has(nm); k++) nm = pick(WITCH_NAMES);
       if (used.has(nm)) nm = `${nm} ${made + 2}`;
@@ -772,7 +772,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (!save || !this.world) return;
     save.dungeons = save.dungeons ?? { elapsed: 0, sequence: 1, portals: [], day: 0, dayElapsed: 0, stamps: {} };
-    const spots = this.chartPlay ? chartAnchors(this.chartPlay, 14) : lmsSpawns(this.world, 14);
+    const spots = this.chartPlay ? chartAnchors(this.chartPlay, 14, { x: save.x, y: save.y }) : lmsSpawns(this.world, 14);
     const depths = [4, 8, 12, 18, 26, 36];
     // Idempotent: on resume the rift portals already exist (persisted), so only add missing ones.
     depths.forEach((lv, i) => {
@@ -863,9 +863,11 @@ export function installTurbz(game: any): void {
         this.applyMined?.(map);
         this.syncSolids?.(map);
         if (fresh || this.populationMap !== map) {
-          this.mobs = [];
-          this.dormant = [];
+          const specs = (this.world?.spawns ?? []).filter((s: any) => s.kind === "mob");
+          this.mobs = specs.filter((s: any) => s.boss).map((s: any) => this.makeMob(s));
+          this.dormant = specs.filter((s: any) => !s.boss).map((s: any) => ({ spec: s, x: s.x, y: s.y, at: this.clock ?? 0 }));
           this.populationMap = map;
+          this.dormancyT = 0;
         }
       }
     } else {
@@ -1262,7 +1264,7 @@ export function installTurbz(game: any): void {
       bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: isCryingBuild ? 3 : 2 },
       spirits: isCryingBuild ? Math.min(3, Math.floor(witchLevel / 10)) : 0,
       team: 0,
-      state: "hunt", // starts in hunt state, not idle grind
+      state: "grind",
       goalX: x, goalY: y, think: rand() * 0.2, simT: rand() * SIM,
       castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 4, age: 0, stuck: 0,
     };
@@ -1276,7 +1278,7 @@ export function installTurbz(game: any): void {
       race: raceId,
       female: rand() < 0.65,
       ghost: false,
-      aggro: true, // always aggressive — these witches hunt, they do not wander
+      aggro: false, // she minds the wild until you are actually close
       seen: true, huntIn: 0, enchants: [], fromSpawn: false,
       // cryingGirl builds are scarier: more HP, higher crit, better dodge.
       stats: isCryingBuild
@@ -1949,7 +1951,7 @@ export function installTurbz(game: any): void {
     // Scent range: a witch who catches your trail turns hunter and heads your way from off-screen.
     // In the free-for-all she has no special grudge against you — she'll only come if you are close,
     // the same as she'd turn on any witch nearby — so the whole wild doesn't converge on the player.
-    const scent = TURBZ2_FREE_FOR_ALL && this.turbz2 ? 460 : (EASY ? EASY_TUNE.witchHunt : 3600);
+    const scent = TURBZ2_FREE_FOR_ALL && this.turbz2 ? 460 : (EASY ? EASY_TUNE.witchHunt : TWITCH_HUNT);
     if (pd < scent && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
     this.witchPlay(m, true);
   };

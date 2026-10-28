@@ -430,7 +430,7 @@ const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, 
 const REBUILT = new Set<PanelId>(["gear", "bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause"]);
 
 function winId(panel: PanelId): string {
-  if (panel === "map") return "panel-map-v3";
+  if (panel === "map") return "panel-map-v5";
   return REBUILT.has(panel) ? `panel-${panel}-v2` : `panel-${panel}`;
 }
 
@@ -512,7 +512,7 @@ const Windows = memo(function Windows({ game }: GameProp) {
   return (
     <>
       {open.map((p) => (
-        <FloatWin key={p} id={winId(p)} title={PANEL_TITLE[p]} def={panelDef(p)} minW={p === "bag" || p === "gear" ? 320 : 220} onClose={() => { if (panel === p) game?.closePanel(); }}>
+        <FloatWin key={p} id={winId(p)} title={PANEL_TITLE[p]} def={panelDef(p)} minW={p === "map" ? 720 : p === "bag" || p === "gear" ? 320 : 220} minH={p === "map" ? 480 : 80} onClose={() => { if (panel === p) game?.closePanel(); }}>
           <PanelBody panel={p} game={game} />
         </FloatWin>
       ))}

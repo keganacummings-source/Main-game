@@ -17,8 +17,8 @@ import { TILE } from "./content";
 import { fogForSave, noteVisited, setActiveChart } from "./chart-store";
 import { isChopTreeArt } from "./map-format";
 import { FL } from "./tex-world";
-import { BIOME, generateChart, startSpot, type ChartPlace, type WorldChart } from "./world-chart";
-import { buildWindow, type RegionWorld } from "./world-chunks";
+import { BIOME, generateChart, isWater, startSpot, type WorldChart } from "./world-chart";
+import { buildWindow, chartTileSolid, type RegionWorld } from "./world-chunks";
 
 /** Tiles on a side of the live window. Small enough to stay cheap, large enough that a slide is rare. */
 export const CHART_WIN = 176;
@@ -92,6 +92,74 @@ export function dressWindow(chart: WorldChart, world: RegionWorld): void {
   world.spawns = spawns;
 }
 
+const CAMP: Record<number, { pool: string[]; lo: number; hi: number }> = {
+  [BIOME.beach]: { pool: ["hare", "crow", "kusa"], lo: 1, hi: 2 },
+  [BIOME.plains]: { pool: ["hare", "boar", "kusa", "yanagi"], lo: 1, hi: 3 },
+  [BIOME.forest]: { pool: ["boar", "stag", "mokuzu", "umoregi", "tsuchi"], lo: 2, hi: 5 },
+  [BIOME.savanna]: { pool: ["boar", "hare", "kusa", "kaze"], lo: 2, hi: 5 },
+  [BIOME.desert]: { pool: ["boar", "crow", "tsuchi", "hinotama"], lo: 3, hi: 7 },
+  [BIOME.swamp]: { pool: ["crow", "shizuku", "nami", "wisp"], lo: 2, hi: 6 },
+  [BIOME.jungle]: { pool: ["boar", "uroko", "kasa", "mokuzu"], lo: 3, hi: 7 },
+  [BIOME.taiga]: { pool: ["wolf", "stag", "yuki", "kaze"], lo: 3, hi: 7 },
+  [BIOME.tundra]: { pool: ["wolf", "hare", "yuki", "hikari"], lo: 4, hi: 8 },
+  [BIOME.glacier]: { pool: ["wolf", "yuki", "kaze"], lo: 5, hi: 9 },
+  [BIOME.highland]: { pool: ["wolf", "stag", "gaikotsu", "yami"], lo: 5, hi: 10 },
+  [BIOME.volcanic]: { pool: ["boar", "onibi", "nobi", "hinotama"], lo: 6, hi: 12 },
+  [BIOME.void]: { pool: ["crow", "kage", "yomi", "muma"], lo: 8, hi: 14 },
+};
+
+/**
+ * Wildlife camps on open ground. Ids are chart coordinates, so a camp is the
+ * same camp when the window slides away and back, and the engine's dormancy
+ * only wakes the ones near the hunter.
+ */
+export function seedWildlife(chart: WorldChart, world: RegionWorld, avoid?: { tx: number; ty: number }): void {
+  const step = 13;
+  for (let y = 6; y < world.h - 6; y += step) {
+    for (let x = 6; x < world.w - 6; x += step) {
+      const jx = Math.floor(hash(x, y, chart.seed + 3) * 7) - 3;
+      const jy = Math.floor(hash(y, x, chart.seed + 5) * 7) - 3;
+      const tx = Math.max(4, Math.min(world.w - 5, x + jx));
+      const ty = Math.max(4, Math.min(world.h - 5, y + jy));
+      if (avoid && (tx - avoid.tx) ** 2 + (ty - avoid.ty) ** 2 < 16 * 16) continue;
+      const t = world.tiles[ty * world.w + tx];
+      if (!t || t.block || t.floor === FL.water || t.floor === FL.lava) continue;
+      const cx = world.originX + tx;
+      const cy = world.originY + ty;
+      if (isWater(chart.biome[cy * chart.w + cx]!) || chartTileSolid(chart, cx, cy)) continue;
+      const roll = hash(cx, cy, chart.seed + 17);
+      if (roll > 0.78) continue;
+      const spec = CAMP[chart.biome[cy * chart.w + cx]!] ?? CAMP[BIOME.plains]!;
+      const count = roll < 0.32 ? 2 : 1;
+      const level = spec.lo + Math.floor(hash(cx, cy, chart.seed + 23) * (spec.hi - spec.lo + 1));
+      for (let k = 0; k < count; k++) {
+        const ox = k === 0 ? 0 : hash(cx, cy, chart.seed + 31) < 0.5 ? 1 : -1;
+        const oy = k === 0 ? 0 : hash(cx, cy, chart.seed + 37) < 0.5 ? 1 : -1;
+        const sx = Math.max(3, Math.min(world.w - 4, tx + ox));
+        const sy = Math.max(3, Math.min(world.h - 4, ty + oy));
+        const species = spec.pool[Math.floor(hash(cx + k, cy, chart.seed + 19) * spec.pool.length)]!;
+        world.spawns.push({
+          id: `foe-${cx}-${cy}-${k}`,
+          kind: "mob",
+          species,
+          x: (sx + 0.5) * TILE,
+          y: (sy + 0.5) * TILE,
+          level,
+          fixedLevel: true,
+          zone: {
+            id: `camp-${cx}-${cy}`,
+            tx, ty, tw: 3, th: 3,
+            levelMin: spec.lo, levelMax: spec.hi,
+            species: spec.pool,
+            count,
+            respawn: 55,
+          },
+        });
+      }
+    }
+  }
+}
+
 function fileFor(play: ChartPlay, world: RegionWorld) {
   const regions: { id: string; name: string; kind: string; tx: number; ty: number; tw: number; th: number; about?: string }[] = [];
   for (const c of play.chart.continents) {
@@ -119,9 +187,10 @@ function fileFor(play: ChartPlay, world: RegionWorld) {
   };
 }
 
-function cut(play: ChartPlay): RegionWorld {
+function cut(play: ChartPlay, avoid?: { tx: number; ty: number }): RegionWorld {
   const world = buildWindow(play.chart, play.originX, play.originY, play.w, play.h);
   dressWindow(play.chart, world);
+  seedWildlife(play.chart, world, avoid);
   world.swim = true;
   return world;
 }
@@ -160,7 +229,9 @@ export function presentChart(game: any): void {
   if (game.world?.originX === play.originX && game.world?.originY === play.originY) {
     absorbMines(play, save.mined?.[save.map], game.world.w);
   }
-  const world = cut(play);
+  const tx = Math.floor((save.x ?? 0) / TILE);
+  const ty = Math.floor((save.y ?? 0) / TILE);
+  const world = cut(play, { tx, ty });
   game.world = world;
   game.turbzWorld = world;
   game.customFile = fileFor(play, world);
@@ -168,6 +239,7 @@ export function presentChart(game: any): void {
   save.mined = save.mined ?? {};
   save.mined[save.map ?? "custom-turbz"] = minedLocal(play, world);
   world.cache = null;
+  reconcileChartFoes(game);
 }
 
 function shiftBy(game: any, dtx: number, dty: number): void {
@@ -287,34 +359,71 @@ export function tickChartPlay(game: any): boolean {
   return true;
 }
 
-/** Spread points across the chart's named places, in the current window's coordinates. */
-export function chartAnchors(play: ChartPlay, n: number): { x: number; y: number }[] {
-  const places = play.chart.places.filter((p) => p.kind === "settlement" || p.kind === "peak" || p.kind === "landmark");
-  const picked: ChartPlace[] = [];
-  if (places.length) {
-    picked.push(places[Math.floor(hash(play.chart.seed, 1, 3) * places.length)]!);
-    while (picked.length < Math.min(n, places.length)) {
-      let best = places[0]!;
-      let bestD = -1;
-      for (const p of places) {
-        if (picked.includes(p)) continue;
-        let d = Infinity;
-        for (const q of picked) d = Math.min(d, (p.tx - q.tx) ** 2 + (p.ty - q.ty) ** 2);
-        if (d > bestD) { bestD = d; best = p; }
-      }
-      picked.push(best);
+/** Spread points across open ground in the live window, not across the whole chart. */
+export function chartAnchors(play: ChartPlay, n: number, avoid?: { x: number; y: number }): { x: number; y: number }[] {
+  const cand: { x: number; y: number }[] = [];
+  const step = 6;
+  for (let y = 8; y < play.h - 8; y += step) {
+    for (let x = 8; x < play.w - 8; x += step) {
+      const cx = play.originX + x;
+      const cy = play.originY + y;
+      const b = play.chart.biome[cy * play.chart.w + cx]!;
+      if (isWater(b) || chartTileSolid(play.chart, cx, cy)) continue;
+      const px = (x + 0.5) * TILE;
+      const py = (y + 0.5) * TILE;
+      if (avoid && Math.hypot(px - avoid.x, py - avoid.y) < 860) continue;
+      cand.push({ x: px, y: py });
     }
   }
-  const out = picked.map((p) => ({
-    x: (p.tx - play.originX) * TILE + TILE / 2,
-    y: (p.ty - play.originY) * TILE + TILE / 2,
-  }));
-  while (out.length < n) {
-    const spot = startSpot(play.chart);
-    out.push({
-      x: (spot.tx - play.originX) * TILE + TILE / 2 + out.length * 48,
-      y: (spot.ty - play.originY) * TILE + TILE / 2,
-    });
+  if (!cand.length) {
+    return Array.from({ length: n }, (_, i) => ({
+      x: Math.min(play.w - 4, 10 + (i % 5) * 8) * TILE,
+      y: Math.min(play.h - 4, 10 + Math.floor(i / 5) * 8) * TILE,
+    }));
   }
+  const out = [cand[Math.floor(hash(play.chart.seed, n, 1) * cand.length)]!];
+  while (out.length < n && out.length < cand.length) {
+    let best = cand[0]!;
+    let bestD = -1;
+    for (const p of cand) {
+      let d = Infinity;
+      for (const q of out) d = Math.min(d, (p.x - q.x) ** 2 + (p.y - q.y) ** 2);
+      if (d > bestD) { bestD = d; best = p; }
+    }
+    if (bestD < 1) break;
+    out.push(best);
+  }
+  while (out.length < n) out.push({ ...out[out.length % out.length]! });
   return out;
+}
+
+/**
+ * Keep wildlife in step with the window. Camps that slid off are packed away
+ * unless they are in a fight. Camps on ground that just streamed in are added.
+ */
+export function reconcileChartFoes(game: any): void {
+  const world = game.world as RegionWorld | undefined;
+  if (!world || !game.chartPlay) return;
+  const maxX = world.w * TILE;
+  const maxY = world.h * TILE;
+  const inside = (x: number, y: number) => x > -TILE && y > -TILE && x < maxX + TILE && y < maxY + TILE;
+  const kept: any[] = [];
+  for (const d of game.dormant ?? []) {
+    const x = d?.x ?? d?.mob?.x ?? 0;
+    const y = d?.y ?? d?.mob?.y ?? 0;
+    const mob = d?.mob;
+    const fighting = !!(mob?.alive && (mob.aggro || (mob.hurt ?? 0) > 0));
+    if (inside(x, y) || fighting) kept.push(d);
+  }
+  game.dormant = kept;
+  const have = new Set<string>();
+  for (const m of game.mobs ?? []) if (m?.id && String(m.id).startsWith("foe-")) have.add(m.id);
+  for (const d of game.dormant) {
+    const id = d?.spec?.id ?? d?.mob?.id;
+    if (id) have.add(id);
+  }
+  for (const s of world.spawns ?? []) {
+    if (s.kind !== "mob" || have.has(s.id)) continue;
+    game.dormant.push({ spec: s, x: s.x, y: s.y, at: game.clock ?? 0 });
+  }
 }
