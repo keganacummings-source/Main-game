@@ -79,12 +79,23 @@ function h2(x: number, y: number, seed: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+/** Smooth value noise in tile space. `freq` is tiles per feature. */
+function n2(x: number, y: number, seed: number, freq: number): number {
+  const fx = x / freq, fy = y / freq;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy);
+  const tx = fx - x0, ty = fy - y0;
+  const u = tx * tx * (3 - 2 * tx), v = ty * ty * (3 - 2 * ty);
+  const a = h2(x0, y0, seed), b = h2(x0 + 1, y0, seed), c = h2(x0, y0 + 1, seed), d = h2(x0 + 1, y0 + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+
 /**
  * A chart tile that is solid rock the hunter can mine.
  *
- * Highland peaks stay walls. Everywhere else, rock comes in ridges — clumps a
- * few tiles across — so a walk always finds a wall, and the same tile is a
- * wall every time the window is cut. The wake clearing stays open.
+ * Rock follows the ground it sits on. Highland and volcanic land grow real
+ * outcrops; plains and forest only get a vein where the land rises. The wall
+ * art is that biome's own (sand, snow, hellbrick, void, stone) — not one grey
+ * rock dropped on every biome. The wake clearing stays open.
  */
 export function chartTileSolid(chart: WorldChart, cx: number, cy: number, wake?: { tx: number; ty: number } | null): boolean {
   if (cx < 0 || cy < 0 || cx >= chart.w || cy >= chart.h) return true;
@@ -95,10 +106,23 @@ export function chartTileSolid(chart: WorldChart, cx: number, cy: number, wake?:
   const b = chart.biome[cy * chart.w + cx]!;
   const look = LOOK[b] ?? LOOK[BIOME.plains]!;
   if (look.liquid || isWater(b) || b === BIOME.beach) return false;
-  const ci = cy * chart.w + cx;
-  if (b === BIOME.highland && chart.elev[ci]! > 214 && h2(cx, cy, chart.seed + 23) < 0.72) return true;
-  const ridge = h2((cx / 5) | 0, (cy / 5) | 0, chart.seed + 21);
-  return ridge > 0.7 && h2(cx, cy, chart.seed + 29) < 0.82;
+  const elev = chart.elev[cy * chart.w + cx] ?? 0;
+  // A wide vein, broken into outcrops by a shorter noise. Not a salt of single tiles.
+  const vein = n2(cx, cy, chart.seed + 21, 16);
+  const lump = n2(cx, cy, chart.seed + 29, 6);
+  const high = Math.max(0, Math.min(1, (elev - 128) / 80));
+  // How readily this ground turns to rock. Lower means more stone, and it is
+  // the stone that belongs there.
+  let need = 0.78;
+  if (b === BIOME.highland) need = 0.7;
+  else if (b === BIOME.volcanic) need = 0.66;
+  else if (b === BIOME.void) need = 0.66;
+  else if (b === BIOME.glacier) need = 0.66;
+  else if (b === BIOME.tundra || b === BIOME.taiga) need = 0.7;
+  else if (b === BIOME.desert || b === BIOME.savanna) need = 0.72;
+  // The very top of a highland is bare rock, with gaps so it can still be walked.
+  if (b === BIOME.highland && elev > 230 && lump > 0.28) return true;
+  return vein * 0.72 + lump * 0.28 + high * 0.2 > need && lump > 0.1;
 }
 
 export type RegionKey = { rx: number; ry: number };
@@ -147,19 +171,21 @@ export function buildWindow(chart: WorldChart, originX: number, originY: number,
         floor = look.patchFloor ?? floor;
       }
 
-      const block = chartTileSolid(chart, cx, cy, wake) ? 1 : 0;
+      const solid = chartTileSolid(chart, cx, cy, wake);
 
       const tile: Record<string, unknown> = {
-        floor: look.liquid ? FL.water : block ? FL.wall : floor,
+        // Keep the biome's own floor under the wall. Floor 1 is what swim mode
+        // treats as open water, which is why rock could be walked through.
+        floor: look.liquid ? FL.water : (solid ? look.floor : floor),
         biome: look.biome,
-        block,
+        block: solid ? 1 : 0,
         decor: 0,
-        sprite: block ? look.wall : sprite,
+        sprite: solid ? look.wall : sprite,
       };
 
       // Scenery. Water and solid rock never carry any, and a tile gets either a
       // tree or small ground detail — never both stacked on one tile.
-      if (!block && !look.liquid) {
+      if (!solid && !look.liquid) {
         if (look.tree && look.treeAt && h2(cx, cy, chart.seed + 41) < look.treeAt) {
           tile.layers = [look.tree];
           tile.decor = 1;

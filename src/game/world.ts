@@ -1236,9 +1236,10 @@ export function blocked(world: WorldData, x: number, y: number): boolean {
   if (tx <= 1 || ty <= 1 || tx >= world.w - 2 || ty >= world.h - 2) return true;
   if (world.solids && world.solids.has(ty * world.w + tx)) return true;
   const t = world.tiles[ty * world.w + tx]!;
-  // Water (floor 2) is always walkable. Non-water-element classes are slowed on it
-  // (see engine movement). Walls (floor 1) stay blocked unless the mode allows swimming.
+  // Water is always walkable. A real wall (block 1) stays solid even when the
+  // wild lets you swim; swim only opens a floor-1 tile that is not solid.
   if (t.floor === 2) return false;
+  if (t.block === 1) return true;
   if (t.floor === 1) return !world.swim;
   if (t.decor > 0) return false;
   return t.block === 1;

@@ -9963,12 +9963,13 @@ export class TurbzGame {
 		pruneByLife(this.parts, MAX_PARTICLES);
 		this.cfx?.tick(dt);
 		if (this.cfx?.kick) {
-			this.shake = Math.max(this.shake, this.cfx.kick);
+			const kick = this.turbz ? Math.min(this.cfx.kick, 2.5) : this.cfx.kick;
+			this.shake = Math.max(this.shake, kick);
 			this.cfx.kick = 0;
 		}
 		for (const f of this.floats) f.life -= dt;
 		pruneByLife(this.floats);
-		this.shake = Math.max(0, this.shake - dt * 18);
+		this.shake = Math.max(0, this.shake - dt * (this.turbz ? 40 : 18));
 		for (const id in this.nodeCd) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
 	}
 	procSet(fx, variant = 0) {
@@ -13556,8 +13557,8 @@ export class TurbzGame {
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.fillStyle = "#140e0c";
 		ctx.fillRect(0, 0, w, h);
-		const sx = (Math.random() - .5) * this.shake;
-		const sy = (Math.random() - .5) * this.shake;
+		const sx = this.turbz ? Math.sin(this.clock * 34) * Math.min(this.shake, 2.2) * 0.5 : (Math.random() - .5) * this.shake;
+		const sy = this.turbz ? Math.cos(this.clock * 29) * Math.min(this.shake, 2.2) * 0.35 : (Math.random() - .5) * this.shake;
 		ctx.translate(w / 2 + sx, h / 2 + sy);
 		ctx.scale(this.zoom, this.zoom);
 		ctx.translate(-this.cam.x, -this.cam.y);

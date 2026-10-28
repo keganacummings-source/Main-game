@@ -114,48 +114,43 @@ const CAMP: Record<number, { pool: string[]; lo: number; hi: number }> = {
  * only wakes the ones near the hunter.
  */
 export function seedWildlife(chart: WorldChart, world: RegionWorld, avoid?: { tx: number; ty: number }): void {
-  const step = 13;
-  for (let y = 6; y < world.h - 6; y += step) {
-    for (let x = 6; x < world.w - 6; x += step) {
-      const jx = Math.floor(hash(x, y, chart.seed + 3) * 7) - 3;
-      const jy = Math.floor(hash(y, x, chart.seed + 5) * 7) - 3;
+  // One camp every few screens, not a fight on every other tile. The engine
+  // only wakes the camp nearest the hunter, so this spacing is what she meets.
+  const step = 36;
+  for (let y = 8; y < world.h - 8; y += step) {
+    for (let x = 8; x < world.w - 8; x += step) {
+      const jx = Math.floor(hash(x, y, chart.seed + 3) * 11) - 5;
+      const jy = Math.floor(hash(y, x, chart.seed + 5) * 11) - 5;
       const tx = Math.max(4, Math.min(world.w - 5, x + jx));
       const ty = Math.max(4, Math.min(world.h - 5, y + jy));
-      if (avoid && (tx - avoid.tx) ** 2 + (ty - avoid.ty) ** 2 < 16 * 16) continue;
+      if (avoid && (tx - avoid.tx) ** 2 + (ty - avoid.ty) ** 2 < 22 * 22) continue;
       const t = world.tiles[ty * world.w + tx];
       if (!t || t.block || t.floor === FL.water || t.floor === FL.lava) continue;
       const cx = world.originX + tx;
       const cy = world.originY + ty;
       if (isWater(chart.biome[cy * chart.w + cx]!) || chartTileSolid(chart, cx, cy)) continue;
       const roll = hash(cx, cy, chart.seed + 17);
-      if (roll > 0.78) continue;
+      if (roll > 0.55) continue;
       const spec = CAMP[chart.biome[cy * chart.w + cx]!] ?? CAMP[BIOME.plains]!;
-      const count = roll < 0.32 ? 2 : 1;
       const level = spec.lo + Math.floor(hash(cx, cy, chart.seed + 23) * (spec.hi - spec.lo + 1));
-      for (let k = 0; k < count; k++) {
-        const ox = k === 0 ? 0 : hash(cx, cy, chart.seed + 31) < 0.5 ? 1 : -1;
-        const oy = k === 0 ? 0 : hash(cx, cy, chart.seed + 37) < 0.5 ? 1 : -1;
-        const sx = Math.max(3, Math.min(world.w - 4, tx + ox));
-        const sy = Math.max(3, Math.min(world.h - 4, ty + oy));
-        const species = spec.pool[Math.floor(hash(cx + k, cy, chart.seed + 19) * spec.pool.length)]!;
-        world.spawns.push({
-          id: `foe-${cx}-${cy}-${k}`,
-          kind: "mob",
-          species,
-          x: (sx + 0.5) * TILE,
-          y: (sy + 0.5) * TILE,
-          level,
-          fixedLevel: true,
-          zone: {
-            id: `camp-${cx}-${cy}`,
-            tx, ty, tw: 3, th: 3,
-            levelMin: spec.lo, levelMax: spec.hi,
-            species: spec.pool,
-            count,
-            respawn: 55,
-          },
-        });
-      }
+      const species = spec.pool[Math.floor(hash(cx, cy, chart.seed + 19) * spec.pool.length)]!;
+      world.spawns.push({
+        id: `foe-${cx}-${cy}-0`,
+        kind: "mob",
+        species,
+        x: (tx + 0.5) * TILE,
+        y: (ty + 0.5) * TILE,
+        level,
+        fixedLevel: true,
+        zone: {
+          id: `camp-${cx}-${cy}`,
+          tx, ty, tw: 3, th: 3,
+          levelMin: spec.lo, levelMax: spec.hi,
+          species: spec.pool,
+          count: 1,
+          respawn: 90,
+        },
+      });
     }
   }
 }
