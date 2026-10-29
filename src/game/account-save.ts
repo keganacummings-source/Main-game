@@ -301,17 +301,11 @@ export function wipeAccountProgress(): number {
     localStorage.removeItem(ARENA_KEY);
     localStorage.removeItem(HARD_KEY);
     localStorage.removeItem("turbz-v3");
-    // TURBZ mode (and its Easy / TurboHunt variant) is a parallel run with its own save keys
-    // (see src/game/turbz-mode.ts). Ascending wipes those too — the run, the heirloom gear,
-    // the packed camp, and the persistent storage chest contents.
+    // TURBZ mode is a parallel run with its own save keys (see src/game/turbz-mode.ts).
+    // Ascending wipes those too — the run, the heirloom gear and the packed camp.
     localStorage.removeItem("turbz-run-v1");
     localStorage.removeItem("turbz-heirloom-v1");
     localStorage.removeItem("turbz-camp-v1");
-    localStorage.removeItem("turbz-easy-run-v1");
-    localStorage.removeItem("turbz-easy-heirloom-v1");
-    localStorage.removeItem("turbz-easy-camp-v1");
-    localStorage.removeItem("turbz-chest-store-v1");
-    // Preference keys (newtex, UI layout, designer maps, etc.) are intentionally kept.
     localStorage.setItem(META_KEY, JSON.stringify(meta));
   } catch {
     /* private mode */

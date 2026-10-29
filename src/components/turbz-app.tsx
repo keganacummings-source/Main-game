@@ -120,6 +120,32 @@ function uploadShinies(): void {
   }, 50);
 }
 
+/**
+ * Shown while a new world's chart is being built. The chart takes a few seconds to generate (in a worker, so the
+ * page stays alive), and without a word on screen it would look like the game had stopped.
+ */
+function ChartingScreen() {
+  const { charting } = useSnapPick(["charting"] as const);
+  if (!charting) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="charting-screen"
+      style={{
+        position: "fixed", inset: 0, zIndex: 400, display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", gap: 12, background: "rgba(8,6,5,.94)", color: "#f0e2c8", textAlign: "center",
+        fontFamily: "VT323, monospace", padding: 24,
+      }}
+    >
+      <div style={{ fontSize: 34, letterSpacing: 1 }}>Charting a new world…</div>
+      <div style={{ fontSize: 20, opacity: 0.75, maxWidth: 420 }}>
+        Raising a continent out of the sea. This takes a few seconds, and only once for each world.
+      </div>
+    </div>
+  );
+}
+
 function Hunt() {
   const acct = useStaticAccount();
   const username = acct.user ? veilName(acct.user) : "witch";
@@ -137,7 +163,6 @@ function Hunt() {
   const [screen, setScreen] = useState<ScreenId>("hub");
   const [arenaSeed, setArenaSeed] = useState<unknown>(null);
   const [booted, setBooted] = useState(false);
-  const [charting, setCharting] = useState(false);
 
   const onArenaCloud = useCallback((save: unknown | null) => {
     noteArena(save);
@@ -242,6 +267,7 @@ function Hunt() {
   return (
     <main className="game-root">
       <canvas ref={canvasRef} className="game-canvas" aria-label="TURBZ wilds" />
+      <ChartingScreen />
       <div className="overlay">
         {screen === "hub" && !playing && (
           <Hub
@@ -304,7 +330,7 @@ function Hunt() {
                   TurboHunt is TURBZ on easy mode: the same wild, the same camp, build mode, Storage Chest, Ghost Box, power blocks, dungeons and world bosses, so you can learn how TURBZ plays without the pressure. Only three or four calm witches wander and they only come for you when you are close. Foes have less health and hit for half. Your mana and stamina refill faster. If you fall you wake at your campfire, losing a little kyo, and you keep your level, gear, skills and camp. It keeps its own save, so it never touches a real TURBZ run. Press H at a campfire for the Camp menu and F for build mode.
                 </p>
               )}
-              <p className="text-dim">{screen === "turbzeasy" ? "The rules below are real TURBZ. Where easy mode changes them, the paragraph above wins. " : ""}You wake at level 1 on one charted continent, 2500×2500 tiles of land and ocean, on Hardcore difficulty. The map (M) starts dark and fills in as you walk; the ground streams in with you, so the edge of the screen is never the edge of the world. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
+              <p className="text-dim">{screen === "turbzeasy" ? "The rules below are real TURBZ. Where easy mode changes them, the paragraph above wins. " : ""}You wake at level 1 on a generated 450×450 map, on Hardcore difficulty. Dungeons and world bosses are the point: they drop the good gear. There is day and night, and no food or water: you have health, mana and stamina. Spells spend mana. Melee spends stamina. Run a pool dry and that kind of attack is half speed for five seconds while it refills. No bounties, no quests, no townsfolk. Ten to fifteen rival witches hunt the wild — and hunt you: they autolevel to match you, carry up to four elements, and are among the deadliest fights in the game. Gear you wear levels up, slower than you do. When you die you keep your WHOLE armour bag — every piece reset to level 1 with its enchantments intact — so you can grind a full set here and never lose it. And the run is saved: leave whenever, come back, and pick up exactly where you left off.</p>
               <p className="text-kyo font-display text-[9px]">Wake as any class at the full XP rate, or pick the Crying Lady and build her: perks, borrowed passives, elements and a trait.</p>
               <Field label="Name">
                 <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} className="px-input" />
@@ -318,20 +344,12 @@ function Hunt() {
                     Continue run
                   </button>
                 )}
-                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" disabled={charting} onClick={() => {
-                  if (charting) return;
-                  setCharting(true);
-                  window.setTimeout(() => {
-                    try {
-                      const api = g() as unknown as { startTurbz?: (...a: unknown[]) => void; startTurbz2?: (...a: unknown[]) => void } | null;
-                      const args = [name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true, screen === "turbzeasy"];
-                      if (screen === "turbz2") api?.startTurbz2?.(...args); else api?.startTurbz?.(...args);
-                    } finally {
-                      setCharting(false);
-                    }
-                  }, 40);
+                <button type="button" className="px-btn px-btn-kyo" data-testid="turbz-go" onClick={() => {
+                  const api = g() as unknown as { startTurbz?: (...a: unknown[]) => void; startTurbz2?: (...a: unknown[]) => void } | null;
+                  const args = [name, race, pick.classId, pick.traitId, classGendered(pick.classId) ? pick.female : true, true, true, screen === "turbzeasy"];
+                  if (screen === "turbz2") api?.startTurbz2?.(...args); else api?.startTurbz?.(...args);
                 }}>
-                  {charting ? "Charting the continent…" : `${screen === "turbz2" ? "Wake into the war" : "Wake"} as ${pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}`}
+                  {screen === "turbz2" ? "Wake into the war" : "Wake"} as {pick.classId === "cryinggirl" ? "the Crying Lady" : CLASSES.find((c) => c.id === pick.classId)?.name ?? "your class"}
                 </button>
               </div>
             </div>
@@ -430,7 +448,7 @@ const PANEL_W: Partial<Record<PanelId, number>> = { chest: 640, wildghost: 520, 
 const REBUILT = new Set<PanelId>(["gear", "bag", "trade", "moves", "skills", "ghost", "craft", "survival", "quests", "map", "bounty", "pause"]);
 
 function winId(panel: PanelId): string {
-  if (panel === "map") return "panel-map-v5";
+  if (panel === "map") return "panel-map-v3";
   return REBUILT.has(panel) ? `panel-${panel}-v2` : `panel-${panel}`;
 }
 
@@ -512,7 +530,7 @@ const Windows = memo(function Windows({ game }: GameProp) {
   return (
     <>
       {open.map((p) => (
-        <FloatWin key={p} id={winId(p)} title={PANEL_TITLE[p]} def={panelDef(p)} minW={p === "map" ? 720 : p === "bag" || p === "gear" ? 320 : 220} minH={p === "map" ? 480 : 80} onClose={() => { if (panel === p) game?.closePanel(); }}>
+        <FloatWin key={p} id={winId(p)} title={PANEL_TITLE[p]} def={panelDef(p)} minW={p === "bag" || p === "gear" ? 320 : 220} onClose={() => { if (panel === p) game?.closePanel(); }}>
           <PanelBody panel={p} game={game} />
         </FloatWin>
       ))}

@@ -10,6 +10,8 @@
 import { ensureEnemyCoverage, generateWorld, mainWorldOptions } from "./map-gen";
 import { packMap, parseMapJson, savedMaps, type MapFile } from "./map-format";
 import { idbAll, idbAvailable, idbDelete, idbPut, STORE_WORLDS } from "./idb-store";
+import { chartNow } from "./chart-gen";
+import { chartWorldName, openChartWorld } from "./chart-world";
 
 /** Bumped when the generator changes in a way that would make an old seed build a different world. */
 export const WORLD_GEN = 1;
@@ -23,6 +25,11 @@ export type LifeWorld = {
   gen: number;
   /** A Map Builder world chosen for this life instead of a rolled one. */
   map?: string;
+  /**
+   * A world cut from a world chart (chart-world.ts): one 2500 x 2500 continent, walked a region at a time. Rolled
+   * for every new life. Characters made before this keep the world they were rolled until they die.
+   */
+  chart?: boolean;
 };
 
 const cache = new Map<string, { map: MapFile; at: number }>();
@@ -66,12 +73,19 @@ export function rollLifeWorld(): LifeWorld {
     if (m) return { seed: 0, id: m.id, name: m.name, gen: WORLD_GEN, map: m.id };
   }
   const seed = 1 + Math.floor(Math.random() * 2_000_000_000);
-  return { seed, id: `life-${seed.toString(36)}`, name: "", gen: WORLD_GEN };
+  return { seed, id: `life-${seed.toString(36)}`, name: "", gen: WORLD_GEN, chart: true };
 }
 
 /** The map for a life world: the cached copy, a Map Builder world, or rebuilt from the seed. */
 export function lifeWorldFile(w: LifeWorld): MapFile | null {
   if (w.map) return savedMaps().find((x) => x.id === w.map) ?? null;
+  if (w.chart) {
+    // The engine builds the chart behind a loading screen before it gets here; building it in place is the
+    // safety net, not the plan (it takes seconds).
+    const chart = chartNow(w.seed);
+    if (!w.name) w.name = chartWorldName(chart);
+    return openChartWorld(chart, w.id, w.name).file;
+  }
   const hit = cache.get(w.id);
   if (hit) {
     hit.at = Date.now();

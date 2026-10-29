@@ -601,206 +601,39 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
     for (let i = 0; i < n; i++) if (land[i]) bySize.set(land[i]!, (bySize.get(land[i]!) ?? 0) + 1);
 
     for (const [id, tiles] of bySize) {
-      if (tiles < 8000) continue;
-      // Enough basins that a walk across the continent keeps meeting water,
-      // not one inland sea a day's travel from everything else.
-      const want = Math.max(6, Math.min(160, Math.round(tiles / 14000)));
-      const baseR = Math.max(7, Math.sqrt(tiles) * 0.016);
-      const centers: { x: number; y: number; r: number }[] = [];
+      if (tiles < 20000) continue;
+      const want = Math.max(2, Math.min(14, Math.round(tiles / 120000) + 2));
+      const baseR = Math.max(5, Math.sqrt(tiles) * 0.022);
       let made = 0;
-      for (let attempt = 0; attempt < want * 80 && made < want; attempt++) {
+      for (let attempt = 0; attempt < want * 400 && made < want; attempt++) {
         const x = Math.floor(lrng() * w);
         const y = Math.floor(lrng() * h);
         if (land[y * w + x] !== id) continue;
-        const r = baseR * (0.55 + lrng() * 1.25);
-        if (centers.some((c) => (c.x - x) ** 2 + (c.y - y) ** 2 < (c.r + r + 10) ** 2)) continue;
-        // Inland only: a ring outside the basin must still be this landmass,
+        const r = baseR * (0.7 + lrng() * 0.9);
+        // Inland only: every point on a ring well outside the basin must be land,
         // or the "lake" opens onto the sea and is just a bay.
-        let inland = true;
-        const guard = r + 8;
-        for (let k = 0; k < 16 && inland; k++) {
-          const a = (k / 16) * Math.PI * 2;
-          const rx = Math.round(x + Math.cos(a) * guard);
-          const ry = Math.round(y + Math.sin(a) * guard);
-          if (rx < 1 || ry < 1 || rx >= w - 1 || ry >= h - 1 || land[ry * w + rx] !== id) inland = false;
-        }
-        if (!inland) continue;
-
-        for (let yy = Math.max(1, Math.floor(y - r - 2)); yy <= Math.min(h - 2, Math.ceil(y + r + 2)); yy++) {
-          for (let xx = Math.max(1, Math.floor(x - r - 2)); xx <= Math.min(w - 2, Math.ceil(x + r + 2)); xx++) {
-            const i = yy * w + xx;
-            if (land[i] !== id) continue;
-            const d = Math.hypot(xx - x, yy - y) / r;
-            // A solid basin with a wobbling shore, not a hole-punched disc.
-            const edge = 0.78 + (fbm(xx / 18, yy / 18, seed + 907 + made, 3) - 0.5) * 0.36;
-            if (d > edge) continue;
-            land[i] = 0;
-            elev[i] = SEA - 1 - Math.round((1 - Math.min(1, d)) * 18);
-          }
-        }
-        centers.push({ x, y, r });
-        made++;
-      }
-
-      // Smaller tarns in the ground between the big lakes.
-      const tarns = Math.max(4, Math.min(48, Math.round(tiles / 42000)));
-      let tarnMade = 0;
-      for (let attempt = 0; attempt < tarns * 60 && tarnMade < tarns; attempt++) {
-        const x = Math.floor(lrng() * w);
-        const y = Math.floor(lrng() * h);
-        if (land[y * w + x] !== id) continue;
-        const r = 4 + lrng() * 5.5;
-        if (centers.some((c) => (c.x - x) ** 2 + (c.y - y) ** 2 < (c.r + r + 6) ** 2)) continue;
         let inland = true;
         for (let k = 0; k < 8 && inland; k++) {
           const a = (k / 8) * Math.PI * 2;
-          const rx = Math.round(x + Math.cos(a) * (r + 7));
-          const ry = Math.round(y + Math.sin(a) * (r + 7));
-          if (rx < 1 || ry < 1 || rx >= w - 1 || ry >= h - 1 || land[ry * w + rx] !== id) inland = false;
+          const rx = Math.round(x + Math.cos(a) * r * 2.6);
+          const ry = Math.round(y + Math.sin(a) * r * 2.6);
+          if (rx < 0 || ry < 0 || rx >= w || ry >= h || land[ry * w + rx] !== id) inland = false;
         }
         if (!inland) continue;
-        for (let yy = Math.max(1, Math.floor(y - r)); yy <= Math.min(h - 2, Math.ceil(y + r)); yy++) {
-          for (let xx = Math.max(1, Math.floor(x - r)); xx <= Math.min(w - 2, Math.ceil(x + r)); xx++) {
+
+        for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(h - 1, Math.ceil(y + r)); yy++) {
+          for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(w - 1, Math.ceil(x + r)); xx++) {
             const i = yy * w + xx;
             if (land[i] !== id) continue;
-            if (Math.hypot(xx - x, yy - y) > r) continue;
+            const d = Math.hypot(xx - x, yy - y) / r;
+            if (d > 1) continue;
+            // A soft, uneven shore rather than a disc.
+            if (fbm(xx / 14, yy / 14, seed + 907 + made, 3) < 0.18 + d * 0.66) continue;
             land[i] = 0;
-            elev[i] = SEA - 2;
+            elev[i] = SEA - 1 - Math.round((1 - d) * 18);
           }
         }
-        centers.push({ x, y, r });
-        tarnMade++;
-      }
-    }
-
-    /*
-     * Rivers. High ground sheds water downhill until it finds a lake or the sea.
-     *
-     * The course is walked FIRST, one tile at a time, and only widened afterwards.
-     * Widening as you go looks like a finished lake to the next step, so the
-     * river steps into water it just dug and stops — which is how a whole
-     * continent used to get a handful of ponds on the peaks and no rivers at all.
-     *
-     * A river that reaches the ocean stays ocean; one that pools inland is
-     * classified as a lake by the flood fill afterwards. Fords are left in the
-     * course so a stream is something you cross, not a wall across the land.
-     */
-    const flow = new Uint8Array(n);
-    let gen = 1;
-    const DIRS: readonly (readonly [number, number])[] = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
-    const carveDisc = (x: number, y: number, rad: number) => {
-      const r2 = rad * rad;
-      const y0 = Math.max(1, Math.floor(y - rad));
-      const y1 = Math.min(h - 2, Math.ceil(y + rad));
-      const x0 = Math.max(1, Math.floor(x - rad));
-      const x1 = Math.min(w - 2, Math.ceil(x + rad));
-      for (let yy = y0; yy <= y1; yy++) {
-        for (let xx = x0; xx <= x1; xx++) {
-          const dx = xx - x, dy = yy - y;
-          if (dx * dx + dy * dy > r2) continue;
-          const i = yy * w + xx;
-          if (!land[i]) continue;
-          land[i] = 0;
-          elev[i] = SEA - 1;
-        }
-      }
-    };
-    const course = (sx: number, sy: number, maxStep: number): number[] => {
-      if (gen === 255) { flow.fill(0); gen = 1; } else gen++;
-      const path: number[] = [];
-      let x = sx, y = sy, px = 0, py = 0;
-      for (let step = 0; step < maxStep; step++) {
-        const here = y * w + x;
-        if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) break;
-        if (flow[here] === gen) break;
-        if (!land[here]) break;
-        flow[here] = gen;
-        path.push(here);
-        let bx = x, by = y, best = Infinity;
-        const aim = (fbm(x / 28, y / 28, seed + 90 + gen, 2) - 0.5) * Math.PI * 2;
-        const curE = elev[here]!;
-        for (const [dx, dy] of DIRS) {
-          const nx = x + dx, ny = y + dy;
-          if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
-          if (dx === -px && dy === -py) continue;
-          const ni = ny * w + nx;
-          if (flow[ni] === gen) continue;
-          const water = !land[ni];
-          const ahead = dx === px && dy === py ? -6 : 0;
-          const climb = !water && elev[ni]! > curE + 1 ? (elev[ni]! - curE) * 10 : 0;
-          const align = Math.cos(aim) * dx + Math.sin(aim) * dy;
-          const score = (water ? -4000 : elev[ni]!) + climb - align * 12 + ahead;
-          if (score < best) { best = score; bx = nx; by = ny; }
-        }
-        if (bx === x && by === y) break;
-        const ni = by * w + bx;
-        if (!land[ni]) break;                 // joined a lake, a river or the sea
-        px = bx - x; py = by - y;
-        x = bx; y = by;
-      }
-      return path;
-    };
-    const lay = (path: number[], width: number, pools: boolean) => {
-      if (path.length < 8) return;
-      for (let p = 0; p < path.length; p++) {
-        // A ford, rarely: one gap you can walk through, not a dashed line.
-        const slot = p % 120;
-        if (p > 24 && p < path.length - 12 && slot >= 54 && slot <= 60) continue;
-        const i = path[p]!;
-        const xx = i % w, yy = (i / w) | 0;
-        carveDisc(xx, yy, width);
-        if (pools && p % 70 === 35) carveDisc(xx, yy, width + 2.4 + lrng() * 2);
-      }
-      // The end that never reached water becomes a pond, so a dead river
-      // still reads as a lake rather than a ditch that stops.
-      const end = path[path.length - 1]!;
-      if (land[end]) carveDisc(end % w, (end / w) | 0, width + 3.2);
-    };
-    for (const [id, tiles] of bySize) {
-      if (tiles < 12000) continue;
-      const rivers = Math.max(6, Math.min(64, Math.round(tiles / 32000)));
-      const brooks = Math.max(4, Math.min(72, Math.round(tiles / 26000)));
-      const sources: { x: number; y: number; e: number }[] = [];
-      const stride = Math.max(6, Math.round(Math.sqrt(tiles) / 26));
-      for (let y = stride; y < h - stride; y += stride) {
-        for (let x = stride; x < w - stride; x += stride) {
-          const i = y * w + x;
-          if (land[i] !== id || elev[i]! < SEA + 22) continue;
-          let coastal = false;
-          for (let k = 0; k < 8 && !coastal; k++) {
-            const a = (k / 8) * Math.PI * 2;
-            const rx = Math.round(x + Math.cos(a) * 14);
-            const ry = Math.round(y + Math.sin(a) * 14);
-            if (rx < 0 || ry < 0 || rx >= w || ry >= h || !land[ry * w + rx]) coastal = true;
-          }
-          if (!coastal) sources.push({ x, y, e: elev[i]! });
-        }
-      }
-      sources.sort((a, b) => b.e - a.e);
-      const picked: { x: number; y: number }[] = [];
-      for (const s of sources) {
-        if (picked.length >= rivers) break;
-        if (picked.some((p) => (p.x - s.x) ** 2 + (p.y - s.y) ** 2 < 64 * 64)) continue;
-        picked.push(s);
-      }
-      for (const src of picked) {
-        const width = 1.35 + lrng() * 0.85;
-        lay(course(src.x, src.y, 1800), width, true);
-      }
-      // Shorter brooks from lower hills, so the plains between the big rivers
-      // are not a dry march.
-      let laid = 0;
-      for (const s of sources) {
-        if (laid >= brooks) break;
-        if (s.e < SEA + 18) continue;
-        if (lrng() < 0.35) continue;
-        if (picked.some((p) => (p.x - s.x) ** 2 + (p.y - s.y) ** 2 < 28 * 28)) continue;
-        const width = 1.05 + lrng() * 0.45;
-        const path = course(s.x, s.y, 700);
-        if (path.length < 24) continue;
-        lay(path, width, false);
-        picked.push(s);
-        laid++;
+        made++;
       }
     }
   }
@@ -964,43 +797,6 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       if (i < n - w) push(i + w);
     }
     for (let i = 0; i < n; i++) if (!land[i] && !reached[i]) biome[i] = BIOME.lake;
-  }
-
-  /*
-   * River banks and lake shores were taking the same two-tile beach as the
-   * ocean. A continent cut by rivers then charted as mostly sand. The sea keeps
-   * its beach; inland water keeps a single tile of shore and the rest goes
-   * back to whatever climate it actually has.
-   */
-  {
-    const FAR = 255;
-    const od = new Uint8Array(n);
-    od.fill(FAR);
-    const relax = (from: number, to: number) => {
-      const d = od[from]!;
-      if (d < FAR && d + 1 < od[to]!) od[to] = d + 1;
-    };
-    for (let i = 0; i < n; i++) if (biome[i] === BIOME.ocean || biome[i] === BIOME.deep) od[i] = 0;
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = y * w + x;
-        if (x > 0) relax(i - 1, i);
-        if (y > 0) relax(i - w, i);
-      }
-    }
-    for (let y = h - 1; y >= 0; y--) {
-      for (let x = w - 1; x >= 0; x--) {
-        const i = y * w + x;
-        if (x < w - 1) relax(i + 1, i);
-        if (y < h - 1) relax(i + w, i);
-      }
-    }
-    for (let i = 0; i < n; i++) {
-      if (biome[i] !== BIOME.beach) continue;
-      if (od[i]! <= SHORE) continue;
-      if (coast[i]! <= 1) continue;
-      biome[i] = biomeFor(elev[i]!, temp[i]!, moist[i]!);
-    }
   }
 
   /*

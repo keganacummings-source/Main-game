@@ -11,6 +11,7 @@ import { setTileRemap } from "./content";
 import { savedMaps, type MapFile } from "./map-format";
 import { reachable } from "./map-tools";
 import { relocateClassicSites } from "./world";
+import { chartWorldForFile } from "./chart-world";
 
 export const MAIN_WORLD_ID = "veilreach";
 
@@ -71,6 +72,11 @@ export function mainWorldHearth(): { x: number; y: number } | null {
 
 function install(file: MapFile): void {
   installedFor = file;
+  // A chart world carries its own site layout (chart-world.ts) and has no tiles to walk here.
+  if (file.chartSeed !== undefined) {
+    chartWorldForFile(file)?.activate();
+    return;
+  }
   const w = file.w, h = file.h;
   const reach = reachable(file);
   const s = file.spawn ?? { tx: Math.floor(w / 2), ty: Math.floor(h / 2) };

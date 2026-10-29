@@ -1235,11 +1235,12 @@ export function blocked(world: WorldData, x: number, y: number): boolean {
   if (tx < 0 || ty < 0 || tx >= world.w || ty >= world.h) return true;
   if (tx <= 1 || ty <= 1 || tx >= world.w - 2 || ty >= world.h - 2) return true;
   if (world.solids && world.solids.has(ty * world.w + tx)) return true;
-  const t = world.tiles[ty * world.w + tx]!;
-  // Water is always walkable. A real wall (block 1) stays solid even when the
-  // wild lets you swim; swim only opens a floor-1 tile that is not solid.
+  const t = world.tiles[ty * world.w + tx];
+  // A chart world only has ground built near the hunter (chart-world.ts); anywhere else is not there to stand on.
+  if (!t) return true;
+  // Water (floor 2) is always walkable. Non-water-element classes are slowed on it
+  // (see engine movement). Walls (floor 1) stay blocked unless the mode allows swimming.
   if (t.floor === 2) return false;
-  if (t.block === 1) return true;
   if (t.floor === 1) return !world.swim;
   if (t.decor > 0) return false;
   return t.block === 1;
@@ -1248,7 +1249,8 @@ export function blocked(world: WorldData, x: number, y: number): boolean {
 export function biomeNameAt(world: WorldData, x: number, y: number): BiomeId {
   const tx = Math.max(0, Math.min(world.w - 1, Math.floor(x / TILE)));
   const ty = Math.max(0, Math.min(world.h - 1, Math.floor(y / TILE)));
-  return BIOMES[world.tiles[ty * world.w + tx]!.biome] ?? "crown";
+  const t = world.tiles[ty * world.w + tx];
+  return (t && BIOMES[t.biome]) || "crown";
 }
 
 export const BIOME_LABEL: Record<BiomeId, string> = {

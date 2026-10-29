@@ -1,7 +1,7 @@
 /**
- * TURBZ. Hardcore on the charted continent (2500×2500). A window of that chart
- * is the ground you walk; the rest streams in as you reach the edge. No bounties,
- * no townsfolk and no quests. Rival witches grind, craft, catch spirits and sometimes die.
+ * TURBZ. Hardcore difficulty on a fresh 450×450 wild with no bounties, no townsfolk and no quests.
+ * Ten to fifteen other witches grind, craft, catch spirits and sometimes die. If two meet, they
+ * team up, never more than three. You have health, mana and stamina instead of food and water.
  */
 import {
   CLASSES,
@@ -25,15 +25,12 @@ import {
   xpNeed,
   type Gear,
   type Move,
-  type RaceId,
 } from "./content";
 import type { ClassId } from "./classes";
 import { cryingElements } from "./classes";
 import { enemyTargets, expectedHunterPower } from "./balance";
 import { generateWorld } from "./map-gen";
 import { generateTexWorld, retextureDungeon } from "./tex-world";
-import { beginChart, chartAnchors, presentChart, stampChartSave, tickChartPlay } from "./chart-play";
-import { clearActiveChart } from "./chart-store";
 import { setTexMode } from "./tile-atlas";
 import { lmsSpawns } from "./lms";
 import { hasStatus } from "./status-rules";
@@ -86,7 +83,7 @@ export const EASY_TUNE = {
   witchesSpread: 2,
   /** The most rivals that can be alive at once (hard mode is 15). */
   witchCap: 4,
-  /** A rival only commits to you inside this range (hard mode is 620) and gives up past the chase range (hard is 1300). */
+  /** A rival only commits to you inside this range (hard mode is 1900) and gives up past the chase range (hard is 5200). */
   witchHunt: 520,
   witchChase: 1100,
   /** World bosses only notice you inside this range (hard mode is 2400). */
@@ -106,12 +103,12 @@ export function hasTurbzSave(easy = false): boolean {
   try { return !!localStorage.getItem(easy ? TURBZ_EASY_SAVE_KEY : TURBZ_SAVE_KEY); } catch { return false; }
 }
 const SLOTS = ["weapon", "head", "chest", "legs", "feet", "relic"] as const;
-/** Within this range a witch runs full live AI. */
-const NEAR = 1400;
+/** Within this range a witch runs full live AI and hunts you relentlessly. */
+const NEAR = 1900;
 /** Within this range a witch commits to the player, dropping whatever she was doing. */
-const TWITCH_HUNT = 620;
+const TWITCH_HUNT = 1900;
 /** Once she has locked onto you she chases this far before giving up. */
-const TWITCH_CHASE = 1300;
+const TWITCH_CHASE = 5200;
 const SIM = 2;
 const TEAM_MAX = 3;
 const rand = Math.random;
@@ -275,27 +272,33 @@ export function installTurbz(game: any): void {
     if (save.hunt) { save.hunt.wanted = 0; save.hunt.stars = 0; save.hunt.board = []; save.hunt.waveIn = 0; }
     save.dayNight = { t: DAY_SECONDS * 0.35, nights: 0 };
     const seed = (Math.random() * 1e9) >>> 0 || 7;
-    // The seed rebuilds the same continent. The chart itself is never saved — only the fog and where you stand.
+    // Remember the seed (and the texture mode) so the exact same wild can be rebuilt when you continue the run later.
     save.turbzSeed = seed;
     save.turbzNewTex = useNewTex;
-    save.fog = null;
-    save.chartMined = [];
     setTexMode(useNewTex);
-    const play = beginChart(this, seed, save);
-    const chart = play.chart;
+    const file = buildTurbzWorld(seed, useNewTex, this.turbz2);
+    this.turbzFile = file;
     save.map = TURBZ_MAP;
     this.contract = [];
     this.loadMap(TURBZ_MAP, true);
     if (this.world) this.world.swim = true;
     const n = EASY ? EASY_TUNE.witchesMin + Math.floor(rand() * EASY_TUNE.witchesSpread) : 10 + Math.floor(rand() * 6);
     const spots = lmsSpawns(this.world, n + 1);
-    // Wake on the chart's start tile (habitable ground). Drop the witch spot nearest that, so a rival doesn't spawn on you.
-    let mine = 0;
-    let best = Infinity;
-    spots.forEach((p, i) => {
-      const d = Math.hypot(p.x - save.x, p.y - save.y);
-      if (d < best) { best = d; mine = i; }
-    });
+    // Land ladder: continent levels climb 1, 13, 25, 37, 49... Start on the gentlest land, not a random one.
+    const zones: { tx: number; ty: number; tw: number; th: number; levelMin: number }[] = file.zones ?? [];
+    const landLevel = (p: { x: number; y: number }) => {
+      let best = Infinity, lv = 1;
+      for (const z of zones) {
+        const d = Math.hypot((z.tx + z.tw / 2) * 32 - p.x, (z.ty + z.th / 2) * 32 - p.y);
+        if (d < best) { best = d; lv = z.levelMin; }
+      }
+      return lv;
+    };
+    const lowest = Math.min(...spots.map(landLevel));
+    const gentle = spots.map((p, i) => ({ i, lv: landLevel(p) })).filter((o) => o.lv <= lowest + 3).map((o) => o.i);
+    const mine = gentle[Math.floor(rand() * gentle.length)] ?? 0;
+    save.x = spots[mine]!.x;
+    save.y = spots[mine]!.y;
     this.cam.x = save.x;
     this.cam.y = save.y;
     save.hp = this.maxHp();
@@ -306,7 +309,7 @@ export function installTurbz(game: any): void {
     this.witchGraves = [];
     this.spawnTurbzWitches(n, spots.filter((_, i) => i !== mine));
     this.plantTurbzHunts();
-    this.say(EASY ? `TURBZ (easy). Level 1 on a ${chart.w}×${chart.h} continent with ${n} calm witches. The map (M) fills in as you walk. Light a campfire (H) to build a camp, a bed, a Storage Chest and a Ghost Box. If you fall you only lose a little kyo, never your level or gear.` : `TURBZ. Level 1 on a ${chart.w}×${chart.h} continent. The map (M) starts dark and fills in as you walk. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
+    this.say(EASY ? `TURBZ (easy). Level 1 on a ${file.w}×${file.h} wild with ${n} calm witches. Light a campfire (H) to build a camp, a bed, a Storage Chest and a Ghost Box. If you fall you only lose a little kyo, never your level or gear.` : `TURBZ. Level 1 on a ${file.w}×${file.h} wild. Dungeons and world bosses drop the good gear. ${n} witches are hunting. Spells drink mana, melee drinks stamina. Die and you keep your whole armour bag (reset to level 1, enchants intact). Leave and come back and the run is right where you left it.`);
     this.giveTurbzHeirloom();
     // Bring back the camp you were packed up with, so placing a campfire drops it where you stand.
     try { save.turbzCamp = JSON.parse(localStorage.getItem(campKey()) ?? "null"); } catch { save.turbzCamp = null; }
@@ -330,7 +333,7 @@ export function installTurbz(game: any): void {
     let made = 0;
     for (const p of places) {
       if (made >= n) break;
-      if (Math.hypot(p.x - save.x, p.y - save.y) < 980) continue;
+      if (Math.hypot(p.x - save.x, p.y - save.y) < 520) continue;
       let nm = pick(WITCH_NAMES);
       for (let k = 0; k < 12 && used.has(nm); k++) nm = pick(WITCH_NAMES);
       if (used.has(nm)) nm = `${nm} ${made + 2}`;
@@ -686,7 +689,6 @@ export function installTurbz(game: any): void {
   game.persistTurbz = function () {
     const save = this.save;
     if (!this.turbz || !save || this.dead) return;
-    stampChartSave(this);
     try { localStorage.setItem(saveKey(), JSON.stringify(save)); } catch { /* private mode */ }
     // Skills, perks and account level are kept on the account, so they survive death and carry into the next run.
     try { this.writeProgress(save); } catch { /* private mode */ }
@@ -720,12 +722,8 @@ export function installTurbz(game: any): void {
     // Rebuild the exact same wild from the saved seed before booting into it (same generator it was made with).
     raw.turbzNewTex = true; // NewTex is permanent in TURBZ (migrates old saves on load).
     setTexMode(raw.turbzNewTex);
-    // Same continent as the run was charted on. A save from before the chart has no chart position,
-    // so it wakes on the new start tile instead of trying to stand on the old 450 map.
-    const at = Number.isFinite(raw.chartX) && Number.isFinite(raw.chartY)
-      ? { tx: Math.max(0, Math.floor(raw.chartX / 32)), ty: Math.max(0, Math.floor(raw.chartY / 32)) }
-      : undefined;
-    beginChart(this, seed, raw, at);
+    const file = buildTurbzWorld(seed, raw.turbzNewTex, !!raw.turbz2);
+    this.turbzFile = file;
     // Always resume on the overworld (never stuck inside a torn-down rift instance).
     raw.map = TURBZ_MAP;
     if (raw.deathBanked) raw.deathBanked = false;
@@ -772,7 +770,7 @@ export function installTurbz(game: any): void {
     const save = this.save;
     if (!save || !this.world) return;
     save.dungeons = save.dungeons ?? { elapsed: 0, sequence: 1, portals: [], day: 0, dayElapsed: 0, stamps: {} };
-    const spots = this.chartPlay ? chartAnchors(this.chartPlay, 14, { x: save.x, y: save.y }) : lmsSpawns(this.world, 14);
+    const spots = lmsSpawns(this.world, 14);
     const depths = [4, 8, 12, 18, 26, 36];
     // Idempotent: on resume the rift portals already exist (persisted), so only add missing ones.
     depths.forEach((lv, i) => {
@@ -820,31 +818,6 @@ export function installTurbz(game: any): void {
     this.say("Six dungeons are open, and five world bosses walk the wild. That is where the good gear is.");
   };
 
-  game.tickChartPlay = function () {
-    tickChartPlay(this);
-  };
-
-  const origSwap = game.swapRules.bind(game);
-  game.swapRules = function (rules: string) {
-    origSwap(rules);
-    this.chartPlay = null;
-    clearActiveChart();
-  };
-
-  const origRegrow = game.regrowNodes?.bind(game);
-  if (origRegrow) {
-    game.regrowNodes = function (why: string) {
-      origRegrow(why);
-      if (this.chartPlay && this.save?.map === TURBZ_MAP) {
-        presentChart(this);
-        this.applyCampGround?.(this.save.map);
-        this.applyMined?.(this.save.map);
-        this.syncSolids?.(this.save.map);
-        this.refreshTerrain?.();
-      }
-    };
-  }
-
   const origLoad = game.loadMap.bind(game);
   game.loadMap = function (map: string, fresh: boolean) {
     if (this.turbz) {
@@ -853,26 +826,7 @@ export function installTurbz(game: any): void {
         if ((m.twitch || m.turbzBoss || m.twitchPet) && m.alive && !this.turbzRoster.includes(m)) this.turbzRoster.push(m);
       }
     }
-    if (map === TURBZ_MAP && this.chartPlay) {
-      presentChart(this);
-      const save = this.save;
-      if (save) {
-        save.map = map;
-        this.applyTakenNodes?.(map);
-        this.applyCampGround?.(map);
-        this.applyMined?.(map);
-        this.syncSolids?.(map);
-        if (fresh || this.populationMap !== map) {
-          const specs = (this.world?.spawns ?? []).filter((s: any) => s.kind === "mob");
-          this.mobs = specs.filter((s: any) => s.boss).map((s: any) => this.makeMob(s));
-          this.dormant = specs.filter((s: any) => !s.boss).map((s: any) => ({ spec: s, x: s.x, y: s.y, at: this.clock ?? 0 }));
-          this.populationMap = map;
-          this.dormancyT = 0;
-        }
-      }
-    } else {
-      origLoad(map, fresh);
-    }
+    origLoad(map, fresh);
     // New Texture Mode: the wild is generated with the new art, and every dungeon is re-skinned to match.
     const newTex = !!(this.turbz && this.save?.turbzNewTex);
     setTexMode(newTex);
@@ -1226,14 +1180,14 @@ export function installTurbz(game: any): void {
     const isCryingBuild = rand() < 0.5;
 
     let cls: (typeof CLASSES)[number];
-    let raceId: RaceId;
+    let raceId: string;
     let classId: string;
     let witchLevel: number;
 
     if (isCryingBuild) {
       // cryingGirl build: always a few levels above the player so she is never a fair fight.
       classId = "cryinggirl";
-      raceId = (CLASS_RACE as Record<string, RaceId>).cryinggirl ?? "tide";
+      raceId = (CLASS_RACE as Record<string, string>).cryinggirl ?? "tide";
       witchLevel = level + 2 + Math.floor(rand() * 3); // +2 to +4 levels above player
       cls = CLASSES.find((c) => c.id === "cryinggirl") ?? CLASSES[0]!;
     } else {
@@ -1264,7 +1218,7 @@ export function installTurbz(game: any): void {
       bag: { timber: 0, ore: 0, fish: 0, mushroom: 0, potion: isCryingBuild ? 3 : 2 },
       spirits: isCryingBuild ? Math.min(3, Math.floor(witchLevel / 10)) : 0,
       team: 0,
-      state: "grind",
+      state: "hunt", // starts in hunt state, not idle grind
       goalX: x, goalY: y, think: rand() * 0.2, simT: rand() * SIM,
       castCd: {}, foe: "", foeT: 0, dodgeCd: 0, wanderT: 4, age: 0, stuck: 0,
     };
@@ -1278,7 +1232,7 @@ export function installTurbz(game: any): void {
       race: raceId,
       female: rand() < 0.65,
       ghost: false,
-      aggro: false, // she minds the wild until you are actually close
+      aggro: true, // always aggressive — these witches hunt, they do not wander
       seen: true, huntIn: 0, enchants: [], fromSpawn: false,
       // cryingGirl builds are scarier: more HP, higher crit, better dodge.
       stats: isCryingBuild
@@ -1951,7 +1905,7 @@ export function installTurbz(game: any): void {
     // Scent range: a witch who catches your trail turns hunter and heads your way from off-screen.
     // In the free-for-all she has no special grudge against you — she'll only come if you are close,
     // the same as she'd turn on any witch nearby — so the whole wild doesn't converge on the player.
-    const scent = TURBZ2_FREE_FOR_ALL && this.turbz2 ? 460 : (EASY ? EASY_TUNE.witchHunt : TWITCH_HUNT);
+    const scent = TURBZ2_FREE_FOR_ALL && this.turbz2 ? 460 : (EASY ? EASY_TUNE.witchHunt : 3600);
     if (pd < scent && m.hp > m.max * 0.25) { r.foe = "player"; r.foeT = Math.max(r.foeT, 6); }
     this.witchPlay(m, true);
   };
@@ -1975,7 +1929,7 @@ export function installTurbz(game: any): void {
     }
     if (save && !this.dead) {
       const d = Math.hypot(save.x - m.x, save.y - m.y);
-      if (d < 280) foes.push({ id: "player", x: save.x, y: save.y, d, level: save.level, type: CLASS_BY_ID[save.classId as ClassId]?.type ?? "spirit" });
+      if (d < 280) foes.push({ id: "player", x: save.x, y: save.y, d, level: save.level, type: CLASS_BY_ID[save.classId]?.type ?? "spirit" });
     }
     foes.sort((a, b) => a.d - b.d);
     if (foes.length > 8) foes.length = 8;
@@ -2330,7 +2284,7 @@ export function installTurbz(game: any): void {
     const moves = this.witchMoves(m);
     const ready = (mv: Move) => (r.castCd[mv.id] ?? 0) <= 0;
     if (hp < 0.55) {
-      const heal = moves.find((mv: Move) => isHeal(mv) && ready(mv));
+      const heal = moves.find((mv) => isHeal(mv) && ready(mv));
       if (heal) return this.twitchCast(m, heal, null);
     }
     this.witchPlay(m, false);

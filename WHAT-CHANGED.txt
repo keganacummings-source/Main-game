@@ -1,3 +1,114 @@
+TURBZ — the world chart is wired in
+===================================
+
+Drop over the repo root. Everything below is on top of the previous drop.
+
+New lives wake in a chart world: the 2500 x 2500 continent, walked a region at
+a time, with enemies on it. M shows the chart and its fog of war.
+
+  16 new tests (scripts/chart-world.test.mjs). The 229 existing ones in the
+  suites I could run here still pass. Not run here: the Vite build, the browser,
+  and the wiki / worker / mining suites (no node_modules in the sandbox).
+
+
+HOW THE GROUND WORKS
+--------------------
+
+ONE WorldData the size of the whole chart. Every position in the game (hunter,
+foes, campfires, nodes, saves, the chart menu) is a chart position, so nothing
+is ever translated between a region and the world. Only the 256 x 256 regions
+near the hunter are built; every other tile is undefined, and blocked() reads
+that as solid. A region is built when the hunter is within 96 tiles of it and
+dropped when she is 160 away, so crossing a seam back and forth costs nothing.
+Memory stays at four to nine regions however far you walk (about 155 MB heap in
+a long full-size walk). Crossing a seam costs 15 to 60 ms once the code is warm.
+
+The chart is built in a Web Worker (src/game/chart-worker.ts). It takes about
+nine seconds, so a "Charting a new world…" screen is up for that long, once per
+world. If a Worker is not available the chart is built in place instead: slow,
+but the world is never the wrong shape.
+
+
+ENEMIES — THE PART TO WATCH
+---------------------------
+
+A region is only terrain, so it brings no foes. chart-world.ts lays camps on
+every region as it is built, using the same recipe the generated worlds use:
+a 22-tile grid, a clean 10 x 10 square of open ground per cell, a pool of foes
+that belong to the biome, two or three per camp (animals three), a respawn of
+45-105 seconds. Each foe is spelled out as the spawn expandZones() would have
+made (kind "mob", fixedLevel, zone with levels / species / respawn), so the
+engine's proximity spawning, 45% random swap, respawn timers and kill credit
+treat them like any other camp. Nothing in the fight code changed.
+
+Levels come from distance to the start, since there is one continent and not
+one per tier: 1-4 at the hearth, rising to about 70-105 at the far edge.
+No camp within 22 tiles of the hearth or 8 tiles of any town, shrine, tavern or
+door. Foes only stand on ground a hunter can walk on.
+
+The engine keeps its list of spawn points in step with the regions
+(applyStream): new ground adds its camps, dropped ground removes them, and a
+foe that died and is waiting to respawn leaves with its ground rather than
+ticking on forever. World bosses and bounty hunters belong to no region and are
+never dropped. A region built again comes back identical.
+
+Tested: every foe is on walkable ground, inside its own camp, in its level
+range, with unique ids; the reported changes always add up to the real spawn
+list across a long walk; the real applyStream() is cut out of engine.ts and run
+against a stand-in to prove dormant foes follow the regions.
+
+
+SITES AND RESOURCES
+-------------------
+
+The hearth, townsfolk, shrines, taverns, dungeon doors and the three world
+bosses are re-homed around the start (townsfolk close in, the rest spread out
+about ten tiles per old tile), each snapped to ground reachable on foot from
+the start, so none is on an island or inside a mountain. Trees are real
+choppable nodes (capped at 320 per region so the node list stays small; the
+rest stay as walkable scenery), plus ore, mushrooms and fishing spots by biome.
+
+
+WHO GETS IT
+-----------
+
+New characters and every rebirth after dying (unless "Keep Current World" is
+ticked). Characters made before this keep the world they were rolled until
+they die, because their campfires, logs and open rifts are pinned to it.
+Loading a save, creating a character and rebirth all wait for the chart first.
+
+A different seed's chart fog is never shown on a world (the save stores the
+seed with it). Inside a dungeon the chart menu steps aside.
+
+
+THINGS TO KNOW
+--------------
+
+- The old Veilreach overworld's hand-built towns, NPC quests and story intro
+  are NOT in the chart world: the chart has places and names, not NPCs or
+  quests. The classic townsfolk, shrines, taverns, doors and bosses are all
+  there; designer-map quests and the opening story are not.
+- The first nine seconds of a new character are the chart building.
+- Bounty hunters now look for a spot around the hunter on big worlds rather than
+  anywhere on the map.
+- I could not run the game or the Vite build here, so the worker import and the
+  screen have not been seen running. Please load a new character and walk a
+  while before trusting it.
+
+
+FILES
+-----
+
+New:     src/game/chart-gen.ts, chart-worker.ts, chart-world.ts,
+         scripts/chart-world.test.mjs
+Changed: src/game/engine.ts, life-world.ts, main-world.ts, map-format.ts,
+         world.ts, world-chunks.ts, src/components/turbz-app.tsx, package.json
+
+
+---------------------------------------------------------------------------
+EARLIER DROP: ONE CENTRAL CONTINENT
+---------------------------------------------------------------------------
+
 TURBZ — one central continent
 =============================
 
@@ -113,6 +224,4 @@ I rendered seeds 2026, 7 and 99 to check this by eye — the three worlds are
 clearly different in shape while all reading as one central landmass, which is
 also how the diamond-shaped shelf boundary got noticed.
 
-STILL NOT WIRED TO THE ENGINE. Nothing creates a chart yet, so M still shows the
-old local map. The four calls it needs are written out in the earlier
-WHAT-CHANGED, and I will do that pass whenever you want it.
+WIRED IN NOW. See the top of this file.

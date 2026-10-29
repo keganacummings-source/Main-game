@@ -18,7 +18,6 @@ export const SIGHT = 26;
 type Active = { chart: WorldChart; explored: Explored } | null;
 
 let active: Active = null;
-let hunter: { tx: number; ty: number } | null = null;
 const listeners = new Set<() => void>();
 const emit = () => { for (const fn of listeners) fn(); };
 
@@ -29,8 +28,6 @@ export function onChart(fn: () => void): () => void {
 
 export const activeChart = (): WorldChart | null => active?.chart ?? null;
 export const activeExplored = (): Explored | null => active?.explored ?? null;
-/** Where the hunter is standing on the chart, in tiles. Null before she has moved. */
-export const hunterAt = (): { tx: number; ty: number } | null => (active ? hunter : null);
 
 /**
  * Enter a world.
@@ -41,14 +38,12 @@ export const hunterAt = (): { tx: number; ty: number } | null => (active ? hunte
  */
 export function setActiveChart(chart: WorldChart, savedFog?: unknown): void {
   active = { chart, explored: unpackExplored(savedFog, chart.w, chart.h) };
-  hunter = null;
   emit();
 }
 
 export function clearActiveChart(): void {
-  if (!active && !hunter) return;
+  if (!active) return;
   active = null;
-  hunter = null;
   emit();
 }
 
@@ -59,10 +54,8 @@ export function clearActiveChart(): void {
  */
 export function noteVisited(tx: number, ty: number, sight = SIGHT): number {
   if (!active) return 0;
-  const moved = !hunter || hunter.tx !== tx || hunter.ty !== ty;
-  hunter = { tx, ty };
   const fresh = reveal(active.explored, tx, ty, sight);
-  if (fresh || moved) emit();
+  if (fresh) emit();
   return fresh;
 }
 
@@ -74,7 +67,6 @@ export function fogForSave(): ExploredSave | null {
 /** Only for tests: forget everything. */
 export function resetChartStore(): void {
   active = null;
-  hunter = null;
   listeners.clear();
 }
 

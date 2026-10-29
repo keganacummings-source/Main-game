@@ -225,6 +225,9 @@ import { FLOOR_COLOR, expandZones, mapToWorld, regionAt, savedMaps } from "./map
 import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./builtin-maps";
 import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
 import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
+import { cachedChart, ensureChart } from "./chart-gen";
+import { chartWorldForFile, resetChartWorld, streamChartWorld } from "./chart-world";
+import { activeChart, clearActiveChart, fogForSave, noteVisited, setActiveChart } from "./chart-store";
 import { tileImage, tileImageRevision, texModeOn, NEWTEX_DIR } from "./tile-atlas";
 import { powerArt } from "./camp-assets";
 import { accept as acceptMapQuest, advance as advanceMapQuest, marker as questMarker, offerable as offerableQuests, openQuests, progressLines, qkey, sanitizeQuestStates, stepText, turnIn as turnInMapQuest, turnInOf, type QuestEvent, type QuestStates } from "./map-quests";
@@ -279,7 +282,7 @@ export type DeathReport = {
 };
 export type Panel = null | "died" | "gear" | "sheet" | "lobby" | "bag" | "skills" | "quests" | "map" | "talk" | "shop" | "death" | "pause" | "trade" | "ghost" | "moves" | "chat" | "bounty" | "rebirth" | "survival" | "craft" | "loot" | "chest" | "wildghost" | "cryrebuild" | "build" | "turbzchest" | "power";
 export type PowerView = {
-  kind: string;
+  kind: "hellgen" | "battery" | "wire" | "xpgen" | "duplicator";
   name: string;
   about: string;
   how: string[];
@@ -316,39 +319,6 @@ export type PowerView = {
   ioAbout: string;
   /** Whether this machine takes part in pipe item flow (shows the Pipe Flow control). */
   canPipe: boolean;
-  cap: number;
-  day: boolean;
-  on: boolean;
-  fuel: number;
-  fuelNext: number;
-  bagTimber: number;
-  bagRock: number;
-  dirName: string;
-  mat: "wood" | "stone";
-  buf: { id: string; name: string; count: number }[];
-  bufMax: number;
-  merger: {
-    stored: { uid: string; name: string; type: string; level: number }[];
-    storedMax: number;
-    super: { fed: number; types: string[]; abilities: number; movesKnown: number; level: number; ready: boolean } | null;
-    extractMin: number;
-    next: number;
-    party: { uid: string; name: string; type: string; level: number }[];
-    box: { uid: string; name: string; type: string; level: number }[];
-    currentSuper: { name: string; fed: number; hp: number; maxHp: number } | null;
-  } | null;
-  forge: {
-    pieces: number;
-    pileMax: number;
-    minCast: number;
-    megaAt: number;
-    bonus: number;
-    avgLevel: number;
-    types: string[];
-    enchantKinds: number;
-    castPower: number;
-    bagGear: number;
-  } | null;
 };
 export type BountyRow = { id: string; name: string; className: string; tier: number; level: number; kyo: number; active: boolean; status: string };
 export type HuntInfo = { tier: number; kills: number; stars: number; need: number; wanted: number; waveIn: number; hunters: number; clearCost: number; starsOn: boolean };
@@ -383,6 +353,8 @@ export type Snap = {
   died: DeathReport | null;
   /** Death screen: keep this world for the next life. */
   keepWorld: boolean;
+  /** A world chart is being built (it takes a few seconds): the "charting" screen is up. */
+  charting: boolean;
   hasSave: boolean;
   panel: Panel;
   name: string;
@@ -620,6 +592,8 @@ type Save = {
   perks: Record<string, number>; lastTavern: string; innate: string[]; party: string[]; found: Record<string, Slot[]>;
   /** Set pieces collected per class (character). A full set unlocks for that class only. */
   foundBy?: Record<string, Record<string, Slot[]>>;
+  /** What the hunter has charted of a chart world, with the seed it belongs to (a different seed's fog is not hers). */
+  chartFog?: { seed: number; fog: unknown };
   spirits?: Spirit[]; accountScore?: number; evilMark?: number; deathBanked?: boolean; traitId?: string | null; female?: boolean; classMovesV?: number;
   ghostSlots?: number; jarLeft?: number;
   /** Equipped verse ids, at most MAX_EQUIPPED. */
@@ -928,6 +902,7 @@ const emptySnap = (): Snap => ({
 	mode: "title",
 	died: null,
 	keepWorld: false,
+	charting: false,
 	hasSave: false,
 	panel: null,
 	name: "",
@@ -1858,7 +1833,10 @@ export class TurbzGame {
 		party.slice(0, Math.max(1, cap)).forEach((g) => { g.active = true; });
 		return { spirits: party, ghostStore: store.slice(0, GHOST_STORE_MAX) };
 	}
-	begin(name, race: RaceId, as, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true) {
+	begin(name, race: RaceId, as, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true, rolled: LifeWorld | null = null) {
+		// Every new character wakes in a world rolled just for it. A chart world needs its chart first.
+		const world = rolled ?? rollLifeWorld();
+		if (!this.chartGate(world, () => this.begin(name, race, as, classId, traitId, female, world))) return;
 		const prevSave = this.peekRuleSave();
 		if (!this.turbz) this.captureProgress(prevSave);
 		const inherited = this.turbz ? { spirits: [], ghostStore: [] } : this.inheritGhosts(prevSave, classId);
@@ -1873,8 +1851,6 @@ export class TurbzGame {
 			raceBias: race
 		});
 		const known = [...CLASS_BY_ID[classId].starterMoves];
-		// Every new character wakes in a world rolled just for it.
-		const world = rollLifeWorld();
 		this.enterLifeWorld(world);
 		const home = hearthXY();
 		const save = {
@@ -1947,7 +1923,10 @@ export class TurbzGame {
 		const raw = cached ? JSON.stringify(cached) : localStorage.getItem(key);
 		if (!raw) return false;
 		try {
-			this.boot(JSON.parse(raw));
+			const parsed = JSON.parse(raw);
+			// A chart world's chart is built behind a loading screen; this runs again when it is ready.
+			if (!this.chartGate(parsed?.world, () => this.continueGame())) return true;
+			this.boot(parsed);
 			this.say("The hearth kept your skills.");
 			return true;
 		} catch {
@@ -1975,6 +1954,9 @@ export class TurbzGame {
 		// the main menu used to keep the old generated world here).
 		this.overworld = null;
 		this.overworldFile = null;
+		// A new boot starts without any chart world: it is found again when the overworld loads.
+		this.chartWorld = null;
+		clearActiveChart();
 		this.mobs = [];
 		this.nodeStash = [];
 		this.chests = null;
@@ -2006,18 +1988,12 @@ export class TurbzGame {
 		this.migrateMainWorld(save);
 		this.loadMap(save.map, false);
 		if (blocked(this.world, save.x, save.y)) {
-			if (this.chartPlay && save.map === "custom-turbz") {
-				const home = nearestOpen(this.world, save.x, save.y);
-				save.x = home.x;
-				save.y = home.y;
-			} else {
-				this.loadMap("world", true);
-				const home = nearestOpen(this.world, hearthXY().x, hearthXY().y);
-				save.x = home.x;
-				save.y = home.y;
-				save.map = "world";
-				this.loadMap("world", false);
-			}
+			this.loadMap("world", true);
+			const home = nearestOpen(this.world, hearthXY().x, hearthXY().y);
+			save.x = home.x;
+			save.y = home.y;
+			save.map = "world";
+			this.loadMap("world", false);
 		}
 		this.cam.x = save.x;
 		this.cam.y = save.y;
@@ -2038,6 +2014,69 @@ export class TurbzGame {
 	 * old generated world no longer line up, so the hunter wakes at the new hearth. Veilreach progress
 	 * (played as a separate map) carries straight over.
 	 */
+	/**
+	 * A chart world cannot be stood in until its chart exists, and building one takes seconds. Returns true when
+	 * it is ready. Otherwise the chart is built in the background behind a "charting" screen, and `resume` runs
+	 * once it is there (or once building it has failed, in which case it is built in place: slow, but right).
+	 */
+	chartGate(world, resume) {
+		if (!world?.chart || cachedChart(world.seed)) return true;
+		publish({ charting: true });
+		const done = () => { publish({ charting: false }); resume(); };
+		ensureChart(world.seed).then(done, done);
+		return false;
+	}
+	/**
+	 * Keeps the built ground, and the foes and nodes on it, in step with where the hunter is.
+	 *
+	 * The chart world is one chart-sized map of which only the regions near the hunter exist. When regions are
+	 * built or dropped, the foes that came with them have to join (or leave) the list of spawn points the
+	 * engine wakes as the hunter nears them, or the new ground would be empty and the old ground would keep
+	 * ghosts of foes that no longer have anywhere to stand.
+	 */
+	applyStream(res) {
+		if (!res.changed) return;
+		if (res.removed.size) {
+			const gone = (id) => id !== undefined && res.removed.has(id);
+			this.dormant = (this.dormant ?? []).filter((d) => !gone(d.spec?.id ?? d.mob?.id));
+			this.mobs = (this.mobs ?? []).filter((m) => !(m.fromSpawn && !m.boss && gone(m.id)));
+		}
+		this.dormant = this.dormant ?? [];
+		for (const s of res.added) if (s.kind === "mob" && !s.boss && !s.dungeonBoss) this.dormant.push({ spec: s, x: s.x, y: s.y, at: this.clock });
+		// Nodes used up earlier and ground cleared for camps stay that way when their region is built again.
+		if (res.added.length) { this.applyTakenNodes("world"); this.applyCampGround("world"); }
+		if (this.world) { this.world.cache = null; invalidateTerrain(this.world); }
+		this.mapImg = null;
+	}
+	/** Builds the ground around a tile (or drops what is left far behind). A no-op in every world but a chart world. */
+	reachTile(tx, ty) {
+		const cw = this.chartWorld;
+		if (!cw || !this.world || this.world !== cw.world) return;
+		this.applyStream(streamChartWorld(cw, Math.floor(tx), Math.floor(ty)));
+	}
+	/** Every frame: build the ground the hunter is walking into, and chart what she can see. */
+	tickChartStream() {
+		const save = this.save;
+		const cw = this.chartWorld;
+		if (!cw || !save || save.map !== "world" || this.world !== cw.world) return;
+		const tx = Math.floor(save.x / 32), ty = Math.floor(save.y / 32);
+		this.applyStream(streamChartWorld(cw, tx, ty));
+		if (tx !== this.fogTx || ty !== this.fogTy) { this.fogTx = tx; this.fogTy = ty; noteVisited(tx, ty); }
+	}
+	/** The chart menu follows the hunter into the overworld and out of it. What she has charted goes into the save first. */
+	syncChartStore(map) {
+		const cw = map === "world" ? this.chartWorld : null;
+		if (cw && this.world === cw.world) {
+			if (activeChart() !== cw.chart) {
+				const seen = this.save?.chartFog;
+				setActiveChart(cw.chart, seen && seen.seed === cw.chart.seed ? seen.fog : undefined);
+			}
+			return;
+		}
+		const fog = fogForSave();
+		if (fog && this.save && this.chartWorld) this.save.chartFog = { seed: this.chartWorld.chart.seed, fog };
+		clearActiveChart();
+	}
 	/** Makes `world` the overworld (null: Veilreach). Rebuilds the overworld the next time it loads. */
 	enterLifeWorld(world: LifeWorld | null) {
 		let file = null;
@@ -2091,8 +2130,13 @@ export class TurbzGame {
 			if (!this.overworld || this.overworldFile !== main) {
 				this.overworldFile = main;
 				if (main) {
-					const w = mapToWorld(main);
-					w.spawns.push(...expandZones(main));
+					// A chart world is streamed, not built from a file: start it empty so nothing from an earlier
+					// visit (nodes taken, regions built) is left in it, and let the ground be cut around the hunter.
+					const cw = chartWorldForFile(main);
+					if (cw) resetChartWorld(cw);
+					this.chartWorld = cw;
+					const w = cw ? cw.world : mapToWorld(main);
+					if (!cw) w.spawns.push(...expandZones(main));
 					for (const p of POIS) {
 						if (p.kind !== "boss") continue;
 						const at = scaleTile(p.tx, p.ty);
@@ -2104,6 +2148,8 @@ export class TurbzGame {
 			}
 			this.world = this.overworld;
 			this.world.cache = null;
+			// Cut the ground under the hunter before anything reads it: collision, the node list, the foes.
+			if (this.chartWorld) this.reachTile(save.x / 32, save.y / 32);
 			if (main) {
 				if (this.customFile !== main) { this.regionKey = ""; this.mapRegion = null; }
 				this.customFile = main;
@@ -2175,6 +2221,7 @@ export class TurbzGame {
 		this.restoreContract(map);
 		save.map = map;
 		this.syncSolids(map);
+		this.syncChartStore(map);
 	}
 	/**
 	 * Overworld foes from spawn points and camps: 45% of the time one rolls a random kind of foe instead of
@@ -2492,6 +2539,8 @@ export class TurbzGame {
 		// Autosave every few seconds of play, so walking, gathering and skill XP are never more than that behind.
 		this.autoSaveT = (this.autoSaveT ?? AUTOSAVE_SECONDS) - dt;
 		if (this.autoSaveT <= 0) { this.autoSaveT = AUTOSAVE_SECONDS; this.persist(); }
+		// Before anything moves: the ground the hunter is about to step onto has to exist.
+		this.tickChartStream();
 		// A bounty's loot menu stops the world until you pick a piece.
 		if (snap.panel === "loot") {
 			this.vx = 0;
@@ -4780,7 +4829,6 @@ export class TurbzGame {
 		this.tickIncoming(dt);
 		this.evadeT = Math.max(0, (this.evadeT ?? 0) - dt);
 		this.visitRegion();
-		this.tickChartPlay?.();
 		// Nodes are gathered with E. Do not pick them up by walking into them.
 		const set = this.setInfo();
 		if (set.on && set.fx && this.combat > 0) {
@@ -8880,13 +8928,17 @@ export class TurbzGame {
 		this.persist();
 		this.syncHud(true);
 	}
-	rebirth(name, race: RaceId, setId, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true) {
+	rebirth(name, race: RaceId, setId, classId: ClassId = LEGACY_CLASS[race], traitId: string | null = null, female = true, rolled: LifeWorld | null = null) {
 		const save = this.save;
 		if (!save || !this.dead) return;
 		if (this.turbz) {
 			this.startTurbz?.(name, race, classId, traitId, female);
 			return;
 		}
+		// A new life wakes in a new world unless this one is kept. A chart world needs its chart built first, so
+		// that is settled before anything about this hunter is changed.
+		const nextWorld = this.keepWorld && save.world ? null : (rolled ?? rollLifeWorld());
+		if (nextWorld && !this.chartGate(nextWorld, () => this.rebirth(name, race, setId, classId, traitId, female, nextWorld))) return;
 		const set = setId ? SET_BY_ID[setId] : null;
 		const wear = set && this.isUnlocked(set.id, classId) ? set.id : null;
 		save.name = (name || "Huntress").slice(0, 16);
@@ -8965,7 +9017,8 @@ export class TurbzGame {
 		// A new life rolls a new world, unless "Keep Current World" was chosen on the death screen.
 		if (!this.keepWorld || !save.world) {
 			const oldId = mainWorldFile()?.id ?? "";
-			save.world = rollLifeWorld();
+			save.world = nextWorld ?? rollLifeWorld();
+			save.chartFog = undefined;
 			this.enterLifeWorld(save.world);
 			save.mainWorld = this.mainWorldSig();
 			// Anything pinned to the old world's ground goes with it.
@@ -9963,13 +10016,12 @@ export class TurbzGame {
 		pruneByLife(this.parts, MAX_PARTICLES);
 		this.cfx?.tick(dt);
 		if (this.cfx?.kick) {
-			const kick = this.turbz ? Math.min(this.cfx.kick, 2.5) : this.cfx.kick;
-			this.shake = Math.max(this.shake, kick);
+			this.shake = Math.max(this.shake, this.cfx.kick);
 			this.cfx.kick = 0;
 		}
 		for (const f of this.floats) f.life -= dt;
 		pruneByLife(this.floats);
-		this.shake = Math.max(0, this.shake - dt * (this.turbz ? 40 : 18));
+		this.shake = Math.max(0, this.shake - dt * 18);
 		for (const id in this.nodeCd) this.nodeCd[id] = Math.max(0, (this.nodeCd[id] ?? 0) - dt);
 	}
 	procSet(fx, variant = 0) {
@@ -10427,6 +10479,7 @@ export class TurbzGame {
 		if (!town) return false;
 		if (this.duel) { this.say("Finish the duel first."); return false; }
 		if (this.combat > 0 || this.inFight()) { this.say("You cannot slip away with enemies on you."); return false; }
+		this.reachTile(town.tx + town.tw / 2, town.ty + town.th / 2);
 		const to = nearestOpen(this.world, (town.tx + town.tw / 2) * 32, (town.ty + town.th / 2) * 32);
 		save.x = to.x;
 		save.y = to.y;
@@ -11272,7 +11325,7 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	// ---------- Ghost tasks (Hardcore) ----------
-	ghostTasksOn() {
+	taskOn() {
 		return this.rules === "hardcore" && !this.lms;
 	}
 	/** Seconds between a working ghost's results: rarer ghosts are quicker, and water ghosts fish and earth ghosts chop faster. */
@@ -11287,7 +11340,7 @@ export class TurbzGame {
 		const save = this.save;
 		const spirit = save?.spirits?.find((s) => s.uid === uid);
 		if (!save || !spirit) return;
-		if (!this.ghostTasksOn()) return this.say("Ghosts only take tasks in Hardcore.");
+		if (!this.taskOn()) return this.say("Ghosts only take tasks in Hardcore.");
 		if (!task) {
 			if (!spirit.task) return;
 			spirit.task = null;
@@ -11308,7 +11361,7 @@ export class TurbzGame {
 	}
 	tickGhostTasks(dt) {
 		const save = this.save;
-		if (!save || this.dead || this.role === "guest" || !this.ghostTasksOn()) return;
+		if (!save || this.dead || this.role === "guest" || !this.taskOn()) return;
 		for (const sp of save.spirits ?? []) {
 			if (!sp.task) continue;
 			sp.taskT = (sp.taskT ?? 0) - dt;
@@ -11830,9 +11883,13 @@ export class TurbzGame {
 		const min = world.w < 48 ? 6 : 18;
 		const max = world.w < 48 ? 22 : 80;
 		let fallback = null;
+		// A chart world is thousands of tiles across and only the ground near the hunter exists, so look around her
+		// rather than across the whole map; on ordinary worlds any tile is fair game.
+		const big = world.w > 600;
+		const hx = Math.floor(save.x / 32), hy = Math.floor(save.y / 32);
 		for (let i = 0; i < 500; i++) {
-			const tx = 3 + Math.floor(Math.random() * (world.w - 6));
-			const ty = 3 + Math.floor(Math.random() * (world.h - 6));
+			const tx = big ? Math.max(3, Math.min(world.w - 4, hx + Math.round((Math.random() * 2 - 1) * max))) : 3 + Math.floor(Math.random() * (world.w - 6));
+			const ty = big ? Math.max(3, Math.min(world.h - 4, hy + Math.round((Math.random() * 2 - 1) * max))) : 3 + Math.floor(Math.random() * (world.h - 6));
 			if (!reach[ty * world.w + tx]) continue;
 			const x = tx * 32 + 16;
 			const y = ty * 32 + 16;
@@ -12849,6 +12906,10 @@ export class TurbzGame {
 		// TURBZ saves to its own slot so leaving and returning resumes the exact same grind.
 		if (this.turbz) { this.persistTurbz?.(); return; }
 		for (const g of this.save.gear) this.noteFound(g);
+		if (this.chartWorld && this.save.map === "world") {
+			const fog = fogForSave();
+			if (fog) this.save.chartFog = { seed: this.chartWorld.chart.seed, fog };
+		}
 		this.save.savedAt = Date.now();
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
 		const localJson = JSON.stringify(this.save);
@@ -13557,8 +13618,8 @@ export class TurbzGame {
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.fillStyle = "#140e0c";
 		ctx.fillRect(0, 0, w, h);
-		const sx = this.turbz ? Math.sin(this.clock * 34) * Math.min(this.shake, 2.2) * 0.5 : (Math.random() - .5) * this.shake;
-		const sy = this.turbz ? Math.cos(this.clock * 29) * Math.min(this.shake, 2.2) * 0.35 : (Math.random() - .5) * this.shake;
+		const sx = (Math.random() - .5) * this.shake;
+		const sy = (Math.random() - .5) * this.shake;
 		ctx.translate(w / 2 + sx, h / 2 + sy);
 		ctx.scale(this.zoom, this.zoom);
 		ctx.translate(-this.cam.x, -this.cam.y);
@@ -14637,6 +14698,8 @@ export class TurbzGame {
 	mapTerrainImage() {
 		const world = this.world;
 		if (!world) return null;
+		// A chart world is mostly not there: its picture is the chart menu's job, not a bitmap of six million tiles.
+		if (this.chartWorld && world === this.chartWorld.world) return null;
 		const rev = tileImageRevision();
 		const c = this.mapImg;
 		if (c && c.world === world && (c.rev === rev || performance.now() - c.at < 2500) && c.solids === (world.solids?.size ?? 0)) return c.img;

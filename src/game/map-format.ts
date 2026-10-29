@@ -257,6 +257,11 @@ export type MapFile = {
    * was a type error. Keeping it means a generated world can be rebuilt exactly from the file.
    */
   seed?: number;
+  /**
+   * Set on the overworld of a chart world (chart-world.ts). Such a file has regions and a start but NO tiles:
+   * the ground is streamed from the chart a region at a time. Anything that would walk `tiles` must check this.
+   */
+  chartSeed?: number;
 };
 
 export const FLOOR_COLOR: Record<number, string> = {

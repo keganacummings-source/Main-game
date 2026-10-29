@@ -14,11 +14,11 @@
  * Both are pure: they take a chart and a fog and give back data. Nothing here
  * touches the DOM, so it can all be tested.
  */
-import { BIOME_BY_ID, biomeCensus, isWater, type ChartPlace, type WorldChart } from "./world-chart";
+import { BIOME_BY_ID, biomeCensus, type ChartPlace, type WorldChart } from "./world-chart";
 import { FOG_CELL, exploredShare, seenCell, type Explored } from "./explored";
 
-/** Unexplored ground. Dark, but not the same black as the frame, so the chart reads as a map. */
-const UNSEEN = [28, 22, 40] as const;
+/** Unexplored ground, in the chart's own colour scheme. */
+const UNSEEN = [14, 11, 18] as const;
 
 export type ChartPixels = { w: number; h: number; rgba: Uint8ClampedArray };
 
@@ -46,21 +46,7 @@ export function chartPixels(chart: WorldChart, fog: Explored | null, opts: { all
       // The middle of the cell stands for the whole of it.
       const tx = Math.min(chart.w - 1, cx * FOG_CELL + (FOG_CELL >> 1));
       const ty = Math.min(chart.h - 1, cy * FOG_CELL + (FOG_CELL >> 1));
-      // Sample the cell, and prefer water when a river or lake cuts through it.
-      // The centre alone misses a river that is only a few tiles wide.
-      let b = chart.biome[ty * chart.w + tx]!;
-      if (!isWater(b)) {
-        const probes: [number, number][] = [
-          [cx * FOG_CELL, cy * FOG_CELL],
-          [Math.min(chart.w - 1, cx * FOG_CELL + FOG_CELL - 1), cy * FOG_CELL],
-          [cx * FOG_CELL, Math.min(chart.h - 1, cy * FOG_CELL + FOG_CELL - 1)],
-          [Math.min(chart.w - 1, cx * FOG_CELL + FOG_CELL - 1), Math.min(chart.h - 1, cy * FOG_CELL + FOG_CELL - 1)],
-        ];
-        for (const [sx, sy] of probes) {
-          const bi = chart.biome[sy * chart.w + sx]!;
-          if (isWater(bi)) { b = bi; break; }
-        }
-      }
+      const b = chart.biome[ty * chart.w + tx]!;
       let col = cache.get(b);
       if (!col) {
         const hex = BIOME_BY_ID[b]?.colour ?? "#ff00ff";
