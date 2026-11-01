@@ -1827,22 +1827,6 @@ export const PausePanel = memo(function PausePanel({ game }: GameProp) {
       {tab === "worlds" && (
         <div className="ui-list" data-testid="designer-maps">
           {map.startsWith("custom-") && <button type="button" className="px-btn px-btn-kyo" data-testid="leave-custom-map-btn" onClick={() => game?.leaveCustom()}>Return to the overworld</button>}
-          {/*
-            The generated world, as opposed to the authored ones below it. It is
-            2500 x 2500 tiles, so it is never in the saved-maps list — there is
-            no file, only a seed.
-          */}
-          <button
-            type="button"
-            className={`px-btn text-left ${map === "chart" ? "map-btn-active" : ""}`}
-            data-testid="enter-chart-world"
-            disabled={map === "chart"}
-            onClick={() => game?.enterChartWorld()}
-          >
-            {map === "chart" ? "▶ The Wide World" : "Enter the Wide World"}{" "}
-            <span className="text-dim">· 2500 × 2500, villages, 24 biomes · M for the chart</span>
-          </button>
-          {map === "chart" && <button type="button" className="px-btn px-btn-kyo" data-testid="leave-chart-world" onClick={() => game?.leaveCustom()}>Return to the overworld</button>}
           {maps.map((m) => (
             <button key={m.id} type="button" className={`px-btn text-left ${map === `custom-${m.id}` ? "map-btn-active" : ""}`} data-testid={`enter-map-${m.id}`} disabled={map === `custom-${m.id}`} onClick={() => game?.enterCustom(m.id)}>
               {map === `custom-${m.id}` ? `▶ ${m.name}` : `Enter ${m.name}`} <span className="text-dim">· {m.builtin ? "world" : m.kind}</span>

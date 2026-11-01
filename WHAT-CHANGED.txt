@@ -1,0 +1,227 @@
+TURBZ — the world chart is wired in
+===================================
+
+Drop over the repo root. Everything below is on top of the previous drop.
+
+New lives wake in a chart world: the 2500 x 2500 continent, walked a region at
+a time, with enemies on it. M shows the chart and its fog of war.
+
+  16 new tests (scripts/chart-world.test.mjs). The 229 existing ones in the
+  suites I could run here still pass. Not run here: the Vite build, the browser,
+  and the wiki / worker / mining suites (no node_modules in the sandbox).
+
+
+HOW THE GROUND WORKS
+--------------------
+
+ONE WorldData the size of the whole chart. Every position in the game (hunter,
+foes, campfires, nodes, saves, the chart menu) is a chart position, so nothing
+is ever translated between a region and the world. Only the 256 x 256 regions
+near the hunter are built; every other tile is undefined, and blocked() reads
+that as solid. A region is built when the hunter is within 96 tiles of it and
+dropped when she is 160 away, so crossing a seam back and forth costs nothing.
+Memory stays at four to nine regions however far you walk (about 155 MB heap in
+a long full-size walk). Crossing a seam costs 15 to 60 ms once the code is warm.
+
+The chart is built in a Web Worker (src/game/chart-worker.ts). It takes about
+nine seconds, so a "Charting a new world…" screen is up for that long, once per
+world. If a Worker is not available the chart is built in place instead: slow,
+but the world is never the wrong shape.
+
+
+ENEMIES — THE PART TO WATCH
+---------------------------
+
+A region is only terrain, so it brings no foes. chart-world.ts lays camps on
+every region as it is built, using the same recipe the generated worlds use:
+a 22-tile grid, a clean 10 x 10 square of open ground per cell, a pool of foes
+that belong to the biome, two or three per camp (animals three), a respawn of
+45-105 seconds. Each foe is spelled out as the spawn expandZones() would have
+made (kind "mob", fixedLevel, zone with levels / species / respawn), so the
+engine's proximity spawning, 45% random swap, respawn timers and kill credit
+treat them like any other camp. Nothing in the fight code changed.
+
+Levels come from distance to the start, since there is one continent and not
+one per tier: 1-4 at the hearth, rising to about 70-105 at the far edge.
+No camp within 22 tiles of the hearth or 8 tiles of any town, shrine, tavern or
+door. Foes only stand on ground a hunter can walk on.
+
+The engine keeps its list of spawn points in step with the regions
+(applyStream): new ground adds its camps, dropped ground removes them, and a
+foe that died and is waiting to respawn leaves with its ground rather than
+ticking on forever. World bosses and bounty hunters belong to no region and are
+never dropped. A region built again comes back identical.
+
+Tested: every foe is on walkable ground, inside its own camp, in its level
+range, with unique ids; the reported changes always add up to the real spawn
+list across a long walk; the real applyStream() is cut out of engine.ts and run
+against a stand-in to prove dormant foes follow the regions.
+
+
+SITES AND RESOURCES
+-------------------
+
+The hearth, townsfolk, shrines, taverns, dungeon doors and the three world
+bosses are re-homed around the start (townsfolk close in, the rest spread out
+about ten tiles per old tile), each snapped to ground reachable on foot from
+the start, so none is on an island or inside a mountain. Trees are real
+choppable nodes (capped at 320 per region so the node list stays small; the
+rest stay as walkable scenery), plus ore, mushrooms and fishing spots by biome.
+
+
+WHO GETS IT
+-----------
+
+New characters and every rebirth after dying (unless "Keep Current World" is
+ticked). Characters made before this keep the world they were rolled until
+they die, because their campfires, logs and open rifts are pinned to it.
+Loading a save, creating a character and rebirth all wait for the chart first.
+
+A different seed's chart fog is never shown on a world (the save stores the
+seed with it). Inside a dungeon the chart menu steps aside.
+
+
+THINGS TO KNOW
+--------------
+
+- The old Veilreach overworld's hand-built towns, NPC quests and story intro
+  are NOT in the chart world: the chart has places and names, not NPCs or
+  quests. The classic townsfolk, shrines, taverns, doors and bosses are all
+  there; designer-map quests and the opening story are not.
+- The first nine seconds of a new character are the chart building.
+- Bounty hunters now look for a spot around the hunter on big worlds rather than
+  anywhere on the map.
+- I could not run the game or the Vite build here, so the worker import and the
+  screen have not been seen running. Please load a new character and walk a
+  while before trusting it.
+
+
+FILES
+-----
+
+New:     src/game/chart-gen.ts, chart-worker.ts, chart-world.ts,
+         scripts/chart-world.test.mjs
+Changed: src/game/engine.ts, life-world.ts, main-world.ts, map-format.ts,
+         world.ts, world-chunks.ts, src/components/turbz-app.tsx, package.json
+
+
+---------------------------------------------------------------------------
+EARLIER DROP: ONE CENTRAL CONTINENT
+---------------------------------------------------------------------------
+
+TURBZ — one central continent
+=============================
+
+Drop over the repo root. Self-contained: carries the class update, the UI
+overhaul, mobile mode, the bug-fix pass and the whole world system.
+
+  312 tests, 0 failures.
+
+
+THE SHAPE OF THE WORLD
+----------------------
+
+Was: five landmasses spaced around a wide ring, which gave a scattered,
+archipelago-ish chart with no centre to it and no sense of a homeland.
+
+Now: ONE continent in the middle of an ocean.
+
+It is built from a broad core at the centre plus a handful of LOBES overlapping
+it. Because the lobes sit inside the core's reach they fuse with it rather than
+standing apart, and what they add is shape — headlands, bays, peninsulas, the
+occasional near-separated limb. The `continents` option is now how many lobes to
+hang off the core.
+
+An edge fade keeps the sea at the margins, so the continent sits IN an ocean
+rather than running off the side of the chart.
+
+Seed 2026: one landmass of 2,124,384 tiles, 117 named places, 34% land.
+
+
+FOUR THINGS THAT HAD TO CHANGE WITH IT
+--------------------------------------
+
+1. CLIMATE IS MEASURED ACROSS THE LAND, NOT THE CHART.
+
+   With everything in the middle of the chart, the whole continent sat in the
+   tropics on chart latitude. The world came out with 22 tiles of taiga and 249
+   of glacier — the cold biomes existed only because the guarantee pass forced
+   them in. The gradient now spans the continent's own north-south reach, so it
+   has poles at its top and bottom edges and an equator across its middle.
+
+   Taiga 2.0%, glacier 1.8%, tundra 0.3% — naturally, before any guarantee.
+
+2. LAKES ARE CARVED, NOT LEFT TO CHANCE.
+
+   Lakes used to be whatever the coastline happened to strand, which on a single
+   central continent is almost nothing: a few hundred tiles in a whole world. A
+   continent this size should have real water in it, so basins are now carved
+   inland — checked against a ring of land so a "lake" cannot open onto the sea
+   and turn out to be a bay. Carved before the distance fields, so lakeshores
+   get the damp they should and the ocean flood fill still cannot reach them,
+   which is what marks them as lakes rather than sea.
+
+   15,339 lake tiles on seed 2026, up from 384.
+
+3. SETTLEMENTS SCALE WITH AREA.
+
+   The old formula was tuned when places were shared between five continents.
+   With one landmass it gave NINETEEN settlements for the entire world. One per
+   ~18,000 tiles now, with spacing that scales to match, so they sit a
+   reasonable walk apart: 117 places.
+
+4. THE SHELF IS WIDER AND THE DISTANCE FIELDS ARE ROUND.
+
+   A narrow shelf left the ocean as one flat expanse of deep blue right up to
+   the shore, so the chart had no readable edge to the land. Widened.
+
+   That exposed a second thing: the shallows gave out along an angular,
+   diamond-shaped boundary. Both distance fields were plain four-neighbour
+   chamfers, which measure Manhattan distance, and Manhattan contours ARE
+   diamonds. They now use a 3-4 chamfer — an orthogonal step counts 3, a
+   diagonal 4 — which approximates true distance closely enough for the
+   contours to come out round.
+
+
+TESTS UPDATED
+-------------
+
+Four tests asserted the old shape and now assert the new one. None was weakened
+to pass — each says what it checks and why:
+
+  - "continents are real landmasses" now requires the main continent to hold
+    more than 15% of the chart, i.e. that the world really is centred on it.
+  - "a full 2500 x 2500 world" requires a central continent over a million
+    tiles rather than "more than one continent".
+  - "every real landmass carries every land biome" needs one big landmass, not
+    two.
+  - the lake test now checks a real count AND that no lake reaches the edge of
+    the chart, which is where the open sea is — a carved basin that opened onto
+    the ocean would otherwise pass as a lake.
+
+
+FILES CHANGED THIS ROUND
+------------------------
+
+  src/game/world-chart.ts        central layout + edge fade, climate across the
+                                 land, carved lakes, area-scaled settlements,
+                                 wider shelf, 3-4 chamfer distance fields
+  scripts/world-chart.test.mjs   four tests updated to the new shape
+
+  ...plus everything from the previous drops, unchanged.
+
+
+VERIFIED HERE
+-------------
+
+  npm test      278 + 7 + 8 + 19 = 312 tests, 0 failures
+  map audit     0 problems
+  wiki check    OK
+  types         clean across src/ under the stub harness
+  build         6.25M tiles, ~30 MB, 8.7s
+
+I rendered seeds 2026, 7 and 99 to check this by eye — the three worlds are
+clearly different in shape while all reading as one central landmass, which is
+also how the diamond-shaped shelf boundary got noticed.
+
+WIRED IN NOW. See the top of this file.

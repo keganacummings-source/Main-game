@@ -176,3 +176,30 @@ test("every piece of art the world can place is real New Texture art", () => {
     if (look.scatter) assert.ok(allowed.has(look.scatter), `${b.label}: scatter ${look.scatter} is not New Texture art`);
   }
 });
+
+test("a solid feature is visible, not swallowed by the rock rule", () => {
+  // `rockAt` says a solid feature's tile is solid, so that camps and sites keep
+  // off it. The tile then has to be drawn as the FEATURE, not as the mountain
+  // wall the solid branch would otherwise reach for — the first version of this
+  // made every ore node in the world render as blank rock.
+  const solid = ch.FEATURES.filter((f) => f.solid);
+  assert.ok(solid.length, "no solid features to check");
+  let found = 0;
+  for (let rx = 0; rx < 4 && found < 1; rx++) {
+    const r = ch.buildRegion(chart, rx, rx);
+    for (let y = 0; y < r.h; y++) {
+      for (let x = 0; x < r.w; x++) {
+        const cx = r.originX + x, cy = r.originY + y;
+        const f = ch.featureAt(chart.seed, cx, cy, chart.biome[cy * chart.w + cx]);
+        if (!f?.solid) continue;
+        const t = r.tiles[y * r.w + x];
+        assert.equal(t.sprite, f.art, `a solid feature at ${cx},${cy} is drawn as something else`);
+        assert.equal(t.block, 1, "a solid feature came out walkable");
+        assert.ok(ch.rockAt(chart, cx, cy), "rockAt disagrees that a solid feature is solid");
+        assert.ok(!ch.walkableAt(chart, cx, cy), "walkableAt would let a camp stand on an ore node");
+        found++;
+      }
+    }
+  }
+  assert.ok(found > 0, "no solid features landed in the sampled regions");
+});

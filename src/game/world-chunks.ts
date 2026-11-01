@@ -115,7 +115,6 @@ type Feature = {
 };
 
 export const FEATURES: Feature[] = [
-  // Ore. Commonest in rock and clay, where you would actually dig for it.
   /*
    * The rates below are the ones that survived a world-wide count, and the
    * count is the only way to set them: a cell only produces its feature if the
@@ -146,6 +145,48 @@ function h2(x: number, y: number, seed: number): number {
   h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
   h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * Whether a chart tile is solid rock.
+ *
+ * Highland above the treeline is solid, not walkable ground: that is what makes
+ * mountain ranges read as barriers rather than grey meadows. This is the single
+ * place that decides it, so the terrain a region is cut with, the enemies placed
+ * on it and the sites laid out across it can never disagree about where the
+ * walls are.
+ */
+export function rockAt(chart: WorldChart, cx: number, cy: number): boolean {
+  const ci = cy * chart.w + cx;
+  // A solid world feature — an ore node — is as solid as the mountain is, and
+  // this is the place that has to say so. It was not here at first, and the
+  // camp placer, which trusts this function completely, duly pitched tents on
+  // top of ore nodes and spawned foes inside them.
+  if (featureAt(chart.seed, cx, cy, chart.biome[ci]!)?.solid) return true;
+  if (chart.biome[ci] !== BIOME.highland || chart.elev[ci]! <= 214) return false;
+  return h2(cx, cy, chart.seed + 23) < 0.72;
+}
+
+/**
+ * Ground a hunter or a foe can stand on: on the chart, not water, not solid rock.
+ *
+ * `villages` is optional because most callers ask about ground the villages
+ * have no opinion on, and building one costs more than the question is worth.
+ * Anything PLACING something — a camp, a site — must pass it, or it can put
+ * what it is placing inside somebody's house.
+ */
+export function walkableAt(chart: WorldChart, cx: number, cy: number, villages?: VillageCache): boolean {
+  if (cx < 2 || cy < 2 || cx >= chart.w - 2 || cy >= chart.h - 2) return false;
+  if (isWater(chart.biome[cy * chart.w + cx]!)) return false;
+  if (rockAt(chart, cx, cy)) return false;
+  if (!villages) return true;
+  for (const v of villages.overlapping(cx, cy, cx, cy)) {
+    const t = v.tiles.get(cy * chart.w + cx);
+    // Any built tile at all, not just the walls: a camp pitched on the village
+    // green is still a camp in the middle of a village.
+    if (t) return false;
+  }
+  return true;
 }
 
 /**
@@ -215,17 +256,32 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
         floor = look.patchFloor ?? floor;
       }
 
-      // Highland above the treeline is solid rock, not walkable ground: that is
-      // what makes mountain ranges read as barriers rather than grey meadows.
-      const high = b === BIOME.highland && chart.elev[ci]! > 214;
-      const block = high && h2(cx, cy, chart.seed + 23) < 0.72 ? 1 : 0;
+      // Solid rock is decided in rockAt, shared with everything that has to agree
+      // about it — which now includes the solid world features, so a tile can be
+      // solid because an ore node is standing on it.
+      const feat = featureAt(chart.seed, cx, cy, b);
+      const block = rockAt(chart, cx, cy) ? 1 : 0;
+
+      /*
+       * A solid feature IS the tile, not something laid over it.
+       *
+       * Scenery goes in `layers`, which the renderer draws on top of the ground
+       * — but a solid tile draws its own sprite and nothing else, so a layer on
+       * one is invisible. The ore art is an opaque 32x32 tile, so it stands on
+       * its own as the sprite. This has now been got wrong twice in opposite
+       * directions: first as a solid tile wearing a layer it could never show,
+       * then — once `rockAt` learned about features — as a solid tile that fell
+       * through to the mountain's wall art, so the nodes vanished from the world
+       * entirely. It is decided here, before the tile is built, for that reason.
+       */
+      const solidFeature = feat?.solid ? feat : null;
 
       const tile: Record<string, unknown> = {
         floor: look.liquid ? FL.water : block ? FL.wall : floor,
         biome: look.biome,
         block,
         decor: 0,
-        sprite: block ? look.wall : sprite,
+        sprite: solidFeature ? solidFeature.art : block ? look.wall : sprite,
       };
 
       // Scenery. Water and solid rock never carry any, and a tile gets either a
@@ -233,22 +289,7 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
       if (!block && !look.liquid) {
         // A landmark beats the scenery: an ore node is not something to hide in
         // a tree, and the lattice has already decided this tile is special.
-        const feat = featureAt(chart.seed, cx, cy, b);
-        if (feat?.solid) {
-          /*
-           * A solid feature IS the tile, not something laid over it.
-           *
-           * Scenery goes in `layers`, which the renderer draws on top of the
-           * ground — but a solid tile draws its wall sprite and nothing else, so
-           * a layer on one is invisible. (There is a test for exactly this; it
-           * caught the first version, where an ore node was a solid tile wearing
-           * a layer and would have rendered as blank rock.) The ore art is an
-           * opaque 32x32 tile, so it stands on its own as the sprite.
-           */
-          tile.sprite = feat.art;
-          tile.block = 1;
-          tile.floor = FL.wall;
-        } else if (feat) {
+        if (feat) {
           tile.layers = [feat.art];
           tile.decor = 1;
         } else if (look.tree && look.treeAt && h2(cx, cy, chart.seed + 41) < look.treeAt) {

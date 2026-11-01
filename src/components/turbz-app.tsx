@@ -120,6 +120,32 @@ function uploadShinies(): void {
   }, 50);
 }
 
+/**
+ * Shown while a new world's chart is being built. The chart takes a few seconds to generate (in a worker, so the
+ * page stays alive), and without a word on screen it would look like the game had stopped.
+ */
+function ChartingScreen() {
+  const { charting } = useSnapPick(["charting"] as const);
+  if (!charting) return null;
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-testid="charting-screen"
+      style={{
+        position: "fixed", inset: 0, zIndex: 400, display: "flex", flexDirection: "column", alignItems: "center",
+        justifyContent: "center", gap: 12, background: "rgba(8,6,5,.94)", color: "#f0e2c8", textAlign: "center",
+        fontFamily: "VT323, monospace", padding: 24,
+      }}
+    >
+      <div style={{ fontSize: 34, letterSpacing: 1 }}>Charting a new world…</div>
+      <div style={{ fontSize: 20, opacity: 0.75, maxWidth: 420 }}>
+        Raising a continent out of the sea. This takes a few seconds, and only once for each world.
+      </div>
+    </div>
+  );
+}
+
 function Hunt() {
   const acct = useStaticAccount();
   const username = acct.user ? veilName(acct.user) : "witch";
@@ -241,6 +267,7 @@ function Hunt() {
   return (
     <main className="game-root">
       <canvas ref={canvasRef} className="game-canvas" aria-label="TURBZ wilds" />
+      <ChartingScreen />
       <div className="overlay">
         {screen === "hub" && !playing && (
           <Hub
