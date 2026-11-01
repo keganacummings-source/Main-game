@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import * as px from "../src/game/power-extra.ts";
-import * as bld from "../src/game/building.ts";
+import { loadTs } from "./lib/ts-module.mjs";
+
+// Direct .ts imports only work under --experimental-strip-types, and even then Node cannot resolve
+// building.ts's own extensionless `./tile-atlas` import — which is why this file was failing and,
+// being absent from the npm test script, failing unnoticed. The shared loader handles both.
+const px = await loadTs(import.meta.url, "../src/game/power-extra.ts");
+const bld = await loadTs(import.meta.url, "../src/game/building.ts");
 
 const port = (kind, n, key = `${Math.random()}`) => ({ kind, key, n });
 const total = (o) => Object.values(o).reduce((a, v) => a + v, 0);
@@ -9,7 +14,7 @@ const total = (o) => Object.values(o).reduce((a, v) => a + v, 0);
 test("every new Power piece is a real build piece, grouped, hotkeyed and gated to TURBZ + New Textures", () => {
   for (const id of px.POWER_EXTRA_KINDS) {
     assert.ok(bld.BUILD_PIECES[id], `${id} has no build piece`);
-    assert.ok(bld.BUILD_GROUPS.find((g) => g.id === "power").pieces.includes(id), `${id} missing from the Power group`);
+    assert.ok(bld.BUILD_GROUPS.some((g) => g.id.startsWith("power") && g.pieces.includes(id)), `${id} missing from every Power group`);
     assert.ok(bld.BUILD_HOTKEY_ORDER.includes(id), `${id} has no hotkey slot`);
     assert.ok(bld.TURBZ_ONLY_PIECES.has(id) && bld.NEWTEX_ONLY_PIECES.has(id), `${id} is not gated`);
     assert.ok(Object.keys(bld.BUILD_PIECES[id].cost).length > 0);
@@ -33,7 +38,10 @@ test("sanitizePowerExtra drops junk, keeps object identity, clamps and dedupes",
   const out = px.sanitizePowerExtra(list);
   assert.equal(out.length, 3);
   assert.equal(out[0], good, "same object");
-  assert.equal(good.dir, 3);
+  assert.equal(good.dir, 1, "an out-of-range facing wraps (9 % 4), it is not clamped");
+  const negative = { kind: "blockgen", map: "m", tx: 9, ty: 9, dir: -1 };
+  px.sanitizePowerExtra([negative]);
+  assert.equal(negative.dir, 3, "a negative facing wraps to the other side");
   assert.equal(good.mat, "wood");
   assert.deepEqual(good.buf, { timber: px.MACHINE_BUF_MAX });
   assert.equal(good.on, true);
@@ -139,8 +147,8 @@ test("machines are fed before the chest takes the overflow", () => {
   assert.deepEqual(bag, { hell_ore: 2 });
 });
 
-test("BlockBreaker hauls into the chest; a BlockGenerator only accepts the block it builds", () => {
-  const breaker = port("blockbreaker", { buf: { timber: 2, rock_ore: 1 } });
+test("a Rock Miner hauls into the chest; a BlockGenerator only accepts the block it builds", () => {
+  const breaker = port("rockminer", { buf: { timber: 2, rock_ore: 1 } });
   const gen = port("blockgen", { mat: "wood", buf: {} });
   const chest = port("chest", {});
   const bag = {};
@@ -153,8 +161,8 @@ test("BlockBreaker hauls into the chest; a BlockGenerator only accepts the block
   assert.equal(px.portRoom(gen, "rock_ore"), true);
 });
 
-test("a wall engine (BlockGenerator + BlockBreaker + pipe) conserves material", () => {
-  const breaker = port("blockbreaker", { buf: { timber: 5 } });
+test("a wall engine (BlockGenerator + Rock Miner + pipe) conserves material", () => {
+  const breaker = port("rockminer", { buf: { timber: 5 } });
   const gen = port("blockgen", { mat: "wood", buf: {} });
   for (let i = 0; i < 20; i++) px.pipeStep([breaker, gen], {});
   assert.equal(gen.n.buf.timber, 5);

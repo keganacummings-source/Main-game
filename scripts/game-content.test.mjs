@@ -1,18 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import ts from "typescript";
+import { moduleUrlFrom } from "./lib/ts-module.mjs";
 
-// Exercise the same TypeScript data and world generator used by both builds.
-function moduleUrl(path, imports = {}) {
-  let source = ts.transpileModule(readFileSync(new URL(path, import.meta.url), "utf8"), {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  for (const [specifier, url] of Object.entries(imports)) {
-    source = source.replaceAll(`from "${specifier}"`, `from "${url}"`);
-  }
-  return `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
-}
+/*
+ * Exercise the same TypeScript data and world generator used by both builds.
+ *
+ * The loader follows relative imports itself (scripts/lib/ts-module.mjs), so the import maps below
+ * are now only for the DELIBERATE stubs — swapping a real dependency for a fake one. They used to
+ * also have to list every ordinary import by hand, which is how this file ended up failing at the
+ * file level when `building.ts` grew an import nobody updated here.
+ */
+const moduleUrl = (path, overrides = null) => moduleUrlFrom(import.meta.url, path, overrides);
 const kitsUrl = moduleUrl("../src/game/class-kits.ts");
 const classesUrl = moduleUrl("../src/game/classes.ts", { "./class-kits": kitsUrl });
 const overmaxUrl = moduleUrl("../src/game/overmax.ts");
@@ -32,7 +31,10 @@ test("every sheet class is playable with a full moveset, traits and distinct spr
   const sprites = [];
   for (const c of content.CLASSES) {
     assert.ok(content.RACES.some((r) => r.id === content.CLASS_RACE[c.id]));
-    assert.ok(c.starterMoves.length >= 5, `${c.id}: needs a full moveset`);
+    // V4: every class starts with exactly four verses — a main hit, a second trick, a ward or a
+    // mend, and a way to move. It used to be five listed plus two appended automatically.
+    assert.equal(c.starterMoves.length, 4, `${c.id}: should start with exactly four verses`);
+    assert.equal(new Set(c.starterMoves).size, 4, `${c.id}: a starter verse is listed twice`);
     assert.ok(c.starterMoves.includes(c.signature));
     for (const id of c.starterMoves) assert.ok(content.MOVE_BY_ID[id], `${c.id}: missing ${id}`);
     assert.ok(c.starterMoves.some((id) => ["blink", "lunge", "roll", "dash", "surge"].includes(content.moveTactic(content.MOVE_BY_ID[id]))), `${c.id}: needs a movement verse`);

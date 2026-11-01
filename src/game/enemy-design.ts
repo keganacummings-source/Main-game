@@ -9,7 +9,7 @@
 import { ANIMAL_BY_ID, BIOME_MONSTERS, MONSTERS, MONSTER_BY_ID, MOVE_BY_ID, TYPES, type BiomeId, type MonsterDef, type TypeId, MOVES, attackForm, moveTactic } from "./content";
 import { MOB_ENCHANT_IDS, type EnemyStats, type MobEnchantId } from "./balance";
 import { CREATURE_CELLS, frameTwoKey, setCustomSprite, clearCustomSprites, setTypedSpriteResolver } from "./creature-sprites";
-import { retintPixels } from "./type-palettes";
+import { retintPixels, TYPE_PALETTE } from "./type-palettes";
 import shipped from "./enemies/custom-enemies.json";
 
 export const ENEMY_DESIGN_KEY = "turbz-enemy-designs-v1";
@@ -311,12 +311,21 @@ const typedCanvasCache = new Map<string, HTMLCanvasElement | null>();
  * Return a canvas for `species` rendered as `type`. If no custom pixel sprite was registered
  * (or the type matches the base), returns null — caller falls back to the default canvas.
  */
-export function typedSpriteCanvas(species: string, type: TypeId): HTMLCanvasElement | null {
+/**
+ * A palette-shifted copy of a custom sprite, or null when no shift applies.
+ *
+ * `type` is a plain string, not a TypeId, because that is what reaches it: the resolver is called
+ * from creature-sprites with `String(m.type ?? "normal")` off live mob data, which can be anything
+ * a designed enemy carries. Declaring it as TypeId made this unsound — tsc flagged it — so unknown
+ * types are turned away here instead, which is the same answer as "this needs no retint".
+ */
+export function typedSpriteCanvas(species: string, type: string): HTMLCanvasElement | null {
   const base = basePixels.get(species);
   if (!base || base.baseType === type) return null;
+  if (!(type in TYPE_PALETTE)) return null;
   const key = `${species}:${type}`;
   if (typedCanvasCache.has(key)) return typedCanvasCache.get(key) ?? null;
-  const retinted = retintPixels(base.pixels, base.baseType, type);
+  const retinted = retintPixels(base.pixels, base.baseType, type as TypeId);
   const canvas = spriteCanvas(retinted);
   typedCanvasCache.set(key, canvas);
   return canvas;

@@ -250,6 +250,13 @@ export type MapFile = {
   intro?: string;
   /** Named areas: continents, cities, forests, mines… */
   regions?: MapRegion[];
+  /**
+   * The seed a generated world was built from, when it had one.
+   *
+   * tex-world.ts has always written this; the type just never admitted it, so the object literal
+   * was a type error. Keeping it means a generated world can be rebuilt exactly from the file.
+   */
+  seed?: number;
 };
 
 export const FLOOR_COLOR: Record<number, string> = {

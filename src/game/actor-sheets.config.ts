@@ -133,6 +133,8 @@ for (const [id, x, y] of [
   ["embermage", 128, 880], ["tidewitch", 256, 880], ["stonecaller", 384, 880], ["stormwitch", 512, 880], ["frostweaver", 640, 880],
   ["radiant", 0, 1056], ["gravemage", 128, 1056], ["arcanist", 256, 1056], ["ruinmage", 384, 1056], ["veilsinger", 512, 1056],
 ] as const) CHARACTERS[`warrior:${id}`] = { sheet: "warrior", x, y, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
+// The Engineer, in the last free block on the sheet (scripts/sprites/engineer-class.py).
+CHARACTERS["warrior:engineer"] = { sheet: "warrior", x: 640, y: 1056, fw: 32, fh: 44, frames: 4, chroma: WARRIOR_MAGENTA };
 
 export const spriteKey = (charId: string, row: number, frame: number): string => `${charId}|d${row}f${frame}`;
 

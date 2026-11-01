@@ -28,6 +28,10 @@ type KitMove = {
   fx?: string;
   cdMult?: number;
   cls?: string;
+  /** A second element the verse follows through with (see Move.second in content.ts). */
+  second?: string;
+  /** How much of the verse's power that second element carries. */
+  secondMult?: number;
 };
 
 const v = (
@@ -343,53 +347,100 @@ export const KIT_MOVES: KitMove[] = [
   x("gravemage", "ck_shadowstep", "Shadow Step", "ghoul", 14, 100, 8, 3, "gloom", "blink", "Gravemage starter. Step through the grave-dark to a new spot.", { form: "spell", react: "move", fail: 12 }),
   x("gravemage", "sx_deathstorm", "Death Storm", "ghoul", 62, 84, 18, 0, "gloom", "heavy", "Gravemage bonus. A storm of death magic crashes down on every foe nearby.", { form: "spell", splash: { radius: 100, mult: 0.65 }, fx: "meteor" }),
   x("gravemage", "sx_cursecascade", "Curse Cascade", "ghoul", 22, 96, 8, 1, "gloom", "channel", "Gravemage bonus. Curses cascade — each hit jumps to a new target.", { form: "spell", multi: { hits: 5, gap: 0.18, mult: 0.6 }, chain: { jumps: 2, range: 120, mult: 0.65 } }),
+
+  // -------------------------------------------------------------------------
+  // The close-quarters kits.
+  //
+  // Seven classes used to cast at range purely because that is what their kit
+  // happened to be, even when the class was a Bruiser, a skirmisher or a knight
+  // with a lantern haft in its hands. They fight up close now, so they needed
+  // verses that reach that far and no further.
+  //
+  // Each one follows the same four-verse shape as every other kit: a main hit,
+  // a second trick, a ward or a mend, and a way to close the gap.
+  // -------------------------------------------------------------------------
+  // Seraph — a diving blade, to go with the wings it already had
+  x("seraph", "ck_wingblade", "Wing Blade", "light", 40, 94, 16, 1, "expose", "strike", "Seraph starter. The leading edge of a wing, drawn across the throat on the way past.", { form: "melee", reach: 50, second: "air", secondMult: 0.4 }),
+  // Nightlord — the old blood does its own biting now
+  x("nightlord", "ck_fangrend", "Fang Rend", "ghoul", 44, 94, 14, 1, "leech", "strike", "Nightlord starter. Teeth first, questions later. What it takes, you keep.", { form: "melee", reach: 46 }),
+  x("nightlord", "ck_clawsweep", "Claw Sweep", "ghoul", 66, 84, 12, 0, "leech", "heavy", "Nightlord starter. A wide opening of the ribs. Neighbours get the spray.", { form: "melee", reach: 56, splash: { radius: 46, mult: 0.45 }, second: "void", secondMult: 0.35 }),
+  x("nightlord", "ck_mistlunge", "Mist Lunge", "ghoul", 32, 90, 18, 2, "leech", "lunge", "Nightlord starter. Go to mist, arrive as a mouth.", { form: "melee", react: "move", fail: 16 }),
+  // Outrider — a shot loosed at arm's length is just a cut
+  x("stormrider", "ck_ridercut", "Rider's Cut", "air", 38, 96, 18, 2, "none", "strike", "Outrider starter. Taken at full tilt, without breaking stride.", { form: "melee", reach: 48, echo: 0.3 }),
+  x("stormrider", "ck_spurkick", "Spur Kick", "air", 34, 92, 12, 1, "expose", "lunge", "Outrider starter. Close the gap with a heel and leave them open.", { form: "melee", react: "move", fail: 14 }),
+  // Vigilant — the lantern has a haft, and the haft has a use
+  x("vigilant", "ck_lanternhaft", "Lantern Haft", "spirit", 36, 96, 10, 2, "gloom", "strike", "Vigilant starter. The watch does not only hold the light up. Sometimes it swings it.", { form: "melee", reach: 48, second: "light", secondMult: 0.4 }),
+  x("vigilant", "ck_vigilstep", "Vigil Step", "spirit", 28, 92, 10, 1, "gloom", "lunge", "Vigilant starter. Step into the dark where it is thickest and plant the lantern there.", { form: "melee", react: "move", fail: 16 }),
+  // Hexbinder — a pact signed close enough to reach
+  x("hexbinder", "ck_hexblade", "Hex Blade", "spirit", 42, 94, 14, 1, "leech", "strike", "Hexbinder starter. The sigil is cut into them, not drawn in the air.", { form: "melee", reach: 46, second: "ghoul", secondMult: 0.4 }),
+  x("hexbinder", "ck_pactcarve", "Pact Carve", "spirit", 62, 86, 12, 0, "leech", "heavy", "Hexbinder starter. The whole clause, in one stroke. It costs them more than you.", { form: "melee", reach: 54 }),
+  x("hexbinder", "ck_bindlunge", "Binding Lunge", "spirit", 30, 90, 12, 1, "root", "lunge", "Hexbinder starter. Close the distance and knot them to the spot.", { form: "melee", react: "move", fail: 18 }),
+  // Sovereign — a crown with a blade under it
+  x("sovereign", "ck_scepterblow", "Scepter Blow", "light", 40, 94, 12, 1, "expose", "strike", "Sovereign starter. The scepter is not ceremonial. It has a weight to it.", { form: "melee", reach: 50 }),
+  x("sovereign", "ck_regalcleave", "Regal Cleave", "light", 70, 84, 14, 0, "expose", "heavy", "Sovereign starter. One stroke, delivered as a sentence.", { form: "melee", reach: 58, second: "normal", secondMult: 0.35 }),
+  // Engineer — a wrench, a piston, a coolant line and a pair of jet boots
+  x("engineer", "ck_wrenchswing", "Wrench Swing", "electric", 40, 96, 12, 2, "spark", "strike", "Engineer signature. A heavy spanner with a live lead taped to it. Not to code.", { form: "melee", reach: 48, second: "normal", secondMult: 0.4 }),
+  x("engineer", "ck_pistonpunch", "Piston Punch", "electric", 68, 84, 14, 0, "spark", "heavy", "Engineer starter. A gauntlet with one job, done all at once.", { form: "melee", reach: 54, splash: { radius: 42, mult: 0.4 } }),
+  x("engineer", "ck_coolantward", "Coolant Ward", "electric", 0, 100, 0, 3, "shell", "ward", "Engineer starter. Vent the coolant line across the plating. The next hit meets a cold wall."),
+  x("engineer", "ck_jetboot", "Jet Boot", "electric", 30, 92, 10, 1, "spark", "lunge", "Engineer starter. Boots fire once, hard, and you are standing in their guard.", { form: "melee", react: "move", fail: 14 }),
 ];
 
-const SIGNATURE_BATCH = KIT_MOVES.filter((m) => m.cls);
-
+/**
+ * What each class wakes up carrying: exactly four verses, in the shape the kits were always
+ * designed around — a main hit, a second trick, a ward or a mend, and a way to move.
+ *
+ * It used to be seven. Five were listed here and two more were appended automatically from the
+ * bonus (`sx_`) verses, which is how a starting loadout nobody chose ended up nearly filling the
+ * nine equip slots. The bonus verses are still in the game and still learnable at a shrine of
+ * their element; they are just no longer handed over on the first morning.
+ *
+ * The four are also held to the class's fight style: a melee class's attacking verses reach about
+ * two tiles, a ranged class's never land closer than three. Wards, mends and steps are exempt —
+ * everyone gets to shield and everyone gets to move.
+ */
 export const STARTER_KITS: Record<string, string[]> = {
-  warden: ["shieldbash", "ck_rampart", "ck_walldrop", "ck_bulwarkward", "ck_shieldrush"],
-  spellweaver: ["arcbolt", "ck_staticneedle", "ck_weaverlash", "ck_stormward", "ck_stormstep"],
-  spiritbinder: ["soulmend", "ck_choirpull", "ck_sixfold", "ck_graveward", "ck_bellstep"],
-  nightblade: ["shadowstrike", "ck_throatnick", "ck_openingcut", "ck_feintsurge", "ck_voidroll"],
-  pathfinder: ["piercingvolley", "ck_windpin", "ck_markingflare", "ck_crowshot", "ck_rangestep"],
-  ironpalm: ["hundredpalm", "ck_palmcheck", "ck_templeheavy", "ck_breathroll", "ck_ironrush"],
-  bloodrager: ["rampage", "ck_ragecleave", "ck_painwell", "ck_furydash", "ck_bloodrush"],
-  ghoulknight: ["soulreap", "ck_platebite", "ck_boneward", "ck_gravesurge", "ck_hungerstep"],
-  frostblade: ["glaciercharge", "ck_longwinter", "ck_icebreath", "ck_rimeguard", "ck_skatesurge"],
-  pyromancer: ["inferno", "ck_heldflame", "ck_cinderlane", "ck_kilnward", "ck_ashblink"],
-  tidecaller: ["maelstrom", "ck_springwell", "ck_springmend", "ck_brineward", "ck_tidestep"],
-  stormrider: ["cyclone", "ck_tailstrike", "ck_gustroll", "ck_overhill", "ck_slipstream"],
-  briarmage: ["tectonic", "ck_hilldrop", "ck_quakenova", "ck_stoneward", "ck_rootstep"],
-  lightbringer: ["sunburst", "ck_revealbeam", "ck_noonlance", "ck_lanternward", "ck_dawnblink"],
-  voidwalker: ["abyssrift", "ck_stare", "ck_riftward", "ck_nowhere", "ck_phasecut"],
-  absolver: ["absolution", "ck_forgiven", "ck_fullgrace", "ck_mercyward", "ck_pilgrimstep"],
-  vigilant: ["vigilward", "ck_watchmend", "ck_lanternring", "ck_nightwatch", "ck_fearstep"],
-  coinmaster: ["cointoss", "ck_oddsmark", "ck_interest", "ck_dealdash", "ck_pursehook"],
-  hexbinder: ["bloodpact", "ck_signedcut", "ck_debtnova", "ck_hexward", "ck_pactstep"],
-  corsair: ["cutlass", "ck_lowblow", "ck_plunder", "ck_saltroll", "ck_boardlunge"],
-  warlord: ["rallycry", "ck_commandstrike", "ck_fieldheal", "ck_bannerward", "ck_linecharge"],
-  nightlord: ["crimsondrain", "ck_drinkspell", "ck_thirstheavy", "ck_veinward", "ck_bloodblink"],
-  songweaver: ["ballad", "ck_versehook", "ck_restnote", "ck_chorus", "ck_dancestep"],
-  oathkeeper: ["judgment", "ck_answerblade", "ck_vowstrike", "ck_swornward", "ck_oathcharge"],
-  ronin: ["iaido", "ck_seconddraw", "ck_burningedge", "ck_sheathdash", "ck_iailunge"],
-  seraph: ["wingburst", "ck_feathercut", "ck_skymend", "ck_glideward", "ck_ascent"],
-  moonhopper: ["moonhop", "ck_bouncecut", "ck_moonkick", "ck_fliproll", "ck_hopdash"],
-  bladedancer: ["whirlingveil", "ck_stepcut", "ck_tempo", "ck_silkroll", "ck_spinlunge"],
-  sovereign: ["royaldecree", "ck_edict", "ck_levy", "ck_crownward", "ck_courtstep"],
+  // ---- Close quarters (20) ----
+  warden: ["shieldbash", "ck_rampart", "ck_bulwarkward", "ck_shieldrush"],
+  nightblade: ["ck_openingcut", "ck_throatnick", "ck_feintsurge", "shadowstrike"],
+  ironpalm: ["hundredpalm", "ck_templeheavy", "ck_palmcheck", "ck_breathroll"],
+  bloodrager: ["rampage", "ck_ragecleave", "ck_painwell", "ck_bloodrush"],
+  ghoulknight: ["soulreap", "ck_platebite", "ck_boneward", "ck_hungerstep"],
+  frostblade: ["ck_longwinter", "ck_rimeguard", "ck_icebreath", "glaciercharge"],
+  briarmage: ["tectonic", "ck_quakenova", "ck_stoneward", "ck_rootstep"],
+  corsair: ["cutlass", "ck_plunder", "ck_saltroll", "ck_boardlunge"],
+  warlord: ["ck_commandstrike", "rallycry", "ck_bannerward", "ck_linecharge"],
+  oathkeeper: ["judgment", "ck_answerblade", "ck_swornward", "ck_oathcharge"],
+  ronin: ["iaido", "ck_burningedge", "ck_seconddraw", "ck_sheathdash"],
+  bladedancer: ["whirlingveil", "ck_stepcut", "ck_tempo", "ck_silkroll"],
+  seraph: ["ck_wingblade", "sx_divebomb", "ck_skymend", "wingburst"],
+  moonhopper: ["sx_cratercrash", "ck_moonkick", "ck_fliproll", "moonhop"],
+  nightlord: ["ck_fangrend", "ck_clawsweep", "ck_veinward", "ck_mistlunge"],
+  stormrider: ["ck_ridercut", "ck_spurkick", "ck_gustroll", "ck_slipstream"],
+  vigilant: ["ck_lanternhaft", "ck_nightwatch", "ck_watchmend", "ck_vigilstep"],
+  hexbinder: ["ck_hexblade", "ck_pactcarve", "ck_hexward", "ck_bindlunge"],
+  sovereign: ["ck_scepterblow", "ck_regalcleave", "ck_crownward", "ck_courtstep"],
+  engineer: ["ck_wrenchswing", "ck_pistonpunch", "ck_coolantward", "ck_jetboot"],
+  // ---- At range (20) ----
+  spellweaver: ["arcbolt", "ck_weaverlash", "ck_stormward", "ck_stormstep"],
+  spiritbinder: ["ck_choirpull", "ck_sixfold", "soulmend", "ck_bellstep"],
+  pathfinder: ["piercingvolley", "ck_crowshot", "ck_markingflare", "ck_rangestep"],
+  pyromancer: ["inferno", "ck_cinderlane", "ck_kilnward", "ck_ashblink"],
+  tidecaller: ["maelstrom", "ck_springwell", "ck_springmend", "ck_tidestep"],
+  lightbringer: ["sunburst", "ck_noonlance", "ck_lanternward", "ck_dawnblink"],
+  voidwalker: ["abyssrift", "ck_stare", "ck_riftward", "ck_phasecut"],
+  absolver: ["absolution", "ck_forgiven", "ck_mercyward", "ck_pilgrimstep"],
+  coinmaster: ["cointoss", "ck_interest", "ck_oddsmark", "ck_dealdash"],
+  songweaver: ["ballad", "ck_versehook", "ck_restnote", "ck_dancestep"],
+  embermage: ["ck_emberblast", "ck_scorchbeam", "ck_cinderward", "ck_flashstep"],
+  tidewitch: ["ck_tidecrash", "ck_deluge", "ck_saltward", "ck_currentstep"],
+  stonecaller: ["ck_stonecall", "ck_rockspike", "ck_earthward", "ck_groundstep"],
+  stormwitch: ["ck_stormvolley", "ck_windlance", "ck_galeward", "ck_gustblink"],
+  frostweaver: ["ck_frostweave", "ck_blizzardneedle", "ck_iceward", "ck_iceblink"],
+  radiant: ["ck_radiantburst", "ck_solarbeam", "ck_lightward", "ck_dawnstep"],
+  gravemage: ["ck_gravecurse", "ck_deathpulse", "ck_cryptward", "ck_shadowstep"],
+  arcanist: ["ck_arcprism", "ck_leybeam", "ck_manaveil", "ck_arcblink"],
+  ruinmage: ["ck_ruinstrike", "ck_voidcrack", "ck_darkward", "ck_riftslip"],
+  veilsinger: ["ck_veilsong", "ck_harmonystrike", "ck_veilward", "ck_ghoststep"],
+  // ---- Hers is whatever she builds ----
   cryinggirl: ["ck_tearlance", "ck_sobwave", "ck_sorrowmend", "ck_puddlestep"],
-  arcanist: ["ck_arcprism", "ck_manaveil", "ck_leybeam", "ck_spellpulse", "ck_arcblink"],
-  ruinmage: ["ck_ruinstrike", "ck_darkward", "ck_voidcrack", "ck_abyssdrain", "ck_riftslip"],
-  veilsinger: ["ck_veilsong", "ck_spiritmend", "ck_veilward", "ck_harmonystrike", "ck_ghoststep"],
-  embermage: ["ck_emberblast", "ck_cinderward", "ck_scorchbeam", "ck_ashpulse", "ck_flashstep", "ck_embermend"],
-  tidewitch: ["ck_tidecrash", "ck_saltward", "ck_deluge", "ck_tidalmend", "ck_currentstep"],
-  stonecaller: ["ck_stonecall", "ck_earthward", "ck_rockspike", "ck_stonemend", "ck_groundstep"],
-  stormwitch: ["ck_stormvolley", "ck_galeward", "ck_windlance", "ck_windmend", "ck_gustblink"],
-  frostweaver: ["ck_frostweave", "ck_iceward", "ck_blizzardneedle", "ck_frostmend", "ck_iceblink"],
-  radiant: ["ck_radiantburst", "ck_lightward", "ck_solarbeam", "ck_lightmend", "ck_dawnstep"],
-  gravemage: ["ck_gravecurse", "ck_cryptward", "ck_deathpulse", "ck_gravemend", "ck_shadowstep"],
 };
-for (const m of SIGNATURE_BATCH) {
-  const kit = STARTER_KITS[m.cls!];
-  if (kit && !kit.includes(m.id)) kit.push(m.id);
-}

@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { isMobileUi, onMobileUi } from "@/game/mobile-mode";
 
 /** Shared building blocks so every window looks and behaves the same (matches the Bag). */
 
@@ -158,4 +159,15 @@ export function StatusChips({ items }: { items: (false | null | undefined | { la
       {items.filter(Boolean).map((it, i) => it && <span key={i} className={`chip ${it.tone === "on" ? "chip-on" : it.tone === "bad" ? "chip-bad" : it.tone === "kyo" ? "chip-kyo" : ""}`}>{it.label}</span>)}
     </div>
   );
+}
+
+/**
+ * Whether the interface is in mobile mode right now, re-rendering when it is switched.
+ *
+ * Deliberately not a media query: the setting is the player's, not the device's (see mobile-mode.ts).
+ */
+export function useMobileUi(): boolean {
+  const [on, setOn] = useState(isMobileUi);
+  useEffect(() => onMobileUi(setOn), []);
+  return on;
 }

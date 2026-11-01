@@ -36,6 +36,11 @@ import {
   type PowerExtra, type PowerExtraKind, type StoredGhost, type PartialSuperGhost, type GhostMergerNode, type GearForgeNode, type ForgeTally,
 } from "./power-extra";
 import { paintPipe } from "./pipe-art";
+// The 2500 x 2500 world. Everything it needs lives behind `chartSession`, which
+// is null in every other mode, so none of this runs unless you are standing in it.
+import { generateChart } from "./world-chart";
+import { setActiveChart, clearActiveChart, fogForSave } from "./chart-store";
+import { chartTileAt, crossRegions, enterWorld, stepWorld, villagerNear, visibleVillagers, sessionSave } from "./world-session";
 import { mineInfo, rollMineDrop, mineXp, breakBlock, mineClick, MINE_REACH, MINE_HITS, type MineProgress } from "./mining";
 import { itemUseProblem, bestFood, GREEN_MUSHROOM_LEVEL, healingOf, healingLine, isConsumable, cleanQuick, POTION_CD, QUICK_MAX } from "./item-use";
 import { advanceDayNight, clockLabel, darkness, freshDayNight, isNight, normalizeDayNight, skipRate, NIGHT, NIGHT_IN_STANDARD_MODE, DAY_SECONDS, type DayNightState } from "./daynight";
@@ -203,6 +208,15 @@ const SET_FX_CHAN: Record<string, Record<string, number>> = {
 /** Helpful effects a Cleanse keeps. */
 const GOOD_STATUS = new Set(["swift", "shell"]);
 const MAX_EQUIPPED = 9;
+/**
+ * The Engineer's grip on the Power grid. Batteries hold this many times as much, generators give
+ * this much more, duplicators turn out this many copies a cycle and the XP Producer pays this much
+ * over. Overclock (her R) doubles it again while it holds.
+ */
+const ENGINEER_MACHINE_MULT = 2;
+/** Machine work cycles per XP payout to the Engineer, and what each payout is worth in kills. */
+const MACHINE_XP_EVERY = 4;
+const MACHINE_XP_SHARE = 0.5;
 /** Burning lasts this long and takes this share of max health each second. */
 const BURN_SECONDS = 15;
 const BURN_PCT_PER_SECOND = 0.05;
@@ -454,7 +468,13 @@ export type Snap = {
   /** Mouse-over card by the cursor (desktop). */
   hover: HoverCard | null;
   foe: string;
-  menu: { sx: number; sy: number; title: string; lines: string[]; actions: { id: string; label: string }[] } | null;
+  menu: {
+    sx: number; sy: number; title: string; lines: string[];
+    /** What you can do with the thing actually under the cursor. */
+    actions: { id: string; label: string }[];
+    /** The shortcuts to the rest of the game, folded away behind "More". */
+    shell: { id: string; label: string }[];
+  } | null;
   mapX: number;
   mapY: number;
   party: string[];
@@ -1839,7 +1859,7 @@ export class TurbzGame {
 			classId,
 			traitId: traitId && TRAIT_BY_ID[traitId] ? traitId : null,
 			female: female !== false,
-			classMovesV: 3,
+			classMovesV: 4,
 			seed,
 			x: home.x,
 			y: home.y,
@@ -2055,6 +2075,36 @@ export class TurbzGame {
 				this.customFile = main;
 				this.mapNpcs = main.npcs ?? [];
 			}
+		} else if (map === "chart") {
+			/*
+			 * The big world.
+			 *
+			 * Only a REGION of the chart is playable terrain at a time, so
+			 * `save.x`/`save.y` are relative to the region that is loaded, and
+			 * walking off its edge swaps both together (world-session.ts).
+			 *
+			 * The chart is rebuilt from the seed rather than saved: it is 25 MB
+			 * of typed arrays and a pure function of one number. Only the seed,
+			 * the region and the fog go in the save.
+			 */
+			const cs = save.chartWorld ?? (save.chartWorld = { seed: (save.seed >>> 0) || 1 });
+			const chart = generateChart({ seed: cs.seed });
+			setActiveChart(chart, cs.fog);
+			// Come back where you left off, as a CHART tile — the one coordinate
+			// that does not change meaning when the loaded region does. Storing a
+			// region and an offset would mean the save had two ways to say the
+			// same thing and could disagree with itself.
+			const resume = typeof cs.tx === "number" && typeof cs.ty === "number" ? { tx: cs.tx, ty: cs.ty } : undefined;
+			const entered = enterWorld(chart, resume);
+			this.chartSession = entered.session;
+			this.world = entered.session.world;
+			this.world.cache = null;
+			save.x = entered.x;
+			save.y = entered.y;
+			this.customFile = null;
+			this.mapNpcs = [];
+			this.regionKey = "";
+			this.mapRegion = null;
 		} else if (map === "custom-turbz" && this.turbzFile) {
 			const file = this.turbzFile;
 			this.customFile = file;
@@ -2100,7 +2150,9 @@ export class TurbzGame {
 			save.x = this.world.entry.x;
 			save.y = this.world.entry.y;
 		}
-		if (!map.startsWith("custom-") && !(map === "world" && this.overworldFile)) { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
+		if (!map.startsWith("custom-") && !(map === "world" && this.overworldFile) && map !== "chart") { this.customFile = null; this.mapNpcs = []; this.mapRegion = null; this.regionKey = ""; }
+		// Leaving the big world: drop the 25 MB chart and the region cache with it.
+		if (map !== "chart" && this.chartSession) { this.chartSession = null; clearActiveChart(); }
 		this.applyTakenNodes(map);
 		this.applyCampGround(map);
 		this.applyMined(map);
@@ -2462,6 +2514,9 @@ export class TurbzGame {
 		}
 		if (this.role !== "guest" && !this.lms) this.tickDungeons(dt);
 		this.tickPlayer(dt);
+		// Straight after the player moves and before anything reads the world:
+		// a region swap replaces `this.world` underneath everyone.
+		if (this.chartSession) this.tickChartWorld(dt);
 		if (this.dead) return;
 		this.gim?.tick(dt);
 		if (this.save) this.save.lifeT = (this.save.lifeT ?? 0) + dt;
@@ -3201,13 +3256,41 @@ export class TurbzGame {
 		for (const n of world.spawns) if (n.kind === "node" && Math.hypot(n.x - cx, n.y - cy) < 26) return false;
 		return true;
 	}
+	/**
+	 * How hard every powered machine runs for the hunter standing in this camp.
+	 *
+	 * One for everybody, two for the Engineer, four while her Overclock holds. Everything on the
+	 * grid reads this: battery and capacitor capacity, what generators give, how many copies a
+	 * Duplicator turns out, what the XP Producer pays and how hard a Tesla Coil bites.
+	 */
+	machineMult() {
+		if (this.save?.classId !== "engineer") return 1;
+		return this.gim?.active("overclock") ? ENGINEER_MACHINE_MULT * 2 : ENGINEER_MACHINE_MULT;
+	}
+	/** A battery's capacity for whoever owns it. */
+	batCapFor(b) {
+		return batteryCap(b) * this.machineMult();
+	}
+	/**
+	 * The Engineer learns from the work her machines do. Every few finished cycles — a copy made, a
+	 * block laid, a lump of Power generated — hands her a little experience, so a well-laid camp
+	 * levels her while she is standing in it. Nobody else gains anything from this.
+	 */
+	machineWorkXp(cycles = 1) {
+		const save = this.save;
+		if (!save || save.classId !== "engineer") return;
+		this.machXp = (this.machXp ?? 0) + cycles;
+		if (this.machXp < MACHINE_XP_EVERY) return;
+		this.machXp -= MACHINE_XP_EVERY;
+		this.gainXp(Math.max(1, Math.floor(killXpAmount(save.level) * MACHINE_XP_SHARE)));
+	}
 	/** Add Power to the Batteries and Capacitors on a block's wire network. Returns how much was stored. */
 	addNetworkPower(node, amount) {
 		const bats = this.powerNetwork(node).filter((w) => w.kind === "bat").map((w) => w.n);
 		let left = amount;
 		for (const b of bats) {
 			if (left <= 0) break;
-			const room = Math.max(0, batteryCap(b) - (b.power ?? 0));
+			const room = Math.max(0, this.batCapFor(b) - (b.power ?? 0));
 			const add = Math.min(room, left);
 			b.power = (b.power ?? 0) + add;
 			left -= add;
@@ -3233,6 +3316,7 @@ export class TurbzGame {
 		world.solids = world.solids ?? new Set();
 		world.solids.add(ty * world.w + tx);
 		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: kind === "stone" ? 0.8 : 1 }, [kind === "stone" ? 150 : 190, .04, "square"]);
+		this.machineWorkXp();
 		this.powerDirty = true;
 		return true;
 	}
@@ -3259,6 +3343,7 @@ export class TurbzGame {
 		e.buf[id] = (e.buf[id] ?? 0) + 1;
 		if (Math.hypot(tx * 32 + 16 - save.x, ty * 32 + 16 - save.y) < 420) this.cue("click", { rate: 0.5 }, [100, .04, "square"]);
 		this.float(tx * 32 + 16, ty * 32 + 4, `+1 ${ITEM_BY_ID[id]?.name ?? id}`, "#e6c15a");
+		this.machineWorkXp();
 		this.powerDirty = true;
 		return true;
 	}
@@ -3276,14 +3361,16 @@ export class TurbzGame {
 				if (e.t < LOGBURN_SECONDS) continue;
 				e.t -= LOGBURN_SECONDS;
 				e.fuel -= 1;
-				const stored = this.addNetworkPower(e, LOGBURN_POWER);
+				const stored = this.addNetworkPower(e, LOGBURN_POWER * this.machineMult());
+				this.machineWorkXp();
 				this.float(cx, e.ty * 32 - 8, stored > 0 ? `+${stored} Power` : "Power fades", stored > 0 ? "#ffb870" : "#9aa0a6");
 			} else if (e.kind === "solar") {
 				if (this.isNightNow()) { e.t = 0; continue; }
 				e.t = (e.t ?? 0) + dt;
 				if (e.t < SOLAR_SECONDS) continue;
 				e.t -= SOLAR_SECONDS;
-				const stored = this.addNetworkPower(e, SOLAR_POWER);
+				const stored = this.addNetworkPower(e, SOLAR_POWER * this.machineMult());
+				this.machineWorkXp();
 				if (stored > 0) this.float(cx, e.ty * 32 - 8, `+${stored} Power`, "#ffe27a");
 			} else if (e.kind === "blockgen") {
 				if (e.on === false) continue;
@@ -3309,7 +3396,8 @@ export class TurbzGame {
 				}
 				if (!best || !this.spendNetworkPower(e, TESLA_POWER)) { e.t = TESLA_SECONDS - 0.3; continue; }
 				e.t = 0;
-				this.damageMob(best, Math.round(12 + (save.level ?? 1) * 5), false);
+				this.damageMob(best, Math.round((12 + (save.level ?? 1) * 5) * this.machineMult()), false);
+				this.machineWorkXp();
 				(this.teslaZaps = this.teslaZaps ?? new Map()).set(`${e.tx},${e.ty}`, { x: best.x, y: best.y, at: this.clock });
 				this.float(best.x, best.y - 26, "ZAP", "#9fe8ff");
 				this.cue("click", { rate: 1.6 }, [900, .05, "sawtooth"]);
@@ -3571,7 +3659,8 @@ export class TurbzGame {
 			if (g.t < 5) continue;
 			g.t -= 5;
 			g.ore = Math.max(0, g.ore - 1);
-			const stored = this.addNetworkPower(g, 10);
+			const stored = this.addNetworkPower(g, 10 * this.machineMult());
+			this.machineWorkXp();
 			if (stored > 0) this.float(g.tx * 32 + 16, g.ty * 32 - 8, `+${stored} Power`, "#8fd0ff");
 			else this.float(g.tx * 32 + 16, g.ty * 32 - 8, "Power fades", "#9aa0a6");
 		}
@@ -3609,9 +3698,12 @@ export class TurbzGame {
 			if (d.t < DUP_SECONDS) continue;
 			d.t -= DUP_SECONDS;
 			if (!this.spendNetworkPower(d, DUP_POWER_COST)) continue;
-			d.stored = (d.stored ?? 0) + 1;
+			// The Engineer's duplicators turn out a copy per multiplier, not one, and never past the cap.
+			const copies = Math.max(1, Math.min(this.machineMult(), DUP_STORE_MAX - (d.stored ?? 0)));
+			d.stored = (d.stored ?? 0) + copies;
+			this.machineWorkXp();
 			const name = ITEM_BY_ID[d.item]?.name ?? d.item;
-			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+1 ${name}`, "#7dffb3");
+			this.float(d.tx * 32 + 16, d.ty * 32 - 8, `+${copies} ${name}`, "#7dffb3");
 		}
 	}
 	// ---------- Ghost Merger ----------
@@ -3957,7 +4049,7 @@ export class TurbzGame {
 			dir: ex?.dir ?? 2,
 			dirName: DIR_NAME[ex?.dir ?? 2],
 			on: ex ? ex.on !== false : true,
-			cap: open.kind === "capacitor" ? CAP_MAX : BAT_MAX,
+			cap: (open.kind === "capacitor" ? CAP_MAX : BAT_MAX) * this.machineMult(),
 			fuel: ex?.kind === "logburner" ? (ex.fuel ?? 0) : 0,
 			fuelNext: ex?.kind === "logburner" && (ex.fuel ?? 0) > 0 ? Math.max(0, LOGBURN_SECONDS - (ex.t ?? 0)) : -1,
 			mat: ex?.mat === "stone" ? "stone" : "wood",
@@ -4130,7 +4222,7 @@ export class TurbzGame {
 			need -= take;
 		}
 		const mult = (1 + this.chan("xp_boost") / 100) * (this.isNightNow() ? NIGHT.xp : 1);
-		const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult));
+		const gain = Math.max(1, Math.floor(killXpAmount(save.level) * 50 * mult * this.machineMult()));
 		this.gainXp(gain);
 		this.float(save.x, save.y - 60 * WITCH_SIZE, `+${gain} xp`, "#c8beff");
 		this.say(`XP Producer spent 200 Power. +${gain} XP (about 50 kills at your level).`);
@@ -8816,7 +8908,7 @@ export class TurbzGame {
 			}
 		}
 		save.female = female !== false;
-		save.classMovesV = 3;
+		save.classMovesV = 4;
 		for (const id of CLASS_BY_ID[classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks?.[id]) {
 			save.abilityRanks = save.abilityRanks ?? {};
 			save.abilityRanks[id] = 1;
@@ -9994,6 +10086,7 @@ export class TurbzGame {
 			if (who) { this.talkWanderer(who); return; }
 		}
 		if (this.customFile && this.interactMapPlace()) return;
+		if (this.chartSession && this.talkToVillager()) return;
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
 			if (Math.hypot(save.x - ex.x, save.y - ex.y) < 36) {
@@ -10382,6 +10475,75 @@ export class TurbzGame {
 		}
 		return true;
 	}
+	/**
+	 * One frame of the big world.
+	 *
+	 * Runs only when `chartSession` is set, which is only on the "chart" map.
+	 *
+	 * Order matters here. The hunter has just moved, so first work out whether
+	 * she left the loaded region — that swaps `this.world` and shifts her
+	 * coordinates by exactly one region — and only then lift the fog and walk
+	 * the villagers, both of which are addressed in chart tiles and would
+	 * otherwise be told about a position in the wrong region's frame.
+	 */
+	tickChartWorld(dt) {
+		const s = this.chartSession;
+		const save = this.save;
+		if (!s || !save) return;
+		const crossed = crossRegions(s, save.x, save.y);
+		if (crossed.moved) {
+			save.x = crossed.x;
+			save.y = crossed.y;
+			this.world = s.world;
+			// The terrain is new, so the drawn cache and anything keyed to the old
+			// region is stale. Mobs are rebuilt from the region the next tick.
+			this.world.cache = null;
+			this.mobs = [];
+			this.syncHud(true);
+		} else {
+			save.x = crossed.x;
+			save.y = crossed.y;
+		}
+		stepWorld(s, save.x, save.y, dt);
+	}
+
+	/**
+	 * The villagers, drawn the same way map NPCs are.
+	 *
+	 * Separate from `drawMapPlaces` because that one needs a `customFile` and
+	 * the big world has none — it is generated, not authored.
+	 */
+	drawVillagers(ctx) {
+		const s = this.chartSession;
+		if (!s) return;
+		const { w: vw, h: vh } = this.cssSize();
+		const viewX = vw / this.zoom * .62 + 120, viewY = vh / this.zoom * .62 + 140;
+		for (const { npc, x, y } of visibleVillagers(s)) {
+			if (Math.abs(x - this.cam.x) > viewX || Math.abs(y - this.cam.y) > viewY) continue;
+			const outfit = npc.outfit;
+			drawActor(ctx, {
+				x, y, race: "vesper", female: !!npc.female, hair: npc.hair, skin: outfit % 5,
+				// Facing follows the way they are actually walking, which is the
+				// difference between a village of people and a village of statues.
+				facing: npc.route[npc.leg % npc.route.length].x >= npc.tx ? 1 : -1,
+				walk: npc.wait > 0 ? 0 : .6, attack: 0, hurt: 0, setFx: null, setOn: false, time: this.clock,
+				pieces: ["chest", "legs", "feet"].map((slot, i) => ({ slot, style: outfit, type: "normal", fxSeed: i, quality: 0 }))
+			});
+			drawShadowName(ctx, npc.name, x, y - 44, "#f0e2c8");
+		}
+	}
+
+	/** Talk to whoever is standing next to you in a village. */
+	talkToVillager() {
+		const s = this.chartSession;
+		const save = this.save;
+		if (!s || !save) return false;
+		const npc = villagerNear(s, save.x, save.y);
+		if (!npc) return false;
+		this.say(`${npc.name}, ${npc.role.toLowerCase()}: ${npc.lines[1 + Math.floor(Math.random() * (npc.lines.length - 1))]}`);
+		return true;
+	}
+
 	drawMapPlaces(ctx) {
 		const file = this.customFile;
 		const save = this.save;
@@ -10555,6 +10717,20 @@ export class TurbzGame {
 		const worlds = playableWorlds().filter((w) => w.id !== MAIN_WORLD_ID && !mine.some((m) => m.id === w.id)).map((m) => ({ id: m.id, name: m.name, kind: "world", builtin: true }));
 		return [...worlds, ...mine];
 	}
+	/**
+	 * Step into the 2500 x 2500 world.
+	 *
+	 * `switchTo` wants a position, but the big world decides its own: the chart
+	 * picks a start spot, or the save remembers one. Whatever is passed here is
+	 * overwritten by the "chart" branch of loadMap, which is the only place that
+	 * knows which region is about to be cut.
+	 */
+	enterChartWorld() {
+		if (!this.save) return;
+		this.closePanel();
+		this.returnTo = this.save.map === "world" ? { x: this.save.x, y: this.save.y } : hearthXY();
+		this.switchTo("chart", { x: this.save.x, y: this.save.y });
+	}
 	enterCustom(id) {
 		const file = findMapFile(id);
 		if (!file || !this.save || isBuiltinMap(id)) return;
@@ -10592,7 +10768,9 @@ export class TurbzGame {
 		this.syncHud(true);
 	}
 	leaveCustom() {
-		if (!this.save?.map.startsWith("custom-")) return;
+		// The big world is left the same way an authored one is, but its map id
+		// is "chart", not "custom-…", so the guard has to know about it.
+		if (!this.save?.map.startsWith("custom-") && this.save?.map !== "chart") return;
 		this.closePanel();
 		this.switchTo("world", this.returnTo ?? hearthXY());
 	}
@@ -10688,6 +10866,12 @@ export class TurbzGame {
 		if (map.startsWith("custom-")) { this.persist(); this.openMapStory(); return; }
 		if (map === "world" && this.customFile && !(save.mapSeen ?? []).includes(this.customFile.id)) { this.persist(); this.openMapStory(); return; }
 		const named = this.world?.layout && this.world.layout !== "halls" ? ` ${this.world.name}: ${this.world.blurb}` : "";
+		if (map === "chart") {
+			const where = this.world?.name && this.world.name !== "The Open Sea" ? ` You are in ${this.world.name}.` : "";
+			this.say(`The wide world opens.${where} Press M for the chart.`);
+			this.persist();
+			return;
+		}
 		this.say(map === "world" ? "Back under the sky." : map === "crypt" ? `The Tiny Crypt breathes.${named}` : map.startsWith("rift-") ? (named ? `A new dungeon.${named}` : "A new dungeon. Its guardian waits in the final room.") : `The Ash Kiln is awake.${named}`);
 		this.persist();
 	}
@@ -12256,9 +12440,11 @@ export class TurbzGame {
 		normalizeAbilities(save);
 		if (save.traitId && !TRAIT_BY_ID[save.traitId]) save.traitId = null;
 		if (save.female === undefined) save.female = true;
-		if (save.classMovesV !== 3) {
+		// V4 remixed every kit down to four verses. Hand an existing hunter the ones she is missing;
+		// nothing is ever taken away, so a loadout built up over a life survives the change.
+		if (save.classMovesV !== 4) {
 			for (const id of CLASS_BY_ID[save.classId].starterMoves) if (MOVE_BY_ID[id] && !save.abilityRanks[id]) save.abilityRanks[id] = 1;
-			save.classMovesV = 3;
+			save.classMovesV = 4;
 		}
 		save.dungeons = normalizeDungeonState(save.dungeons);
 		if (this.rules === "hardcore") save.dayNight = normalizeDayNight(save.dayNight);
@@ -12754,6 +12940,18 @@ export class TurbzGame {
 		// TURBZ saves to its own slot so leaving and returning resumes the exact same grind.
 		if (this.turbz) { this.persistTurbz?.(); return; }
 		for (const g of this.save.gear) this.noteFound(g);
+		// The big world is rebuilt from its seed, so only where she stands and
+		// what she has uncovered need saving. The chart itself is 25 MB and is
+		// a pure function of one number; writing it would be writing the number
+		// out longhand.
+		if (this.chartSession && this.save.chartWorld) {
+			const where = chartTileAt(this.chartSession, this.save.x, this.save.y);
+			this.save.chartWorld.tx = where.tx;
+			this.save.chartWorld.ty = where.ty;
+			Object.assign(this.save.chartWorld, sessionSave(this.chartSession));
+			const fog = fogForSave();
+			if (fog) this.save.chartWorld.fog = fog;
+		}
 		this.save.savedAt = Date.now();
 		const key = this.rules === "hardcore" ? HC_KEY : SAVE_KEY;
 		const localJson = JSON.stringify(this.save);
@@ -13531,6 +13729,7 @@ export class TurbzGame {
 			}
 		}
 		if (this.customFile) this.drawMapPlaces(ctx);
+		if (this.chartSession) this.drawVillagers(ctx);
 		// TURBZ travellers (turbz-mode.ts): the wild's stand-in for townsfolk.
 		this.drawWanderers?.(ctx);
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
@@ -15037,12 +15236,24 @@ export class TurbzGame {
 				label: "Autoplay"
 			}
 		];
+		// Right-clicking a tree used to open the same thirteen buttons as right-clicking a bounty.
+		// What is under the cursor comes first now; the shortcuts to the rest of the game are still
+		// here, but folded away behind "More" so the common case is two or three real choices.
+		const here = [
+			...info?.actions ?? [],
+			...(this.rules === "hardcore"
+				? [{ id: "menu:survival", label: "Survival & Camp" }]
+				: this.save?.map === "world" && !this.lms
+					? [{ id: "ghostbox:here", label: this.save.ghostBox ? "Move Ghost Box here" : "Place Ghost Box here" }]
+					: []),
+		];
 		this.menu = {
 			sx: Math.max(8, Math.min(sx, w - 300)),
 			sy: Math.max(8, Math.min(sy, h - 280)),
 			title: info?.title ?? "Menu",
-			lines: info?.lines ?? ["Bag, skills, the board, and the rest of the veil."],
-			actions: [...info?.actions ?? [], ...(this.rules === "hardcore" ? [{ id: "menu:survival", label: "Survival & Camp" }] : this.save?.map === "world" && !this.lms ? [{ id: "ghostbox:here", label: this.save.ghostBox ? "Move Ghost Box here" : "Place Ghost Box here" }] : []), ...shell]
+			lines: info?.lines ?? ["Nothing here. The rest of the veil is under More."],
+			actions: here,
+			shell,
 		};
 		this.syncHud(true);
 	}
