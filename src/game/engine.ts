@@ -226,7 +226,7 @@ import { GREEN_CAVE_ID, findMapFile, isBuiltinMap, playableWorlds } from "./buil
 import { MAIN_WORLD_ID, mainWorldFile, mainWorldHearth, setLifeWorld } from "./main-world";
 import { lifeWorldFile, rollLifeWorld, touchLifeWorld, type LifeWorld } from "./life-world";
 import { cachedChart, ensureChart } from "./chart-gen";
-import { chartWorldForFile, resetChartWorld, streamChartWorld } from "./chart-world";
+import { chartWorldForFile, resetChartWorld, streamChartWorld, tickVillagers, villagersNear } from "./chart-world";
 import { activeChart, clearActiveChart, fogForSave, noteVisited, setActiveChart } from "./chart-store";
 import { tileImage, tileImageRevision, texModeOn, NEWTEX_DIR } from "./tile-atlas";
 import { powerArt } from "./camp-assets";
@@ -2055,13 +2055,15 @@ export class TurbzGame {
 		this.applyStream(streamChartWorld(cw, Math.floor(tx), Math.floor(ty)));
 	}
 	/** Every frame: build the ground the hunter is walking into, and chart what she can see. */
-	tickChartStream() {
+	tickChartStream(dt = 0) {
 		const save = this.save;
 		const cw = this.chartWorld;
 		if (!cw || !save || save.map !== "world" || this.world !== cw.world) return;
 		const tx = Math.floor(save.x / 32), ty = Math.floor(save.y / 32);
 		this.applyStream(streamChartWorld(cw, tx, ty));
 		if (tx !== this.fogTx || ty !== this.fogTy) { this.fogTx = tx; this.fogTy = ty; noteVisited(tx, ty); }
+		// The villages near her carry on with their day.
+		tickVillagers(cw, tx, ty, dt);
 	}
 	/** The chart menu follows the hunter into the overworld and out of it. What she has charted goes into the save first. */
 	syncChartStore(map) {
@@ -2540,7 +2542,7 @@ export class TurbzGame {
 		this.autoSaveT = (this.autoSaveT ?? AUTOSAVE_SECONDS) - dt;
 		if (this.autoSaveT <= 0) { this.autoSaveT = AUTOSAVE_SECONDS; this.persist(); }
 		// Before anything moves: the ground the hunter is about to step onto has to exist.
-		this.tickChartStream();
+		this.tickChartStream(dt);
 		// A bounty's loot menu stops the world until you pick a piece.
 		if (snap.panel === "loot") {
 			this.vx = 0;
@@ -10139,6 +10141,7 @@ export class TurbzGame {
 			if (who) { this.talkWanderer(who); return; }
 		}
 		if (this.customFile && this.interactMapPlace()) return;
+		if (this.chartWorld && this.talkToVillager()) return;
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {
 			const ex = this.dungeonExitAt();
 			if (Math.hypot(save.x - ex.x, save.y - ex.y) < 36) {
@@ -10528,6 +10531,49 @@ export class TurbzGame {
 		}
 		return true;
 	}
+	/**
+	 * The people in the villages.
+	 *
+	 * Separate from `drawMapPlaces` because that one needs a `customFile` and a
+	 * chart world has none — it is generated, not authored.
+	 */
+	drawVillagers(ctx) {
+		const cw = this.chartWorld;
+		const save = this.save;
+		if (!cw || !save) return;
+		const { w: vw, h: vh } = this.cssSize();
+		const viewX = vw / this.zoom * .62 + 120, viewY = vh / this.zoom * .62 + 140;
+		for (const { npc, x, y } of villagersNear(cw, Math.floor(save.x / 32), Math.floor(save.y / 32))) {
+			if (Math.abs(x - this.cam.x) > viewX || Math.abs(y - this.cam.y) > viewY) continue;
+			const outfit = npc.outfit;
+			drawActor(ctx, {
+				x, y, race: "vesper", female: !!npc.female, hair: npc.hair, skin: outfit % 5,
+				// Facing follows the way they are actually walking, which is the
+				// difference between a village of people and a village of statues.
+				facing: npc.route[npc.leg % npc.route.length].x >= npc.tx ? 1 : -1,
+				walk: npc.wait > 0 ? 0 : .6, attack: 0, hurt: 0, setFx: null, setOn: false, time: this.clock,
+				pieces: ["chest", "legs", "feet"].map((slot, i) => ({ slot, style: outfit, type: "normal", fxSeed: i, quality: 0 }))
+			});
+			drawShadowName(ctx, npc.name, x, y - 44, "#f0e2c8");
+		}
+	}
+
+	/** Talk to whoever is standing next to you in a village. */
+	talkToVillager() {
+		const cw = this.chartWorld;
+		const save = this.save;
+		if (!cw || !save || this.world !== cw.world) return false;
+		let best = null, bd = 64;
+		for (const v of villagersNear(cw, Math.floor(save.x / 32), Math.floor(save.y / 32), 12)) {
+			const d = Math.hypot(v.x - save.x, v.y - save.y);
+			if (d < bd) { bd = d; best = v.npc; }
+		}
+		if (!best) return false;
+		const line = best.lines[1 + Math.floor(Math.random() * (best.lines.length - 1))];
+		this.say(`${best.name}, ${best.role.toLowerCase()}: ${line}`);
+		return true;
+	}
+
 	drawMapPlaces(ctx) {
 		const file = this.customFile;
 		const save = this.save;
@@ -13687,6 +13733,7 @@ export class TurbzGame {
 			}
 		}
 		if (this.customFile) this.drawMapPlaces(ctx);
+		if (this.chartWorld && this.world === this.chartWorld.world) this.drawVillagers(ctx);
 		// TURBZ travellers (turbz-mode.ts): the wild's stand-in for townsfolk.
 		this.drawWanderers?.(ctx);
 		if (save.map !== "world" && !save.map.startsWith("custom-")) {

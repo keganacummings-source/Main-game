@@ -40,6 +40,25 @@ GROUND = [
     # Frozen ground, not more ice: tundra is lichen and grit showing through the
     # snow. A bluer snow tile was indistinguishable from the snow beside it.
     ("snow_tundra.png", "snow.png", 36, 0.40, 0.84),
+
+    # --- the second wave of biomes ---------------------------------------
+    # Badlands uses the hand-drawn ClayStone tiles from the camp pack, so it
+    # needs nothing here. These five do.
+    #
+    # Cold dry grass. Not savanna's yellow (that reads as heat) and not plain
+    # grass (that reads as meadow): olive, with the life washed out of it.
+    ("grass_steppe.png", "grass.png", 72, 0.46, 0.92),
+    # Sporefield ground: the mushrooms are the hand-drawn part, so the ground
+    # under them only has to stop reading as swamp. Violet-grey.
+    ("moss_spore.png", "swamp_floor.png", 288, 0.62, 1.06),
+    # Alpine meadow: thin grass over cold rock. Paler and bluer than lowland
+    # grass, which is what makes a treeline visible from the ground.
+    ("grass_alpine.png", "grass.png", 150, 0.62, 1.04),
+    # A salt pan. Taken from sand rather than snow so it keeps a warm cast and
+    # cannot be mistaken for the glacier it often borders.
+    ("salt_flat.png", "sand.png", 44, 0.14, 1.28),
+    # Mangrove mud: the dark wet brown of a tidal flat.
+    ("mud_mangrove.png", "swamp_floor.png", 24, 0.66, 0.72),
 ]
 
 # output -> (source tile sampled for colour, how many clumps, clump radius)
@@ -50,6 +69,11 @@ SCATTER = [
     ("decor_rocks.png", "sand.png", 5, 3, 0.72),
     ("decor_bones.png", "snow.png", 4, 2, 1.05),
     ("decor_shrub.png", "grass.png", 6, 3, 0.85),
+    # Broken clay rubble for the badlands floor, taken from the ClayStone tile
+    # itself so the debris matches the cliffs it fell off.
+    ("decor_clay.png", "claystone.png", 5, 3, 0.9),
+    # Salt crust: pale lumps on the pan.
+    ("decor_salt.png", "snow.png", 7, 2, 1.1),
 ]
 
 MAGENTA = (255, 0, 255)

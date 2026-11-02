@@ -226,3 +226,93 @@ test("a full 2500 x 2500 world fits in memory and holds together", { timeout: 12
   assert.ok(main.tiles > 1_000_000, `the central continent is only ${main.tiles.toLocaleString()} tiles`);
   assert.ok(c.places.length >= 10, `only ${c.places.length} named places in a whole world`);
 });
+
+// ---------------------------------------------------------------------------
+// Rivers and the second wave of biomes
+// ---------------------------------------------------------------------------
+
+test("rivers run off the high ground and reach water", { timeout: 120000 }, () => {
+  const c = wc.generateChart({ seed: 2026, w: 1200, h: 1200 });
+  const river = [];
+  for (let i = 0; i < c.biome.length; i++) if (c.biome[i] === wc.BIOME.river) river.push(i);
+  assert.ok(river.length > 2000, `only ${river.length} river tiles in a whole world`);
+
+  // A river must END somewhere water already was. The first version of the
+  // tracer mistook its own bank for a confluence and stopped after two steps,
+  // which left the continent covered in unconnected damp threads — so this
+  // checks that most river tiles can actually trace through to open water.
+  const W = c.w;
+  const seen = new Uint8Array(c.biome.length);
+  const stack = [];
+  for (let i = 0; i < c.biome.length; i++) {
+    const b = c.biome[i];
+    if ((b === wc.BIOME.ocean || b === wc.BIOME.deep || b === wc.BIOME.lake) && !seen[i]) { seen[i] = 1; stack.push(i); }
+  }
+  // Flood back up the rivers from the sea and the lakes.
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % W;
+    for (const j of [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, i - W, i + W]) {
+      if (j < 0 || j >= c.biome.length) continue;
+      if (seen[j] || c.biome[j] !== wc.BIOME.river) continue;
+      seen[j] = 1; stack.push(j);
+    }
+  }
+  const connected = river.filter((i) => seen[i]).length;
+  assert.ok(connected / river.length > 0.75,
+    `only ${((connected / river.length) * 100).toFixed(0)}% of river tiles drain to water`);
+});
+
+test("a river is water, and is still part of the land it cuts through", () => {
+  const c = wc.generateChart({ seed: 7, w: 800, h: 800 });
+  let checked = 0;
+  for (let i = 0; i < c.biome.length && checked < 400; i++) {
+    if (c.biome[i] !== wc.BIOME.river) continue;
+    checked++;
+    assert.ok(wc.isWater(wc.BIOME.river), "a river is not counted as water");
+    // A river is carved through a continent, so it keeps that continent's id:
+    // the connected-component work ran before the rivers did, and a river is a
+    // cut in a landmass rather than a break in it.
+    assert.ok(c.land[i] > 0, "a river tile lost the continent it was cut into");
+  }
+  assert.ok(checked > 50, `only ${checked} river tiles to check`);
+});
+
+test("the later biomes are real places, not just table entries", { timeout: 120000 }, () => {
+  const c = wc.generateChart({ seed: 2026 });
+  const count = new Map();
+  for (let i = 0; i < c.biome.length; i++) count.set(c.biome[i], (count.get(c.biome[i]) ?? 0) + 1);
+  for (const key of ["river", "reef", "mangrove", "badlands", "steppe", "sporefield", "alpine", "saltflats"]) {
+    const id = wc.BIOME_BY_KEY[key].id;
+    assert.ok((count.get(id) ?? 0) > 500, `${key} covers only ${count.get(id) ?? 0} tiles of a whole world`);
+  }
+});
+
+test("the climate table still answers the plain questions first", () => {
+  // Every biome added later sits in a gap, never on top of a canonical answer:
+  // a sporefield must not be what "hot and wet" means, and a salt pan must not
+  // be what "hot and dry" means. Both of those regressions happened.
+  const { biomeFor, BIOME } = wc;
+  assert.equal(biomeFor(130, 220, 230), BIOME.jungle, "hot and wet stopped being jungle");
+  assert.equal(biomeFor(130, 220, 30), BIOME.desert, "hot and dry stopped being desert");
+  assert.equal(biomeFor(130, 150, 220), BIOME.swamp, "temperate and soaking stopped being swamp");
+  // And the new ones do have to be reachable.
+  assert.equal(biomeFor(118, 230, 10), BIOME.saltflats, "nothing is dry enough to be a salt pan");
+  assert.equal(biomeFor(130, 220, 250), BIOME.sporefield, "nothing is wet enough to be a sporefield");
+  assert.equal(biomeFor(120, 110, 60), BIOME.steppe, "cold and dry grass is not steppe");
+  assert.equal(biomeFor(180, 120, 120), BIOME.alpine, "the band under the peaks is not alpine");
+});
+
+test("shore, mangrove and river are left alone by the guarantee pass", { timeout: 120000 }, () => {
+  // These four are geography, not climate. `fixedGround` exists so that forcing
+  // a missing biome onto a landmass cannot route a desert across a river mouth.
+  const { BIOME, fixedGround, isWater } = wc;
+  for (const k of ["beach", "mangrove", "river", "ocean", "deep", "lake", "reef"]) {
+    assert.ok(fixedGround(wc.BIOME_BY_KEY[k].id), `${k} is not protected from the guarantee pass`);
+  }
+  for (const k of ["plains", "desert", "badlands", "steppe", "highland"]) {
+    assert.ok(!fixedGround(wc.BIOME_BY_KEY[k].id), `${k} is wrongly protected from the guarantee pass`);
+  }
+  assert.ok(isWater(BIOME.river) && isWater(BIOME.reef), "river and reef are not water");
+  assert.ok(!isWater(BIOME.mangrove), "mangrove is land you walk on");
+});

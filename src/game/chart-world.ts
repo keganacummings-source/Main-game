@@ -26,6 +26,7 @@
  */
 import { BIOME, startSpot, type WorldChart } from "./world-chart";
 import { REGION, buildRegion, walkableAt } from "./world-chunks";
+import { VillageCache, stepVillagers, type Villager } from "./world-villages";
 import { MONSTER_BY_ID, ANIMAL_BY_ID, NPCS, POIS, TILE, mulberry32, scaleTile, setTileRemap } from "./content";
 import { MAP_VERSION, isChopTreeArt, type MapFile, type MapRegion } from "./map-format";
 import { TAVERNS, relocateClassicSites, type Spawn, type Tile, type WorldData } from "./world";
@@ -126,6 +127,16 @@ export type ChartWorld = {
   loaded: Map<string, Loaded>;
   /** Towns, shrines, taverns and doors, in chart tiles. Camps keep clear of them. */
   sites: Site[];
+  /**
+   * The villages on this chart, built on demand and then kept.
+   *
+   * Shared across every region, and it has to be: a village straddles region
+   * seams, and its people live on the Village object. Per-region caches would
+   * give the two halves of a border village two different sets of residents,
+   * and everyone would snap back to their doorstep whenever the ground under
+   * them was streamed out and back.
+   */
+  villages: VillageCache;
   /** Makes this world's layout the one the classic sites (hearth, townsfolk, bosses) are read from. */
   activate: () => void;
 };
@@ -299,7 +310,7 @@ export function createChartWorld(chart: WorldChart, id: string, name = chartWorl
     w: chart.w, h: chart.h, tiles: emptyTiles(chart.w * chart.h), spawns: [], cache: null,
     entry: { x: start.tx * TILE + TILE / 2, y: start.ty * TILE + TILE / 2 }, name,
   };
-  return { chart, world, file: overworldFile(chart, start, id, name), start, loaded: new Map(), sites, activate };
+  return { chart, world, file: overworldFile(chart, start, id, name), start, loaded: new Map(), sites, activate, villages: new VillageCache(chart) };
 }
 
 // A hunter is in one world at a time, but the engine asks for "the main world's file" from many places and
@@ -382,7 +393,7 @@ function campsFor(cw: ChartWorld, rx: number, ry: number, w: number, h: number):
       const open: { x: number; y: number }[] = [];
       let wet = 0;
       for (let y = zy; y < zy + CAMP_SIZE; y++) for (let x = zx; x < zx + CAMP_SIZE; x++) {
-        if (walkableAt(chart, x, y)) open.push({ x, y });
+        if (walkableAt(chart, x, y, cw.villages)) open.push({ x, y });
         else if (chart.biome[y * chart.w + x] === BIOME.lake || chart.biome[y * chart.w + x] === BIOME.ocean || chart.biome[y * chart.w + x] === BIOME.deep) wet++;
       }
       if (wet === 0 && open.length >= CAMP_SIZE * CAMP_SIZE * 0.8) { found = { x: zx, y: zy }; spots = open; }
@@ -566,7 +577,7 @@ export function streamChartWorld(cw: ChartWorld, tx: number, ty: number): Stream
   for (let ry = want.ry0; ry <= want.ry1; ry++) for (let rx = want.rx0; rx <= want.rx1; rx++) {
     const key = regionKey(rx, ry);
     if (loaded.has(key)) continue;
-    const region = buildRegion(chart, rx, ry);
+    const region = buildRegion(chart, rx, ry, REGION, cw.villages);
     const ox = rx * REGION, oy = ry * REGION;
     const prefix = prefixOf(rx, ry);
 
@@ -611,4 +622,41 @@ export function builtTiles(cw: ChartWorld): number {
     n += Math.min(REGION, cw.chart.w - ox) * Math.min(REGION, cw.chart.h - oy);
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Villagers
+// ---------------------------------------------------------------------------
+
+/**
+ * Walk everybody in the villages near the hunter.
+ *
+ * Near, not everywhere: a world holds about ninety villages of a dozen people
+ * each, and animating all of them every frame to show the one or two you could
+ * actually see is a thousand pointless steps a frame.
+ *
+ * Positions are CHART tiles, which in a chart world is also the world's own
+ * coordinate system — `createChartWorld` makes one `WorldData` the size of the
+ * whole chart precisely so that nothing has to be translated.
+ */
+export function tickVillagers(cw: ChartWorld, tx: number, ty: number, dt: number): void {
+  for (const v of cw.villages.near(tx, ty, REGION)) {
+    stepVillagers(v, dt, (btx, bty) => {
+      // Villagers do not walk into their own walls. The hunter and each other
+      // they step around by waiting, which stepVillagers handles.
+      const t = v.tiles.get(bty * cw.chart.w + btx);
+      return !!t?.block;
+    });
+  }
+}
+
+/** Everyone close enough to draw or talk to, with their world pixel position. */
+export function villagersNear(cw: ChartWorld, tx: number, ty: number, radius = 72): { npc: Villager; x: number; y: number }[] {
+  const out: { npc: Villager; x: number; y: number }[] = [];
+  for (const v of cw.villages.near(tx, ty, radius)) {
+    for (const npc of v.villagers) {
+      out.push({ npc, x: npc.tx * TILE + TILE / 2, y: npc.ty * TILE + TILE / 2 });
+    }
+  }
+  return out;
 }

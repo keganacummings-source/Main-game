@@ -82,6 +82,15 @@ export const BIOME = {
   highland: 13,
   volcanic: 14,
   void: 15,
+  // Added after the first 2500x2500 world shipped. Ids are append-only.
+  river: 16,
+  reef: 17,
+  mangrove: 18,
+  badlands: 19,
+  steppe: 20,
+  sporefield: 21,
+  alpine: 22,
+  saltflats: 23,
 } as const;
 export type BiomeId = (typeof BIOME)[keyof typeof BIOME];
 
@@ -115,11 +124,38 @@ export const BIOMES: readonly ChartBiome[] = [
   { id: BIOME.highland, key: "highland", label: "Highland", water: false, colour: "#8a8275", words: ["Crag", "Peak", "Spine", "Tor"], about: "Bare rock above the treeline." },
   { id: BIOME.volcanic, key: "volcanic", label: "Volcanic", water: false, colour: "#8c3a2a", words: ["Cinder", "Ember", "Ashgrave"], about: "Hellbrick, lava rivers and charred trees." },
   { id: BIOME.void, key: "void", label: "Void", water: false, colour: "#6a4cff", words: ["Blight", "Nullgrave", "Breach"], about: "Violet grass and starry rock. The deepest, deadliest land." },
+
+  { id: BIOME.river, key: "river", label: "River", water: true, colour: "#49a7dd", words: ["Run", "Ford", "Bend", "Race"], about: "Fresh water running off the highlands to the sea." },
+  { id: BIOME.reef, key: "reef", label: "Reef", water: true, colour: "#3fb6a8", words: ["Reef", "Shoal", "Bar"], about: "Warm shallows close enough to shore to wade." },
+  { id: BIOME.mangrove, key: "mangrove", label: "Mangrove", water: false, colour: "#3b6b52", words: ["Root", "Tangle", "Flat"], about: "Tidal mud and standing roots where hot land meets the sea." },
+  { id: BIOME.badlands, key: "badlands", label: "Badlands", water: false, colour: "#b5703f", words: ["Gulch", "Mesa", "Burn", "Cut"], about: "Banded clay stone cut into gullies. Nothing grows and nothing hides." },
+  { id: BIOME.steppe, key: "steppe", label: "Steppe", water: false, colour: "#9aa86a", words: ["Steppe", "Sweep", "Range"], about: "Cold dry grass that runs to the horizon." },
+  { id: BIOME.sporefield, key: "sporefield", label: "Sporefield", water: false, colour: "#a35fa0", words: ["Bloom", "Cap", "Spore", "Shade"], about: "Mushrooms the size of trees over warm sodden ground." },
+  { id: BIOME.alpine, key: "alpine", label: "Alpine Meadow", water: false, colour: "#6f9a74", words: ["Shelf", "Saddle", "Bench"], about: "Thin grass and loose rock in the last band below the peaks." },
+  { id: BIOME.saltflats, key: "saltflats", label: "Salt Flats", water: false, colour: "#e8e4d2", words: ["Pan", "Flat", "Glare"], about: "A dead white pan where an inland sea dried out." },
 ];
 
 export const BIOME_BY_ID: Record<number, ChartBiome> = Object.fromEntries(BIOMES.map((b) => [b.id, b]));
-/** True for the three water biomes. */
-export const isWater = (b: number): boolean => b === BIOME.deep || b === BIOME.ocean || b === BIOME.lake;
+/**
+ * True for every biome you swim rather than walk.
+ *
+ * Rivers and reefs joined the first three. A river tile keeps its continent id
+ * in `land` — it is a thin cut through a landmass, not a break in it — so this
+ * predicate, not the land array, is what callers must ask about water.
+ */
+export const isWater = (b: number): boolean =>
+  b === BIOME.deep || b === BIOME.ocean || b === BIOME.lake || b === BIOME.river || b === BIOME.reef;
+
+/**
+ * Ground the biome passes must leave alone.
+ *
+ * Shore, mangrove and river are not climates — they are where the water is, and
+ * they were decided from the distance fields. The "every landmass has every
+ * biome" pass paints over whatever it finds, and without this it would route a
+ * guaranteed desert straight across a river mouth.
+ */
+export const fixedGround = (b: number): boolean =>
+  b === BIOME.beach || b === BIOME.mangrove || isWater(b);
 
 // ---------------------------------------------------------------------------
 // Noise
@@ -262,16 +298,46 @@ export function biomeFor(elev: number, temp: number, moist: number): BiomeId {
 
   if (elev > ALPINE) return temp < 96 ? BIOME.glacier : BIOME.highland;
   if (elev > HIGHLAND) return BIOME.highland;
+  // The band right under the peaks. Without it the mountains went from bare rock
+  // straight to lowland forest with no treeline in between, which is the part of
+  // a mountain that actually reads as a mountain from the ground.
+  if (elev > HIGHLAND - 24 && temp > 70 && moist > 70) return BIOME.alpine;
 
   // The hottest, driest, highest ground turns volcanic — the old "hell" land.
-  if (temp > 212 && moist < 70 && elev > SEA + 40) return BIOME.volcanic;
+  if (temp > 206 && moist < 80 && elev > SEA + 40) return BIOME.volcanic;
 
   if (temp < 58) return moist > 120 ? BIOME.glacier : BIOME.tundra;
   if (temp < 96) return moist > 110 ? BIOME.taiga : BIOME.tundra;
+  // Cold but not frozen, and dry: the long grass belt between tundra and desert.
+  // This used to fall through to savanna, which put lone acacias on frozen ground.
+  if (temp < 134 && moist < 108) return BIOME.steppe;
 
   if (temp > 188) {
-    if (moist < 60) return BIOME.desert;
-    if (moist < 110) return BIOME.savanna;
+    /*
+     * A salt pan is not "a dry place" — a desert is that. It is the floor of a
+     * basin that dried out completely, so it has to be both LOW and drier than
+     * the driest desert, which is why the two numbers here are nowhere near the
+     * desert band below rather than just inside it.
+     *
+     * The first attempt used half this margin and swallowed ordinary hot, dry
+     * ground, which put a white pan where the desert should have been.
+     */
+    if (moist < 24 && elev < SEA + 26) return BIOME.saltflats;
+    if (moist < 62) return BIOME.desert;
+    if (moist < 108) return BIOME.savanna;
+    // Hot, wet and HIGH is clay country, not rainforest: rain cuts bare rock into
+    // gullies rather than growing on it.
+    if (moist < 168 && elev > SEA + 36) return BIOME.badlands;
+    /*
+     * Wetter than a rainforest: ground warm enough and wet enough to rot.
+     *
+     * The band has to sit well clear of jungle's, or the sporefield simply
+     * replaces the jungle — which is what happened at 214. At this end of the
+     * scale the moisture mostly comes from the river-bank bonus, so sporefields
+     * grow along tropical rivers and around warm lakes, which is where a
+     * fungal bloom belongs anyway.
+     */
+    if (moist > 238) return BIOME.sporefield;
     if (moist > 190) return BIOME.jungle;
     return BIOME.forest;
   }
@@ -293,6 +359,8 @@ export type ChartOpts = {
   islands?: number;
   /** Roughly how much of the chart should be land, 0-1. */
   landRatio?: number;
+  /** How many rivers to run off the highlands. Default: one per ~26,000 land tiles. */
+  rivers?: number;
 };
 
 /**
@@ -753,6 +821,270 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
   }
 
   /*
+   * ---- 3b. rivers ---------------------------------------------------------
+   *
+   * Lakes gave the continent standing water but nothing joining it up, so the
+   * interior still read as one unbroken slab of ground. Rivers are what give a
+   * landmass its grain: they say which way the land falls, they cut the biomes
+   * into recognisable halves, and they are the reason a settlement sits where it
+   * sits.
+   *
+   * Each one starts high and walks DOWNHILL — the same rule water follows — to
+   * the sea or to a lake, widening as it goes, because a river gathers. They are
+   * carved before the biomes are chosen and they raise the moisture of the
+   * ground they pass, so the land along a river greens up by itself instead of
+   * having a green stripe painted beside it.
+   *
+   * A river keeps its continent id in `land`: it is a cut through a landmass,
+   * not a break in it, and the connected-component work has already finished.
+   */
+  const riverMask = new Uint8Array(n);
+  {
+    let landTiles = 0;
+    for (let i = 0; i < n; i++) if (land[i]) landTiles++;
+    // One river per ~26,000 land tiles, so the count follows the world's size
+    // rather than being a magic number tuned to one chart.
+    const want = opts.rivers ?? Math.max(0, Math.min(400, Math.round(landTiles / 26000)));
+    // Sources must start apart or every river in a range runs the same valley.
+    const apart = Math.max(18, Math.sqrt(Math.max(1, landTiles) / Math.max(1, want)) * 0.55);
+    /*
+     * Generous on purpose. A river meanders, and when a meander boxes its own
+     * head in it walks back down its channel to get out — all of which costs
+     * steps. At three-quarters of the chart's width, six of nineteen rivers
+     * simply ran out of length part-way to the coast. The walk is bounded by
+     * this and by the ground, so the only thing a bigger number costs is time
+     * for rivers that would have stopped anyway.
+     */
+    const MAX_LEN = Math.round(Math.max(w, h) * 3);
+
+    /** High ground to start from, roughly ordered by height so sources sit near peaks. */
+    const sources: number[] = [];
+    {
+      const high: number[] = [];
+      const step = 7;   // a coarse scan; a river source does not need tile precision
+      for (let y = 2; y < h - 2; y += step) {
+        for (let x = 2; x < w - 2; x += step) {
+          const i = y * w + x;
+          if (!land[i] || elev[i]! < HIGHLAND - 18) continue;
+          high.push(i);
+        }
+      }
+      high.sort((a, b) => elev[b]! - elev[a]!);
+      for (const i of high) {
+        if (sources.length >= want) break;
+        const x = i % w, y = (i / w) | 0;
+        let ok = true;
+        for (const j of sources) {
+          if (Math.hypot(x - (j % w), y - ((j / w) | 0)) < apart) { ok = false; break; }
+        }
+        if (ok) sources.push(i);
+      }
+    }
+
+    /*
+     * Each river is traced as a one-tile CENTRELINE first and widened after.
+     *
+     * Widening as it went did not work, and the reason is worth keeping: once a
+     * channel is two tiles across, the tiles the walk has just painted are its
+     * own forward neighbours. The walk then either mistook its own bank for a
+     * confluence and stopped, or found every candidate already taken and had
+     * nowhere to go. Every river in the world ended after a couple of steps.
+     * Tracing thin and widening afterwards keeps the two concerns apart.
+     *
+     * `owner` is which river claimed a tile, so a river can tell its own channel
+     * from somebody else's and only the second of those ends the walk.
+     */
+    const owner = new Int32Array(n);              // 0 = none, else river index + 1
+    const paths: number[][] = [];
+    const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+
+    for (let s = 0; s < sources.length; s++) {
+      const me = s + 1;
+      let i = sources[s]!;
+      let px = 0, py = 0;              // last direction, so a river keeps its line
+      const rngR = mulberry32(seed + 9001 + s * 7919);
+      const path: number[] = [];
+      let stuck = 0;
+
+      for (let len = 0; len < MAX_LEN; len++) {
+        if (owner[i] && owner[i] !== me) break;    // ran into somebody else's channel
+        // Our own tiles are walked back over when a meander boxes the head in
+        // (see below), so only new ground joins the path.
+        if (!owner[i]) { owner[i] = me; path.push(i); }
+        const x = i % w, y = (i / w) | 0;
+
+        let bestI = -1, bestCost = Infinity, bdx = 0, bdy = 0, joined = false;
+        // The same search again, but ranked by distance to water instead of by
+        // height — the escape route for a hollow. Kept alongside so both answers
+        // come out of one pass over the eight neighbours.
+        let spillI = -1, spillCost = Infinity, sdx = 0, sdy = 0;
+        // And the best way along our OWN channel, for when there is no other.
+        let ownI = -1, ownCost = Infinity;
+        for (const [dx, dy] of DIRS) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const j = ny * w + nx;
+          if (owner[j] === me) {
+            if (coast[j]! < ownCost) { ownCost = coast[j]!; ownI = j; }
+            continue;                              // normally, never step back into it
+          }
+          if (owner[j]) {
+            // Met another river. Water that meets water has arrived.
+            bestI = j; bdx = dx; bdy = dy; joined = true; break;
+          }
+          /*
+           * Height, how far the sea is, a nudge to keep going straight, and a
+           * little noise to meander with.
+           *
+           * The distance-to-water term is the one that matters. Without it the
+           * walk only ever sees its eight neighbours, and the elevation field
+           * is rank-mapped, so it has broad almost-flat stretches where every
+           * neighbour is a legal downhill step. Rivers wandered those stretches
+           * until they ran out of length: eighteen rivers, eight hundred tiles
+           * each, and three of them reached the sea. Knowing which way is out
+           * costs one array read and makes a river behave like a river.
+           */
+          const straight = (dx === px && dy === py) ? -2.5 : 0;
+          const cost = elev[j]! + coast[j]! * 0.5 + straight + (rngR() - 0.5) * 3.2;
+          if (cost < bestCost) { bestCost = cost; bestI = j; bdx = dx; bdy = dy; }
+          const sc = coast[j]! * 4 + straight + (rngR() - 0.5) * 2;
+          if (sc < spillCost) { spillCost = sc; spillI = j; sdx = dx; sdy = dy; }
+        }
+        /*
+         * Boxed in by our own channel.
+         *
+         * A meander can curl round until the head is surrounded by its own
+         * tail, and this was how HALF the rivers in a world ended: not at the
+         * sea, just stopped, in the middle of the continent. The water has met
+         * itself, which is fine — an oxbow is a real thing — so the river keeps
+         * going ALONG its own channel, toward whichever of its own tiles is
+         * nearest the sea, until it finds open ground again.
+         *
+         * That terminates: the coast field decreases strictly toward water, so
+         * following it down the channel always leads out, and the step counter
+         * bounds it regardless.
+         */
+        if (bestI < 0) {
+          if (ownI < 0) break;                     // genuinely nowhere left to go
+          i = ownI;
+          continue;                                // already river; not re-added to the path
+        }
+
+        if (joined) { path.push(bestI); break; }
+
+        /*
+         * A hollow. Counting the uphill steps and giving up was the first attempt
+         * and it is why the rivers came out as unconnected threads in the middle
+         * of the continent: a basin anywhere along the way ended the river there.
+         *
+         * Real water fills a basin and spills over the lowest rim, and the rim it
+         * spills toward is whichever side faces the sea. The coast distance field
+         * already knows which side that is, so when the descent stalls the river
+         * steers by it instead until it is falling again.
+         */
+        if (elev[bestI]! > elev[i]! + 1) {
+          stuck++;
+          if (spillI >= 0) { bestI = spillI; bdx = sdx; bdy = sdy; }
+          // Still climbing after a long way: the ground genuinely goes nowhere.
+          if (stuck > 400) break;
+        } else stuck = 0;
+
+        px = bdx; py = bdy;
+        i = bestI;
+        if (!land[i]) { path.push(i); break; }     // reached the sea or a lake
+      }
+      // A few tiles is a damp patch, not a river. Give the ground back.
+      if (path.length < 24) { for (const j of path) owner[j] = 0; continue; }
+      paths.push(path);
+    }
+
+    /*
+     * Widen. A river gathers as it runs, so the channel is measured from how far
+     * along its own path a tile is, not from a global counter.
+     */
+    const carve = (cx: number, cy: number, r: number) => {
+      for (let y = Math.max(0, cy - r); y <= Math.min(h - 1, cy + r); y++) {
+        for (let x = Math.max(0, cx - r); x <= Math.min(w - 1, cx + r); x++) {
+          if ((x - cx) * (x - cx) + (y - cy) * (y - cy) > r * r) continue;
+          const j = y * w + x;
+          if (!land[j]) continue;                  // already sea; nothing to carve
+          riverMask[j] = 1;
+          // Drop the bed a little so the river sits in a valley rather than on
+          // a ridge, which also keeps the banks reading as banks.
+          if (elev[j]! > SEA + 1) elev[j] = Math.max(SEA + 1, elev[j]! - 2);
+        }
+      }
+    };
+
+    for (const path of paths) {
+      for (let k = 0; k < path.length; k++) {
+        const r = k < 40 ? 0 : k < 140 ? 1 : 2;
+        const cx = path[k]! % w, cy = (path[k]! / w) | 0;
+        carve(cx, cy, r);
+        /*
+         * Close the corner on a diagonal step.
+         *
+         * The walk moves in eight directions, so a one-tile channel that steps
+         * diagonally touches only at the corners — and a chain of corners is not
+         * a river. It is not crossable as water by anything that moves on tiles,
+         * and a flood fill up from the sea does not reach past the first one: a
+         * world of eighteen rivers came out as 453 disconnected fragments, of
+         * which three reached the sea. Painting one extra tile at each diagonal
+         * makes the channel properly joined.
+         */
+        if (k > 0 && r === 0) {
+          const px2 = path[k - 1]! % w, py2 = (path[k - 1]! / w) | 0;
+          if (px2 !== cx && py2 !== cy) carve(cx, py2, 0);
+        }
+      }
+    }
+
+    /*
+     * Wet banks.
+     *
+     * Moisture already falls off with distance from the coast; a river is coast
+     * too. The first version of this spread a disc out of every river tile, which
+     * re-walked the same ground hundreds of times; sampling it instead left the
+     * moisture stippled, which would have come out as speckled biomes. This is
+     * the same 3-4 chamfer used for the coast, seeded on the river: two passes
+     * over the chart, and every tile gets its true distance.
+     */
+    const BANK = 14;
+    const rd = new Int32Array(n);
+    for (let i = 0; i < n; i++) rd[i] = riverMask[i] ? 0 : FAR;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!rd[i]) continue;
+        let best = rd[i]!;
+        if (x > 0) best = Math.min(best, rd[i - 1]! + ORTH);
+        if (y > 0) best = Math.min(best, rd[i - w]! + ORTH);
+        if (x > 0 && y > 0) best = Math.min(best, rd[i - w - 1]! + DIAG);
+        if (x < w - 1 && y > 0) best = Math.min(best, rd[i - w + 1]! + DIAG);
+        rd[i] = best;
+      }
+    }
+    for (let y = h - 1; y >= 0; y--) {
+      for (let x = w - 1; x >= 0; x--) {
+        const i = y * w + x;
+        if (!rd[i]) continue;
+        let best = rd[i]!;
+        if (x < w - 1) best = Math.min(best, rd[i + 1]! + ORTH);
+        if (y < h - 1) best = Math.min(best, rd[i + w]! + ORTH);
+        if (x < w - 1 && y < h - 1) best = Math.min(best, rd[i + w + 1]! + DIAG);
+        if (x > 0 && y < h - 1) best = Math.min(best, rd[i + w - 1]! + DIAG);
+        rd[i] = best;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (!land[i] || riverMask[i]) continue;
+      const d = rd[i]! / ORTH;
+      if (d > BANK) continue;
+      moist[i] = Math.min(255, moist[i]! + Math.round((1 - d / BANK) * 52));
+    }
+  }
+
+  /*
    * ---- 4. biomes ---------------------------------------------------------
    *
    * Shore and shallow sea are decided by DISTANCE TO THE COAST, not by height.
@@ -768,9 +1100,22 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
    * readable edge to the land.
    */
   const SHELF = 150;
+  /** Warm shallows right against the shore become reef rather than more ocean. */
+  const REEF = 7;
   for (let i = 0; i < n; i++) {
-    if (!land[i]) { biome[i] = sea[i]! <= SHELF ? BIOME.ocean : BIOME.deep; continue; }
-    if (coast[i]! <= SHORE) { biome[i] = BIOME.beach; continue; }
+    if (!land[i]) {
+      if (sea[i]! <= REEF && temp[i]! > 170) biome[i] = BIOME.reef;
+      else biome[i] = sea[i]! <= SHELF ? BIOME.ocean : BIOME.deep;
+      continue;
+    }
+    // A river cuts through whatever the climate would otherwise have put here.
+    if (riverMask[i]) { biome[i] = BIOME.river; continue; }
+    if (coast[i]! <= SHORE) {
+      // Hot wet coast is root and mud, not sand. This is the only place mangrove
+      // can occur, which is right: it is a shoreline, not a climate.
+      biome[i] = temp[i]! > 186 && moist[i]! > 176 ? BIOME.mangrove : BIOME.beach;
+      continue;
+    }
     biome[i] = biomeFor(elev[i]!, temp[i]!, moist[i]!);
   }
 
@@ -834,6 +1179,16 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       // high, dry inland ground, which is where they read best.
       { id: BIOME.volcanic, elev: HIGHLAND, temp: 220, moist: 40, lift: HIGHLAND - 10 },
       { id: BIOME.void, elev: SEA + 60, temp: 120, moist: 100 },
+      // The later additions. Each sits in a gap the original twelve left open,
+      // so their ideals are deliberately not near any of the ones above.
+      { id: BIOME.badlands, elev: SEA + 70, temp: 205, moist: 130 },
+      { id: BIOME.steppe, elev: SEA + 30, temp: 110, moist: 85 },
+      { id: BIOME.sporefield, elev: SEA + 15, temp: 200, moist: 240 },
+      { id: BIOME.alpine, elev: HIGHLAND - 12, temp: 105, moist: 130, lift: HIGHLAND - 18 },
+      { id: BIOME.saltflats, elev: SEA + 8, temp: 225, moist: 18 },
+      // Shore, mangrove, river and reef are NOT here. All four are geography
+      // rather than climate — they exist where the water is — so forcing one
+      // inland would put a tidal flat in the middle of a continent.
     ];
 
     /*
@@ -865,7 +1220,7 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
       const seen = new Map<number, number>();
       for (let i = 0; i < n; i++) {
         const id = land[i]!;
-        if (!id || biome[i] === BIOME.beach) continue;
+        if (!id || fixedGround(biome[i]!)) continue;
         const k = (seen.get(id) ?? 0) + 1;
         seen.set(id, k);
         if (k % stride.get(id)!) continue;
@@ -912,7 +1267,7 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
         for (let y = Math.max(0, Math.floor(by - r)); y < Math.min(h, Math.ceil(by + r)); y++) {
           for (let x = Math.max(0, Math.floor(bx - r)); x < Math.min(w, Math.ceil(bx + r)); x++) {
             const i = y * w + x;
-            if (land[i] !== id || biome[i] === BIOME.beach) continue;
+            if (land[i] !== id || fixedGround(biome[i]!)) continue;
             const d = Math.hypot(x - bx, y - by) / r;
             if (d > 1) continue;
             // A ragged edge, so a placed region does not read as a stamped disc.
@@ -932,7 +1287,7 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
           for (let y = Math.max(0, by - fr); y <= Math.min(h - 1, by + fr); y++) {
             for (let x = Math.max(0, bx - fr); x <= Math.min(w - 1, bx + fr); x++) {
               const i = y * w + x;
-              if (land[i] !== id || biome[i] === BIOME.beach || placed[i]) continue;
+              if (land[i] !== id || fixedGround(biome[i]!) || placed[i]) continue;
               biome[i] = want.id;
               placed[i] = 1;
               if (want.lift && elev[i]! < want.lift) elev[i] = want.lift;
@@ -969,7 +1324,7 @@ export function generateChart(opts: ChartOpts = {}): WorldChart {
           if (set.has(want.id)) continue;
           // Any inland tile of this landmass will do at this point.
           for (const i of sample.get(id) ?? []) {
-            if (placed[i]) continue;
+            if (placed[i] || fixedGround(biome[i]!)) continue;
             biome[i] = want.id;
             placed[i] = 1;
             if (want.lift && elev[i]! < want.lift) elev[i] = want.lift;

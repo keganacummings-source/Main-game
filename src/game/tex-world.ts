@@ -34,6 +34,15 @@ export const TEX = {
   grassDry: T("grass_dry"), grassJungle: T("grass_jungle"),
   stoneHighland: T("stone_highland"), snowTundra: T("snow_tundra"),
   decorRocks: T("decor_rocks"), decorBones: T("decor_bones"), decorShrub: T("decor_shrub"),
+
+  // Hand-drawn in the camp tile pack, for the second wave of biomes and for the
+  // things standing around in the world.
+  clayStone: T("claystone"), clayWall: T("claystone_wall"),
+  arena: T("arena"), oreNode: T("ore_node"), mushroom: T("mushroom"), sign: T("sign"),
+  // Derived alongside them (scripts/sprites/world-decor.py).
+  grassSteppe: T("grass_steppe"), mossSpore: T("moss_spore"), grassAlpine: T("grass_alpine"),
+  saltFlat: T("salt_flat"), mudMangrove: T("mud_mangrove"),
+  decorClay: T("decor_clay"), decorSalt: T("decor_salt"),
 } as const;
 export const TEX_FILES: string[] = Object.values(TEX);
 /** The same list as a set, for the per-tile checks in retextureDungeon. */

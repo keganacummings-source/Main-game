@@ -107,3 +107,99 @@ test("a region at the edge of the chart is clipped, not overrun", () => {
   assert.equal(r.tiles.length, r.w * r.h);
   for (const t of r.tiles) assert.ok(t && t.sprite, "a clipped region has holes in it");
 });
+
+// ---------------------------------------------------------------------------
+// Things standing in the world
+// ---------------------------------------------------------------------------
+
+test("world features are spread, not sprinkled", () => {
+  // Features sit on a LATTICE rather than rolling per tile, because at one in a
+  // few thousand a per-tile roll makes whether a region has any at all a matter
+  // of luck. So they must actually appear, in the numbers the table implies.
+  const count = new Map();
+  for (let y = 0; y < chart.h; y++) {
+    for (let x = 0; x < chart.w; x++) {
+      const f = ch.featureAt(chart.seed, x, y, chart.biome[y * chart.w + x]);
+      if (f) count.set(f.art, (count.get(f.art) ?? 0) + 1);
+    }
+  }
+  // This chart is 1000 x 1000; the real world is 2500 x 2500, so a little over
+  // six times the area. Arenas are deliberately the rarest thing in the world —
+  // a handful here is dozens there.
+  for (const f of ch.FEATURES) {
+    assert.ok((count.get(f.art) ?? 0) >= 5, `${f.art} appears ${count.get(f.art) ?? 0} times on a whole chart`);
+  }
+});
+
+test("a feature only stands on ground its own table allows", () => {
+  for (let y = 0; y < chart.h; y += 3) {
+    for (let x = 0; x < chart.w; x += 3) {
+      const b = chart.biome[y * chart.w + x];
+      const f = ch.featureAt(chart.seed, x, y, b);
+      if (f) assert.ok(f.on.includes(b), `${f.art} is standing on biome ${b}`);
+    }
+  }
+});
+
+test("a feature on a region seam is cut the same from either side", () => {
+  // featureAt takes a chart tile and the seed and nothing else, which is the
+  // whole reason a node on a boundary cannot come out twice or half-missing.
+  const R = ch.REGION;
+  for (const [x, y] of [[R - 1, R - 1], [R, R], [R, R - 1], [2 * R, R + 5]]) {
+    if (x >= chart.w || y >= chart.h) continue;
+    const b = chart.biome[y * chart.w + x];
+    assert.equal(ch.featureAt(chart.seed, x, y, b), ch.featureAt(chart.seed, x, y, b));
+  }
+});
+
+test("a solid feature is the tile, not a layer on it", () => {
+  // The renderer draws a solid tile's sprite and nothing else, so scenery on a
+  // solid tile is invisible. An ore node is solid, so it has to BE the sprite.
+  const solid = ch.FEATURES.filter((f) => f.solid).map((f) => f.art);
+  assert.ok(solid.length, "no solid features to check");
+  let seen = 0;
+  for (let rx = 0; rx < 4; rx++) {
+    for (const t of ch.buildRegion(chart, rx, rx).tiles) {
+      if (!t || !solid.includes(t.sprite)) continue;
+      seen++;
+      assert.equal(t.block, 1, "a solid feature came out walkable");
+      assert.ok(!t.layers?.length, "a solid feature is wearing a layer it cannot show");
+    }
+  }
+  assert.ok(seen > 0, "no solid features landed in the sampled regions");
+});
+
+test("every piece of art the world can place is real New Texture art", () => {
+  for (const f of ch.FEATURES) assert.ok(allowed.has(f.art), `${f.art} is not in the New Texture set`);
+  for (const b of wc.BIOMES) {
+    const look = ch.LOOK[b.id];
+    if (look.scatter) assert.ok(allowed.has(look.scatter), `${b.label}: scatter ${look.scatter} is not New Texture art`);
+  }
+});
+
+test("a solid feature is visible, not swallowed by the rock rule", () => {
+  // `rockAt` says a solid feature's tile is solid, so that camps and sites keep
+  // off it. The tile then has to be drawn as the FEATURE, not as the mountain
+  // wall the solid branch would otherwise reach for — the first version of this
+  // made every ore node in the world render as blank rock.
+  const solid = ch.FEATURES.filter((f) => f.solid);
+  assert.ok(solid.length, "no solid features to check");
+  let found = 0;
+  for (let rx = 0; rx < 4 && found < 1; rx++) {
+    const r = ch.buildRegion(chart, rx, rx);
+    for (let y = 0; y < r.h; y++) {
+      for (let x = 0; x < r.w; x++) {
+        const cx = r.originX + x, cy = r.originY + y;
+        const f = ch.featureAt(chart.seed, cx, cy, chart.biome[cy * chart.w + cx]);
+        if (!f?.solid) continue;
+        const t = r.tiles[y * r.w + x];
+        assert.equal(t.sprite, f.art, `a solid feature at ${cx},${cy} is drawn as something else`);
+        assert.equal(t.block, 1, "a solid feature came out walkable");
+        assert.ok(ch.rockAt(chart, cx, cy), "rockAt disagrees that a solid feature is solid");
+        assert.ok(!ch.walkableAt(chart, cx, cy), "walkableAt would let a camp stand on an ore node");
+        found++;
+      }
+    }
+  }
+  assert.ok(found > 0, "no solid features landed in the sampled regions");
+});

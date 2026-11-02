@@ -17,6 +17,7 @@
  */
 import { BIOME, isWater, type WorldChart } from "./world-chart";
 import { BI, FL, TEX } from "./tex-world";
+import { VillageCache, type Village } from "./world-villages";
 import type { WorldData } from "./world";
 
 /** Chart tiles across one playable region. */
@@ -69,7 +70,74 @@ export const LOOK: Record<number, Look> = {
   [BIOME.highland]: { floor: FL.stone, biome: BI.bone, ground: TEX.stoneHighland, patch: TEX.stone, patchFloor: FL.stone, patchAt: 0.16, wall: TEX.stoneWall, scatter: TEX.decorRocks, scatterAt: 0.06 },
   [BIOME.volcanic]: { floor: FL.ash, biome: BI.ashen, ground: TEX.hellFloor, patch: TEX.lava, patchFloor: FL.lava, patchAt: 0.05, wall: TEX.hellWall, tree: TEX.treeHell, treeAt: 0.03 },
   [BIOME.void]: { floor: FL.void, biome: BI.void, ground: TEX.voidGrass, patch: TEX.voidBrick, patchFloor: FL.void, patchAt: 0.08, wall: TEX.voidRock, tree: TEX.treeVoid, treeAt: 0.06 },
+
+  // --- the second wave --------------------------------------------------
+  // A river is shallow water, so it uses the shallow tile rather than the deep
+  // one: you are meant to be able to see you could wade it.
+  [BIOME.river]: { floor: FL.water, biome: BI.tide, ground: TEX.water, wall: TEX.stoneWall, liquid: true },
+  [BIOME.reef]: { floor: FL.water, biome: BI.tide, ground: TEX.water, patch: TEX.swamp, patchFloor: FL.water, patchAt: 0.3, wall: TEX.stoneWall, liquid: true },
+  [BIOME.mangrove]: { floor: FL.bog, biome: BI.tide, ground: TEX.mudMangrove, patch: TEX.swamp, patchFloor: FL.water, patchAt: 0.26, wall: TEX.stoneWall, tree: TEX.treeSwamp, treeAt: 0.16 },
+  // Badlands is the one biome whose walls are its own material: the ClayStone
+  // wall tile is what makes a gully look cut rather than fenced.
+  [BIOME.badlands]: { floor: FL.stone, biome: BI.crown, ground: TEX.clayStone, patch: TEX.sand, patchFloor: FL.sand, patchAt: 0.14, wall: TEX.clayWall, tree: TEX.treeDesert, treeAt: 0.004, scatter: TEX.decorClay, scatterAt: 0.08 },
+  [BIOME.steppe]: { floor: FL.grass, biome: BI.verdant, ground: TEX.grassSteppe, patch: TEX.dirt, patchFloor: FL.dirt, patchAt: 0.12, wall: TEX.stoneWall, tree: TEX.treePlains, treeAt: 0.004, scatter: TEX.decorShrub, scatterAt: 0.04 },
+  // The mushrooms ARE the biome, so they go on thick — more than any forest.
+  [BIOME.sporefield]: { floor: FL.bog, biome: BI.tide, ground: TEX.mossSpore, patch: TEX.swampFloor, patchFloor: FL.bog, patchAt: 0.18, wall: TEX.stoneWall, tree: TEX.mushroom, treeAt: 0.22 },
+  [BIOME.alpine]: { floor: FL.grass, biome: BI.bone, ground: TEX.grassAlpine, patch: TEX.stoneHighland, patchFloor: FL.stone, patchAt: 0.22, wall: TEX.stoneWall, tree: TEX.treeSnow, treeAt: 0.03, scatter: TEX.decorRocks, scatterAt: 0.07 },
+  [BIOME.saltflats]: { floor: FL.sand, biome: BI.crown, ground: TEX.saltFlat, patch: TEX.sand, patchFloor: FL.sand, patchAt: 0.1, wall: TEX.sandWall, scatter: TEX.decorSalt, scatterAt: 0.05 },
 };
+
+/**
+ * Things that stand in the world rather than carpet it.
+ *
+ * Trees and scatter are per-tile noise — they are the ground's texture. These
+ * are landmarks: an ore node worth stopping for, an arena worth walking to.
+ * They are rare enough that per-tile probability is the wrong tool (at one in
+ * four thousand, rounding noise decides whether a region has any at all), so
+ * each is placed on a fixed LATTICE: the world is divided into cells of `every`
+ * tiles and at most one of the thing lands in each cell, at a spot the cell's
+ * own hash picks. That makes them evenly spread, deterministic, independent of
+ * region boundaries — a node on a region seam is cut identically from either
+ * side — and countable in advance.
+ */
+type Feature = {
+  art: string;
+  /** Lattice cell size in chart tiles: one of these per cell, at most. */
+  every: number;
+  /** Chance a given cell actually gets one. */
+  chance: number;
+  /** Only on these biomes. */
+  on: number[];
+  /** Blocks movement (you walk up to it, not through it). */
+  solid?: boolean;
+  /** Salt in the hash so two features never choose the same tile. */
+  salt: number;
+};
+
+export const FEATURES: Feature[] = [
+  /*
+   * The rates below are the ones that survived a world-wide count, and the
+   * count is the only way to set them: a cell only produces its feature if the
+   * ONE tile its hash picked happens to be a listed biome, so the real rate is
+   * the cell rate times that biome's share of the world. At the first numbers
+   * I tried, ore came out at 348 nodes and arenas at 8 — for a whole continent.
+   */
+  { // ~1,000 nodes: enough that a prospector always has somewhere to go.
+    art: TEX.oreNode, every: 20, chance: 0.85, salt: 101, solid: true,
+    on: [BIOME.highland, BIOME.badlands, BIOME.alpine, BIOME.volcanic, BIOME.tundra, BIOME.void],
+  },
+  // Mushrooms grow outside the sporefield too, just sparsely — damp shade.
+  {
+    art: TEX.mushroom, every: 18, chance: 0.5, salt: 211,
+    on: [BIOME.forest, BIOME.swamp, BIOME.jungle, BIOME.taiga, BIOME.mangrove],
+  },
+  // Arenas are the rarest thing in the world and the only reason to cross it.
+  // Rare, but not so rare that a hunter can cross the map without meeting one.
+  {
+    art: TEX.arena, every: 150, chance: 0.85, salt: 317,
+    on: [BIOME.plains, BIOME.savanna, BIOME.desert, BIOME.steppe, BIOME.saltflats, BIOME.badlands, BIOME.highland, BIOME.volcanic, BIOME.void, BIOME.glacier],
+  },
+];
 
 /** A deterministic hash per tile, so a region is identical every time it is cut. */
 function h2(x: number, y: number, seed: number): number {
@@ -90,15 +158,55 @@ function h2(x: number, y: number, seed: number): number {
  */
 export function rockAt(chart: WorldChart, cx: number, cy: number): boolean {
   const ci = cy * chart.w + cx;
+  // A solid world feature — an ore node — is as solid as the mountain is, and
+  // this is the place that has to say so. It was not here at first, and the
+  // camp placer, which trusts this function completely, duly pitched tents on
+  // top of ore nodes and spawned foes inside them.
+  if (featureAt(chart.seed, cx, cy, chart.biome[ci]!)?.solid) return true;
   if (chart.biome[ci] !== BIOME.highland || chart.elev[ci]! <= 214) return false;
   return h2(cx, cy, chart.seed + 23) < 0.72;
 }
 
-/** Ground a hunter or a foe can stand on: on the chart, not water, not solid rock. */
-export function walkableAt(chart: WorldChart, cx: number, cy: number): boolean {
+/**
+ * Ground a hunter or a foe can stand on: on the chart, not water, not solid rock.
+ *
+ * `villages` is optional because most callers ask about ground the villages
+ * have no opinion on, and building one costs more than the question is worth.
+ * Anything PLACING something — a camp, a site — must pass it, or it can put
+ * what it is placing inside somebody's house.
+ */
+export function walkableAt(chart: WorldChart, cx: number, cy: number, villages?: VillageCache): boolean {
   if (cx < 2 || cy < 2 || cx >= chart.w - 2 || cy >= chart.h - 2) return false;
   if (isWater(chart.biome[cy * chart.w + cx]!)) return false;
-  return !rockAt(chart, cx, cy);
+  if (rockAt(chart, cx, cy)) return false;
+  if (!villages) return true;
+  for (const v of villages.overlapping(cx, cy, cx, cy)) {
+    const t = v.tiles.get(cy * chart.w + cx);
+    // Any built tile at all, not just the walls: a camp pitched on the village
+    // green is still a camp in the middle of a village.
+    if (t) return false;
+  }
+  return true;
+}
+
+/**
+ * Whether a world feature stands on this chart tile.
+ *
+ * Pure function of the tile and the seed — no region, no neighbours — which is
+ * what lets the same node be cut identically from either side of a seam.
+ */
+export function featureAt(seed: number, cx: number, cy: number, b: number): Feature | null {
+  for (const f of FEATURES) {
+    if (!f.on.includes(b)) continue;
+    const gx = Math.floor(cx / f.every);
+    const gy = Math.floor(cy / f.every);
+    if (h2(gx, gy, seed + f.salt) >= f.chance) continue;
+    // Where in the cell it stands. Two more hashes, so the lattice never shows.
+    const ox = Math.floor(h2(gx, gy, seed + f.salt + 1) * f.every);
+    const oy = Math.floor(h2(gx, gy, seed + f.salt + 2) * f.every);
+    if (gx * f.every + ox === cx && gy * f.every + oy === cy) return f;
+  }
+  return null;
 }
 
 export type RegionKey = { rx: number; ry: number };
@@ -114,6 +222,8 @@ export type RegionWorld = WorldData & {
   originY: number;
   rx: number;
   ry: number;
+  /** Villages whose buildings reach into this region. */
+  villages: Village[];
 };
 
 /**
@@ -123,7 +233,7 @@ export type RegionWorld = WorldData & {
  * always comes back the same — it can be thrown away and re-cut whenever the
  * hunter walks away and back, which is what keeps memory flat.
  */
-export function buildRegion(chart: WorldChart, rx: number, ry: number, size = REGION): RegionWorld {
+export function buildRegion(chart: WorldChart, rx: number, ry: number, size = REGION, villages?: VillageCache): RegionWorld {
   const originX = rx * size;
   const originY = ry * size;
   const w = Math.min(size, chart.w - originX);
@@ -146,27 +256,73 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
         floor = look.patchFloor ?? floor;
       }
 
-      // Solid rock is decided in rockAt, shared with everything that has to agree about it.
+      // Solid rock is decided in rockAt, shared with everything that has to agree
+      // about it — which now includes the solid world features, so a tile can be
+      // solid because an ore node is standing on it.
+      const feat = featureAt(chart.seed, cx, cy, b);
       const block = rockAt(chart, cx, cy) ? 1 : 0;
+
+      /*
+       * A solid feature IS the tile, not something laid over it.
+       *
+       * Scenery goes in `layers`, which the renderer draws on top of the ground
+       * — but a solid tile draws its own sprite and nothing else, so a layer on
+       * one is invisible. The ore art is an opaque 32x32 tile, so it stands on
+       * its own as the sprite. This has now been got wrong twice in opposite
+       * directions: first as a solid tile wearing a layer it could never show,
+       * then — once `rockAt` learned about features — as a solid tile that fell
+       * through to the mountain's wall art, so the nodes vanished from the world
+       * entirely. It is decided here, before the tile is built, for that reason.
+       */
+      const solidFeature = feat?.solid ? feat : null;
 
       const tile: Record<string, unknown> = {
         floor: look.liquid ? FL.water : block ? FL.wall : floor,
         biome: look.biome,
         block,
         decor: 0,
-        sprite: block ? look.wall : sprite,
+        sprite: solidFeature ? solidFeature.art : block ? look.wall : sprite,
       };
 
       // Scenery. Water and solid rock never carry any, and a tile gets either a
       // tree or small ground detail — never both stacked on one tile.
       if (!block && !look.liquid) {
-        if (look.tree && look.treeAt && h2(cx, cy, chart.seed + 41) < look.treeAt) {
+        // A landmark beats the scenery: an ore node is not something to hide in
+        // a tree, and the lattice has already decided this tile is special.
+        if (feat) {
+          tile.layers = [feat.art];
+          tile.decor = 1;
+        } else if (look.tree && look.treeAt && h2(cx, cy, chart.seed + 41) < look.treeAt) {
           tile.layers = [look.tree];
           tile.decor = 1;
         } else if (look.scatter && look.scatterAt && h2(cx, cy, chart.seed + 59) < look.scatterAt) {
           tile.layers = [look.scatter];
         }
       }
+      tiles[y * w + x] = tile;
+    }
+  }
+
+  /*
+   * Villages are stamped over the finished terrain rather than grown into it.
+   *
+   * Order matters and this is the right way round: the biome under a village
+   * still decides its surroundings — a village in the taiga has pines right up
+   * to its fence — but nothing the terrain pass rolled can put a tree through
+   * somebody's roof, because the roof is written last.
+   */
+  const here: Village[] = villages
+    ? villages.overlapping(originX, originY, originX + w - 1, originY + h - 1)
+    : [];
+  for (const v of here) {
+    for (const [ci, t] of v.tiles) {
+      const cx = ci % chart.w;
+      const cy = (ci / chart.w) | 0;
+      const x = cx - originX;
+      const y = cy - originY;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;   // the rest of it is in the next region
+      const tile: Record<string, unknown> = { floor: t.floor, biome: BI.verdant, block: t.block, decor: 0, sprite: t.sprite };
+      if (t.layers) { tile.layers = t.layers; tile.decor = 1; }
       tiles[y * w + x] = tile;
     }
   }
@@ -187,7 +343,10 @@ export function buildRegion(chart: WorldChart, rx: number, ry: number, size = RE
   return {
     w, h, tiles: tiles as WorldData["tiles"], spawns: [], cache: null,
     originX, originY, rx, ry,
-    name: home?.name ?? "The Open Sea",
+    villages: here,
+    // A village you are standing in is a better answer to "where am I" than the
+    // continent it is on.
+    name: here[0]?.name ?? home?.name ?? "The Open Sea",
   };
 }
 
@@ -209,7 +368,17 @@ export const REGION_TILES = REGION * REGION;
  */
 export class RegionCache {
   private map = new Map<string, RegionWorld>();
-  constructor(private chart: WorldChart, private keep = 4) {}
+  /**
+   * Shared by every region this cache cuts.
+   *
+   * It has to be shared: a village straddles region seams, and the villagers
+   * live on the Village object. One cache per region would give the two halves
+   * of a border village two different sets of people.
+   */
+  readonly villages: VillageCache;
+  constructor(private chart: WorldChart, private keep = 4) {
+    this.villages = new VillageCache(chart);
+  }
 
   private key(rx: number, ry: number) { return `${rx},${ry}`; }
 
@@ -222,7 +391,7 @@ export class RegionCache {
       this.map.set(k, had);
       return had;
     }
-    const built = buildRegion(this.chart, rx, ry);
+    const built = buildRegion(this.chart, rx, ry, REGION, this.villages);
     this.map.set(k, built);
     while (this.map.size > this.keep) {
       const oldest = this.map.keys().next().value as string | undefined;

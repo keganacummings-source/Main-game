@@ -320,8 +320,11 @@ test("wiring: a new life, a loaded save and a rebirth all wait for the chart bef
 
 test("wiring: the ground is streamed before anything moves, and on every way of arriving", () => {
   const step = methodBody("step").body;
-  assert.ok(step.indexOf("this.tickChartStream()") > 0);
-  assert.ok(step.indexOf("this.tickChartStream()") < step.indexOf("this.tickPlayer("), "ground first, then movement");
+  // Matched without its arguments: the call now carries the frame's dt, so that
+  // the villagers near the hunter can be walked on the same tick. What this
+  // test is actually guarding is the ORDER, which is unchanged.
+  assert.ok(step.indexOf("this.tickChartStream(") > 0);
+  assert.ok(step.indexOf("this.tickChartStream(") < step.indexOf("this.tickPlayer("), "ground first, then movement");
 
   const load = methodBody("loadMap").body;
   assert.match(load, /if \(this\.chartWorld\) this\.reachTile\(save\.x \/ 32, save\.y \/ 32\)/, "loading the overworld builds the ground under the hunter");
@@ -351,4 +354,63 @@ test("wiring: new lives are chart worlds, old characters keep theirs", () => {
   assert.match(life, /if \(w\.chart\) \{/, "and only a world marked as one is built from the chart");
   const main = readFileSync(resolve(HERE, "../src/game/main-world.ts"), "utf8");
   assert.match(main, /file\.chartSeed !== undefined/, "the old site layout is not applied over a chart world's");
+});
+
+test("villages are built into the world, and nothing is pitched on top of them", () => {
+  const cw = make();
+  cwm.streamChartWorld(cw, cw.start.tx, cw.start.ty);
+
+  // The villages near the start are actually standing in the world's tiles —
+  // stamped by buildRegion, not just held in the cache.
+  const near = cw.villages.near(cw.start.tx, cw.start.ty, 200);
+  assert.ok(near.length > 0, "no villages anywhere near the start of the world");
+  let checked = 0;
+  for (const v of near) {
+    for (const [ci, t] of v.tiles) {
+      const built = cw.world.tiles[ci];
+      if (!built) continue;            // that part of the village is not streamed in yet
+      checked++;
+      assert.equal(built.sprite, t.sprite, "a village tile is not the one the village built");
+      assert.equal(built.block, t.block, "the world and the village disagree about a wall");
+    }
+  }
+  assert.ok(checked > 50, `only ${checked} village tiles are streamed in`);
+
+  // And no camp foe is standing in one. `walkableAt` is the single place that
+  // decides this, so the camp placer has to be asking it about villages too —
+  // without that it pitched tents on the green and inside the houses.
+  const inside = new Set();
+  for (const v of near) for (const ci of v.tiles.keys()) inside.add(ci);
+  for (const m of mobsOf(cw)) {
+    const { tx, ty } = tileOf(m);
+    assert.ok(!inside.has(ty * cw.chart.w + tx), `foe ${m.id} is camped inside ${near[0].name}`);
+  }
+});
+
+test("villagers walk, and the people are shared across a region seam", () => {
+  const cw = make();
+  cwm.streamChartWorld(cw, cw.start.tx, cw.start.ty);
+  const v = cw.villages.near(cw.start.tx, cw.start.ty, 200)[0];
+  assert.ok(v, "no village to walk in");
+  for (const n of v.villagers) n.wait = 0;
+  const start = v.villagers.map((n) => ({ x: n.tx, y: n.ty }));
+
+  let moved = 0;
+  for (let i = 0; i < 400; i++) {
+    cwm.tickVillagers(cw, v.cx, v.cy, 0.05);
+    v.villagers.forEach((n, k) => { if (Math.hypot(n.tx - start[k].x, n.ty - start[k].y) > 0.3) moved = Math.max(moved, k + 1); });
+  }
+  assert.ok(v.villagers.some((n, k) => Math.hypot(n.tx - start[k].x, n.ty - start[k].y) > 0.3), "nobody in the village moved");
+
+  // The cache is shared by every region, so a village on a seam has ONE set of
+  // people. Two caches would give its two halves two different villages.
+  const again = cw.villages.near(cw.start.tx, cw.start.ty, 200)[0];
+  assert.equal(again, v, "the village was rebuilt and its people sent home");
+
+  // And they are reachable where they actually are, in world pixels.
+  const seen = cwm.villagersNear(cw, Math.round(v.cx), Math.round(v.cy));
+  assert.ok(seen.length > 0, "nobody is near the middle of their own village");
+  for (const { npc, x, y } of seen) {
+    assert.ok(Math.abs(x - (npc.tx * 32 + 16)) < 1e-6 && Math.abs(y - (npc.ty * 32 + 16)) < 1e-6, "a villager is drawn away from where they are standing");
+  }
 });
