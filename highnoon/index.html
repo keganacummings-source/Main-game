@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>HIGH NOON</title>
+<style>
+  @font-face {
+    font-family: "PressStart";
+    src: url("love_source/assets/fonts/PressStart2P.ttf") format("truetype");
+    font-display: swap;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #1a1208;
+    color: #f0e6c8;
+    font-family: "PressStart", monospace;
+    overflow: hidden;
+    touch-action: none;
+  }
+  #wrap {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 100%; gap: 8px; padding: 8px;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    max-width: min(96vw, 640px);
+    max-height: min(70vh, 640px);
+    width: 640px; height: 640px;
+    border: 3px solid #5a4020;
+    box-shadow: 0 0 24px #000a;
+  }
+  #touch {
+    display: none;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px; width: min(96vw, 640px);
+  }
+  #touch.show { display: grid; }
+  #touch button {
+    font-family: "PressStart", monospace;
+    font-size: 10px;
+    padding: 14px 6px;
+    background: #2a1c0c;
+    color: #f0d080;
+    border: 2px solid #6a4820;
+    border-radius: 6px;
+  }
+  #touch button:active { background: #5a3818; }
+  .hint {
+    font-size: 9px; opacity: 0.7; text-align: center;
+    max-width: 640px; line-height: 1.5;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="c" width="320" height="320"></canvas>
+  <div id="touch">
+    <button data-act="jump">JUMP<br>W</button>
+    <button data-act="shoot">SHOT<br>SPACE</button>
+    <button data-act="shoot_high">HIGH<br>A/X</button>
+    <button data-act="duck">DUCK<br>S</button>
+  </div>
+  <div class="hint">SPACE shot · A/X high · S duck · W jump · Arrows/WASD move</div>
+</div>
+<script>
+(() => {
+"use strict";
+
+// ─── Canvas setup ───────────────────────────────────────────────────────────
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+const W = 320, H = 320;
+
+const touchEl = document.getElementById("touch");
+if ("ontouchstart" in window || navigator.maxTouchPoints > 0) {
+  touchEl.classList.add("show");
+}
+
+// ─── Palette ────────────────────────────────────────────────────────────────
+const C = {
+  sky:[0.87,0.80,0.55], sky2:[0.95,0.70,0.35], ground:[0.65,0.48,0.28],
+  sand:[0.80,0.68,0.42], dark:[0.12,0.08,0.05], white:[1,1,1],
+  red:[0.90,0.18,0.12], yellow:[1,0.88,0.10], green:[0.20,0.72,0.22],
+  blood:[0.65,0.05,0.05], gold:[1,0.78,0.10], bounty:[0.85,0.20,0.08],
+  cactus:[0.26,0.52,0.18], wood:[0.55,0.36,0.18], roof:[0.72,0.42,0.20],
+  stone:[0.55,0.48,0.38], stone2:[0.42,0.36,0.28], stoneDark:[0.22,0.18,0.14],
+  torch:[1,0.70,0.25], hieroglyph:[0.75,0.62,0.35],
+  skin:[0.88,0.70,0.52], leather:[0.22,0.14,0.07],
+  gunmetal:[0.55,0.55,0.58], gunwood:[0.45,0.26,0.10],
+  bone:[0.78,0.82,0.72], undeadCoat:[0.28,0.30,0.26],
+};
+const COAT = [
+  [0.82,0.65,0.40],[0.50,0.32,0.15],[0.52,0.52,0.50],[0.18,0.14,0.12]
+];
+const HAT = [
+  [0.20,0.14,0.08],[0.48,0.32,0.14],[0.30,0.22,0.14]
+];
+function rgb(c,a){ return `rgba(${c[0]*255|0},${c[1]*255|0},${c[2]*255|0},${a==null?1:a})`; }
+function setColor(c,a){ ctx.fillStyle = rgb(c,a); ctx.strokeStyle = ctx.fillStyle; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function rnd(a,b){ return a+Math.random()*(b-a); }
+function rndi(a,b){ return a+Math.floor(Math.random()*(b-a+1)); }
+
+// ─── Font ───────────────────────────────────────────────────────────────────
+function font(sz){ ctx.font = `${sz}px PressStart, monospace`; ctx.textBaseline = "top"; }
+function text(s,x,y,c,a){ setColor(c||C.white,a); ctx.fillText(s,x|0,y|0); }
+function textC(s,y,c,sz){ font(sz||6); const w=ctx.measureText(s).width; text(s,(W-w)/2,y,c); }
+
+// ─── State ──────────────────────────────────────────────────────────────────
+const MAP_W=40, MAP_H=30, TILE=8;
+const T_GROUND=1, T_ROAD=2, T_STONE=3, T_FLOOR=4;
+const BOUNTY_THRESHOLD=8, MAX_ROUNDS=6;
+const NPC_REACT_MIN=0.22, NPC_REACT_MAX=0.90;
+
+let SCREEN = "title";
+let world=[], decor=[], npcs=[], cam={x:0,y:0};
+let highscores = [];
+try { highscores = JSON.parse(localStorage.getItem("highnoon_scores")||"[]"); } catch(e){}
+
+const GANGS = {
+  muerte: {
+    title:"THE MUERTE GANG",
+    names:["Rattler","Coyote","El Diablo"],
+    coats:[4,3,2], hats:[1,1,2],
+    reacts:[[0.45,0.65],[0.28,0.45],[0.16,0.30]]
+  },
+  viper: {
+    title:"THE SAND VIPERS",
+    names:["Asp","Sidewinder","King Cobra"],
+    coats:[3,4,4], hats:[2,1,1],
+    reacts:[[0.38,0.55],[0.22,0.38],[0.12,0.24]]
+  }
+};
+
+let stage = {
+  id:"village", floor:1, areaKills:0, floorKills:0, floorGoal:8,
+  transitionT:0, transitionTo:null, bannerTimer:0, bannerText:""
+};
+let bounty = { active:false, wantedFlash:0, warned:false, gangType:"muerte" };
+let player = {};
+let duel = {};
+let gangBattle = { active:false, members:[], current:1, phase:"intro" };
+let deadTimer=0, deadFlash=0, titleT=0;
+
+const keys = Object.create(null);
+const keysJust = Object.create(null);
+
+// ─── Player / progression ───────────────────────────────────────────────────
+function initPlayer(){
+  const roadY = (MAP_H/2)|0;
+  player = {
+    tx:(MAP_W/2)|0, ty:roadY, px:0, py:0, dir:1,
+    alive:true, score:0, hat:2, coat:1,
+    walkFrame:0, walkTimer:0, engageRange:4,
+    lives:1, maxLives:9, lifeFlash:0, lifeFlashText:"",
+    level:1, xp:0, xpToNext:40,
+    skills:{ quickdraw:1, presence:1, focus:1 },
+    levelUpTimer:0
+  };
+  player.px=(player.tx-1)*TILE; player.py=(player.ty-1)*TILE;
+  cam.x=player.tx-W/(TILE*2); cam.y=player.ty-H/(TILE*2);
+  bounty={ active:false, wantedFlash:0, warned:false, gangType:"muerte" };
+}
+function skillVal(n){ return (player.skills&&player.skills[n])||1; }
+function getHeadstart(){ return skillVal("quickdraw")*0.014; }
+function getFocusGrace(){ return 0.06+skillVal("focus")*0.04; }
+function getEffectiveReact(base){
+  return Math.min(base*(1+skillVal("presence")*0.018), 1.35);
+}
+function checkLevelUp(){
+  while(player.xp>=player.xpToNext){
+    player.xp-=player.xpToNext;
+    player.level++;
+    player.xpToNext=(28+player.level*14+player.level*player.level*0.8)|0;
+    player.skills.quickdraw++;
+    player.skills.presence++;
+    if(player.level%2===0) player.skills.focus++;
+    player.engageRange=4+(((player.level-1)/3)|0);
+    player.levelUpTimer=2.4;
+  }
+}
+function gainXP(amount){
+  if(amount<=0) return;
+  player.xp+=amount; checkLevelUp();
+}
+function xpForEnemy(react, isGang){
+  return (isGang?28:14)+(((NPC_REACT_MAX-react)*22)|0)+(player.level-1)*2;
+}
+function gainLife(n){
+  n=n||1;
+  const before=player.lives;
+  player.lives=Math.min(player.maxLives, before+n);
+  if(player.lives>before){
+    player.lifeFlash=2.2;
+    player.lifeFlashText="+1 LIFE  (BOUNTY)  x"+player.lives;
+  }
+}
+function saveScores(){
+  try{ localStorage.setItem("highnoon_scores", JSON.stringify(highscores.slice(0,10))); }catch(e){}
+}
+function loseLife(){
+  player.lives=(player.lives||1)-1;
+  if(player.lives<=0){
+    player.alive=false; player.lives=0;
+    highscores.push(player.score);
+    highscores.sort((a,b)=>b-a);
+    highscores=highscores.slice(0,10);
+    saveScores();
+    SCREEN="dead"; deadTimer=0; deadFlash=1;
+    return true;
+  }
+  player.alive=true;
+  player.lifeFlash=2;
+  player.lifeFlashText="LOST A LIFE  ("+player.lives+" LEFT)";
+  duel.active=false; gangBattle.active=false;
+  bounty.active=false; bounty.warned=false; bounty.wantedFlash=0;
+  SCREEN="explore";
+  return false;
+}
+
+// ─── Combat helpers ─────────────────────────────────────────────────────────
+function isOffensive(a){ return a==="shoot"||a==="shoot_high"; }
+function pickNpcAction(isGang, round){
+  let bias=(isGang?0.55:0.42)+(round-1)*0.04;
+  const roll=Math.random();
+  if(roll<bias) return Math.random()<0.55?"shoot":"shoot_high";
+  if(roll<bias+0.28) return "duck";
+  return "jump";
+}
+function resolveExchange(pAct,nAct,pTime,nTime){
+  pAct=pAct||"stand"; nAct=nAct||"stand";
+  const pOff=isOffensive(pAct), nOff=isOffensive(nAct);
+  if(pOff&&nOff){
+    if(pTime<nTime-0.015) return "player_win";
+    if(nTime<pTime-0.015) return "npc_win";
+    return "double";
+  }
+  if(pOff&&!nOff){
+    if((pAct==="shoot"&&nAct==="duck")||(pAct==="shoot_high"&&nAct==="jump")) return "continue";
+    return "player_win";
+  }
+  if(nOff&&!pOff){
+    if((nAct==="shoot"&&pAct==="duck")||(nAct==="shoot_high"&&pAct==="jump")) return "continue";
+    return "npc_win";
+  }
+  return "continue";
+}
+function actionFromKey(key){
+  if([" ","space","z","enter"].includes(key)) return "shoot";
+  if(["x","c","a","arrowleft","shift"].includes(key)) return "shoot_high";
+  if(["s","arrowdown"].includes(key)) return "duck";
+  if(["w","arrowup"].includes(key)) return "jump";
+  return null;
+}
+function actionLabel(a){
+  return ({shoot:"SHOT",shoot_high:"HIGH",duck:"DUCK",jump:"JUMP"})[a]||"...";
+}
+
+// ─── World gen ──────────────────────────────────────────────────────────────
+function genVillage(){
+  world=[];
+  for(let y=1;y<=MAP_H;y++){ world[y]=[]; for(let x=1;x<=MAP_W;x++) world[y][x]=T_GROUND; }
+  const midY=(MAP_H/2)|0, midX=(MAP_W/2)|0;
+  for(let x=1;x<=MAP_W;x++) for(let dy=-1;dy<=1;dy++){ const y=midY+dy; if(y>=1&&y<=MAP_H) world[y][x]=T_ROAD; }
+  for(let y=1;y<=MAP_H;y++) for(let dx=-1;dx<=1;dx++){ const x=midX+dx; if(x>=1&&x<=MAP_W) world[y][x]=T_ROAD; }
+  decor=[];
+  for(let i=0;i<40;i++){
+    const x=rndi(2,MAP_W-1), y=rndi(2,MAP_H-1);
+    if(world[y][x]!==T_ROAD) decor.push({x,y,kind:"cactus",h:rndi(1,3)});
+  }
+  [[2,2,10,8],[28,2,38,8],[2,20,12,28],[28,20,38,28]].forEach(bz=>{
+    for(let i=0;i<rndi(2,4);i++){
+      const x=rndi(bz[0]+1,bz[2]-2), y=rndi(bz[1]+1,bz[3]-2);
+      if(world[y][x]!==T_ROAD) decor.push({x,y,kind:"building",w:rndi(2,4),h:rndi(2,3)});
+    }
+  });
+}
+function genApproach(){
+  world=[];
+  for(let y=1;y<=MAP_H;y++){ world[y]=[]; for(let x=1;x<=MAP_W;x++) world[y][x]=T_GROUND; }
+  const roadY=(MAP_H/2)|0;
+  for(let x=1;x<=MAP_W;x++) for(let dy=-1;dy<=1;dy++){ const y=roadY+dy; if(y>=1&&y<=MAP_H) world[y][x]=T_ROAD; }
+  decor=[];
+  for(let i=0;i<28;i++){
+    const x=rndi(2,MAP_W-8), y=rndi(2,MAP_H-1);
+    if(world[y][x]!==T_ROAD) decor.push({x,y,kind:"cactus",h:rndi(1,3)});
+  }
+  for(let i=0;i<4;i++){
+    const x=rndi(4,MAP_W-12), y=rndi(3,MAP_H-6);
+    if(world[y][x]!==T_ROAD) decor.push({x,y,kind:"building",w:rndi(2,3),h:rndi(1,2)});
+  }
+  decor.push({x:MAP_W-1,y:roadY,kind:"pillar"});
+  decor.push({x:MAP_W-1,y:roadY-2,kind:"pillar"});
+  decor.push({x:MAP_W-1,y:roadY+2,kind:"pillar"});
+}
+function genPyramidFloor(floor){
+  world=[];
+  for(let y=1;y<=MAP_H;y++){ world[y]=[]; for(let x=1;x<=MAP_W;x++) world[y][x]=T_STONE; }
+  const midY=(MAP_H/2)|0, midX=(MAP_W/2)|0;
+  const carve=(x1,y1,x2,y2)=>{
+    for(let y=Math.max(1,y1);y<=Math.min(MAP_H,y2);y++)
+      for(let x=Math.max(1,x1);x<=Math.min(MAP_W,x2);x++) world[y][x]=T_FLOOR;
+  };
+  carve(2,midY-1,MAP_W-1,midY+1);
+  carve(midX-1,2,midX+1,MAP_H-1);
+  // side chambers
+  carve(4,4,12,10); carve(MAP_W-12,4,MAP_W-3,10);
+  carve(4,MAP_H-10,12,MAP_H-3); carve(MAP_W-12,MAP_H-10,MAP_W-3,MAP_H-3);
+  // connectors so corner rooms join the main cross
+  carve(7,10,9,midY); carve(MAP_W-9,10,MAP_W-7,midY);
+  carve(7,midY,9,MAP_H-10); carve(MAP_W-9,midY,MAP_W-7,MAP_H-10);
+  carve(12,6,midX,8); carve(midX,6,MAP_W-12,8);
+  carve(12,MAP_H-8,midX,MAP_H-6); carve(midX,MAP_H-8,MAP_W-12,MAP_H-6);
+  carve(midX-5,midY-5,midX+5,midY+5);
+  decor=[];
+  for(let x=6;x<=MAP_W-5;x+=6){
+    if(world[midY-3]&&world[midY-3][x]===T_STONE) decor.push({x,y:midY-3,kind:"pillar"});
+    if(world[midY+3]&&world[midY+3][x]===T_STONE) decor.push({x,y:midY+3,kind:"pillar"});
+  }
+  for(let i=0;i<18;i++){
+    const x=rndi(3,MAP_W-2), y=rndi(3,MAP_H-2);
+    if(world[y][x]===T_FLOOR) decor.push({x,y,kind:"torch"});
+  }
+}
+function spawnNPCs(){
+  npcs=[];
+  const roadY=(MAP_H/2)|0, roadX=(MAP_W/2)|0;
+  const placed={};
+  const notNear=(x,y)=>{ const dx=x-player.tx, dy=y-player.ty; return Math.hypot(dx,dy)>5; };
+  let count=8, names=["Kid","Buck","Doc","Hank","Cole","Slim","Rex","Zeke","Ace","Ike"];
+  let rMin=NPC_REACT_MIN, rMax=NPC_REACT_MAX;
+  if(stage.id==="approach"){
+    names=["Dust","Mirage","Cinder","Bone","Hawk","Drift","Scorp","Dune"]; rMin=0.20; rMax=0.80;
+  } else if(stage.id==="pyramid"){
+    count=6+Math.min(4,stage.floor);
+    names=["Bone","Grim","Rotjaw","Dust","Skull","Coffin","Shade","Wight","Hollow","Rattle"];
+    rMin=Math.max(0.12,0.20-stage.floor*0.015);
+    rMax=Math.max(0.40,0.75-stage.floor*0.04);
+  }
+  for(let i=0;i<count;i++){
+    for(let t=0;t<60;t++){
+      let x,y,valid=true;
+      if(stage.id==="pyramid"){
+        x=rndi(2,MAP_W-1); y=rndi(2,MAP_H-1);
+        if(!world[y]||world[y][x]!==T_FLOOR) valid=false;
+      } else {
+        const r=rndi(1,4);
+        if(r===1){ x=rndi(2,MAP_W-1); y=roadY+rndi(-1,1); }
+        else if(r===2){ x=roadX+rndi(-1,1); y=rndi(2,MAP_H-1); }
+        else if(r===3){ x=rndi(2,10); y=rndi(2,MAP_H-1); }
+        else { x=rndi(MAP_W-10,MAP_W-1); y=rndi(2,MAP_H-1); }
+      }
+      if(!valid) continue;
+      const key=x+","+y;
+      if(!placed[key]&&notNear(x,y)){
+        placed[key]=true;
+        npcs.push({
+          tx:x,ty:y,px:(x-1)*TILE,py:(y-1)*TILE,
+          name:names[i%names.length],
+          react:rnd(rMin,rMax), alive:true, dir:1, moveTimer:rnd(1,3),
+          hat:rndi(1,3), coat:stage.id==="pyramid"?rndi(3,4):rndi(1,4),
+          isUndead: stage.id==="pyramid"
+        });
+        break;
+      }
+    }
+  }
+}
+function resetStageToVillage(){
+  stage={ id:"village", floor:1, areaKills:0, floorKills:0, floorGoal:8,
+    transitionT:0, transitionTo:null, bannerTimer:0, bannerText:"" };
+  bounty={ active:false, wantedFlash:0, warned:false, gangType:"muerte" };
+}
+function startTransition(toId, banner){
+  stage.id="transition"; stage.transitionTo=toId; stage.transitionT=0;
+  stage.bannerText=banner||""; stage.bannerTimer=3.2; SCREEN="transition";
+}
+function enterArea(id){
+  stage.id=id; stage.areaKills=0; stage.floorKills=0;
+  bounty.active=false; bounty.warned=false; bounty.wantedFlash=0;
+  if(id==="village"){ bounty.gangType="muerte"; genVillage(); }
+  else if(id==="approach"){ bounty.gangType="viper"; genApproach(); }
+  else if(id==="pyramid"){ genPyramidFloor(stage.floor); }
+  const roadY=(MAP_H/2)|0;
+  player.tx=(MAP_W/2)|0; player.ty=roadY;
+  if(id==="approach") player.tx=4;
+  if(id==="pyramid"){ player.tx=(MAP_W/2)|0; player.ty=(MAP_H/2)|0; }
+  player.px=(player.tx-1)*TILE; player.py=(player.ty-1)*TILE;
+  cam.x=player.tx-W/(TILE*2); cam.y=player.ty-H/(TILE*2);
+  spawnNPCs(); SCREEN="explore";
+}
+
+// ─── Drawing cowboys ────────────────────────────────────────────────────────
+function drawCowboy(px,py,dir,hat,coat,dead,walkFrame,pose,isGang,isUndead){
+  pose=pose||"stand";
+  const isShooting=pose==="shoot"||pose==="shoot_high";
+  const isDuck=pose==="duck", isJump=pose==="jump";
+  let bx=(px-5)|0, by=(py-18)|0;
+  if(isJump) by-=6; if(isDuck) by+=5;
+  const flip=dir===-1;
+  const LX=(x,w=1)=> flip?(10-x-w):x;
+  const R=(x,y,w,h,c)=>{ setColor(c); ctx.fillRect(bx+LX(x,w), by+y, w, h); };
+
+  let skin=C.skin, coatCol=COAT[(coat||1)-1]||COAT[0], leather=C.leather;
+  if(isUndead){ skin=C.bone; coatCol=C.undeadCoat; leather=[0.18,0.16,0.12]; }
+
+  if(dead){
+    setColor([0,0,0],0.35); ctx.beginPath(); ctx.ellipse(bx+5,by+18,7,2,0,0,Math.PI*2); ctx.fill();
+    setColor(coatCol); ctx.fillRect(bx,by+15,12,3);
+    setColor(HAT[(hat||1)-1]||HAT[0]); ctx.fillRect(bx+LX(10,4),by+13,4,2);
+    setColor(skin); ctx.fillRect(bx+LX(-3,3),by+15,3,2);
+    setColor(isUndead?[0.45,0.55,0.35]:C.blood, isUndead?0.7:1);
+    ctx.beginPath(); ctx.ellipse(bx+5,by+18,6,2,0,0,Math.PI*2); ctx.fill();
+    return;
+  }
+
+  setColor([0,0,0],0.35);
+  ctx.beginPath(); ctx.ellipse(bx+5, isJump?by+24:by+18, isJump?4:5, isJump?1:1.5, 0,0,Math.PI*2); ctx.fill();
+
+  const boot=isUndead?[0.22,0.20,0.16]:[0.12,0.08,0.05];
+  if(isDuck){
+    R(1,13,3,4,leather); R(1,16,3,1,boot); R(6,13,3,4,leather); R(6,16,3,1,boot);
+  } else if(isJump){
+    R(0,12,3,5,leather); R(0,16,3,1,boot); R(7,11,3,6,leather); R(7,16,3,1,boot);
+  } else {
+    const loff=(walkFrame%2===0)?2:0;
+    R(1,11+loff,3,7-loff,leather); R(1,17,3,1,boot);
+    R(6,11+(2-loff),3,7-(2-loff),leather); R(6,17,3,1,boot);
+    R(1,17,1,1,isUndead?[0.55,0.55,0.5]:C.gold);
+  }
+
+  const bodyY=isDuck?8:5, bodyH=isDuck?5:7;
+  R(1,bodyY,8,bodyH,coatCol);
+  R(2,bodyY,2,bodyH-2,[coatCol[0]*0.7,coatCol[1]*0.7,coatCol[2]*0.7]);
+  if(isUndead){
+    R(4,bodyY+1,3,1,skin); R(4,bodyY+3,3,1,skin); R(4,bodyY+5,2,1,[skin[0]*0.85,skin[1]*0.85,skin[2]*0.8]);
+  } else R(3,bodyY,4,2,[0.90,0.88,0.82]);
+
+  const beltY=isDuck?12:11;
+  R(1,beltY,8,1,leather);
+  R(4,beltY,2,1,isUndead?[0.5,0.45,0.3]:C.gold);
+
+  if(!isShooting){
+    R(7,beltY,2,isDuck?3:4,leather);
+    R(7,beltY,2,2,C.gunwood); R(7,beltY+2,2,1,C.gunmetal);
+    R(1,isDuck?9:6,2,isDuck?4:5,coatCol);
+    if(isDuck) R(6,9,3,3,coatCol);
+    else if(isJump){ R(8,6,2,4,coatCol); R(7,7,2,4,coatCol); }
+    else R(6,7,3,4,coatCol);
+  } else {
+    const gunY=pose==="shoot_high"?2:5;
+    R(1,6,2,5,coatCol); R(8,gunY+1,3,2,coatCol); R(11,gunY+1,2,2,skin);
+    R(10,gunY+3,2,3,C.gunwood); R(9,gunY+4,2,2,C.gunwood);
+    R(11,gunY+1,3,3,C.gunmetal);
+    setColor([0.45,0.45,0.48]); ctx.fillRect(bx+LX(12,2),by+gunY+1,2,3);
+    R(14,gunY+1,5,2,C.gunmetal); R(14,gunY+1,5,1,[0.65,0.65,0.68]);
+    R(18,gunY,1,1,[0.35,0.35,0.38]); R(11,gunY,1,1,[0.4,0.4,0.42]);
+    const mfx=bx+LX(19,1), mfy=by+gunY+1;
+    if(isUndead){
+      setColor([0.55,1,0.45]); ctx.beginPath(); ctx.arc(mfx,mfy,2.5,0,Math.PI*2); ctx.fill();
+      setColor([0.30,0.85,0.35],0.7); ctx.beginPath(); ctx.arc(mfx,mfy,4,0,Math.PI*2); ctx.fill();
+    } else {
+      setColor([1,0.95,0.35]); ctx.beginPath(); ctx.arc(mfx,mfy,2.5,0,Math.PI*2); ctx.fill();
+      setColor([1,0.55,0.10],0.75); ctx.beginPath(); ctx.arc(mfx,mfy,4,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  const headY=isDuck?3:0;
+  R(4,headY+2,2,3,skin); R(2,headY,6,5,skin);
+  if(isUndead){
+    R(5,headY+1,2,2,[0.05,0.08,0.05]);
+    R(6,headY+1,1,1,[0.45,1,0.35]);
+    R(6,headY+2,1,1,[0.15,0.18,0.12]);
+    R(4,headY+3,3,1,[0.9,0.92,0.85]);
+  } else {
+    R(6,headY+1,1,1,C.dark);
+    R(5,headY,2,1,[0.30,0.20,0.10]);
+    R(4,headY+3,2,1,[0.35,0.22,0.14]);
+  }
+  let hcol=HAT[(hat||1)-1]||HAT[0];
+  if(isUndead) hcol=[0.25,0.22,0.18];
+  R(0,headY,10,1,hcol);
+  const crownH=hat===1?5:hat===2?3:4;
+  R(2,headY-crownH,6,crownH,hcol);
+  if(isUndead) R(2,headY,6,1,[0.35,0.4,0.25]);
+  else if(isGang){ R(2,headY,6,1,C.red); R(4,headY-crownH+1,2,2,[0.9,0.9,0.9]); }
+  else R(2,headY,6,1,C.gold);
+}
+
+function drawCactus(cx,cy,h){
+  const bh=h*7; setColor(C.cactus);
+  ctx.fillRect(cx-2,cy-bh,4,bh);
+  if(h>=2){ ctx.fillRect(cx-6,cy-bh+5,4,3); ctx.fillRect(cx-6,cy-bh+2,3,6); }
+}
+function drawBuilding(bx,by,bw,bh){
+  setColor(C.wood); ctx.fillRect(bx,by-bh*TILE,bw*TILE,bh*TILE);
+  setColor(C.roof); ctx.fillRect(bx-1,by-bh*TILE-3,bw*TILE+2,4);
+  setColor(C.dark); ctx.fillRect(bx+2,by-bh*TILE+4,3,4);
+}
+
+function drawWorld(){
+  const offX=(-cam.x*TILE)|0, offY=(-cam.y*TILE)|0;
+  const tx0=Math.max(1,cam.x|0), ty0=Math.max(1,cam.y|0);
+  const tx1=Math.min(MAP_W,tx0+((W/TILE)|0)+1), ty1=Math.min(MAP_H,ty0+((H/TILE)|0)+1);
+  const isPyr=stage.id==="pyramid";
+  setColor(isPyr?C.stoneDark:C.ground); ctx.fillRect(0,0,W,H);
+
+  for(let ty=ty0;ty<=ty1;ty++) for(let tx=tx0;tx<=tx1;tx++){
+    const t=world[ty]&&world[ty][tx];
+    const px=(tx-1)*TILE+offX, py=(ty-1)*TILE+offY;
+    if(t===T_ROAD){
+      setColor(C.sand); ctx.fillRect(px,py,TILE,TILE);
+    } else if(t===T_FLOOR){
+      setColor(C.stone); ctx.fillRect(px,py,TILE,TILE);
+      if((tx+ty)%2===0){ setColor(C.stone2); ctx.fillRect(px+1,py+1,TILE-2,TILE-2); }
+    } else if(t===T_STONE&&isPyr){
+      setColor(C.stoneDark); ctx.fillRect(px,py,TILE,TILE);
+    } else if(t===T_GROUND&&!isPyr&&(tx+ty)%3===0){
+      setColor([C.ground[0]*0.9,C.ground[1]*0.88,C.ground[2]*0.8]);
+      ctx.fillRect(px+2,py+3,2,2);
+    }
+  }
+  decor.forEach(d=>{
+    const dx=(d.x-1)*TILE+offX+TILE/2, dy=(d.y-1)*TILE+offY+TILE;
+    if(d.kind==="cactus") drawCactus(dx,dy,d.h);
+    else if(d.kind==="building") drawBuilding((d.x-1)*TILE+offX,(d.y-1)*TILE+offY+TILE,d.w,d.h);
+    else if(d.kind==="pillar"){
+      const bx=(d.x-1)*TILE+offX, by=(d.y-1)*TILE+offY;
+      setColor(C.stone2); ctx.fillRect(bx+1,by-6,TILE-2,TILE+6);
+      setColor(C.gold); ctx.fillRect(bx+2,by-7,TILE-4,2);
+    } else if(d.kind==="torch"){
+      const bx=(d.x-1)*TILE+offX+3, by=(d.y-1)*TILE+offY+1;
+      setColor([0.35,0.22,0.1]); ctx.fillRect(bx+1,by+3,2,4);
+      const fl=0.75+0.25*Math.sin(performance.now()/100+d.x);
+      setColor([C.torch[0],C.torch[1]*fl,C.torch[2]*0.5]); ctx.fillRect(bx,by,4,3);
+    }
+  });
+  npcs.forEach(n=>{
+    if(!n.alive){
+      drawCowboy((n.px|0)+offX+TILE/2,(n.py|0)+offY+TILE,n.dir,n.hat,n.coat,true,0,"stand",false,n.isUndead);
+    }
+  });
+  npcs.forEach(n=>{
+    if(n.alive){
+      const nx=(n.px|0)+offX+TILE/2, ny=(n.py|0)+offY+TILE;
+      const wf=((n.moveTimer*4)|0)%2;
+      drawCowboy(nx,ny,n.dir,n.hat,n.coat,false,wf,"stand",false,n.isUndead);
+      const dist=Math.hypot(n.tx-player.tx,n.ty-player.ty);
+      if(dist<7){
+        font(5); const nw=ctx.measureText(n.name).width;
+        text(n.name,nx-nw/2,ny-20,C.white);
+      }
+    }
+  });
+  drawCowboy((player.px|0)+offX+TILE/2,(player.py|0)+offY+TILE,player.dir,player.hat,player.coat,false,player.walkFrame,"stand",false,false);
+}
+
+function drawDuelScene(npcData, state, extraLabel, npcDead){
+  // BG
+  for(let y=0;y<H/2;y++){
+    const t=y/(H/2);
+    setColor([lerp(C.sky2[0],C.sky[0],t),lerp(C.sky2[1],C.sky[1],t),lerp(C.sky2[2],C.sky[2],t)]);
+    ctx.fillRect(0,y,W,1);
+  }
+  setColor(C.sand); ctx.fillRect(0,H/2,W,H/2);
+  setColor(C.wood); ctx.fillRect(15,H/2-32,38,32); ctx.fillRect(W-53,H/2-26,38,26);
+  setColor(C.roof); ctx.fillRect(13,H/2-36,42,5); ctx.fillRect(W-55,H/2-30,42,5);
+
+  const npcX=(W*0.72)|0, npcY=(H*0.72)|0, plX=(W*0.28)|0, plY=(H*0.72)|0;
+  const SCALE=5;
+  const poseFrom=(action,isWinSide,phase,win)=>{
+    if((phase==="duel_shot"||phase==="duel_resolve")&&action) return action;
+    if(phase==="duel_shot"||phase==="duel_resolve"){
+      if(isWinSide&&win) return "shoot";
+      if(!isWinSide&&!win) return "shoot";
+    }
+    return action||"stand";
+  };
+  const pPose=poseFrom(state.playerAction,true,state.phase,state.win);
+  const nPose=poseFrom(state.npcAction,false,state.phase,state.win);
+
+  ctx.save(); ctx.translate(npcX,npcY); ctx.scale(SCALE,SCALE);
+  drawCowboy(0,0,-1,npcData.hat,npcData.coat,npcDead,0,nPose,!!npcData.isGang,!!npcData.isUndead);
+  ctx.restore();
+  ctx.save(); ctx.translate(plX,plY); ctx.scale(SCALE,SCALE);
+  drawCowboy(0,0,1,player.hat,player.coat,false,0,pPose,false,false);
+  ctx.restore();
+
+  if(state.shotSmoke>0){
+    const sm=state.shotSmoke;
+    const smoke=(sx,sy)=>{ setColor([0.7,0.65,0.55],sm*0.55); ctx.beginPath(); ctx.arc(sx,sy,sm*10,0,Math.PI*2); ctx.fill(); };
+    if(isOffensive(state.playerAction)||state.win) smoke(plX+30,plY-24);
+    if(isOffensive(state.npcAction)||(!state.win&&state.phase!=="duel_wait")) smoke(npcX-30,plY-24);
+  }
+
+  setColor([0.1,0.07,0.03],0.88); ctx.fillRect(0,0,W,24); ctx.fillRect(0,H-24,W,24);
+  font(6); text("L"+player.level+"  K:"+player.score,4,5,C.gold);
+  if(state.round){ font(5); textC("ROUND "+state.round+"/"+MAX_ROUNDS,16,C.gold,5); }
+  if(extraLabel){ font(5); textC(extraLabel,7,C.bounty,5); }
+  font(5); const nw=ctx.measureText(npcData.name).width; text(npcData.name,W-nw-4,5,C.white);
+
+  const ph=state.phase;
+  if(ph==="duel_wait"){ font(7); textC("FACE OFF",H/2-26,C.yellow,7); }
+  else if(ph==="duel_draw"){
+    font(16); textC("DRAW!",H/2-36,C.red,16);
+    font(4); text("SPACE SHOT  A HIGH  S DUCK  W JUMP",4,H-19,C.white);
+    if(state.playerAction){ font(6); text(actionLabel(state.playerAction),8,H/2+20,C.gold); }
+    if(state.npcAction){ font(6); const a=actionLabel(state.npcAction); text(a,W-ctx.measureText(a).width-8,H/2+20,C.bounty); }
+  } else if(ph==="duel_resolve"||ph==="duel_shot"){
+    const txt=state.resultText||(state.win?"GOT 'EM!":"SHOT DOWN!");
+    let col=C.red;
+    if(state.win||txt==="DODGED!"||txt==="STARE DOWN"||txt==="STANDOFF") col=txt==="STANDOFF"?C.gold:C.green;
+    if(txt==="DODGED!"||txt==="STARE DOWN") col=[0.5,0.85,1];
+    font(10); textC(txt,H/2-32,col,10);
+    font(5); text("YOU:"+actionLabel(state.playerAction),10,H/2-10,C.white);
+    const nL="THEM:"+actionLabel(state.npcAction);
+    text(nL,W-ctx.measureText(nL).width-10,H/2-10,C.white);
+  }
+  if(state.flashAlpha>0){
+    const fc=state.flashColor||C.flash;
+    setColor(fc,state.flashAlpha); ctx.fillRect(0,0,W,H);
+  }
+}
+
+// ─── Update ─────────────────────────────────────────────────────────────────
+function duelPhaseUpdate(state, npcReact, dt, isGang){
+  state.flashAlpha=Math.max(0,state.flashAlpha-dt*5);
+  state.shotSmoke=Math.max(0,(state.shotSmoke||0)-dt*1.6);
+  if(state.phase==="duel_wait"){
+    state.timer+=dt;
+    if(state.timer>=state.waitTime){
+      state.phase="duel_draw"; state.countdown=0;
+      state.playerAction=null; state.npcAction=null;
+      state.playerActTime=0; state.npcActTime=0;
+      state.earlyShot=false; state.lightning=false; state.bonusXp=0;
+      state._resolved=false;
+      state.flashAlpha=1; state.flashColor=[1,0.9,0.2,0.88];
+    }
+  } else if(state.phase==="duel_draw"){
+    state.countdown+=dt;
+    const hs=state.headstart||0;
+    const npcClock=Math.max(0,state.countdown-hs);
+    if(!state.npcAction&&npcClock>=npcReact){
+      state.npcAction=pickNpcAction(isGang,state.round||1);
+      state.npcActTime=state.countdown;
+    }
+    if(state.playerAction&&isOffensive(state.playerAction)&&!state.npcAction){
+      if(state.countdown>=state.playerActTime+0.14&&npcClock<npcReact){
+        state.npcAction="stand"; state.npcActTime=state.countdown;
+      }
+    }
+    if(state.countdown>hs+npcReact+0.85&&!state.playerAction){
+      state.playerAction="stand"; state.playerActTime=state.countdown;
+      if(!state.npcAction){ state.npcAction=pickNpcAction(isGang,state.round||1); state.npcActTime=state.countdown; }
+      state.phase="duel_resolve"; state.resultTimer=0;
+    } else if(state.playerAction&&state.npcAction){
+      state.phase="duel_resolve"; state.resultTimer=0;
+      if(isOffensive(state.playerAction)||isOffensive(state.npcAction)) state.shotSmoke=1;
+    }
+  } else if(state.phase==="duel_resolve"){
+    state.resultTimer=(state.resultTimer||0)+dt;
+  }
+}
+
+function startDuel(npc){
+  SCREEN="duel";
+  duel={
+    active:true, npc, phase:"duel_wait", timer:0, countdown:0,
+    flashAlpha:0, flashColor:C.flash, resultTimer:0, win:false, shotSmoke:0,
+    earlyShot:false, lightning:false, bonusXp:0, round:1, standoff:false, _resolved:false,
+    playerAction:null, npcAction:null, resultText:"", outcome:null,
+    waitTime:rnd(1.1,3.2), headstart:getHeadstart()
+  };
+  const base=rnd(NPC_REACT_MIN,NPC_REACT_MAX);
+  npc.react=base; duel.effectiveReact=getEffectiveReact(base);
+  player.dir=npc.tx>player.tx?1:-1; npc.dir=-player.dir;
+}
+
+function onKillReward(npc, isGangMember){
+  player.score++;
+  const xp=xpForEnemy(npc.react,!!isGangMember)+(duel.bonusXp||0);
+  gainXP(xp);
+  if(stage.id==="village"||stage.id==="approach"){
+    stage.areaKills++;
+    if(stage.areaKills>=BOUNTY_THRESHOLD&&!bounty.active&&!bounty.warned){
+      bounty.active=true; bounty.wantedFlash=0;
+      bounty.gangType=stage.id==="approach"?"viper":"muerte";
+    }
+  } else if(stage.id==="pyramid"){
+    stage.floorKills++;
+    if(stage.floorKills>=stage.floorGoal){
+      stage.bannerText="FLOOR "+stage.floor+" CLEAR";
+      stage.bannerTimer=2.5;
+      stage.floor++; stage.floorKills=0;
+      stage.floorGoal=8+Math.min(4,stage.floor-1);
+      genPyramidFloor(stage.floor);
+      player.tx=(MAP_W/2)|0; player.ty=(MAP_H/2)|0;
+      player.px=(player.tx-1)*TILE; player.py=(player.ty-1)*TILE;
+      cam.x=player.tx-W/(TILE*2); cam.y=player.ty-H/(TILE*2);
+      spawnNPCs();
+    }
+  }
+}
+
+function duelUpdate(dt){
+  const eff=duel.effectiveReact||duel.npc.react;
+  duelPhaseUpdate(duel,eff,dt,false);
+  if(duel.phase==="duel_resolve"&&!duel._resolved){
+    duel._resolved=true;
+    const outcome=resolveExchange(duel.playerAction,duel.npcAction,duel.playerActTime,duel.npcActTime);
+    duel.outcome=outcome;
+    if(outcome==="player_win"){ duel.win=true; duel.resultText=duel.lightning?"LIGHTNING!":"GOT 'EM!"; }
+    else if(outcome==="npc_win"){ duel.win=false; duel.resultText=duel.earlyShot?"TOO EARLY!":"SHOT DOWN!"; }
+    else if(outcome==="double"){ duel.win=false; duel.resultText="BOTH DOWN!"; }
+    else {
+      duel.resultText=(!isOffensive(duel.playerAction)&&!isOffensive(duel.npcAction))?"STARE DOWN":"DODGED!";
+    }
+    duel.flashAlpha=1;
+    duel.flashColor=duel.win?[1,1,0.8]:(outcome==="continue"?[0.7,0.85,1]:[1,0.2,0]);
+  }
+  let hold=0.55;
+  if(["player_win","npc_win","double"].includes(duel.outcome)) hold=0.85;
+  if(duel.standoff) hold=1.4;
+  if(duel.phase==="duel_resolve"&&duel.resultTimer>hold&&!duel.standoff){
+    const o=duel.outcome;
+    if(o==="player_win"){
+      duel.npc.alive=false;
+      onKillReward(duel.npc,false);
+      duel.active=false;
+      if(!npcs.some(n=>n.alive)) spawnNPCs();
+      SCREEN="explore";
+    } else if(o==="npc_win"||o==="double"){
+      duel.active=false; loseLife();
+    } else {
+      duel.round=(duel.round||1)+1;
+      if(duel.round>MAX_ROUNDS){
+        duel.standoff=true; duel.resultText="STANDOFF"; duel.win=false; duel.resultTimer=0;
+        gainXP(6+player.level);
+      } else {
+        duel._resolved=false; duel.phase="duel_wait"; duel.timer=0; duel.countdown=0;
+        duel.waitTime=rnd(0.35,0.85); duel.playerAction=null; duel.npcAction=null;
+        duel.shotSmoke=0; duel.headstart=getHeadstart();
+      }
+    }
+  }
+  if(duel.standoff&&duel.phase==="duel_resolve"&&duel.resultTimer>1.4){
+    duel.active=false; duel.standoff=false; SCREEN="explore";
+  }
+}
+
+function startGang(){
+  const gdef=GANGS[bounty.gangType]||GANGS.muerte;
+  gangBattle={
+    active:true, members:[], current:1, phase:"intro", introTimer:0, timer:0,
+    countdown:0, flashAlpha:0, shotSmoke:0, earlyShot:false, win:false,
+    playerAction:null, npcAction:null, resultText:"", outcome:null,
+    round:1, _resolved:false, headstart:getHeadstart(), gangTitle:gdef.title,
+    waitTime:rnd(1.0,2.6)
+  };
+  for(let i=0;i<3;i++){
+    const rr=gdef.reacts[i];
+    const base=rnd(rr[0],rr[1]);
+    gangBattle.members.push({
+      name:gdef.names[i], hat:gdef.hats[i], coat:gdef.coats[i],
+      react:base, alive:true, dir:1, isGang:true, effectiveReact:getEffectiveReact(base)
+    });
+  }
+  SCREEN="gang";
+}
+
+function gangUpdate(dt){
+  const gb=gangBattle;
+  gb.flashAlpha=Math.max(0,(gb.flashAlpha||0)-dt*4);
+  gb.shotSmoke=Math.max(0,(gb.shotSmoke||0)-dt*1.2);
+  if(gb.phase==="intro"){ gb.introTimer+=dt; return; }
+  if(gb.phase==="between"||gb.phase==="complete"){ gb.timer+=dt; return; }
+
+  const cur=gb.members[gb.current-1];
+  const eff=(cur&&(cur.effectiveReact||cur.react))||0.4;
+  duelPhaseUpdate(gb,eff,dt,true);
+
+  if(gb.phase==="duel_resolve"&&!gb._resolved){
+    gb._resolved=true;
+    const outcome=resolveExchange(gb.playerAction,gb.npcAction,gb.playerActTime,gb.npcActTime);
+    gb.outcome=outcome;
+    if(outcome==="player_win"){ gb.win=true; gb.resultText=gb.lightning?"LIGHTNING!":"GOT 'EM!"; }
+    else if(outcome==="npc_win"){ gb.win=false; gb.resultText=gb.earlyShot?"TOO EARLY!":"SHOT DOWN!"; }
+    else if(outcome==="double"){ gb.win=false; gb.resultText="BOTH DOWN!"; }
+    else gb.resultText="DODGED!";
+    gb.flashAlpha=1;
+  }
+  let hold=0.55;
+  if(["player_win","npc_win","double"].includes(gb.outcome)) hold=0.85;
+  if(gb.phase==="duel_resolve"&&gb.resultTimer>hold){
+    const o=gb.outcome;
+    if(o==="player_win"){
+      cur.alive=false;
+      gainXP(xpForEnemy(cur.react,true)+(gb.bonusXp||0));
+      if(gb.current<3){ gb.current++; gb.phase="between"; gb.timer=0; gb._resolved=false; gb.round=1; }
+      else { gb.phase="complete"; gb.timer=0; }
+    } else if(o==="npc_win"||o==="double"){
+      gb.active=false; loseLife();
+    } else {
+      gb.round=(gb.round||1)+1;
+      if(gb.round>MAX_ROUNDS){
+        cur.alive=false; gainXP(12+player.level*2);
+        if(gb.current<3){ gb.current++; gb.phase="between"; gb.timer=0; gb._resolved=false; gb.round=1; }
+        else { gb.phase="complete"; gb.timer=0; }
+      } else {
+        gb._resolved=false; gb.phase="duel_wait"; gb.timer=0; gb.countdown=0;
+        gb.waitTime=rnd(0.30,0.75); gb.playerAction=null; gb.npcAction=null;
+        gb.shotSmoke=0; gb.headstart=getHeadstart();
+      }
+    }
+  }
+}
+
+function exploreUpdate(dt){
+  if(player.levelUpTimer>0) player.levelUpTimer-=dt;
+  if(player.lifeFlash>0) player.lifeFlash-=dt;
+  if(stage.bannerTimer>0) stage.bannerTimer-=dt;
+
+  let mx=0,my=0;
+  if(keys.arrowup||keys.w) my=-1;
+  if(keys.arrowdown||keys.s) my=1;
+  if(keys.arrowleft||keys.a) mx=-1;
+  if(keys.arrowright||keys.d) mx=1;
+  const SPEED=24;
+  player.walkTimer+=dt;
+  if(player.walkTimer>0.25){ player.walkTimer=0; if(mx||my) player.walkFrame++; }
+  if(mx) player.dir=mx;
+  const newPX=player.px+mx*SPEED*dt, newPY=player.py+my*SPEED*dt;
+  const ntx=((newPX/TILE)|0)+1, nty=((newPY/TILE)|0)+1;
+  if(ntx>=1&&ntx<=MAP_W&&nty>=1&&nty<=MAP_H){
+    let blocked=false;
+    if(stage.id==="pyramid"&&world[nty]&&world[nty][ntx]===T_STONE) blocked=true;
+    if(!blocked){ player.px=newPX; player.py=newPY; player.tx=ntx; player.ty=nty; }
+  }
+  let tcx=player.px/TILE-W/(TILE*2)+0.5, tcy=player.py/TILE-H/(TILE*2)+0.5;
+  tcx=Math.max(0,Math.min(MAP_W-W/TILE,tcx));
+  tcy=Math.max(0,Math.min(MAP_H-H/TILE,tcy));
+  cam.x=lerp(cam.x,tcx,dt*8); cam.y=lerp(cam.y,tcy,dt*8);
+
+  npcs.forEach(n=>{
+    if(!n.alive) return;
+    n.moveTimer-=dt;
+    if(n.moveTimer<=0){
+      n.moveTimer=rnd(1.5,4);
+      const ndx=rndi(-1,1), ndy=rndi(-1,1);
+      const nx=n.tx+ndx, ny=n.ty+ndy;
+      if(nx>=1&&nx<=MAP_W&&ny>=1&&ny<=MAP_H){
+        let ok=true;
+        if(stage.id==="pyramid"&&world[ny]&&world[ny][nx]!==T_FLOOR) ok=false;
+        if(ok){ n.tx=nx; n.ty=ny; n.px=(nx-1)*TILE; n.py=(ny-1)*TILE; }
+      }
+      if(ndx) n.dir=ndx;
+    }
+  });
+
+  if(bounty.active&&!bounty.warned){
+    bounty.wantedFlash+=dt;
+    if(bounty.wantedFlash>2.5){ bounty.warned=true; startGang(); }
+  }
+
+  if(!bounty.active||bounty.warned){
+    for(const n of npcs){
+      if(!n.alive) continue;
+      if(Math.hypot(n.tx-player.tx,n.ty-player.ty)<=player.engageRange){
+        startDuel(n); break;
+      }
+    }
+  }
+}
+
+function handleAction(act){
+  if(!act) return;
+  if(SCREEN==="title"){
+    resetStageToVillage(); initPlayer(); genVillage(); spawnNPCs(); SCREEN="explore"; return;
+  }
+  if(SCREEN==="dead"&&deadTimer>1.5){
+    resetStageToVillage(); initPlayer(); genVillage(); spawnNPCs(); SCREEN="explore"; return;
+  }
+  if(SCREEN==="transition"){
+    enterArea(stage.transitionTo||"approach"); return;
+  }
+  if(SCREEN==="duel"){
+    if(duel.phase==="duel_draw"&&!duel.playerAction){
+      duel.playerAction=act; duel.playerActTime=duel.countdown;
+      if(isOffensive(act)&&duel.countdown<=0.1+skillVal("quickdraw")*0.015){
+        duel.lightning=true; duel.bonusXp=8+skillVal("quickdraw")*2;
+      }
+      if(duel.npcAction){ duel.phase="duel_resolve"; duel.resultTimer=0; duel._resolved=false; if(isOffensive(act)||isOffensive(duel.npcAction)) duel.shotSmoke=1; }
+    } else if(duel.phase==="duel_wait"&&isOffensive(act)){
+      const grace=getFocusGrace()+0.08;
+      if(duel.timer>=duel.waitTime-grace){
+        duel.phase="duel_draw"; duel.countdown=0.02;
+        duel.playerAction=act; duel.playerActTime=0.02; duel.bonusXp=3;
+      } else {
+        duel.playerAction=act; duel.playerActTime=0; duel.earlyShot=true;
+        duel.npcAction="shoot"; duel.npcActTime=0.04;
+        duel.phase="duel_resolve"; duel._resolved=false; duel.resultTimer=0; duel.shotSmoke=1;
+      }
+    }
+    return;
+  }
+  if(SCREEN==="gang"){
+    const gb=gangBattle;
+    if(gb.phase==="intro"&&gb.introTimer>1.5&&isOffensive(act)){
+      gb.phase="duel_wait"; gb.timer=0; gb.countdown=0;
+      gb.playerAction=null; gb.npcAction=null; gb.round=1; gb._resolved=false;
+      gb.headstart=getHeadstart(); gb.waitTime=rnd(1.0,2.6);
+    } else if(gb.phase==="duel_draw"&&!gb.playerAction){
+      gb.playerAction=act; gb.playerActTime=gb.countdown;
+      if(isOffensive(act)&&gb.countdown<=0.1+skillVal("quickdraw")*0.015){
+        gb.lightning=true; gb.bonusXp=10+skillVal("quickdraw")*3;
+      }
+      if(gb.npcAction){ gb.phase="duel_resolve"; gb.resultTimer=0; gb._resolved=false; }
+    } else if(gb.phase==="duel_wait"&&isOffensive(act)){
+      const grace=getFocusGrace()+0.08;
+      if(gb.timer>=gb.waitTime-grace){
+        gb.phase="duel_draw"; gb.countdown=0.02; gb.playerAction=act; gb.playerActTime=0.02;
+      } else {
+        gb.playerAction=act; gb.earlyShot=true; gb.npcAction="shoot"; gb.npcActTime=0.04;
+        gb.phase="duel_resolve"; gb._resolved=false; gb.resultTimer=0; gb.shotSmoke=1;
+      }
+    } else if(gb.phase==="between"&&gb.timer>0.7&&isOffensive(act)){
+      gb.phase="duel_wait"; gb.timer=0; gb.countdown=0; gb.round=1; gb._resolved=false;
+      gb.playerAction=null; gb.npcAction=null; gb.headstart=getHeadstart(); gb.waitTime=rnd(0.5,1.2);
+    } else if(gb.phase==="complete"&&gb.timer>1.5&&isOffensive(act)){
+      player.score+=3; gainXP(45+player.level*5); gainLife(1);
+      gb.active=false; bounty.active=false; bounty.warned=false; bounty.wantedFlash=0;
+      if(stage.id==="village") startTransition("approach","THE ROAD TO THE PYRAMID");
+      else if(stage.id==="approach"){ stage.floor=1; stage.floorKills=0; stage.floorGoal=8; startTransition("pyramid","ENTER THE PYRAMID"); }
+      else { spawnNPCs(); SCREEN="explore"; }
+    }
+  }
+}
+
+// ─── Input ──────────────────────────────────────────────────────────────────
+window.addEventListener("keydown", e=>{
+  const k=e.key.toLowerCase();
+  if(!keys[k]) keysJust[k]=true;
+  keys[k]=true;
+  if([" ","arrowup","arrowdown","arrowleft","arrowright"].includes(k)) e.preventDefault();
+  const act=actionFromKey(k);
+  if(act||k==="enter") handleAction(act||(k==="enter"?"shoot":null));
+});
+window.addEventListener("keyup", e=>{ keys[e.key.toLowerCase()]=false; });
+touchEl.querySelectorAll("button").forEach(btn=>{
+  const fire=e=>{ e.preventDefault(); handleAction(btn.dataset.act); };
+  btn.addEventListener("touchstart", fire, {passive:false});
+  btn.addEventListener("mousedown", fire);
+});
+
+// ─── Draw screens ───────────────────────────────────────────────────────────
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  if(SCREEN==="title"){
+    titleT+=0.016;
+    for(let y=0;y<H;y++){
+      const t=y/H;
+      setColor([lerp(0.25,C.sky[0],t),lerp(0.15,C.sky[1],t),lerp(0.08,C.sky[2],t)]);
+      ctx.fillRect(0,y,W,1);
+    }
+    setColor(C.ground); ctx.fillRect(0,H*0.72,W,H*0.28);
+    font(18); textC("HIGH NOON", H*0.28, C.gold, 18);
+    font(6); textC("VILLAGE · ROAD · PYRAMID", H*0.40, C.white, 6);
+    font(5); textC("SPACE / TAP TO START", H*0.55, C.yellow, 5);
+    font(4); text("SPACE:SHOT  A/X:HIGH  S:DUCK  W:JUMP",4,H-13,C.white);
+  } else if(SCREEN==="explore"){
+    drawWorld();
+    setColor([0.1,0.07,0.03],0.88); ctx.fillRect(0,0,W,22);
+    font(6); text("L"+player.level,4,3,C.gold);
+    const xpPct=player.xp/Math.max(1,player.xpToNext);
+    setColor([0.25,0.2,0.1]); ctx.fillRect(28,4,50,5);
+    setColor(C.gold); ctx.fillRect(28,4,(50*xpPct)|0,5);
+    font(5); text("K:"+player.score,4,12,C.white);
+    setColor(C.red); ctx.fillRect(28,13,5,4); text("x"+(player.lives||1),36,12,C.red);
+
+    let centerMsg="", centerCol=C.white;
+    if(bounty.active){ centerMsg="!! WANTED !!"; centerCol=C.bounty; }
+    else if(stage.id==="village"){ const left=BOUNTY_THRESHOLD-stage.areaKills; if(left>0) centerMsg=left+" TO BOUNTY"; }
+    else if(stage.id==="approach"){ const left=BOUNTY_THRESHOLD-stage.areaKills; centerMsg=left>0?left+" TO VIPERS":"ROAD TO PYRAMID"; centerCol=C.gold; }
+    else if(stage.id==="pyramid"){ centerMsg="FLOOR "+stage.floor+"  "+stage.floorKills+"/"+stage.floorGoal; centerCol=C.hieroglyph; }
+    if(centerMsg){ font(5); textC(centerMsg,5,centerCol,5); }
+    const alive=npcs.filter(n=>n.alive).length;
+    font(5); const rl=stage.id==="pyramid"?alive+" UNDEAD":alive+" OUTLAWS";
+    text(rl,W-ctx.measureText(rl).width-4,5,C.white);
+
+    if(player.levelUpTimer>0){
+      const a=Math.min(1,player.levelUpTimer);
+      setColor([0.1,0.08,0.02],0.75*a); ctx.fillRect(30,H/2-28,W-60,36);
+      font(10); textC("LEVEL "+player.level+"!",H/2-22,C.gold,10);
+    }
+    if(player.lifeFlash>0&&player.lifeFlashText){
+      const a=Math.min(1,player.lifeFlash);
+      setColor([0.08,0.02,0.02],0.8*a); ctx.fillRect(24,H/2+16,W-48,22);
+      font(6); textC(player.lifeFlashText,H/2+22,C.red,6);
+    }
+    if(stage.bannerTimer>0&&stage.bannerText){
+      const a=Math.min(1,stage.bannerTimer);
+      setColor([0.05,0.04,0.02],0.8*a); ctx.fillRect(20,H/2-20,W-40,28);
+      font(8); textC(stage.bannerText,H/2-12,C.gold,8);
+    }
+    if(bounty.active&&!bounty.warned){
+      const a=Math.abs(Math.sin(performance.now()/200))*0.6;
+      setColor([0.8,0.1,0.05],a); ctx.fillRect(0,0,W,H);
+      setColor([0.1,0.07,0.03],0.9); ctx.fillRect(20,H/2-26,W-40,52);
+      font(7); textC("BOUNTY ON YOUR HEAD",H/2-20,C.bounty,7);
+      const gname=(GANGS[bounty.gangType]||GANGS.muerte).title;
+      font(5); textC(gname+" IS COMING",H/2-4,C.white,5);
+    }
+  } else if(SCREEN==="duel"){
+    const n=duel.npc;
+    drawDuelScene({hat:n.hat,coat:n.coat,react:n.react,name:n.name,isGang:false,isUndead:n.isUndead}, duel, null, false);
+  } else if(SCREEN==="gang"){
+    const gb=gangBattle;
+    if(gb.phase==="intro"){
+      setColor([0.12,0.04,0.02]); ctx.fillRect(0,0,W,H);
+      font(10); textC("WANTED",H*0.2,C.bounty,10);
+      font(6); textC(gb.gangTitle||"GANG",H*0.35,C.gold,6);
+      font(5); textC("PRESS SPACE TO FIGHT",H*0.7,C.yellow,5);
+    } else if(gb.phase==="between"){
+      setColor(C.sand); ctx.fillRect(0,0,W,H);
+      font(8); textC("NEXT...",H/2-10,C.gold,8);
+      font(5); textC("SPACE",H/2+10,C.white,5);
+    } else if(gb.phase==="complete"){
+      setColor(C.sand); ctx.fillRect(0,0,W,H);
+      font(10); textC("GANG DOWN!",H/2-20,C.green,10);
+      font(5); textC("+1 LIFE · SPACE TO CONTINUE",H/2+5,C.gold,5);
+    } else {
+      const cur=gb.members[gb.current-1];
+      drawDuelScene(
+        {hat:cur.hat,coat:cur.coat,react:cur.react,name:cur.name,isGang:true},
+        gb, (gb.gangTitle||"GANG")+"  "+gb.current+"/3", false
+      );
+    }
+  } else if(SCREEN==="transition"){
+    setColor([0.08,0.05,0.02]); ctx.fillRect(0,0,W,H);
+    const a=Math.min(1,stage.transitionT*1.2);
+    font(8); textC(stage.bannerText||"...",H/2-20,C.gold,8);
+    font(5); textC(stage.transitionTo==="pyramid"?"Deeper than the desert...":"Ride east. The stone waits.",H/2,C.white,5);
+    if(stage.transitionT>1.2) textC("SPACE TO CONTINUE",H*0.82,C.yellow,5);
+  } else if(SCREEN==="dead"){
+    deadTimer+=0.016; deadFlash=Math.max(0,deadFlash-0.008);
+    drawWorld();
+    setColor([0.08,0.02,0.02],0.75); ctx.fillRect(0,0,W,H);
+    font(14); textC("GAME OVER",H*0.2,C.red,14);
+    font(7); textC("KILLS: "+player.score+"   LVL: "+player.level+"   LIVES: 0",H*0.38,C.white,7);
+    if(highscores[0]!==undefined&&player.score>=highscores[0]){ font(6); textC("NEW RECORD!",H*0.48,C.gold,6); }
+    font(5); textC("TOP GUNSLINGERS",H*0.58,C.gold,5);
+    highscores.slice(0,5).forEach((s,i)=>{ font(5); textC("#"+(i+1)+"  "+s+" kills",H*0.62+i*10,i===0?C.gold:C.white,5); });
+    if(deadTimer>1.5) textC("ENTER: PLAY AGAIN",H*0.90,C.yellow,5);
+  }
+}
+
+// ─── Loop ───────────────────────────────────────────────────────────────────
+let last=performance.now();
+function frame(now){
+  let dt=Math.min(0.05,(now-last)/1000); last=now;
+  if(SCREEN==="explore") exploreUpdate(dt);
+  else if(SCREEN==="duel") duelUpdate(dt);
+  else if(SCREEN==="gang") gangUpdate(dt);
+  else if(SCREEN==="transition"){
+    stage.transitionT=(stage.transitionT||0)+dt;
+    if(stage.transitionT>2.8) enterArea(stage.transitionTo||"approach");
+  }
+  draw();
+  for(const k in keysJust) delete keysJust[k];
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

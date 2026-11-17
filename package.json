@@ -1,38 +1,18 @@
 {
-  "name": "turbz",
-  "version": "7.0.0",
+  "name": "turbzhack",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
+  "description": "A NetHack-like with the TURBZ look. Every enemy, spell, class and enchantment is its own file.",
   "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 8080",
-    "build": "vite build",
-    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test scripts/*.test.mts",
     "typecheck": "tsc --noEmit",
-    "map:audit": "node scripts/map-gen-audit.mjs",
-    "typecheck:worker": "tsc --noEmit -p worker/tsconfig.json",
-"test": "node --test scripts/game-content.test.mjs scripts/quest-board.test.mjs scripts/survival-night.test.mjs scripts/map-maker.test.mjs scripts/balance.test.mjs scripts/sfx-bank.test.mjs scripts/dungeon-gen.test.mjs scripts/tex-world.test.mjs scripts/perf-helpers.test.mjs scripts/animation.test.mjs scripts/autoplay.test.mjs scripts/verses.test.mjs scripts/verse-levelling.test.mjs scripts/class-update.test.mjs scripts/ui-overlay.test.mjs scripts/mobile-mode.test.mjs scripts/power-extra.test.mjs scripts/fight-depth.test.mjs scripts/world-chart.test.mjs scripts/explored.test.mjs scripts/world-chunks.test.mjs scripts/chart-export.test.mjs scripts/chart-world.test.mjs scripts/world-villages.test.mjs && node --experimental-strip-types --test scripts/mining.test.mjs && node --import ./scripts/wiki/register.mjs --experimental-strip-types --test scripts/tile-builder.test.mjs && node --experimental-strip-types --test worker/account-store.test.ts worker/discord.test.ts && npm run wiki:check",
-    "deploy": "npm run build && wrangler deploy",
-    "dev:worker": "npm run build && wrangler dev",
-    "cf:types": "wrangler types",
-    "wiki": "node --import ./scripts/wiki/register.mjs scripts/wiki/build-wiki.mjs",
-    "wiki:check": "node --import ./scripts/wiki/register.mjs scripts/wiki/build-wiki.mjs --check"
-  },
-  "dependencies": {
-    "@fontsource/press-start-2p": "^5.3.0",
-    "@fontsource/vt323": "^5.3.0",
-    "lucide-react": "^0.510.0",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "build": "tsc",
+    "serve": "node tools/serve.mjs",
+    "stage": "node tools/stage-web.mjs",
+    "build:web": "npm run build && node tools/index-content.mjs content && npm run stage"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.0",
-    "@types/node": "^22.16.5",
-    "@types/react": "^19.2.0",
-    "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.2.0",
-    "tailwindcss": "^4.3.0",
-    "typescript": "^5.7.0",
-    "vite": "^8.2.0",
-    "wrangler": "^4.151.0"
+    "typescript": "^5.6.0"
   }
 }
